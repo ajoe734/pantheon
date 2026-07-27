@@ -70,6 +70,24 @@ after that follow-up merges so the live proof covers the corrected bytes.
 - live read-only REST smoke — 26 promote PRs listed; exact PR `#4138`
   returned head and zero checks without an API error.
 
+## Owner Rescue Revalidation
+
+The supervisor reassigned the blocked lane from Codex2 to Codex without
+changing the repair scope or reviewer. Codex anchored the task metadata as
+`09af22e3c05ebea666f65ee34f57862cfc265840`, then merged current `origin/dev`
+`87166a352c0b90a26a6e35c138acfaea195fa4ee` through merge commit
+`8f4731aa86cbe99da6b535fa565a1dcb84474c40`. The merge was conflict-free and
+composes the REST repair with the current release-controller and supervisor
+mainline.
+
+At that composed head, Codex repeated the 22-test unittest slice and the
+70-test pytest slice, compiled the helper and tests, parsed both workflow YAML
+files and this evidence JSON, ran `git diff --check`, and repeated the
+read-only REST smoke. All local checks passed; the live lookup still returned
+26 open promote PRs and exact PR `#4138` at
+`cb90dc479214c6ff0779aff70f915593ec9196c4` with zero attached checks and no
+API error.
+
 ## REST Follow-up Merge Gate
 
 REST follow-up PR `#4262` is open with auto-merge enabled. At code/evidence
@@ -86,6 +104,9 @@ those external contexts. This is an external review/freeze gate, not a failed
 repository test. The owner will not self-approve, forge a status, weaken
 branch protection, or bypass the freeze. Claude/Human Ops must independently
 clear the governed merge gate before the REST repair can reach `dev`.
+Any owner-rescue push creates a new PR head, so the successful runs above are
+historical evidence for `ee04032de9e00cde74a948b5ba1389217bcccbc4`; the
+updated head must reacquire CI, last-push approval, and both external contexts.
 
 ## Live Proof and Stale-PR Retirement
 

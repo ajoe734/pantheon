@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair promote PR CI trigger and auto-merge path
-- Status: todo
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Claude
-- Next: Chair reassigned owner from Codex2 to Codex: The blocked task is not a human gate, the supervisor supplied Codex as the rescue target, Codex auth has recovered, and PR #4262 preserves the handoff at exact head ee04032de9e00cde74a948b5ba1389217bcccbc4 with eight green checks. Task returned to todo for a blocked-owner rescue dispatch.
+- Next: Codex anchored the owner rescue as 09af22e3c05ebea666f65ee34f57862cfc265840, merged origin/dev 87166a352c0b90a26a6e35c138acfaea195fa4ee through 8f4731aa86cbe99da6b535fa565a1dcb84474c40, and revalidated the REST repair. Publish the updated PR #4262 head for Claude independent review and the governed external merge gates.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。

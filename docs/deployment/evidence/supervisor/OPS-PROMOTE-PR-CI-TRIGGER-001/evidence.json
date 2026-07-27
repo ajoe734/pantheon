@@ -4,7 +4,7 @@
     "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
     "title": "Repair promote PR CI trigger and auto-merge path",
     "phase": "Repository Merge Governance",
-    "owner": "Codex2",
+    "owner": "Codex",
     "reviewer": "Claude",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -15,8 +15,8 @@
     "review_file": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
-  "status": "blocked",
-  "generated_at": "2026-07-27T18:40:26Z",
+  "status": "in_progress",
+  "generated_at": "2026-07-27T19:46:16Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -134,19 +134,19 @@
   },
   "validation": [
     {
-      "command": "python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
       "result": "22 passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py",
-      "result": "70 passed in 10.83s"
+      "result": "70 passed in 8.19s"
     },
     {
-      "command": "python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
       "result": "passed"
     },
     {
-      "command": "parse .github/workflows/branch-ci.yml and .github/workflows/publish-promote.yml; git diff --check",
+      "command": "parse .github/workflows/branch-ci.yml and .github/workflows/publish-promote.yml plus evidence.json; git diff --check origin/dev...HEAD",
       "result": "passed"
     },
     {
@@ -154,6 +154,16 @@
       "result": "26 promote PRs, exact PR 4138, zero exact-head checks, no API error"
     }
   ],
+  "owner_rescue": {
+    "previous_owner": "Codex2",
+    "current_owner": "Codex",
+    "reviewer": "Claude",
+    "metadata_anchor_commit": "09af22e3c05ebea666f65ee34f57862cfc265840",
+    "base_commit": "87166a352c0b90a26a6e35c138acfaea195fa4ee",
+    "base_update_merge_commit": "8f4731aa86cbe99da6b535fa565a1dcb84474c40",
+    "scope_changed": false,
+    "validation_repeated": true
+  },
   "delivery": {
     "implementation_pr": 4258,
     "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
@@ -176,6 +186,7 @@
     "rest_followup_head": null,
     "rest_followup_merge_commit": null,
     "rest_followup_checks": {
+      "observed_head": "ee04032de9e00cde74a948b5ba1389217bcccbc4",
       "push_run": 30294569664,
       "pull_request_run": 30294571835,
       "required_contexts": {
@@ -200,6 +211,7 @@
       ],
       "head_check_runs": 8,
       "head_commit_statuses": 0,
+      "owner_rescue_requires_fresh_head_gates": true,
       "waiting_for": [
         "Claude independent review",
         "Human Ops root merge freeze release"
