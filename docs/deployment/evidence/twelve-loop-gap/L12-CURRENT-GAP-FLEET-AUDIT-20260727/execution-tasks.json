@@ -1,0 +1,395 @@
+{
+  "schema_version": "l12_current_gap_execution_matrix.v1",
+  "program": "pantheon-twelve-loop-gap-2026-07-26",
+  "observation_time": "2026-07-27T18:37:20Z",
+  "base_ref": "origin/dev",
+  "base_sha": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
+  "verdict": "not_all_twelve_loops_operational",
+  "dispatch_rule": "Use supervisor/auto-worker canonical task-state; do not create Codex collaboration subagents for fleet dispatch.",
+  "provider_preference": [
+    "Claude",
+    "Antigravity",
+    "Codex2/Codex fallback only when provider readiness or capacity blocks preferred lanes"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PROVIDER-POOL-PROBE-GATE-001",
+      "lane": "fleet-runtime",
+      "current_status": "in_progress",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "Provider pool, probe gate, canonical root, status-root, base-ref readiness, and redispatch loops are not yet closed.",
+      "required_validation": [
+        "provider auth/quota probe regression",
+        "worker base-ref explicit refspec or verified ls-remote SHA",
+        "status command root/worktree binding regression",
+        "clean worker exit and redispatch loop proof"
+      ]
+    },
+    {
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "lane": "github-merge-boundary",
+      "current_status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "GitHub merge boundary still relies on policy/process instead of productized canonical exact-head review enforcement.",
+      "required_validation": [
+        "exact-head ReviewBus binding required before merge",
+        "stale or different-head review rejected",
+        "auto-merge revoked/fails closed when canonical review is absent"
+      ]
+    },
+    {
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "lane": "github-merge-boundary",
+      "current_status": "in_progress",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "frontier-now",
+      "depends_on": [
+        "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001"
+      ],
+      "blocking_gap": "PR #4218 is green but review-required and blocked.",
+      "required_validation": [
+        "review PR #4218 head c3fd720fca99c26092881c514930adf3457c5818",
+        "verify checks and exact review",
+        "merge only after canonical gate passes"
+      ]
+    },
+    {
+      "task_id": "OPS-TASK-PR-TRIAGE-002",
+      "lane": "repository-triage",
+      "current_status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "Task/PR backlog alignment remains stale and can hide superseded or unreviewed work.",
+      "required_validation": [
+        "classify current task PRs",
+        "bind each nonterminal task to exact PR state",
+        "avoid destructive branch deletion without explicit separate authorization"
+      ]
+    },
+    {
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "lane": "promotion-automation",
+      "current_status": "in_progress",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "Promotion PR CI trigger and auto-merge path are not closed.",
+      "required_validation": [
+        "REST promote validation",
+        "PR #4262 refresh or replacement evidence",
+        "CI trigger and fail-closed auto-merge proof"
+      ]
+    },
+    {
+      "task_id": "L12-DIST-001",
+      "lane": "loop-domain",
+      "loop_ids": [
+        "strategy_distillation"
+      ],
+      "current_status": "review",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "PR #4193 is green but review-required and blocked.",
+      "required_validation": [
+        "review PR #4193 head 5934ed6d8e4dc797fb5dbd34a8fc9636b3acdb1c",
+        "terminal transition lease/expiry regression",
+        "retry identity and replay proof",
+        "fresh source-to-draft evidence"
+      ]
+    },
+    {
+      "task_id": "L12-EVO-001",
+      "lane": "loop-domain",
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_status": "in_progress",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "Implementation/review of durable Evolution dispatch is active but not accepted.",
+      "required_validation": [
+        "review PR #4267 head 9f892149b3f8708cef695f3b7d7808d0c3e8be25 or refreshed replacement",
+        "API-to-worker-to-downstream receipt proof",
+        "retry/DLQ/replay and tenant/auth negatives",
+        "observability verifier participation"
+      ]
+    },
+    {
+      "task_id": "L12-BFF-001",
+      "lane": "loop-domain",
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_status": "in_progress",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "BFF durable infrastructure health telemetry and incident recovery are active but not accepted.",
+      "required_validation": [
+        "strict service auth and tenant scope",
+        "durable probe/outbox/incident state",
+        "two-replica or restart state-sharing proof",
+        "real downstream stop/recover incident proof"
+      ]
+    },
+    {
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "lane": "release-controller",
+      "current_status": "review",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "parallel_group": "frontier-now",
+      "depends_on": [
+        "OPS-PROMOTE-PR-CI-TRIGGER-001"
+      ],
+      "blocking_gap": "Pantheon PR #4268 and execute-plans PR #558 need exact-pair review; no hosted deployment run.",
+      "required_validation": [
+        "review Pantheon head b25b269956dc24eab3a2fc12b76bf731810c143f",
+        "review execute-plans head 1081deb765c5313731ae5813ee6f3d618e7103cd",
+        "archive release pair evidence",
+        "defer hosted proof to L12-HOSTED-001 unless explicitly promoted"
+      ]
+    },
+    {
+      "task_id": "L12-SIGNOFF-001",
+      "lane": "protected-closeout-authority",
+      "current_status": "in_progress",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "parallel_group": "dependency-gated",
+      "depends_on": [
+        "SUP-PROVIDER-POOL-PROBE-GATE-001"
+      ],
+      "blocking_gap": "PR #4261 is behind dev and review-required; Antigravity owner lane is not currently proven runnable.",
+      "required_validation": [
+        "compose/rebase against current dev",
+        "review PR #4261 or replacement exact head",
+        "prove protected Human/Ops verdict cannot be replayed or bypassed"
+      ]
+    },
+    {
+      "task_id": "L12-TRUTH-001",
+      "lane": "operator-truth",
+      "current_status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "serial-integration",
+      "depends_on": [
+        "L12-DIST-001",
+        "L12-EVO-001",
+        "L12-BFF-001",
+        "L12-SIGNOFF-001"
+      ],
+      "blocking_gap": "No accepted current controller/operator truth for all twelve loops.",
+      "required_validation": [
+        "all twelve controller records current",
+        "BFF truth includes desired/actual/last success/last failure/provenance",
+        "stale or synthetic records degrade/fail closed"
+      ]
+    },
+    {
+      "task_id": "L12-MANIFEST-001",
+      "lane": "runtime-manifest",
+      "current_status": "not_materialized_or_not_currently_projected",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "parallel_group": "serial-integration",
+      "depends_on": [
+        "L12-DIST-001",
+        "L12-EVO-001",
+        "L12-BFF-001",
+        "SUP-PROVIDER-POOL-PROBE-GATE-001"
+      ],
+      "blocking_gap": "Current replacement-dev manifest has not been accepted as activating every required loop worker with safe defaults.",
+      "required_validation": [
+        "docker compose config proof",
+        "default profile worker presence",
+        "restart/health/volume/auth proof",
+        "safe source egress and no-live-capital defaults",
+        "no duplicate legacy worker proof"
+      ]
+    },
+    {
+      "task_id": "L12-FE-TRUTH-001",
+      "lane": "frontend-truth",
+      "current_status": "not_materialized_or_not_currently_projected",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "ajoe734/execute-plans",
+      "parallel_group": "serial-integration",
+      "depends_on": [
+        "L12-TRUTH-001",
+        "OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+      ],
+      "blocking_gap": "Hosted frontend truth rendering for all twelve loops has not been delivered against the live BFF.",
+      "required_validation": [
+        "live BFF strict fallback",
+        "all twelve truth fields rendered",
+        "desktop/mobile/keyboard/axe proof",
+        "exact FE/BFF deployment identity"
+      ]
+    },
+    {
+      "task_id": "L12-VERIFY-KNOW-001",
+      "lane": "product-drill",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication"
+      ],
+      "current_status": "not_materialized_or_not_currently_projected",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "verifier-drills",
+      "depends_on": [
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
+      ],
+      "blocking_gap": "Knowledge-loop cross-service product drill has not run against current truth.",
+      "required_validation": [
+        "Source to Distillation to Alpha end-to-end drill",
+        "real service boundary proof",
+        "restart/retry readback",
+        "evidence manifest and checksum"
+      ]
+    },
+    {
+      "task_id": "L12-VERIFY-LEARN-001",
+      "lane": "product-drill",
+      "loop_ids": [
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation"
+      ],
+      "current_status": "not_materialized_or_not_currently_projected",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "verifier-drills",
+      "depends_on": [
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
+      ],
+      "blocking_gap": "Learning-loop cross-service product drill has not run against current truth.",
+      "required_validation": [
+        "Teaching to Agora to Imitation to Consultation drill",
+        "tenant/auth negatives",
+        "handoff and DLQ proof",
+        "evidence manifest and checksum"
+      ]
+    },
+    {
+      "task_id": "L12-VERIFY-RUNTIME-001",
+      "lane": "product-drill",
+      "loop_ids": [
+        "promotion_deployment",
+        "capital_pool_execution"
+      ],
+      "current_status": "not_materialized_or_not_currently_projected",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "verifier-drills",
+      "depends_on": [
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001",
+        "OPS-PROMOTE-PR-CI-TRIGGER-001"
+      ],
+      "blocking_gap": "Runtime-loop product drill has not run against current truth and safe promotion automation.",
+      "required_validation": [
+        "Deployment to governed-paper capital drill",
+        "kill/pause/retire/restart convergence",
+        "signal/order/fill/heartbeat correlation",
+        "no-live-capital proof"
+      ]
+    },
+    {
+      "task_id": "L12-VERIFY-OBS-001",
+      "lane": "product-drill",
+      "loop_ids": [
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_status": "not_materialized_or_not_currently_projected",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "verifier-drills",
+      "depends_on": [
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001",
+        "L12-EVO-001",
+        "L12-BFF-001"
+      ],
+      "blocking_gap": "Observability-loop product drill has not run against current truth.",
+      "required_validation": [
+        "Telemetry to Reconciliation to Incident to Evolution to BFF Health drill",
+        "duplicate/retry/DLQ/replay proof",
+        "real service stop/recover incident proof",
+        "evidence manifest and checksum"
+      ]
+    },
+    {
+      "task_id": "L12-HOSTED-001",
+      "lane": "hosted-dev-drill",
+      "current_status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "parallel_group": "serial-integration",
+      "depends_on": [
+        "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001",
+        "L12-FE-TRUTH-001",
+        "L12-VERIFY-KNOW-001",
+        "L12-VERIFY-LEARN-001",
+        "L12-VERIFY-RUNTIME-001",
+        "L12-VERIFY-OBS-001",
+        "L12-SIGNOFF-001"
+      ],
+      "blocking_gap": "No current hosted deployment/restart proof for the full twelve-loop candidate.",
+      "required_validation": [
+        "exact Pantheon and execute-plans deployment identity",
+        "full stack restart drill",
+        "source-to-health and runtime-to-incident-to-evolution chains",
+        "no-live-capital proof"
+      ]
+    },
+    {
+      "task_id": "L12-CLOSE-001",
+      "lane": "program-closeout",
+      "current_status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "parallel_group": "final-only",
+      "depends_on": [
+        "L12-HOSTED-001",
+        "L12-TRUTH-001",
+        "L12-FE-TRUTH-001",
+        "L12-SIGNOFF-001",
+        "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001"
+      ],
+      "blocking_gap": "Final evidence admission cannot start until every implementation, truth, hosted drill, and protected verdict prerequisite is accepted.",
+      "required_validation": [
+        "schema/checksum replay for every evidence manifest",
+        "all twelve current controller readbacks accepted",
+        "formal reviewer verdicts",
+        "protected Human/Ops verdict consumed"
+      ]
+    }
+  ]
+}
