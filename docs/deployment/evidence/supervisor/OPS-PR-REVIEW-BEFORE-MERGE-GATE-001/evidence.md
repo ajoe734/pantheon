@@ -31,6 +31,18 @@ work, composed current authoritative base
 `e1512d207d9b5df3739ac7b7d0cac202b2798ac8`, and revalidated tree
 `7fb2f318783114d7cbd8ecd981390e84f2af355a` before this evidence-only refresh.
 
+The live finalization of candidate `f93ab06e67eff8e5e197172608a97d0e3b01fb77`
+then exposed one more helper race: `task_finalize.sh` pushed the replacement
+head, called `gh pr create`, and exited on GitHub's "already exists" response
+before reading or revoking `autoMergeRequest`. PR #4218 was already off and did
+not merge, but the shape could leave an armed request across the push. Codex
+withdrew that handoff. Anchor `d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20`
+now makes both PR helpers resolve a unique existing PR and prove its request
+off before changing the head, fail before push on unreadable or ambiguous
+lookup, and prove it off again after push/open. The final validation composes
+authoritative base `6ae436c546942df1ba0a762d7167b456dfedabc8` at tree
+`b679224c70da3b8cdb0df29f9215fa4a5fb3e350`.
+
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
 anyone. Every decision is derived from canonical task state that already
@@ -154,7 +166,7 @@ with two reproduced fail-open cases. A later review at exact head `5a9ad1643`
 found two more, and the review at `dcd4b9ccf` extended the revocation finding
 to the zero-exit/still-armed case. All are now closed; the first pair is replayed
 against the pre-fix modules in §5 of `prefix-reproduction.txt`, the latest
-revocation shape is replayed in §8, and all cases are pinned by the 87-test
+revocation shape is replayed in §8, and all cases are pinned by the 91-test
 gate suite.
 
 **The approval was not structurally bound to the reviewed head.**
@@ -308,15 +320,17 @@ approved path too, because a gated PR lands through an explicit
 
 ### `task_finalize.sh` / `safe_pr.sh`
 
-Both ask the gate for the policy before opening the PR. Under
-`review_before_merge` the PR is created **without** the `auto-merge` label,
-auto-merge is never enabled, and request state is read from GitHub. An
-already-off request is left alone. A standing request is revoked with
-`gh pr merge --disable-auto` and then read back; an unreadable or still-armed
-request terminates the helper nonzero. A gate failure resolves to the gated
-path, so a broken canonical read can only withhold merge authority, never widen
-it. Under `merge_then_review` the previous label + `--auto --merge` behaviour is
-preserved.
+Both ask the gate for the policy before any push that can replace an existing
+PR head. Under `review_before_merge` they resolve exactly zero or one open PR;
+an unreadable lookup or multiple PRs terminates before push. When one exists,
+the helper reads `autoMergeRequest`, revokes a standing request with
+`gh pr merge --disable-auto`, verifies it off, and only then pushes the new
+head. After push/open it reads the request again, so a concurrent re-arm also
+terminates the helper nonzero. A new PR is created **without** the
+`auto-merge` label and auto-merge is never enabled. A gate failure resolves to
+the gated path, so a broken canonical read can only withhold merge authority,
+never widen it. Under `merge_then_review` the previous label +
+`--auto --merge` behaviour is preserved.
 
 Both helpers print the follow-up commands that actually land a gated PR — the
 approval that binds this exact head, then the integrator pass:
@@ -383,16 +397,16 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`e1512d207d9b5df3739ac7b7d0cac202b2798ac8` and validated tree
-`7fb2f318783114d7cbd8ecd981390e84f2af355a`.
+`6ae436c546942df1ba0a762d7167b456dfedabc8` and validated tree
+`b679224c70da3b8cdb0df29f9215fa4a5fb3e350`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
-                                                       Ran  87 tests - OK
+                                                       Ran  91 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
                                                        Ran   9 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
-                                                       Ran  52 tests - OK
+                                                       Ran  56 tests - OK
 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
                                                         2 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
@@ -405,8 +419,8 @@ bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
-pytest combined focused matrix                              333 passed, 31 subtests
-pytest post-dev-compose matrix                              341 passed, 45 subtests
+pytest combined focused matrix                              341 passed, 31 subtests
+pytest post-dev-compose matrix                              349 passed, 45 subtests
 check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```
 
@@ -420,7 +434,9 @@ of the regressions that pin them. The later `5a9ad1643` archive/revocation
 findings are covered by the uppercase archive fixture and five helper-state
 tests. The `dcd4b9ccf` zero-exit/still-armed finding and its unreadable and
 nonzero/already-off boundary cases are reproduced in §8 and pinned by the three
-additional integrator regressions in the 87-test gate suite.
+additional integrator regressions in the 91-test gate suite. The four newest
+shell regressions prove existing-PR revocation occurs before push and that
+unreadable or ambiguous PR discovery also fails before push.
 
 ## 6. Residual risks
 

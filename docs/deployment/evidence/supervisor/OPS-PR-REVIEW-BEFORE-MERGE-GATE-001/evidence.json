@@ -195,13 +195,13 @@
   "merge_entry_point_coverage": [
     {
       "entry_point": "task_finalize.sh",
-      "control": "asks the gate before PR creation; a gated task PR is opened without the auto-merge label; the helper reads autoMergeRequest, revokes only a standing request, reads it back, and exits nonzero if GitHub is unreadable or the request remains armed",
-      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge, ::test_task_finalize_revokes_a_standing_request_and_verifies_it_off, ::test_task_finalize_fails_closed_when_revocation_leaves_request_armed"
+      "control": "asks the gate and resolves a unique existing PR before push; a gated existing PR has autoMergeRequest revoked and verified off before its head changes, unreadable or ambiguous discovery aborts before push, post-push state is verified again, and a new PR is opened without the auto-merge label",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge, ::test_task_finalize_revokes_existing_pr_before_pushing_new_head, ::test_task_finalize_ambiguous_pr_lookup_fails_before_push, ::test_task_finalize_revokes_a_standing_request_and_verifies_it_off, ::test_task_finalize_fails_closed_when_revocation_leaves_request_armed"
     },
     {
       "entry_point": "safe_pr.sh",
-      "control": "same gate call before `gh pr merge --auto --merge`; the gated path distinguishes already-off from armed, verifies state after revocation, and aborts when a failed revoke leaves autoMergeRequest present",
-      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_distinguishes_an_already_off_request, ::test_safe_pr_revokes_a_standing_request_and_verifies_it_off, ::test_safe_pr_fails_closed_when_revocation_leaves_request_armed"
+      "control": "same pre-push existing-PR resolution and revocation boundary; unreadable lookup aborts before push, the gated path verifies off again after push/open, and a failed or ineffective revoke cannot continue",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_revokes_existing_pr_before_pushing_new_head, ::test_safe_pr_unreadable_pr_lookup_fails_before_push, ::test_safe_pr_distinguishes_an_already_off_request, ::test_safe_pr_revokes_a_standing_request_and_verifies_it_off, ::test_safe_pr_fails_closed_when_revocation_leaves_request_armed"
     },
     {
       "entry_point": "auto_integrator.py",
@@ -278,7 +278,11 @@
         "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests::test_unbound_approval_cannot_open_the_gate",
         "scripts/git/test_task_review_merge_gate.py::UnreadableStateTests",
         "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_fails_closed_when_revocation_leaves_request_armed",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_revokes_existing_pr_before_pushing_new_head",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_ambiguous_pr_lookup_fails_before_push",
         "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_fails_closed_when_revocation_leaves_request_armed",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_revokes_existing_pr_before_pushing_new_head",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_unreadable_pr_lookup_fails_before_push",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_successful_revocation_that_still_reads_armed_never_merges",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_unreadable_revocation_readback_never_reaches_the_merge",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_auto_merge_revocation_never_reaches_the_merge",
@@ -333,7 +337,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired the zero-exit/still-armed path, an independent review dispatch named PR #4218 head 30b57020 but observed the PR already at 4cfd0985; Codex2 rejected reuse of the old-head review. Codex preserved that rejection, fast-forwarded the intervening task commits, explicitly composed current dev through PR #4256 while preserving review_binding and command-runtime REVIEW_* isolation, and reran the full focused matrix including all four revocation outcomes.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired those paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, composed current dev through PR #4258, and reran the full matrix.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -346,8 +350,10 @@
       "latest_rejected_dispatched_head": "30b57020d73ba7aefd261a12326b83114d83eec2",
       "latest_rejected_observed_pr_head": "4cfd09852fc3dcaf6490cd25e6d5a35e5d6b6873",
       "latest_rejection_anchor_commit": "456982f4d8566befb60b54d221065c4573cc423f",
-      "validated_dev_base": "e1512d207d9b5df3739ac7b7d0cac202b2798ac8",
-      "validated_tree_commit": "7fb2f318783114d7cbd8ecd981390e84f2af355a"
+      "withdrawn_live_candidate_head": "f93ab06e67eff8e5e197172608a97d0e3b01fb77",
+      "pre_push_revocation_anchor_commit": "d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20",
+      "validated_dev_base": "6ae436c546942df1ba0a762d7167b456dfedabc8",
+      "validated_tree_commit": "b679224c70da3b8cdb0df29f9215fa4a5fb3e350"
     },
     "commands": [
       {
@@ -362,7 +368,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py",
-        "conclusion": "Ran 87 tests - OK; includes uppercase production-shape archive lookup, helper revocation regressions, and integrator exit-zero/still-armed, unreadable-readback, nonzero/still-armed, and nonzero/already-off cases",
+        "conclusion": "Ran 91 tests - OK; includes uppercase production-shape archive lookup, pre-push existing-PR revocation, unreadable/ambiguous pre-push lookup guards, helper revocation regressions, and integrator exit-zero/still-armed, unreadable-readback, nonzero/still-armed, and nonzero/already-off cases",
         "result": "pass"
       },
       {
@@ -372,17 +378,17 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py -q",
-        "conclusion": "96 gate/integrator tests passed under package-mode pytest; verifies the regression fixtures use the same auto_integrator module identity",
+        "conclusion": "100 gate/integrator tests passed under package-mode pytest; verifies the regression fixtures use the same auto_integrator module identity",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q",
-        "conclusion": "333 passed, 31 subtests passed after composing current dev",
+        "conclusion": "341 passed, 31 subtests passed after composing current dev",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q",
-        "conclusion": "341 passed, 45 subtests passed after composing current dev through PR #4256",
+        "conclusion": "349 passed, 45 subtests passed after composing current dev through PR #4258",
         "result": "pass"
       },
       {
@@ -392,7 +398,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py",
-        "conclusion": "Ran 52 tests - OK",
+        "conclusion": "Ran 56 tests - OK",
         "result": "pass"
       },
       {
