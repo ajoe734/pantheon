@@ -46,7 +46,7 @@ OK
 346 passed, 31 subtests passed in 58.47s
 
 == bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
-pending final evidence commit
+OK
 
 Revalidated again by Codex on 2026-07-27 after dev advanced through PR #4265
 immediately after the safe push of e918cbd8de14c4aaff0be4d16d950a590b3eacd8.
