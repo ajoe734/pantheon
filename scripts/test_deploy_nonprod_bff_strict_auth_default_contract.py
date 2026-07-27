@@ -371,10 +371,10 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
                 "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
                 in hosted_probe
             )
-            assert workflow.count(secret_ref) == 3
+            assert workflow.count(secret_ref) == 4
         else:
             assert secret_ref not in hosted_probe
-            assert workflow.count(secret_ref) == 2
+            assert workflow.count(secret_ref) == 3
 
 
 def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
