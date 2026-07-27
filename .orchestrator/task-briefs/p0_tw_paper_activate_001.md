@@ -1,7 +1,7 @@
 # P0-TW-PAPER-ACTIVATE-001 — make `persona-tw-equity` actually paper-trade (it is a ghost row today)
 
 Owner: **Codex2** · Reviewer: Codex · Phase: Pantheon P0 Paper Loop
-Status: implementation revision complete; Codex re-review pending
+Status: **review_approved** by Codex; Codex2 owner closeout in progress
 Source symptom: operator clicked the fleet "Δ 績效 9.50%" cell for `persona-tw-equity` → the
 performance-attribution / holdings pages are entirely `—` / 0, and the funding-pool overview is empty.
 
@@ -110,3 +110,25 @@ engine; the word "sidecar" is overloaded.
 - Admission packet: `support/evidence/MGMT-QLIB-005/registry_admission_packet.json` (review-only proof).
 - Frontend: `execute-plans/src/management/pages/oversight/{_core.tsx,PerformanceAttribution.tsx,personaFleetLinks.ts}`.
 - Prior art: archive tasks `DEVLOOP-PAPER-BINDING-RESTORE-001`, `SRCLIVE-005-*`, `QLIB-ACT-001`, `MGMT-QLIB-005`.
+
+## Independent approval and closeout
+
+Codex independently approved the executable slice on 2026-07-27 after reviewing
+Pantheon head `6d1c8e04a146a21babfdcd8b6b5a8d3205857be5` and execute-plans head
+`90bf8623761aaaf28aee3f83cbaf6e00dbeec120`. The governed task row records
+`review_approved` and binds
+`docs/deployment/evidence/p0-tw-paper-activate-001/evidence.json` as the review
+manifest.
+
+Owner closeout re-verified the approved scope after refreshing the Pantheon task
+branch from `origin/dev`:
+
+- backend authority, honesty, deploy-authority, and persona-fleet tests:
+  `47 passed`;
+- backend focused `py_compile`: passed;
+- frontend management adapter, link, and fleet-page tests: `92 passed`;
+- frontend typecheck and scoped ESLint: passed.
+
+The finalization remains contract/UI-only. It performed no registry admission,
+governance decision, capital-pool mutation, RuntimeBinding creation, signal
+repoint, or live/paper trading write.
