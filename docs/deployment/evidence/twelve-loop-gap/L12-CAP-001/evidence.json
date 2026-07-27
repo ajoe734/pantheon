@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-CAP-001 product-level independent-review handoff.",
-    "note": "Owner evidence over the atomic Redis repair, continuous execution-window claim renewal, token-fenced reconciler lease and post-spawn compensation, real Redis crash drills, and authenticated Capital mutation boundary.",
+    "note": "Owner evidence over atomic Redis claim transitions, signal-scoped execution reservation/commit, heartbeat lease-loss propagation, token-fenced reconciler lease and post-spawn compensation, real Redis crash drills, and authenticated Capital mutation boundary.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T23:47:55Z",
-    "evidence_cut_semantics": "Owner validation over repaired integration head 6bebf5c3770f61158dd7634dc858e133081881f6 replayed after merging dev 643181a067ec5c344faac0766c69de0d5cfb32eb; no independent approval, CI success, PR merge, deployment, or done state is claimed.",
+    "evidence_cut_at": "2026-07-27T00:32:27Z",
+    "evidence_cut_semantics": "Owner validation over token-fenced execution head aa64c1921b1f9b10994a327d633990dc8282fc0e replayed against dev 643181a067ec5c344faac0766c69de0d5cfb32eb; no independent approval, CI success, PR merge, deployment, or done state is claimed.",
     "id": "L12-CAP-001",
     "overall_admission": "owner_validation_passed_pending_independent_review",
     "owner": "Codex",
@@ -33,7 +33,7 @@
   },
   "authorities": {
     "actual_state": [
-      "binding-scoped Redis pending, in-flight, visibility, processed, and DLQ state",
+      "binding-scoped Redis pending, in-flight, visibility, execution-reservation, processed, and DLQ state",
       "paper fleet reconciler worker registry and fenced leadership",
       "Capital service mutation state"
     ],
@@ -56,6 +56,7 @@
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.json",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.sha256",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/lease_loss_execution_fence_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
@@ -107,10 +108,16 @@
         "subject": "L12-CAP-001: anchor execution and spawn fences"
       },
       {
-        "delivery_state": "owner_validated_pending_independent_review",
-        "note": "Closes the long-execution-over-TTL duplicate-side-effect defect by renewing the claim throughout execute() and adds the exact two-worker real-Redis regression.",
+        "delivery_state": "superseded_by_atomic_execution_reservation",
+        "note": "Historical healthy-renewal anchor retained; independent review proved heartbeat loss still allowed a reclaiming worker to duplicate the side effect.",
         "sha": "ceb2073a452af636b745207432be09fa93959167",
         "subject": "L12-CAP-001: anchor execution-window claim renewal"
+      },
+      {
+        "delivery_state": "owner_validated_pending_independent_review",
+        "note": "Adds an atomic signal-scoped execution reservation/commit, publishes heartbeat lease loss to the executing path, and proves renew-false plus renew-exception reclaim races each call the executor exactly once.",
+        "sha": "aa64c1921b1f9b10994a327d633990dc8282fc0e",
+        "subject": "L12-CAP-001: anchor token-fenced execution"
       }
     ],
     "required_checks": []
@@ -119,12 +126,17 @@
     "commands": [
       {
         "command": "/tmp/l12-cap-001-venv/bin/python -m unittest services.execution.lean_runtime.test_signal_consumer services.execution.lean_runtime.test_signal_isolation",
-        "conclusion": "75 tests passed in 13.337s on the merged head, including disposable real-Redis atomic transitions, slow-buffer fencing, long-execution claim heartbeat, and six-process restart drills",
+        "conclusion": "77 tests passed in 10.277s on the execution-fenced head, including disposable real-Redis atomic transitions, slow-buffer fencing, healthy heartbeat, renew-false, renew-exception, and six-process restart drills",
         "result": "pass"
       },
       {
         "command": "cd services/execution/runtime-manager && /tmp/l12-cap-001-venv/bin/python -m unittest test_paper_fleet_reconciler",
-        "conclusion": "44 tests passed in 5.829s on the merged head, including real-Redis two-process fencing and blocked-spawn compensating termination",
+        "conclusion": "44 tests passed in 3.237s on the execution-fenced head, including real-Redis two-process fencing and blocked-spawn compensating termination",
+        "result": "pass"
+      },
+      {
+        "command": "/tmp/l12-cap-001-venv/bin/python -m unittest -v services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises",
+        "conclusion": "3/3 per failure mode passed against disposable Redis: heartbeat lease loss occurred after worker-A entered execute(), worker-B reclaimed after more than two TTLs, and each regression asserted execution_count == 1, processed true, zero pending/inflight residue, and one durable recovery DLQ item",
         "result": "pass"
       },
       {
@@ -144,7 +156,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/capital/test_service.py -q",
-        "conclusion": "59 passed in 19.55s on the merged head; one non-blocking Starlette TestClient deprecation warning",
+        "conclusion": "59 passed in 17.27s on the execution-fenced head; one non-blocking Starlette TestClient deprecation warning",
         "result": "pass"
       },
       {
@@ -153,9 +165,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T23:47:55Z",
+    "validated_at": "2026-07-27T00:32:27Z",
     "validated_base_sha": "643181a067ec5c344faac0766c69de0d5cfb32eb",
-    "validated_head_sha": "6bebf5c3770f61158dd7634dc858e133081881f6"
+    "validated_head_sha": "aa64c1921b1f9b10994a327d633990dc8282fc0e"
   },
   "deployment": {
     "applicable": false,
@@ -185,8 +197,10 @@
       "proof": [
         "A unique monotonic claim token identifies the currently owned copy; Redis server-time renewal refuses an already expired or reclaimed token.",
         "Buffered claims are renewed before polling and again at the executor boundary, where durable processed identity is rechecked before any side effect.",
-        "Redis stores publish a one-third-TTL heartbeat interval; the consumer renews the live claim throughout execute(), including side effects that last longer than one visibility window.",
-        "The real-Redis slow-buffer regression gives one executor call after worker-B reclaims worker-A's expired buffer, while the long-execution regression gives exactly one executor call when worker-B polls after more than two continuously renewed TTLs."
+        "An atomic Redis transaction validates the unexpired claim and creates exactly one signal-scoped execution reservation before execute(); only that token can atomically commit the processed marker.",
+        "Heartbeat renew-false and renew-exception state is published to _execute_one. The execution reservation remains authoritative when the shorter queue claim becomes ambiguous or expires.",
+        "A reclaiming worker that observes another token's in-progress execution never calls the executor and atomically retains its copy in the binding DLQ.",
+        "The real-Redis slow-buffer, healthy long-execution, renew-false, and renew-exception regressions each assert exactly one executor call in their respective reclaim windows."
       ],
       "status": "owner_pass_pending_independent_review"
     },
@@ -194,7 +208,8 @@
       "proof": [
         "Claim, ack, nack, DLQ transfer, and expired reclaim use atomic Lua state transitions.",
         "A crash-before-ack signal becomes reclaimable after its visibility deadline, while a live unexpired claim cannot be stolen.",
-        "Validation and execution exceptions are durably dead-lettered; a failed DLQ transfer does not mark the signal processed."
+        "Validation and execution exceptions are durably dead-lettered; a failed DLQ transfer does not mark the signal processed.",
+        "When a claim is reclaimed after execution started, the successor retains the ambiguous copy in the DLQ while the original execution token alone may commit success."
       ],
       "status": "owner_pass_pending_independent_review"
     },
@@ -216,6 +231,7 @@
     "rollback_or_compensation": {
       "proof": [
         "Nack atomically returns an owned claim to pending; terminal failure atomically transfers it to the scoped DLQ.",
+        "A successor that reclaims an already-started execution does not retry the side effect; it transfers the ambiguous copy to durable DLQ recovery.",
         "Leader demotion stops local worker mutations, and a fence lost during spawn triggers child termination, monitoring-session closure, and port release before registry mutation."
       ],
       "status": "owner_pass_pending_independent_review"
@@ -256,7 +272,8 @@
         "services/execution/lean_runtime/pending_signal_store.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/slow_rebalance_claim_fence_proof.txt",
-        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt"
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/lease_loss_execution_fence_proof.txt"
       ],
       "id": "AC1",
       "statement": "An accepted signal remains recoverable until execution acknowledgement.",
@@ -308,7 +325,7 @@
     "independent_review": {
       "blocking_for_this_task": true,
       "containment": "Task remains outside review_approved and done; manifest explicitly avoids an approval claim.",
-      "description": "Human/Ops rejected head d4636f901b86ac6f8d0245a20012eb9ed16b1c98 after reproducing duplicate execution when execute() outlived its one-time renewed TTL. Owner added continuous execution-window renewal at ceb2073a452af636b745207432be09fa93959167 and replayed merged head 6bebf5c3770f61158dd7634dc858e133081881f6; no independent Claude verdict is yet recorded.",
+      "description": "Claude rejected exact head 945f47dce1d7deaaf4643499a899d3b499cca2bc after independently reproducing duplicate execution when heartbeat renewal returned false or raised after execute() started. Owner added atomic execution reservation/commit and lease-loss propagation at aa64c1921b1f9b10994a327d633990dc8282fc0e; no independent verdict on that repair is yet recorded.",
       "expiry": "When Claude records an independent verdict for the repaired PR tip.",
       "owner": "Claude",
       "recheck_trigger": "After the owner evidence commit is pushed to PR #4203.",
@@ -350,6 +367,7 @@
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/blocked_spawn_fence_compensation_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/lease_loss_execution_fence_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt",
@@ -367,12 +385,13 @@
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "owner_readme_2026_07_26": "727eba6f20c3e8d1c5f8fa7935959fe7be32f5ab0f1d038fe9e37261b803ff77",
+      "owner_readme_2026_07_26": "8a6787d8e1854c512d134002aa06cce341462739b3a7fd6d0d0423731d7dd387",
       "atomic_redis_proof_2026_07_26": "55ff7b8569b6162e76fa8b7364ffe188f59575ebf187d32ef8a6e2bdfde11c7b",
       "blocked_spawn_fence_proof_2026_07_26": "99866da6367d19636cead818f545e07683b4a7e0e19d9f36eb0f99ee7100ebbf",
       "execution_dlq_proof_2026_07_26": "199ce58f009757fef61cf85d6a4a516f461949a12f9f425b36ae17a39ba6d432",
+      "lease_loss_execution_fence_proof_2026_07_27": "2c8dc576b6afa8c0b4e416a46f15270d6d26042a901e4a267fb7ddabba6bdcf8",
       "fenced_leader_proof_2026_07_26": "70c6af21102ca13131ffa4fb632b50250415b25fd54bc4673e836378a3fae6c1",
-      "long_execution_claim_renewal_proof_2026_07_26": "dc8a0e057d96ce29933ad13facaa9d082c8f5ab5b9517df25b59f7a13716582f",
+      "long_execution_claim_renewal_proof_2026_07_26": "017890627570fb10443f978e4b1c2c155845f45f1d74dd703a2c7ad4920b08c3",
       "six_binding_proof_2026_07_26": "433fd44d38da0e2029fafd48eac049aac830940b6d23837b24ceeb804c039c87",
       "slow_rebalance_claim_fence_proof_2026_07_26": "5956d8a7c3798c9b6546f703c9da9b962b3c95139781eee17f47bf163de194f5"
     }
@@ -456,6 +475,24 @@
       "reference": "origin/dev@643181a067ec5c344faac0766c69de0d5cfb32eb",
       "sequence": 9,
       "sha": "6bebf5c3770f61158dd7634dc858e133081881f6",
+      "status": "passed_pending_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "token_fenced_execution_anchor",
+      "recorded_at": "2026-07-27T00:29:49Z",
+      "reference": "task/L12-CAP-001",
+      "sequence": 10,
+      "sha": "aa64c1921b1f9b10994a327d633990dc8282fc0e",
+      "status": "recorded"
+    },
+    {
+      "actor": "Codex",
+      "kind": "lease_loss_execution_fence_replay",
+      "recorded_at": "2026-07-27T00:32:27Z",
+      "reference": "origin/dev@643181a067ec5c344faac0766c69de0d5cfb32eb",
+      "sequence": 11,
+      "sha": "aa64c1921b1f9b10994a327d633990dc8282fc0e",
       "status": "passed_pending_independent_review"
     }
   ]

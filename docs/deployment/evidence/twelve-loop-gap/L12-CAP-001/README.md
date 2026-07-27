@@ -20,9 +20,16 @@ Admission: owner validation passed; independent review is still required
   in-flight and durable ack/requeue/DLQ placement.
 - Buffered rebalance claims renew only while their worker-scoped token is still
   unexpired. The consumer revalidates that claim and the durable processed marker
-  at the executor boundary, then runs a Redis-advertised heartbeat throughout the
-  complete executor call. A reclaimed slow buffer and a side effect lasting longer
-  than the visibility TTL therefore cannot execute concurrently on two workers.
+  at the executor boundary.
+- Before the executor call, an atomic Redis transaction reserves a signal-scoped
+  execution token for the current unexpired claim. The reservation outlives the
+  shorter queue lease, and only its owner can atomically commit the processed
+  marker. A reclaiming worker that finds execution already in progress moves its
+  copy to the binding DLQ without calling the executor.
+- The Redis-advertised heartbeat publishes renew-false and renew-exception state
+  back to the executing path. Healthy renewal avoids reclaim; when renewal is
+  lost after execution starts, the durable execution token—not the heartbeat—
+  prevents a concurrent second side effect.
 - Missing or mismatched runtime, binding, or capital-pool identity fails closed in
   governed-paper mode.
 - The paper fleet reconciler fails closed without a lease backend. Its production
@@ -42,7 +49,7 @@ The Redis integration drills use:
 redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
 ```
 
-The seven task proof transcripts are:
+The eight task proof transcripts are:
 
 - `redis_crash_before_ack_proof.txt`
 - `execution_error_dlq_proof.txt`
@@ -50,15 +57,17 @@ The seven task proof transcripts are:
 - `six_binding_restart_isolation_drill.txt`
 - `slow_rebalance_claim_fence_proof.txt`
 - `long_execution_claim_renewal_proof.txt`
+- `lease_loss_execution_fence_proof.txt`
 - `blocked_spawn_fence_compensation_proof.txt`
 
 Owner validation at repaired integration head
-`6bebf5c3770f61158dd7634dc858e133081881f6` over dev
+`aa64c1921b1f9b10994a327d633990dc8282fc0e` over dev
 `643181a067ec5c344faac0766c69de0d5cfb32eb`:
 
 ```text
-services.execution.lean_runtime.test_signal_isolation + test_signal_consumer: 75 tests, OK
+services.execution.lean_runtime.test_signal_isolation + test_signal_consumer: 77 tests, OK
 long-execution real-Redis regression: 3/3 stability repetitions, OK
+renew-false and renew-exception real-Redis regressions: 3/3 each, OK
 services/execution/runtime-manager/test_paper_fleet_reconciler.py: 44 tests, OK
 services/capital/test_service.py: 59 passed, 1 deprecation warning
 git diff --check: passed
