@@ -52,8 +52,9 @@ were real and both are fixed in implementation, not in wording:
    iterative over an explicit stack with no depth ceiling, so it cannot exhaust
    the interpreter stack either, and containers are tracked by identity so a
    reused or self-referential payload terminates without hiding a field. Proven
-   by four new adversarial tests, a re-executed mutation control that reinstates
-   the cap, and two new runtime probes at depth 12 and depth 40 over real HTTP.
+   by seven new tests — five on the scan itself and two over the strict-auth
+   HTTP route — a re-executed mutation control that reinstates the cap and fails
+   5 of them, and two new runtime probes at depth 12 and depth 40 over real HTTP.
 
 2. **The replica race test conflated the admission owner with post-receipt
    duplicates.** `test_concurrent_replica_processes_admit_exactly_once` asserted
@@ -245,11 +246,11 @@ changed no implementation byte — all five digests under
 `integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head`
 are identical at `7537f2b4c` and at `a4f9083df`.
 
-The commit that carries this manifest lands after the validated head and becomes
-the final PR head, so its own `Branch CI Gate` run cannot be named inside the
-manifest that commit creates. That run is the branch-protection merge gate and
-is visible on PR #4211. What makes the binding hold anyway is that the commit
-touches documentation and the task brief only:
+The commits that carry this manifest land after the validated head, and the last
+of them becomes the final PR head, so their own `Branch CI Gate` runs cannot be
+named inside the manifest they create. Those runs are the branch-protection
+merge gate and are visible on PR #4211. What makes the binding hold anyway is
+that they touch documentation and the task brief only:
 `integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head`
 records the `sha256` of each of the five implementation files at the validated
 head, and re-running `git show <final-head>:<path> | sha256sum` must reproduce

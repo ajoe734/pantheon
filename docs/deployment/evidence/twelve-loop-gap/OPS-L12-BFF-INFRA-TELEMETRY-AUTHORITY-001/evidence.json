@@ -314,7 +314,7 @@
           "services/telemetry/test_infrastructure_health_ingest.py": "3ee524aa9779ab0213cc26c65236ccc8a1d89e201edca4aeb7cdb0b0e7fa2bb3"
         },
         "head_sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
-        "note": "sha256 of each implementation file's content at the validated head. Reproduce with: git show <head>:<path> | sha256sum. The same five digests hold at anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which carries this cut's implementation change, and at the dev merge that became the validated head; the merge altered no implementation byte. The commit that carries this manifest lands after the validated head and touches documentation and the task brief only, so re-running the five hashes at the final PR head must reproduce them exactly."
+        "note": "sha256 of each implementation file's content at the validated head. Reproduce with: git show <head>:<path> | sha256sum. The same five digests hold at anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which carries this cut's implementation change, and at the dev merge that became the validated head; the merge altered no implementation byte. The commits that carry this manifest land after the validated head and touch documentation and the task brief only, so re-running the five hashes at the final PR head must reproduce them exactly."
       },
       "readback_probe_2026_07_26_depth_and_race_repair": "c1d66830bd96c8a550d332e8c87c787c7bc59865072fe13c844eb24084c20c8f"
     }
@@ -404,6 +404,16 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4211",
       "sequence": 9,
       "sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "evidence_correction",
+      "note": "Documentation correction to the fifth cut, no implementation or validation change. The README summary of blocker 1 said 'four new adversarial tests' while the Proof section of the same document correctly enumerates five scan tests plus two HTTP-level tests; the summary now says seven. The head-binding wording in the README, in integrity.source_artifact_sha256_by_epoch, and in the head-binding validation command is restated in the plural, because this correction is a second documentation commit after the validated head. The five implementation digests are unchanged and still reproduce at the final PR head. No test, command, conclusion, or readback observation changed.",
+      "recorded_at": "2026-07-27T00:15:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 10,
+      "sha": "d21b8dafa9490c5c9e0d219663d3a2e4b5d05682",
       "status": "pass"
     }
   ],
@@ -599,7 +609,7 @@
       },
       {
         "command": "Head binding: git show <path> at a4f9083df372ba1a7660bdc7ab754743af6e9740 | sha256sum for every entry in scope.implementation_changed_files",
-        "conclusion": "The five digests are recorded under integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head. They are identical at anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which carries this cut's implementation change, and at the validated head, because the dev merge altered no implementation byte. The only commit after the validated head is this evidence commit, which touches documentation and the task brief only, so re-running the same five hashes at the final PR head must reproduce these digests exactly.",
+        "conclusion": "The five digests are recorded under integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head. They are identical at anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which carries this cut's implementation change, and at the validated head, because the dev merge altered no implementation byte. The commits after the validated head are this evidence cut and one documentation correction to it, both touching documentation and the task brief only, so re-running the same five hashes at the final PR head must reproduce these digests exactly.",
         "result": "pass"
       }
     ],
