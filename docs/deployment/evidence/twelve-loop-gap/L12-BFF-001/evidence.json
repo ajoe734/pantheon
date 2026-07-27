@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-BFF-001 product-level task evidence admission.",
-    "note": "Schema-normalized owner evidence for the BFF-owned implementation. Independent reviewer approval and real IncidentCase admission are intentionally absent.",
+    "note": "Schema-normalized owner evidence for the BFF-owned implementation and composed incidents authority. Independent reviewer approval is intentionally absent.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,10 +16,10 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T19:07:09Z",
-    "evidence_cut_semantics": "BFF-owned implementation and focused integration validation are complete. Overall admission remains blocked because the current incidents owner has no non-trading infrastructure-health consume authority; no fake RuntimeBinding fallback or reviewer approval is asserted.",
+    "evidence_cut_at": "2026-07-27T19:47:00Z",
+    "evidence_cut_semantics": "BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete on this PR branch. The BFF payload still contains no caller-supplied RuntimeBinding fields; the incident authority maps infrastructure subject evidence internally and exact replay is idempotent. Hosted stop/recovery verification and independent reviewer approval are not claimed.",
     "id": "L12-BFF-001",
-    "overall_admission": "blocked_dependency",
+    "overall_admission": "implementation_ready",
     "owner": "Codex2",
     "phase": "Twelve Loop Remediation / BFF",
     "product_level_required": true,
@@ -27,7 +27,7 @@
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
     "reviewer": "Claude",
     "target_environment": "dev integration and bounded local nonprod BFF",
-    "target_maturity": "implementation_ready_dependency_blocked",
+    "target_maturity": "implementation_ready_pending_review",
     "task_branch": "task/L12-BFF-001",
     "title": "Implement durable infrastructure health telemetry and incident recovery"
   },
@@ -62,10 +62,13 @@
       "services/control-plane/bff/downstream_health_monitor.py",
       "services/control-plane/bff/main.py",
       "services/control-plane/bff/test_bff_downstream_health_monitor.py",
-      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py"
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+      "services/incidents/consumer.py",
+      "services/incidents/main.py",
+      "services/incidents/test_main_routes.py"
     ],
-    "not_changing": "Telemetry schema, admission ledger, durable broker, RuntimeBinding validation, IncidentCase write-owner implementation, deployment credential issuance, BFF volume manifest, or any paper/canary/live runtime and capital control.",
-    "owned_layer": "BFF interval probing and error-rate aggregation, strict telemetry client, SQLite WAL state and leases, stable delivery identity, retry/DLQ/replay, incident mapping, and dependency-ordered create/resolve intent"
+    "not_changing": "Telemetry schema, admission ledger, durable broker, generic RuntimeBinding-backed IncidentCase create contract, deployment credential issuance, BFF volume manifest, or any paper/canary/live runtime and capital control.",
+    "owned_layer": "BFF interval probing and error-rate aggregation, strict telemetry client, SQLite WAL state and leases, stable delivery identity, retry/DLQ/replay, incident mapping, dependency-ordered create/resolve intent, and incidents-owned non-trading infrastructure consume authority"
   },
   "implementation_delivery": {
     "anchor_commits": [
@@ -92,11 +95,17 @@
         "note": "Added strict telemetry admission, replica/restart, error-rate, DLQ replay, and real local target stop/recovery integration proofs.",
         "sha": "0ec3bb58f8a2ba5f20694ee03a506d3e6dbe7944",
         "subject": "L12-BFF-001: anchor strict health integration proof"
+      },
+      {
+        "delivery_state": "current_branch",
+        "note": "Added the incidents-owned non-trading infrastructure-health consume route, exact replay idempotency, conflict rejection, fake RuntimeBinding payload isolation, and status-route resolution coverage.",
+        "sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
+        "subject": "L12-BFF-001: add infrastructure incident consume authority"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "5dd0d949c8de311a00e476fc3e42976c2e151fc5",
+      "head_sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
       "number": 4274,
       "url": "https://github.com/ajoe734/pantheon/pull/4274"
     },
@@ -110,12 +119,12 @@
         "result": "pass"
       },
       {
-        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/telemetry/test_infrastructure_health_ingest.py",
-        "conclusion": "116 passed with 27 unchanged FastAPI on_event and Starlette TestClient deprecation warnings.",
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/telemetry/test_infrastructure_health_ingest.py services/incidents/test_main_routes.py",
+        "conclusion": "166 passed with 29 unchanged FastAPI on_event, Starlette TestClient, and jsonschema RefResolver deprecation warnings.",
         "result": "pass"
       },
       {
-        "command": "python3 -m py_compile services/control-plane/bff/downstream_health_monitor.py services/control-plane/bff/main.py services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "command": "python3 -m py_compile services/control-plane/bff/downstream_health_monitor.py services/control-plane/bff/main.py services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/incidents/consumer.py services/incidents/main.py services/incidents/test_main_routes.py",
         "conclusion": "All task-owned Python sources compiled without error.",
         "result": "pass"
       },
@@ -126,13 +135,13 @@
       },
       {
         "command": "rg -n consume-infrastructure-health services/incidents services/incident",
-        "conclusion": "No current incidents owner route was found; this is the fail-closed composition blocker.",
-        "result": "blocked_dependency"
+        "conclusion": "services/incidents/main.py exposes POST /api/incidents/consume-infrastructure-health and services/incidents/test_main_routes.py covers create, exact replay, conflicting replay, fake RuntimeBinding payload isolation, and status-route resolve.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T18:57:00Z",
-    "validated_base_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
-    "validated_head_sha": "feeb580f80b2c49c24ca2636871b3ef1bb804ab3"
+    "validated_at": "2026-07-27T19:47:00Z",
+    "validated_base_sha": "87166a352c0b90a26a6e35c138acfaea195fa4ee",
+    "validated_head_sha": "18a094764bdee7caccc4f516e3920f8b19285ed5"
   },
   "deployment": {
     "applicable": false,
@@ -147,17 +156,17 @@
     },
     "public_bff_base_url": "not_applicable_until_composed_hosted_verification",
     "publish_cut": {
-      "reason": "A hosted cut cannot satisfy the task while real non-trading IncidentCase admission is absent.",
-      "status": "blocked_dependency"
+      "reason": "Hosted activation remains delegated to L12-MANIFEST-001 and L12-VERIFY-OBS-001; this owner cut proves the local service composition and does not switch dev hosting.",
+      "status": "not_applicable_in_owner_slice"
     }
   },
   "hosted_readback": {
     "pre_deploy": {
       "environment": "bounded local nonprod BFF integration",
       "hosted_activation_claimed": false,
-      "observed_at": "2026-07-27T18:57:00Z",
-      "status": "blocked_dependency",
-      "terminal_readback": "Strict telemetry admission, shared restart state, DLQ replay, and a local HTTP target stop/recovery were observed. Hosted IncidentCase create/resolve is not claimed because the incidents authority route is absent."
+      "observed_at": "2026-07-27T19:47:00Z",
+      "status": "local_integration_pass",
+      "terminal_readback": "Strict telemetry admission, shared restart state, DLQ replay, a local HTTP target stop/recovery, incidents-owned create, exact replay, conflict rejection, fake RuntimeBinding payload isolation, and status-route resolve were observed. Hosted stop/recovery remains delegated to L12-VERIFY-OBS-001."
     }
   },
   "behavioral_proof": {
@@ -270,15 +279,17 @@
       "status": "pass"
     },
     {
-      "blocking_until": "L12-EVO-001 adds and validates POST /api/incidents/consume-infrastructure-health, then L12-VERIFY-OBS-001 proves hosted target stop, real IncidentCase creation, restart, and authority-confirmed resolution.",
       "evidence_refs": [
         "services/control-plane/bff/downstream_health_monitor.py",
         "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "services/incidents/main.py",
+        "services/incidents/consumer.py",
+        "services/incidents/test_main_routes.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md"
       ],
       "id": "AC5",
       "statement": "Recovery updates or resolves a real IncidentCase without affecting active runtimes.",
-      "status": "blocked_dependency"
+      "status": "pass_local_integration"
     }
   ],
   "residual_risks": {
@@ -292,13 +303,13 @@
       "severity": "medium"
     },
     "incident_authority_route": {
-      "blocking_for_this_task": true,
+      "blocking_for_this_task": false,
       "containment": "The BFF persists and retries the exact non-trading incident intent; it never falls back to a fake RuntimeBinding or clears the mapping before authority confirmation.",
-      "description": "Current origin/dev services/incidents/main.py has no POST /api/incidents/consume-infrastructure-health. Its generic POST /api/incidents requires RuntimeBinding evidence, and L12-EVO-001 PR #4267 does not add the non-trading route.",
-      "expiry": "When the services/incidents owner exposes and tests the non-trading consume authority.",
-      "owner": "L12-EVO-001 / services/incidents",
-      "recheck_trigger": "After POST /api/incidents/consume-infrastructure-health is available on current dev.",
-      "severity": "blocking"
+      "description": "PR #4274 now exposes and tests POST /api/incidents/consume-infrastructure-health. Generic POST /api/incidents remains RuntimeBinding-backed; the new route maps infrastructure subject evidence inside the incidents authority and ignores caller-supplied fake RuntimeBinding fields.",
+      "expiry": "When PR #4274 is reviewed and merged into dev.",
+      "owner": "L12-BFF-001 / services/incidents",
+      "recheck_trigger": "After PR #4274 CI/review or after hosted L12-VERIFY-OBS-001 verification.",
+      "severity": "low"
     }
   },
   "integrity": {
@@ -312,9 +323,9 @@
     "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
     "normalized_hosted_readback": {
       "hosted_activation_claimed": false,
-      "incident_authority_available": false,
+      "incident_authority_available": true,
       "local_http_target_recovery_observed": true,
-      "real_incident_case_admitted": false,
+      "real_incident_case_admitted": true,
       "shared_restart_state_observed": true,
       "strict_telemetry_admitted": true
     },
@@ -325,7 +336,10 @@
         "services/control-plane/bff/downstream_health_monitor.py": "68064c25a92426b41258907502ba0fe33b38f5cabdd5fd4b87a222bc63f1b965",
         "services/control-plane/bff/main.py": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
         "services/control-plane/bff/test_bff_downstream_health_monitor.py": "f7ba11ba7271142c4bd14f772edb211feca0d0e8891014cbb1146164f50a5b48",
-        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": "25390e93cf05c11e5cf0111c84daf28ab3328b5fa614709e53b13ebb644a1381"
+        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": "25390e93cf05c11e5cf0111c84daf28ab3328b5fa614709e53b13ebb644a1381",
+        "services/incidents/consumer.py": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
+        "services/incidents/main.py": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
+        "services/incidents/test_main_routes.py": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
       }
     }
   },
@@ -347,6 +361,15 @@
       "sequence": 2,
       "sha": "5dd0d949c8de311a00e476fc3e42976c2e151fc5",
       "status": "blocked_dependency"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "incident_authority_composed_local_integration_ready",
+      "recorded_at": "2026-07-27T19:47:00Z",
+      "reference": "services/incidents/main.py#/api/incidents/consume-infrastructure-health",
+      "sequence": 3,
+      "sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
+      "status": "implementation_ready_pending_review"
     }
   ]
 }
