@@ -5827,6 +5827,70 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
 
         self.assertEqual(reads, ["snapshot"])
 
+    def test_run_once_reconciles_task_state_before_runtime_admission(self) -> None:
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+        runtime_snapshot = {"supervisor": {}}
+        lock_held = False
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_held
+            lock_held = True
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_held = False
+
+        real_sync = supervisor.sync_task_state_shadow
+
+        def reconcile_before_lock(
+            config: dict[str, object],
+            state: dict[str, object],
+        ) -> bool:
+            self.assertFalse(lock_held)
+            call_order.append("task_state_shadow")
+            return real_sync(config, state)
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            snapshot = kwargs["task_state_shadow_snapshot"]
+            self.assertTrue(snapshot["report"]["ok"])
+            self.assertTrue(snapshot["report"]["caught_up"])
+            return False
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value=runtime_snapshot,
+            ),
+            mock.patch.object(
+                supervisor,
+                "sync_task_state_shadow",
+                side_effect=reconcile_before_lock,
+            ),
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["task_state_shadow", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
     def test_reconciliation_report_describes_one_journal_generation(self) -> None:
         """The projection report must not straddle two journal generations.
 
@@ -6790,6 +6854,8 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             locked_cycle_source,
         )
         self.assertNotIn("probe_provider_reports", locked_cycle_source)
+        self.assertIn("prefetch_task_state_shadow", run_once_source)
+        self.assertNotIn("sync_task_state_shadow", locked_cycle_source)
         self.assertIn("_fetch_worker_base_ref", run_once_source)
         self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
         self.assertIn(

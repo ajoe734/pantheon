@@ -331,6 +331,27 @@ class TaskStateShadowTests(unittest.TestCase):
             third,
         )
 
+    def test_derived_views_skip_a_stale_projection(self) -> None:
+        current = {"tasks": [{"id": "STATE-VIEW", "status": "review"}]}
+        stale = {"tasks": [{"id": "STATE-VIEW", "status": "in_progress"}]}
+        self._test_status_file.write_text(
+            json.dumps(current) + "\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(
+            ai_status,
+            "refresh_derived_status_views",
+        ) as refresh:
+            self.assertFalse(
+                ai_status.refresh_derived_status_views_if_current(stale)
+            )
+            self.assertTrue(
+                ai_status.refresh_derived_status_views_if_current(current)
+            )
+
+        refresh.assert_called_once_with(current)
+
     def test_authoritative_append_failure_preserves_existing_projection(self) -> None:
         real_parent = self._test_root / "real-authoritative-runtime"
         real_parent.mkdir()

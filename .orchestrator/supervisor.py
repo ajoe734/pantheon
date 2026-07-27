@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12977,6 +12978,13 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    task_state_shadow_snapshot = _safe_phase(
+        "prefetch_task_state_shadow",
+        prefetch_task_state_shadow,
+        config,
+        github_runtime_snapshot,
+        quiet=quiet,
+    )
     ownerless_pr_snapshots = _safe_phase(
         "prefetch_ownerless_merged_pr_snapshots",
         prefetch_ownerless_merged_pr_snapshots,
@@ -13033,6 +13041,7 @@ def run_once(
                 once=once,
                 provider_reports=provider_reports,
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
+                task_state_shadow_snapshot=task_state_shadow_snapshot,
                 prelock_changed=github_bus_changed,
             )
         )
@@ -13165,6 +13174,42 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
         return False
 
 
+def prefetch_task_state_shadow(
+    config: dict[str, Any],
+    runtime_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reconcile the task projection before runtime admission.
+
+    Authoritative journal validation takes the canonical task lock and may need
+    to repair its derived JSON projection. Keeping that wait outside the
+    exclusive runtime lock lets worker-lease commands continue validating
+    admission while this independent state plane reaches parity.
+    """
+
+    previous = (
+        (runtime_snapshot.get("supervisor") or {}).get("task_state_shadow")
+        if isinstance(runtime_snapshot, dict)
+        else None
+    )
+    scratch = {
+        "supervisor": {
+            **(
+                {"task_state_shadow": deepcopy(previous)}
+                if isinstance(previous, dict)
+                else {}
+            )
+        }
+    }
+    changed = sync_task_state_shadow(config, scratch)
+    report = scratch["supervisor"].get("task_state_shadow")
+    if not isinstance(report, dict):
+        return None
+    return {
+        "changed": bool(changed),
+        "report": deepcopy(report),
+    }
+
+
 def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
     """Run one supervisor cycle phase in isolation.
 
@@ -13199,6 +13244,7 @@ def _run_once_locked(
     once: bool = False,
     provider_reports: tuple[dict[str, Any], dict[str, Any]],
     ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
+    task_state_shadow_snapshot: dict[str, Any] | None = None,
     prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
@@ -13289,7 +13335,13 @@ def _run_once_locked(
         changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_chair_review_worktrees", prune_chair_review_worktrees, config, state, quiet=quiet) or changed
         changed = _safe_phase("maybe_auto_commit_archive", maybe_auto_commit_archive, config, state, quiet=quiet) or changed
-        changed = _safe_phase("sync_task_state_shadow", sync_task_state_shadow, config, state, quiet=quiet) or changed
+        if isinstance(task_state_shadow_snapshot, dict):
+            report = task_state_shadow_snapshot.get("report")
+            if isinstance(report, dict):
+                state.setdefault("supervisor", {})["task_state_shadow"] = deepcopy(
+                    report
+                )
+                changed = bool(task_state_shadow_snapshot.get("changed")) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(

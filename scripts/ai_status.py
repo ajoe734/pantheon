@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import gzip
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -4935,7 +4937,11 @@ def sync_docs_site(state: dict[str, Any]) -> None:
     _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
-def sync_all(state: dict[str, Any]) -> None:
+def sync_all(
+    state: dict[str, Any],
+    *,
+    refresh_views: bool = True,
+) -> None:
     assert_task_archive_root_binding()
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
@@ -4949,7 +4955,8 @@ def sync_all(state: dict[str, Any]) -> None:
     buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
     events = list(buffered) if isinstance(buffered, list) else []
     commit_state_with_activity_outbox(state, events)
-    refresh_derived_status_views(state)
+    if refresh_views:
+        refresh_derived_status_views(state)
 
 
 def refresh_derived_status_views(state: dict[str, Any]) -> None:
@@ -4959,6 +4966,58 @@ def refresh_derived_status_views(state: dict[str, Any]) -> None:
     write_current_work(state, logs)
     write_dashboard_bundle(state)
     sync_docs_site(state)
+
+
+@contextmanager
+def derived_status_views_lock():
+    """Serialize derived projections without extending the canonical task lock."""
+
+    lock_path = STATUS_FILE.parent / ".orchestrator" / "status-derived-views.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError(
+                f"derived status views lock must be a regular file: {lock_path}"
+            )
+        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def refresh_derived_status_views_if_current(state: dict[str, Any]) -> bool:
+    """Render only if this command still owns the latest canonical projection."""
+
+    expected_sha256 = _canonical_json_sha256(state)
+    with derived_status_views_lock():
+        try:
+            current = json.loads(
+                read_regular_file_bytes(
+                    STATUS_FILE,
+                    source="canonical status projection",
+                ).decode("utf-8", errors="strict")
+            )
+        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if (
+            not isinstance(current, dict)
+            or _canonical_json_sha256(current) != expected_sha256
+        ):
+            return False
+        refresh_derived_status_views(state)
+    return True
 
 
 def mark_blockers_resolved(state: dict[str, Any], task_id: str) -> None:
@@ -6784,29 +6843,32 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    def run_mutation() -> None:
+    def run_mutation() -> dict[str, Any] | None:
         state = load_state()
         recover_status_archive_outbox(state)
         recover_status_activity_outbox(state)
         with buffer_activity_events():
             command_result = commands[command](state, args)
             if command_result is False:
-                return
-            sync_all(state)
+                return None
+            sync_all(state, refresh_views=False)
+        return deepcopy(state)
 
+    committed_state: dict[str, Any] | None
     if str(os.environ.get("ORCH_RUN_ID") or "").strip():
         config = load_config()
         with runtime_state_lock(config, shared=True):
             validate_active_status_command_lease(command, args)
             with canonical_task_state_lock(shared=False):
                 with authoritative_task_state_transaction():
-                    run_mutation()
-        return 0
-
-    with canonical_task_state_lock(shared=False):
-        validate_active_status_command_lease(command, args)
-        with authoritative_task_state_transaction():
-            run_mutation()
+                    committed_state = run_mutation()
+    else:
+        with canonical_task_state_lock(shared=False):
+            validate_active_status_command_lease(command, args)
+            with authoritative_task_state_transaction():
+                committed_state = run_mutation()
+    if committed_state is not None:
+        refresh_derived_status_views_if_current(committed_state)
     return 0
 
 

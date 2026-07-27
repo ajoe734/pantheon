@@ -33,6 +33,11 @@ EVENT_TYPE_STATE_COMMITTED = "task_state_committed"
 CHECKPOINT_VERSION = 1
 CHECKPOINT_SUFFIX = ".checkpoint.json"
 FULL_REPLAY_ENV = "PANTHEON_TASK_STATE_STORE_FULL_REPLAY"
+_SNAPSHOT_CACHE_LOCK = threading.RLock()
+_SNAPSHOT_CACHE: dict[
+    Path,
+    tuple[tuple[int, int, int, int, int] | None, dict[str, Any]],
+] = {}
 
 # A task leaves the live board only through one of these statuses. Anything else
 # -- including a blank, unknown, or unreadable status -- is treated as live work.
@@ -500,6 +505,33 @@ def _load_snapshot_unlocked(event_path: Path) -> dict[str, Any]:
     return snapshot
 
 
+def _journal_fingerprint(
+    event_path: Path,
+) -> tuple[int, int, int, int, int] | None:
+    """Identify one immutable journal generation without reading its contents."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(event_path, flags)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise TaskStateStoreError(
+                f"task-state event log must be a regular file: {event_path}"
+            )
+        return (
+            int(info.st_dev),
+            int(info.st_ino),
+            int(info.st_size),
+            int(info.st_mtime_ns),
+            int(info.st_ctime_ns),
+        )
+    finally:
+        os.close(descriptor)
+
+
 def load_snapshot(path: str | Path) -> dict[str, Any]:
     """Validate the journal once and return its head as one consistent snapshot.
 
@@ -513,7 +545,16 @@ def load_snapshot(path: str | Path) -> dict[str, Any]:
 
     event_path = _prepare_parent(Path(path))
     with _store_lock(event_path, shared=True):
+        fingerprint = _journal_fingerprint(event_path)
+        if not _full_replay_forced():
+            with _SNAPSHOT_CACHE_LOCK:
+                cached = _SNAPSHOT_CACHE.get(event_path)
+                if cached is not None and cached[0] == fingerprint:
+                    return _public_snapshot(cached[1])
         snapshot = _load_snapshot_unlocked(event_path)
+        if not _full_replay_forced():
+            with _SNAPSHOT_CACHE_LOCK:
+                _SNAPSHOT_CACHE[event_path] = (fingerprint, snapshot)
     return _public_snapshot(snapshot)
 
 

@@ -767,6 +767,27 @@ def test_snapshot_reuses_the_checkpointed_prefix_and_only_parses_the_tail(
     assert incremental["state"] == growing_board(6)
 
 
+def test_unchanged_generation_reuses_the_process_snapshot_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """One supervisor process must not hash one generation phase by phase."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, growing_board(1), source="test")
+    first = store.load_snapshot(path)
+
+    def unexpected_reload(_event_path: Path) -> dict:
+        raise AssertionError("unchanged journal generation was replayed")
+
+    monkeypatch.setattr(store, "_load_snapshot_unlocked", unexpected_reload)
+    second = store.load_snapshot(path)
+
+    assert second["last_event_id"] == first["last_event_id"]
+    assert second["state"] == first["state"]
+    second["state"]["tasks"][0]["status"] = "mutated-copy"
+    assert first["state"]["tasks"][0]["status"] == "todo"
+
+
 def test_checkpointed_snapshot_matches_a_forced_full_replay(
     tmp_path: Path, monkeypatch
 ) -> None:
