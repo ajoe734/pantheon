@@ -59,7 +59,7 @@ REVIEWER = "Codex"
 PACKAGING_TASK_ID = "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
 PACKAGING_REVIEWER = "Codex2"
 CURRENT_PR_NUMBER = 4273
-CURRENT_PR_HEAD_SHA = "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443"
+CURRENT_PR_HEAD_SHA = "5ce0b9a58924bb47f9c2b369fc30821411051e81"
 COMMAND_REF = re.compile(r"^validation\.commands\[(\d+)\]$")
 
 # Every manifest location that carries a wall-clock timestamp. A future value in
@@ -216,10 +216,7 @@ class TestEvidenceManifestSchema(unittest.TestCase):
         self.assertEqual(task["id"], TASK_ID)
         self.assertEqual(task["owner"], OWNER)
         self.assertEqual(task["reviewer"], REVIEWER)
-        self.assertIn(
-            task["overall_admission"],
-            {"ready_for_independent_review", "review_approved"},
-        )
+        self.assertEqual(task["overall_admission"], "review_approved")
         self.assertEqual(EVIDENCE_DIR.name, TASK_ID)
         self.assertEqual(
             task["review_file"],
@@ -230,6 +227,23 @@ class TestEvidenceManifestSchema(unittest.TestCase):
         acceptance = {entry["id"]: entry for entry in self.manifest["acceptance"]}
         self.assertEqual(acceptance["AC2"]["status"], "pass")
         self.assertIn(PACKAGING_TASK_ID, acceptance["AC2"]["statement"])
+
+    def test_manifest_records_independent_review_approval(self):
+        acceptance = {entry["id"]: entry for entry in self.manifest["acceptance"]}
+        self.assertEqual(acceptance["AC6"]["status"], "review_approved_pending_merge")
+        self.assertEqual(
+            self.manifest["security_and_safety"]["two_person_approval"]["status"],
+            "pass",
+        )
+        approvals = [
+            entry
+            for entry in self.manifest["record_log"]
+            if entry.get("kind") == "independent_review_approved"
+        ]
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["actor"], REVIEWER)
+        self.assertEqual(approvals[0]["status"], "review_approved")
+        self.assertIn(CURRENT_PR_HEAD_SHA, approvals[0]["reference"])
 
     def test_dependency_manifest_closes_the_packaging_precondition(self):
         dependency = _load(PACKAGING_MANIFEST_PATH)

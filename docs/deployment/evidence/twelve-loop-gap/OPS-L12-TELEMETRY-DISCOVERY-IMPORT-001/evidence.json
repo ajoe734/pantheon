@@ -57,7 +57,7 @@
       "status": "pass"
     },
     {
-      "blocking_until": "Push the current branch, keep exact-head checks green, obtain Codex independent review, merge to dev, then perform governed owner closeout.",
+      "blocking_until": "Merge PR #4273 to dev, then perform governed owner closeout and archive the task.",
       "evidence_refs": [
         "implementation_delivery.anchor_commits",
         "implementation_delivery.pull_requests",
@@ -67,7 +67,7 @@
       ],
       "id": "AC6",
       "statement": "Branch, commit, push, PR checks, independent review, merge, and evidence archive complete.",
-      "status": "pending_independent_review_and_delivery"
+      "status": "review_approved_pending_merge"
     },
     {
       "evidence_refs": [
@@ -185,6 +185,11 @@
         "delivery_state": "current_repair_pr_4273_prior_owner_recut",
         "sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
         "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: recut Codex review evidence"
+      },
+      {
+        "delivery_state": "current_repair_pr_4273_reviewed_head",
+        "sha": "5ce0b9a58924bb47f9c2b369fc30821411051e81",
+        "subject": "Merge origin/dev into the task branch for exact-head review"
       }
     ],
     "pull_requests": [
@@ -222,7 +227,7 @@
       },
       {
         "base": "dev",
-        "head_sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
+        "head_sha": "5ce0b9a58924bb47f9c2b369fc30821411051e81",
         "merge_sha": "",
         "merged_at": "",
         "number": 4273,
@@ -338,6 +343,34 @@
         },
         "run_id": 30302856984,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30302856984",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "5ce0b9a58924bb47f9c2b369fc30821411051e81",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30305956389,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30305956389",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "5ce0b9a58924bb47f9c2b369fc30821411051e81",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30305953246,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30305953246",
         "workflow": "Branch CI Gate"
       }
     ]
@@ -527,14 +560,22 @@
       "reference": "governed task row and PR #4273 head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
       "sequence": 18,
       "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-27T21:22:53Z",
+      "reference": "PR #4273 exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81 against origin/dev 7f545a33bf41e5682dc67f50333c84b42f09d17e",
+      "sequence": 19,
+      "status": "review_approved"
     }
   ],
   "residual_risks": {
     "current_cut_delivery_binding_pending": {
       "blocking_for_this_task": false,
-      "containment": "AC6 is explicitly pending; the reviewer appends the exact-head decision and the owner closes only after the PR is merged. This cut binds PR #4273 head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443 and its green checks, while the commit carrying these updated bytes necessarily needs a fresh exact-head review after push.",
+      "containment": "AC6 records Codex approval of exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81 and remains pending only for PR merge plus governed archival. This owner-closeout record changes evidence and its fail-closed gate only; GitHub last-push approval and the temporary root merge freeze still govern the final merge.",
       "description": "A manifest cannot contain the merge SHA of the PR that first carries its own bytes.",
-      "expiry": "Owner closeout after Codex review and merge.",
+      "expiry": "Owner closeout after PR #4273 merges.",
       "owner": "Codex2",
       "recheck_trigger": "Current task PR review or merge",
       "severity": "low"
@@ -570,7 +611,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "Owner re-cut after OPS-L12-PYTHON-PACKAGING-PROVISION-001 implemented and independently closed the AC2 provisioning dependency.",
-    "note": "This cut supersedes the blocked 2026-07-26 evidence state. It preserves the rejected history, binds PR #4226 and the completed packaging dependency PR #4232, records fresh no-PYTHONPATH execution, and leaves only this cut's independent review and delivery pending.",
+    "note": "This cut supersedes the blocked 2026-07-26 evidence state. It preserves the rejected history, binds PR #4226 and the completed packaging dependency PR #4232, records fresh no-PYTHONPATH execution, and records Codex approval of PR #4273 exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81. Merge and governed archival remain pending.",
     "status": "formalized"
   },
   "schema_version": "loop_product_evidence.v1",
@@ -621,16 +662,16 @@
       "status": "not_applicable"
     },
     "two_person_approval": {
-      "evidence": "Codex must independently review this cut before owner closeout.",
-      "status": "pending"
+      "evidence": "Codex independently approved PR #4273 exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81 at 2026-07-27T21:22:53Z; the governed task row binds this manifest as review_file.",
+      "status": "pass"
     }
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T20:44:24Z",
-    "evidence_cut_semantics": "Codex2 is the canonical task owner after architecture-level reassignment from quota-paused Claude, and Codex is the current independent reviewer. This cut adopts only the current owner-bearing task evidence and gate: it preserves Claude's historical implementation and validation attribution, and separately preserves Codex2 as the historical reviewer of the completed packaging dependency. It binds repair PR #4273 at observed head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443 with green push and pull_request checks. The independent Codex decision for the owner-adoption head remains pending.",
+    "evidence_cut_at": "2026-07-27T21:22:53Z",
+    "evidence_cut_semantics": "Codex2 is the canonical task owner after architecture-level reassignment from quota-paused Claude, and Codex is the current independent reviewer. This cut preserves Claude's historical implementation and validation attribution and Codex2's historical review of the completed packaging dependency. It records Codex independent approval of repair PR #4273 exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81 against origin/dev 7f545a33bf41e5682dc67f50333c84b42f09d17e, with all eight push and pull-request Branch CI jobs green. Only merge and governed archival remain.",
     "id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
-    "overall_admission": "ready_for_independent_review",
+    "overall_admission": "review_approved",
     "owner": "Codex2",
     "phase": "Twelve-loop verification hardening",
     "product_level_required": false,
@@ -638,7 +679,7 @@
     "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
     "reviewer": "Codex",
     "target_environment": "local developer, auto-worker, and CI test execution only",
-    "target_maturity": "verified_local_test_execution_pending_independent_review",
+    "target_maturity": "verified_local_test_execution_review_approved_pending_merge",
     "task_branch": "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
     "title": "Eliminate telemetry unittest discovery loader errors"
   },
@@ -748,10 +789,15 @@
         "command": "gh pr view 4273 --repo ajoe734/pantheon --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus",
         "conclusion": "PR #4273 was at head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443; required push and pull_request Branch CI Gate runs 30302856984 and 30302858562 were success; reviewDecision remained REVIEW_REQUIRED and mergeStateStatus BLOCKED pending fresh Codex review.",
         "result": "pass"
+      },
+      {
+        "command": "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001; gh pr view 4273 --repo ajoe734/pantheon --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus",
+        "conclusion": "The governed task row records Codex review_approved with this manifest bound as review_file. PR #4273 exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81 had eight successful Branch CI jobs across push run 30305953246 and pull_request run 30305956389; GitHub last-push approval and the temporary root merge freeze remained pending for merge.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T20:44:24Z",
-    "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
-    "validated_head_sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443"
+    "validated_at": "2026-07-27T21:22:53Z",
+    "validated_base_sha": "7f545a33bf41e5682dc67f50333c84b42f09d17e",
+    "validated_head_sha": "5ce0b9a58924bb47f9c2b369fc30821411051e81"
   }
 }

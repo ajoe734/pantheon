@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Eliminate telemetry unittest discovery loader errors
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Canonical binding: PR #4273 closeout stays on this task. Do not use duplicate L12-PR-4273-CLOSE-001; that duplicate was superseded.
+- Next: Approved PR #4273 exact head 5ce0b9a58924bb47f9c2b369fc30821411051e81 against origin/dev 7f545a33bf41e5682dc67f50333c84b42f09d17e: baseline reproduced 197 tests with exactly 2 loader errors and 1 skip; current evidence gate 13/13, discovery 20/20, unittest 342 OK with 1 skip and zero loader errors, pytest 353 passed with 1 skip and 35 subtests; schema, checksums, trailers, diff-check, production no-diff, merged dependency evidence, and all eight exact-head Branch CI jobs verified.
 
 ## Summary
 修正 telemetry 完整 unittest discovery 的兩個裸模組 import error，讓乾淨 repo-root 與 package discovery 都能零 loader error。
