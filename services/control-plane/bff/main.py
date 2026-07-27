@@ -64589,12 +64589,10 @@ def _management_fleet_autonomy(
     return "manual"
 
 
-def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
-    raw_val = metrics.get("training_improvement_pct")
-    if raw_val is None:
-        return None
-    val = _as_float(raw_val)
-    return val / 100.0
+def _trading_performance_delta() -> Optional[float]:
+    """Return no delta until telemetry defines a canonical trading-return field."""
+
+    return None
 
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
@@ -65200,6 +65198,7 @@ def _build_persona_health_items(
     )
     incidents_list = list(read_store.list_incidents() or [])
     all_decisions = list(read_store.list_evolution_decisions() or [])
+    all_telemetry = list(read_store.list_telemetry_summaries() or [])
     items: List[Dict[str, Any]] = []
     for persona in read_store.list_personas(
         include_market_persona_defaults=include_market_persona_defaults,
@@ -65416,6 +65415,43 @@ def _build_persona_health_items(
             if str(incident.get("incident_id") or incident.get("id") or "").strip()
         }
 
+        telemetry_summaries = [
+            t for t in all_telemetry
+            if t.get("persona_id") == persona_id or t.get("runtime_id") == runtime_id
+        ]
+        telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
+        telemetry_sharpe_values = [
+            value
+            for value in (
+                _management_first_float(
+                    summary,
+                    "sharpe",
+                    "sharpe_ratio",
+                    "summary.sharpe",
+                    "summary.sharpe_ratio",
+                )
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_trade_values = [
+            value
+            for value in (
+                _management_first_float(summary, "total_trades", "summary.total_trades")
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_metrics = {
+            "pnl": telemetry_rollup.get("total_pnl"),
+            "max_drawdown": telemetry_rollup.get("max_drawdown"),
+            "fill_rate": telemetry_rollup.get("average_fill_rate"),
+            "total_trades": int(sum(telemetry_trade_values)) if telemetry_trade_values else None,
+            "sharpe": _management_avg(telemetry_sharpe_values),
+        }
+        telemetry_has_performance = any(value is not None for value in telemetry_metrics.values())
+        is_seed_row = bool(metadata.get("is_market_persona_default") or metadata.get("seed_row"))
+
         mutation_projection = _persona_fleet_mutation_projection(
             persona_id=persona_id,
             updated_at=updated_at,
@@ -65445,8 +65481,14 @@ def _build_persona_health_items(
                 governance_required=governance_required,
                 human_needed=human_needed,
             ),
-            "perf_delta": _training_improvement_delta(metrics),
-            "perfDelta": _training_improvement_delta(metrics),
+            "perf_delta": _trading_performance_delta(),
+            "perfDelta": _trading_performance_delta(),
+            "has_trading_telemetry": telemetry_has_performance,
+            "hasTradingTelemetry": telemetry_has_performance,
+            "is_market_persona_default": is_seed_row,
+            "isMarketPersonaDefault": is_seed_row,
+            "seed_row": is_seed_row,
+            "seedRow": is_seed_row,
             "human_needed": human_needed,
             "humanNeeded": human_needed,
             "last_mutation": str(updated_at)[:10],
@@ -66408,7 +66450,14 @@ def _project_persona_fleet_list_row(
             governance_required=governance_required,
             human_needed=human_needed,
         ),
-        "perf_delta": _training_improvement_delta(metrics),
+        "perf_delta": _trading_performance_delta(),
+        "perfDelta": _trading_performance_delta(),
+        "has_trading_telemetry": telemetry_has_performance,
+        "hasTradingTelemetry": telemetry_has_performance,
+        "is_market_persona_default": bool(raw_metadata.get("is_market_persona_default") or raw_metadata.get("seed_row")),
+        "isMarketPersonaDefault": bool(raw_metadata.get("is_market_persona_default") or raw_metadata.get("seed_row")),
+        "seed_row": bool(raw_metadata.get("seed_row")),
+        "seedRow": bool(raw_metadata.get("seed_row")),
         "human_needed": human_needed,
         "last_mutation": str(updated_at)[:10],
         "state": normalized_state,

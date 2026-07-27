@@ -1,0 +1,28 @@
+{
+  "task_id": "P0-TW-PAPER-ACTIVATE-001",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "review_approved": false,
+  "review_status": "owner rework complete; independent re-review pending",
+  "summary": "Track A removes training-improvement fallback from trading performance, marks display-only market defaults, and gates attribution on explicit telemetry. Track C remains a decision packet only; zero registry, governance, capital, runtime, or trading writes were performed.",
+  "verification_commands": [
+    "/home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py -q",
+    "/home/lupin/pantheon/.venv/bin/python -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+    "cd /home/lupin/code/execute-plans && npx vitest run src/lib/bff-v1/__tests__/management.test.ts src/management/pages/oversight/_core.test.ts src/management/pages/oversight/PersonaFleetPage.test.tsx",
+    "cd /home/lupin/code/execute-plans && npm run typecheck",
+    "cd /home/lupin/code/execute-plans && npx eslint src/lib/bff-v1/management.ts src/lib/bff-v1/__tests__/management.test.ts src/management/pages/oversight/personaFleetLinks.ts src/management/pages/oversight/_core.tsx src/management/pages/oversight/_core.test.ts src/management/pages/oversight/PersonaFleetPage.test.tsx"
+  ],
+  "track_c_packet": "docs/deployment/evidence/p0-tw-paper-activate-001/track_c_gonogo_packet.md",
+  "historical_review": "docs/deployment/evidence/p0-tw-paper-activate-001/independent_review_claude.md",
+  "artifacts": [
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/read_store.py",
+    "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+    "frontend-checkout:src/management/pages/oversight/personaFleetLinks.ts",
+    "frontend-checkout:src/management/pages/oversight/_core.tsx",
+    "frontend-checkout:src/management/pages/oversight/_core.test.ts",
+    "frontend-checkout:src/management/pages/oversight/PersonaFleetPage.test.tsx",
+    "frontend-checkout:src/lib/bff-v1/management.ts",
+    "docs/deployment/evidence/p0-tw-paper-activate-001/track_c_gonogo_packet.md"
+  ]
+}
