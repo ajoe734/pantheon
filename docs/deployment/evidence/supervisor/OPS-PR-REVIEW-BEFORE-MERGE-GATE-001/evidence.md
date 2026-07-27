@@ -63,6 +63,19 @@ rerun on compose commit `64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab`
 (tree object `b8429eb957c4e54067e9a623264eb67c0375b873`). The tested graph had
 zero base-only commits and 56 head-only commits.
 
+The next independent exact-head review rejected PR #4218 head
+`9d54d773c67588cb28ea63da838deee352ec744a` even though
+`4688bd252911b91ea0459a38a694c5faa53e3bbd` was its exact merge-base
+(zero base-only commits), GitHub reported `MERGEABLE`, all checks were green,
+and `autoMergeRequest` was null. The gated integrator still unconditionally
+ran `git rebase origin/dev`; the reviewed merge-rich graph reproduced
+`(False, rebase_conflict)` and could not reach the exact-head merge. Codex
+anchored the finding at `4cbf8cbe5f99478b1ac2b4cf932b64c548ac46ae`,
+changed the gated path to ancestry-check and smoke the reviewer-bound oid
+directly, and added a real-git merge-rich regression. The branch now composes
+current `origin/dev` `a6966b13d84430387da9c3a33fcf224c841bc5c6` at
+`8aaf154ca07e4d46f706a50a259e2c0d6fd553c1`.
+
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
 anyone. Every decision is derived from canonical task state that already
@@ -164,7 +177,7 @@ one, so its failure direction is safe.
 |-------------|----------------|-----------|
 | `task_finalize.sh` | gate call before PR creation; no auto-merge label; already-off is a no-op, while a standing request is revoked and read back; unreadable/still-armed fails closed | `TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge`, `::test_task_finalize_revokes_a_standing_request_and_verifies_it_off`, `::test_task_finalize_fails_closed_when_revocation_leaves_request_armed` |
 | `safe_pr.sh` | same gate call and the same before/after `autoMergeRequest` verification | `::test_safe_pr_distinguishes_an_already_off_request`, `::test_safe_pr_revokes_a_standing_request_and_verifies_it_off`, `::test_safe_pr_fails_closed_when_revocation_leaves_request_armed` |
-| `auto_integrator.py` | gate runs before the CI probe; merges only with `--match-head-commit`, never `--auto` | `IntegratorGateTests` |
+| `auto_integrator.py` | gate runs before the CI probe; current base is checked against the exact approved oid; that immutable oid is smoked without rebase/push and merged only with `--match-head-commit`, never `--auto` | `RealGitExactHeadIntegrationTests`, `IntegratorGateTests` |
 | auto-merge **creation** (CLI, UI, or API) | `allow_auto_merge` is `False` for every gated task in every state, approved included | `::test_the_shared_credential_cannot_enable_auto_merge`, `::test_an_approved_task_never_unlocks_auto_merge_creation` |
 | auto-merge **finalization** by GitHub | a request enabled before the current head is refused outright | `::test_pr_4227_shape_is_refused_even_when_this_head_is_approved` |
 | direct `gh pr merge` / merge API | the decision reads no PR-side identity, review, or check state at all | `::test_the_shared_credential_cannot_finalize_a_merge`, `::test_pr_4217_direct_merge_without_any_auto_merge_request`, `::test_pr_4225_direct_merge_by_the_same_credential_is_refused` |
@@ -205,7 +218,7 @@ with two reproduced fail-open cases. A later review at exact head `5a9ad1643`
 found two more, and the review at `dcd4b9ccf` extended the revocation finding
 to the zero-exit/still-armed case. All are now closed; the first pair is replayed
 against the pre-fix modules in §5 of `prefix-reproduction.txt`, the latest
-revocation shape is replayed in §8, and all cases are pinned by the 91-test
+revocation shape is replayed in §8, and all cases are pinned by the 92-test
 gate suite.
 
 **The approval was not structurally bound to the reviewed head.**
@@ -260,6 +273,16 @@ distinguish already-off from standing, and read back after revocation. An
 unreadable result or a request that remains armed aborts the helper. A nonzero
 disable command is accepted only when readback proves another actor already
 turned the request off.
+
+**The approved merge-rich head was rebased even when already current.**
+The integrator correctly disabled force-push for gated tasks, but still ran
+`git rebase origin/dev` before smoke. On the reviewed PR #4218 head that
+operation reported a conflict even though `origin/dev` was already an ancestor
+of the exact approved oid. The gated path now checks that ancestry directly
+and attaches a detached smoke worktree to the exact oid. It returns
+`rebase_required` only when the current base is genuinely absent, leaving
+rebase-and-push behavior unchanged for an explicitly permitted
+`merge_then_review` task.
 
 ## 2. The gate
 
@@ -399,9 +422,10 @@ waiting for checks to turn green. For a gated task the integrator:
   gate refusal keeps its own more precise reason, so this guard adds a failure
   mode rather than masking one;
 * never force-pushes a rebase (`allow_push=False`), because replacing the head
-  would discard the reviewed commit; if the branch needs a refreshed head the
-  result is `waiting` with an explicit "owner refreshes, reviewer re-approves"
-  instruction;
+  would discard the reviewed commit; it instead proves current `origin/dev` is
+  an ancestor of the exact approved oid and smokes that oid in a detached
+  worktree. Only a genuinely absent base returns `waiting` with an explicit
+  "owner refreshes, reviewer re-approves" instruction;
 * merges with `gh pr merge --merge --match-head-commit <approved-oid>` and never
   `--auto`, so a concurrent finalize that moves the head makes GitHub refuse the
   merge instead of landing an unreviewed commit;
@@ -421,7 +445,7 @@ and block, instead of silently resolving to the first row returned by GitHub.
 | 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, failed or unverified revocation in either helper/integrator, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `ApprovalBindingTests::test_pre_dated_head_replacement_is_refused`, the task-finalize/safe-pr failed-revocation shell regressions, `IntegratorGateTests::test_successful_revocation_that_still_reads_armed_never_merges`, `::test_unreadable_revocation_readback_never_reaches_the_merge`, `::test_nonzero_revocation_can_continue_only_when_readback_proves_off`, `::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `--match-head-commit` on the merge call |
 | 4 | Tasks explicitly governed as merge-then-review retain their documented integration behavior | pass | `PolicyResolutionTests`, `IntegratorGateTests::test_merge_then_review_task_keeps_its_documented_behavior`, `TaskFinalizeShellTests::test_merge_then_review_task_still_enables_auto_merge` |
 | 5 | Regression fixtures cover PRs #4212, #4213 and #4214 without impersonating owner or reviewer | pass | `PrematureMergeRegressionTests` (recorded state replayed as data only) |
-| 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and uppercase production-shape evidence archive | pass | `validation.txt`, `UnreadableStateTests::test_archived_task_row_is_still_gated` |
+| 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, immutable merge-rich exact-head delivery, and uppercase production-shape evidence archive | pass | `validation.txt`, `RealGitExactHeadIntegrationTests::test_current_merge_rich_exact_head_reaches_match_head_merge_without_rewrite`, `UnreadableStateTests::test_archived_task_row_is_still_gated` |
 
 AC5 is met as written and then extended: `LiveMergeGovernanceRegressionTests`
 covers the eight later live regressions (#4201, #4217, #4222, #4225 auto-merge
@@ -436,13 +460,13 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`4688bd252911b91ea0459a38a694c5faa53e3bbd` and validated compose commit
-`64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab` (tree object
-`b8429eb957c4e54067e9a623264eb67c0375b873`).
+`a6966b13d84430387da9c3a33fcf224c841bc5c6` and validated compose commit
+`8aaf154ca07e4d46f706a50a259e2c0d6fd553c1` (tree object
+`20066c3384d2dd3f209857f7b3b3280253da088a`).
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
-                                                       Ran  91 tests - OK
+                                                       Ran  92 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
                                                        Ran   9 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
@@ -459,7 +483,7 @@ bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
-pytest combined focused matrix                              345 passed, 31 subtests
+pytest combined focused matrix                              346 passed, 31 subtests
 pytest sequential post-dev-compose matrix                   351 passed, 45 subtests
 check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```
@@ -474,9 +498,12 @@ of the regressions that pin them. The later `5a9ad1643` archive/revocation
 findings are covered by the uppercase archive fixture and five helper-state
 tests. The `dcd4b9ccf` zero-exit/still-armed finding and its unreadable and
 nonzero/already-off boundary cases are reproduced in §8 and pinned by the three
-additional integrator regressions in the 91-test gate suite. The four newest
+additional integrator regressions in the 92-test gate suite. The four newest
 shell regressions prove existing-PR revocation occurs before push and that
-unreadable or ambiguous PR discovery also fails before push.
+unreadable or ambiguous PR discovery also fails before push. The newest
+real-git regression constructs a branch with a merge commit, proves zero
+base-only commits, smokes the exact reviewer-bound oid, and observes the
+`--match-head-commit` merge with no rebase or push command.
 
 ## 6. Residual risks
 

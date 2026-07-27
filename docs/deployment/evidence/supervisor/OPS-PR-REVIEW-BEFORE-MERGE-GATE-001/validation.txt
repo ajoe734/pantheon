@@ -1,3 +1,53 @@
+Revalidated by Codex on 2026-07-27 after independent exact-head review rejected
+PR #4218 head 9d54d773c67588cb28ea63da838deee352ec744a. The reviewed graph already
+contained origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd (0 base-only
+commits), GitHub reported MERGEABLE, all checks were green, and
+autoMergeRequest was null, but the gated integrator still ran git rebase and
+reproduced (False, rebase_conflict). Codex anchored that finding at
+4cbf8cbe5f99478b1ac2b4cf932b64c548ac46ae, changed the gated path to verify
+origin/dev is an ancestor of the reviewer-bound oid and smoke that immutable
+oid in a detached worktree, and added a real-git merge-rich graph regression
+that reaches gh pr merge --match-head-commit without rebase or push.
+
+After composing current origin/dev
+a6966b13d84430387da9c3a33fcf224c841bc5c6, Codex validated compose commit
+8aaf154ca07e4d46f706a50a259e2c0d6fd553c1 (tree object
+20066c3384d2dd3f209857f7b3b3280253da088a). The tested graph had 0 base-only
+commits and 60 head-only commits.
+
+== .venv-pantheon/bin/python scripts/git/test_task_review_merge_gate.py
+Ran 92 tests in 7.222s
+OK
+
+== .venv-pantheon/bin/python scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.772s
+OK
+
+== .venv-pantheon/bin/python -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.32s
+
+== .venv-pantheon/bin/python scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.004s
+OK
+
+== .venv-pantheon/bin/python scripts/git/test_index_safety.py
+Ran 17 tests in 3.316s
+OK
+
+== .venv-pantheon/bin/python scripts/test_ai_status.py
+Ran 144 tests in 13.104s
+OK
+
+== .venv-pantheon/bin/python -m pytest -q focused git/status matrix
+346 passed, 31 subtests passed in 58.47s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+pending final evidence commit
+
 Revalidated again by Codex on 2026-07-27 after dev advanced through PR #4265
 immediately after the safe push of e918cbd8de14c4aaff0be4d16d950a590b3eacd8.
 That pushed candidate retained autoMergeRequest=null and was not dispatched for
