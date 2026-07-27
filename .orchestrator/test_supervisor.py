@@ -4812,6 +4812,58 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
 
+    def test_sync_dispatched_task_status_binds_worker_workspace_env(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        workspace = self.root / "worker-worktrees" / "app-002"
+        workspace.mkdir(parents=True)
+        runner_status_path = self.root / ".orchestrator" / "worker-runtime" / "status" / "copilot-run-7.json"
+        heartbeat_path = self.root / ".orchestrator" / "worker-runtime" / "heartbeats" / "copilot-run-7.json"
+        runner_status_path.parent.mkdir(parents=True)
+        heartbeat_path.parent.mkdir(parents=True)
+        worker = {
+            "run_id": "copilot-run-7",
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "workspace_path": str(workspace),
+            "status_root": str(self.root),
+            "runner_status_path": str(runner_status_path),
+            "heartbeat_path": str(heartbeat_path),
+            "request_snapshot": {
+                "metadata": {
+                    "workspace_path": str(workspace),
+                    "status_root": str(self.root),
+                }
+            },
+        }
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        self.config["paths"]["state_file"] = str(self.root / ".orchestrator" / "state.json")
+
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor, "load_runtime_state", return_value={"workers": {"copilot-run-7": worker}}),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config, event, run_id="copilot-run-7"
+            )
+
+        self.assertTrue(changed)
+        env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(env["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(env["ORCH_TASK_ID"], "APP-002-W1-FRONT-HANDOFF")
+        self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace.resolve()))
+        self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace.resolve()))
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(self.root.resolve()))
+        self.assertEqual(env["ORCH_RUNNER_STATUS_PATH"], str(runner_status_path.resolve()))
+        self.assertEqual(env["ORCH_HEARTBEAT_PATH"], str(heartbeat_path.resolve()))
+
     def test_sync_dispatched_task_status_without_run_id_does_not_inherit_lease(self) -> None:
         # A stray ORCH_RUN_ID in the supervisor environment must not be borrowed as a
         # lease for a dispatch we have no run id for.
@@ -4827,14 +4879,27 @@ class DispatchStatusSyncTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.dict(supervisor.os.environ, {"ORCH_RUN_ID": "inherited-run"}, clear=False),
+            mock.patch.dict(
+                supervisor.os.environ,
+                {
+                    "ORCH_RUN_ID": "inherited-run",
+                    "ORCH_TASK_ID": "INHERITED-TASK",
+                    "PANTHEON_WORKTREE_ROOT": str(self.root / "inherited-worktree"),
+                    "ORCH_WORKSPACE_PATH": str(self.root / "inherited-worktree"),
+                    "ORCH_RUNNER_STATUS_PATH": str(self.root / "inherited-status.json"),
+                    "ORCH_HEARTBEAT_PATH": str(self.root / "inherited-heartbeat.json"),
+                },
+                clear=False,
+            ),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertTrue(changed)
-        self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
+        env = run_mock.call_args.kwargs["env"]
+        for env_name in supervisor.DISPATCH_STATUS_WORKER_ENV_NAMES:
+            self.assertNotIn(env_name, env)
 
     def test_run_once_syncs_dispatch_after_releasing_runtime_lock(self) -> None:
         event = {
