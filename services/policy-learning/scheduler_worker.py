@@ -66,12 +66,36 @@ def window_tick_id(*, eval_type: str, interval_seconds: int, now: float) -> str:
     return f"shadow-tick-{eval_type}-{span}s-{window}"
 
 
-def _post(url: str, body: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
+def request_headers(tenant_id: str) -> dict[str, str]:
+    """Headers that make this sidecar a trusted, tenant-bound caller.
+
+    The imitation-loop routes require an authenticated caller and take the
+    tenant from ``X-Tenant-Id``, not from the request body, so a scheduler
+    without a configured token is refused rather than silently scheduling into
+    an unauthenticated scope.
+    """
+
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    token = _env_text("POLICY_LEARNING_SERVICE_TOKEN") or _env_text("POLICY_LEARNING_API_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    return headers
+
+
+def _post(
+    url: str,
+    body: dict[str, Any],
+    *,
+    timeout_seconds: float,
+    tenant_id: str = "",
+) -> dict[str, Any]:
     payload = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=request_headers(tenant_id),
         method="POST",
     )
     try:
@@ -123,6 +147,7 @@ def run_tick(
         api_url.rstrip("/") + "/api/policy-learning/shadow-eval-tick",
         body,
         timeout_seconds=timeout_seconds,
+        tenant_id=tenant_id or "",
     )
 
 
@@ -148,6 +173,7 @@ def run_claim_cycle(
         api_url.rstrip("/") + "/api/policy-learning/worker/process",
         body,
         timeout_seconds=timeout_seconds,
+        tenant_id=tenant_id or "",
     )
 
 
@@ -172,6 +198,7 @@ def run_recovery(
         api_url.rstrip("/") + "/api/policy-learning/worker/restart",
         body,
         timeout_seconds=timeout_seconds,
+        tenant_id=tenant_id or "",
     )
 
 

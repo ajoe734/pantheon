@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -8,7 +9,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -34,6 +35,62 @@ class LeaseLostError(RuntimeError):
     lease expires and another worker reclaims the candidate.  The losing worker
     must discard its result instead of overwriting the new owner's work.
     """
+
+
+class LeaseHeldError(RuntimeError):
+    """An operator action targeted a candidate a live worker still owns.
+
+    Requeuing a leased candidate would let the eventual settle of the current
+    owner and the result of the requeued run both claim to be authoritative.
+    """
+
+
+class CandidateStoreCorrupt(RuntimeError):
+    """The JSON candidate backlog on disk is not readable as a backlog.
+
+    This is deliberately *not* treated as an empty backlog.  A truncated or
+    partially written file is indistinguishable from "no work" if it decodes to
+    nothing, and an empty backlog silently satisfies every read: the scheduler
+    would report a healthy, idle loop while real candidates were unreachable.
+    """
+
+    def __init__(self, path: Path, detail: str) -> None:
+        super().__init__(f"policy-learning candidate backlog at {path} is unreadable: {detail}")
+        self.path = str(path)
+        self.detail = detail
+
+
+def candidate_dedupe_key(tenant_id: Any, tick_id: Any, dataset_version_id: Any) -> str:
+    """Authority key for one (tenant, tick, dataset version) unit of work.
+
+    This triple is the identity of a scheduled shadow evaluation.  Two ticks in
+    the same window, a scheduler restart, and two schedulers racing all resolve
+    to the same key, so duplicate suppression is a property of the key rather
+    than of a read-then-write window that a concurrent caller can slip through.
+    """
+
+    tenant = str(tenant_id or "").strip()
+    tick = str(tick_id or "").strip()
+    version = str(dataset_version_id or "").strip()
+    if not tick or not version:
+        raise ValueError("tick_id and dataset_version_id are required for a candidate key")
+    # Length-prefixed so no id containing the separator can forge another key.
+    return "/".join(f"{len(part)}:{part}" for part in (tenant, tick, version))
+
+
+def candidate_id_for(tenant_id: Any, tick_id: Any, dataset_version_id: Any) -> str:
+    """Derive the collision-free candidate id for a dedupe key.
+
+    The id is a digest of the same triple rather than a backlog-length counter.
+    A counter is only unique against the rows one process happened to read, so
+    two processes ticking concurrently mint the same ``sic-<date>-001`` for
+    different datasets and the second write destroys the first.
+    """
+
+    digest = hashlib.sha256(
+        candidate_dedupe_key(tenant_id, tick_id, dataset_version_id).encode("utf-8")
+    ).hexdigest()
+    return f"sic-{digest[:32]}"
 
 
 def utc_now_dt() -> datetime:
@@ -82,6 +139,15 @@ def candidate_tenant_id(candidate: Dict[str, Any]) -> str:
         if tenant:
             return tenant
     return str(candidate.get("tenant_id") or "").strip()
+
+
+def is_lease_live(candidate: Dict[str, Any], now: datetime) -> bool:
+    """True when a worker still holds an unexpired lease on this candidate."""
+
+    if str(candidate.get("status") or "").lower() != STATUS_CLAIMED:
+        return False
+    expires_at = _parse_iso(candidate.get("lease_expires_at"))
+    return expires_at is not None and expires_at > now
 
 
 def is_claimable(candidate: Dict[str, Any], now: datetime) -> bool:
@@ -245,6 +311,7 @@ class PostgresPolicyLearningCandidateStore:
                     eval_type TEXT,
                     status TEXT,
                     tenant_id TEXT,
+                    dedupe_key TEXT,
                     lease_owner TEXT,
                     lease_token TEXT,
                     lease_expires_at TIMESTAMPTZ,
@@ -257,12 +324,20 @@ class PostgresPolicyLearningCandidateStore:
             # ADD COLUMN keeps deployments created before L12-IMIT-001 usable.
             for ddl in (
                 "ADD COLUMN IF NOT EXISTS tenant_id TEXT",
+                "ADD COLUMN IF NOT EXISTS dedupe_key TEXT",
                 "ADD COLUMN IF NOT EXISTS lease_owner TEXT",
                 "ADD COLUMN IF NOT EXISTS lease_token TEXT",
                 "ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ",
                 "ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
             ):
                 conn.execute(f"ALTER TABLE {self.table} {ddl}")
+            # The (tenant, tick, dataset version) authority lives in the
+            # database, not in the caller: a concurrent duplicate tick loses the
+            # INSERT rather than winning a read-then-write race.
+            conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_policy_learning_candidate_dedupe "
+                f"ON {self.table} (dedupe_key)"
+            )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_policy_learning_candidate_claim "
                 f"ON {self.table} (status, lease_expires_at, candidate_id)"
@@ -303,19 +378,38 @@ class PostgresPolicyLearningCandidateStore:
             self._upsert(conn, record)
         return record
 
+    def _row_values(self, record: Dict[str, Any]) -> tuple:
+        return (
+            record["candidate_id"],
+            record.get("tick_id"),
+            record.get("eval_type"),
+            record.get("status"),
+            candidate_tenant_id(record) or None,
+            record.get("dedupe_key") or None,
+            record.get("lease_owner"),
+            record.get("lease_token"),
+            _parse_iso(record.get("lease_expires_at")),
+            int(record.get("attempt_count") or 0),
+            json.dumps(record, ensure_ascii=True, sort_keys=True),
+        )
+
+    _INSERT_COLUMNS = (
+        "candidate_id, tick_id, eval_type, status, tenant_id, dedupe_key, "
+        "lease_owner, lease_token, lease_expires_at, attempt_count, payload"
+    )
+    _INSERT_PLACEHOLDERS = "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb"
+
     def _upsert(self, conn: Any, record: Dict[str, Any]) -> None:
         conn.execute(
             f"""
-            INSERT INTO {self.table} (
-                candidate_id, tick_id, eval_type, status, tenant_id,
-                lease_owner, lease_token, lease_expires_at, attempt_count, payload
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            INSERT INTO {self.table} ({self._INSERT_COLUMNS})
+            VALUES ({self._INSERT_PLACEHOLDERS})
             ON CONFLICT (candidate_id) DO UPDATE SET
                 tick_id = EXCLUDED.tick_id,
                 eval_type = EXCLUDED.eval_type,
                 status = EXCLUDED.status,
                 tenant_id = EXCLUDED.tenant_id,
+                dedupe_key = EXCLUDED.dedupe_key,
                 lease_owner = EXCLUDED.lease_owner,
                 lease_token = EXCLUDED.lease_token,
                 lease_expires_at = EXCLUDED.lease_expires_at,
@@ -323,19 +417,50 @@ class PostgresPolicyLearningCandidateStore:
                 payload = EXCLUDED.payload,
                 updated_at = now()
             """,
-            (
-                record["candidate_id"],
-                record.get("tick_id"),
-                record.get("eval_type"),
-                record.get("status"),
-                candidate_tenant_id(record) or None,
-                record.get("lease_owner"),
-                record.get("lease_token"),
-                _parse_iso(record.get("lease_expires_at")),
-                int(record.get("attempt_count") or 0),
-                json.dumps(record, ensure_ascii=True, sort_keys=True),
-            ),
+            self._row_values(record),
         )
+
+    def create_candidate_if_absent(self, candidate: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        """Insert a candidate unless its dedupe key already exists.
+
+        ``ON CONFLICT DO NOTHING`` makes the (tenant, tick, dataset version)
+        authority atomic across processes: a concurrent duplicate tick observes
+        zero inserted rows and reads back the winner instead of overwriting it.
+        """
+
+        record = json.loads(json.dumps(candidate))
+        candidate_id = str(record.get("candidate_id") or record.get("id") or "").strip()
+        dedupe_key = str(record.get("dedupe_key") or "").strip()
+        if not candidate_id:
+            raise ValueError("candidate_id is required")
+        if not dedupe_key:
+            raise ValueError("dedupe_key is required")
+        record["candidate_id"] = candidate_id
+        record["id"] = candidate_id
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                INSERT INTO {self.table} ({self._INSERT_COLUMNS})
+                VALUES ({self._INSERT_PLACEHOLDERS})
+                ON CONFLICT DO NOTHING
+                RETURNING payload
+                """,
+                self._row_values(record),
+            ).fetchall()
+            if rows:
+                return record, True
+            existing = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE dedupe_key = %s",
+                (dedupe_key,),
+            ).fetchall()
+        if not existing:
+            # Losing the insert without a readable winner means the conflict was
+            # on candidate_id, which is derived from the same dedupe key.
+            return self.get_candidate(candidate_id) or record, False
+        payload = existing[0][0] if isinstance(existing[0], tuple) else existing[0].get("payload")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return (payload if isinstance(payload, dict) else record), False
 
     def claim_candidates(
         self,
@@ -411,6 +536,40 @@ class PostgresPolicyLearningCandidateStore:
             self._upsert(conn, record)
         return record
 
+    def requeue_candidate(
+        self,
+        candidate_id: str,
+        *,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Return one terminal candidate to the backlog, fencing live leases."""
+
+        moment = now or utc_now_dt()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE candidate_id = %s FOR UPDATE",
+                (candidate_id,),
+            ).fetchall()
+            if not rows:
+                raise KeyError(candidate_id)
+            payload = rows[0][0] if isinstance(rows[0], tuple) else rows[0].get("payload")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                raise KeyError(candidate_id)
+            if is_lease_live(payload, moment):
+                raise LeaseHeldError(
+                    f"candidate {candidate_id} is leased by {payload.get('lease_owner')!r} "
+                    f"until {payload.get('lease_expires_at')}"
+                )
+            clear_lease(payload)
+            payload["status"] = STATUS_PROPOSED
+            payload["updated_at"] = _iso(moment)
+            payload.pop("error_message", None)
+            payload.pop("degradation", None)
+            self._upsert(conn, payload)
+        return payload
+
     def release_expired_leases(self, *, now: Optional[datetime] = None) -> List[str]:
         """Return orphaned claims to the backlog after a worker restart."""
 
@@ -451,7 +610,24 @@ class PolicyLearningStore:
         self.candidates_lock_path = self.data_dir / "shadow_imitation_candidates.lock"
         self.job_store = job_store
         self.candidate_store = candidate_store
+        self.authority_resolution: Dict[str, Any] = {
+            "candidate_authority": "postgres" if candidate_store is not None else "json",
+            "durable": candidate_store is not None,
+            "reason": "explicit_construction",
+            "requested_store_backend": "unset",
+            "dsn_configured": candidate_store is not None,
+            "dsn": "",
+        }
         self._thread_lock = threading.RLock()
+
+    def describe(self) -> Dict[str, Any]:
+        """Non-secret description of which backend owns candidate authority."""
+
+        return {
+            key: value
+            for key, value in self.authority_resolution.items()
+            if key != "dsn"
+        }
 
     @contextlib.contextmanager
     def _candidate_lock(self) -> Iterator[None]:
@@ -478,19 +654,51 @@ class PolicyLearningStore:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _read_candidates(self) -> Dict[str, Dict[str, Any]]:
+        """Read the backlog, refusing to present damaged state as an empty one.
+
+        Raises:
+            CandidateStoreCorrupt: the file exists but is not a JSON object of
+                candidate records.  A missing or zero-length file is a genuine
+                empty backlog and is not corruption.
+        """
+
         if not self.candidates_path.exists():
             return {}
         text = self.candidates_path.read_text(encoding="utf-8").strip()
         if not text:
             return {}
-        payload = json.loads(text)
+        try:
+            payload = json.loads(text)
+        except ValueError as exc:
+            raise CandidateStoreCorrupt(self.candidates_path, str(exc)) from exc
         if not isinstance(payload, dict):
-            return {}
-        return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
+            raise CandidateStoreCorrupt(
+                self.candidates_path,
+                f"expected a JSON object of candidates, found {type(payload).__name__}",
+            )
+        records = {str(key): value for key, value in payload.items() if isinstance(value, dict)}
+        if len(records) != len(payload):
+            raise CandidateStoreCorrupt(
+                self.candidates_path,
+                f"{len(payload) - len(records)} of {len(payload)} entries are not candidate objects",
+            )
+        return records
 
     def _write_candidates(self, candidates: Dict[str, Dict[str, Any]]) -> None:
+        """Write the backlog atomically so a crash cannot truncate it.
+
+        The worker and the API process share this file; a partial write from an
+        interrupted process would be read by its peer as corruption on the very
+        next claim.  Rename is atomic within the directory, so a reader sees
+        either the previous backlog or the complete new one.
+        """
+
         self.candidates_path.parent.mkdir(parents=True, exist_ok=True)
-        self.candidates_path.write_text(json.dumps(candidates, indent=2, ensure_ascii=True), encoding="utf-8")
+        temp_path = self.candidates_path.with_name(
+            f"{self.candidates_path.name}.{os.getpid()}.tmp"
+        )
+        temp_path.write_text(json.dumps(candidates, indent=2, ensure_ascii=True), encoding="utf-8")
+        os.replace(temp_path, self.candidates_path)
 
     def list_candidates(self) -> List[Dict[str, Any]]:
         if self.candidate_store is not None:
@@ -516,6 +724,36 @@ class PolicyLearningStore:
             records[candidate_id] = record
             self._write_candidates(records)
         return record
+
+    def create_candidate_if_absent(self, candidate: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        """Insert a candidate unless its dedupe key already exists.
+
+        The check and the insert happen inside the same cross-process lock, so
+        two ticks racing on the same (tenant, tick, dataset version) produce one
+        candidate and the loser reads back the winner.
+        """
+
+        candidate_id = str(candidate.get("candidate_id") or candidate.get("id") or "").strip()
+        dedupe_key = str(candidate.get("dedupe_key") or "").strip()
+        if not candidate_id:
+            raise ValueError("candidate_id is required")
+        if not dedupe_key:
+            raise ValueError("dedupe_key is required")
+        if self.candidate_store is not None:
+            return self.candidate_store.create_candidate_if_absent(candidate)
+        record = json.loads(json.dumps(candidate))
+        record["candidate_id"] = candidate_id
+        record["id"] = candidate_id
+        with self._candidate_lock():
+            records = self._read_candidates()
+            for existing in records.values():
+                if str(existing.get("dedupe_key") or "") == dedupe_key:
+                    return existing, False
+            if candidate_id in records:
+                return records[candidate_id], False
+            records[candidate_id] = record
+            self._write_candidates(records)
+        return record, True
 
     # -- backlog claim / lease -------------------------------------------
 
@@ -594,6 +832,42 @@ class PolicyLearningStore:
             self._write_candidates(records)
         return record
 
+    def requeue_candidate(
+        self,
+        candidate_id: str,
+        *,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Return one terminal candidate to the backlog, fencing live leases.
+
+        Raises:
+            KeyError: the candidate does not exist.
+            LeaseHeldError: a worker still owns an unexpired lease.  Requeuing
+                anyway would produce two runs that both believe they are
+                authoritative for the same candidate.
+        """
+
+        if self.candidate_store is not None:
+            return self.candidate_store.requeue_candidate(candidate_id, now=now)
+        moment = now or utc_now_dt()
+        with self._candidate_lock():
+            records = self._read_candidates()
+            record = records.get(candidate_id)
+            if record is None:
+                raise KeyError(candidate_id)
+            if is_lease_live(record, moment):
+                raise LeaseHeldError(
+                    f"candidate {candidate_id} is leased by {record.get('lease_owner')!r} "
+                    f"until {record.get('lease_expires_at')}"
+                )
+            clear_lease(record)
+            record["status"] = STATUS_PROPOSED
+            record["updated_at"] = _iso(moment)
+            record.pop("error_message", None)
+            record.pop("degradation", None)
+            self._write_candidates(records)
+        return json.loads(json.dumps(record))
+
     def release_expired_leases(self, *, now: Optional[datetime] = None) -> List[str]:
         """Return orphaned claims to the backlog after a worker restart."""
 
@@ -657,21 +931,106 @@ class PolicyLearningStore:
         return record
 
 
-def build_policy_learning_store(data_dir: str | Path) -> PolicyLearningStore:
-    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
-    if backend in ("", "json", "jsonl"):
-        return PolicyLearningStore(data_dir)
-    if backend != "postgres":
+CANDIDATE_AUTHORITY_ENV = "POLICY_LEARNING_CANDIDATE_AUTHORITY"
+
+
+def _configured_dsn() -> str:
+    return (os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL") or "").strip()
+
+
+def resolve_candidate_authority(
+    *,
+    backend: Optional[str] = None,
+    dsn: Optional[str] = None,
+    product_mode: bool = True,
+) -> Dict[str, Any]:
+    """Decide which backend owns candidate authority, and say why.
+
+    The candidate backlog is the loop's authoritative record of scheduled and
+    settled shadow evaluations, so in the product path it belongs in Postgres.
+    A JSON file on a container volume is a development convenience: it does not
+    survive a container replacement and gives two processes no transaction to
+    agree on.
+
+    Resolution order:
+
+    1. an explicit ``POLICY_LEARNING_CANDIDATE_AUTHORITY``;
+    2. ``POLICY_LEARNING_STORE_BACKEND=postgres``;
+    3. product dataset mode with a reachable DSN configured — this is the
+       default compose path, where ``POLICY_LEARNING_STORE_BACKEND`` still says
+       ``json`` but ``DATABASE_URL`` is present, and durability wins;
+    4. otherwise JSON, reported truthfully as non-durable.
+    """
+
+    requested_backend = (
+        backend if backend is not None else os.getenv("POLICY_LEARNING_STORE_BACKEND", "")
+    ).strip().lower()
+    resolved_dsn = dsn if dsn is not None else _configured_dsn()
+    if requested_backend and requested_backend not in ("json", "jsonl", "postgres"):
         raise ValueError("POLICY_LEARNING_STORE_BACKEND must be json or postgres")
 
-    dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
-    if not dsn:
-        raise ValueError("POLICY_LEARNING_STORE_DSN or DATABASE_URL is required for Postgres store")
+    explicit = (os.getenv(CANDIDATE_AUTHORITY_ENV) or "").strip().lower()
+    if explicit:
+        if explicit not in ("json", "jsonl", "postgres"):
+            raise ValueError(f"{CANDIDATE_AUTHORITY_ENV} must be json or postgres")
+        if explicit == "postgres" and not resolved_dsn:
+            raise ValueError(
+                f"{CANDIDATE_AUTHORITY_ENV}=postgres requires POLICY_LEARNING_STORE_DSN or DATABASE_URL"
+            )
+        authority = "postgres" if explicit == "postgres" else "json"
+        reason = "explicit_candidate_authority"
+    elif requested_backend == "postgres":
+        if not resolved_dsn:
+            raise ValueError(
+                "POLICY_LEARNING_STORE_DSN or DATABASE_URL is required for Postgres store"
+            )
+        authority = "postgres"
+        reason = "explicit_store_backend"
+    elif product_mode and resolved_dsn:
+        authority = "postgres"
+        reason = "product_mode_durable_default"
+    else:
+        authority = "json"
+        reason = "no_dsn_configured" if product_mode else "non_product_dataset_mode"
+
+    return {
+        "candidate_authority": authority,
+        "durable": authority == "postgres",
+        "reason": reason,
+        "requested_store_backend": requested_backend or "unset",
+        "dsn_configured": bool(resolved_dsn),
+        "dsn": resolved_dsn,
+    }
+
+
+def build_policy_learning_store(
+    data_dir: str | Path,
+    *,
+    product_mode: bool = True,
+) -> PolicyLearningStore:
+    resolution = resolve_candidate_authority(product_mode=product_mode)
+    dsn = resolution["dsn"]
+    if resolution["candidate_authority"] == "json":
+        store = PolicyLearningStore(data_dir)
+        store.authority_resolution = resolution
+        return store
+
     job_table = os.getenv("POLICY_LEARNING_STORE_TABLE", "policy_learning.jobs")
     candidate_table = os.getenv("POLICY_LEARNING_CANDIDATE_STORE_TABLE", "policy_learning.candidates")
     bootstrap = os.getenv("POLICY_LEARNING_STORE_BOOTSTRAP", "1").strip().lower() not in ("0", "false", "no")
-    return PolicyLearningStore(
-        data_dir,
-        job_store=PostgresPolicyLearningJobStore(dsn=dsn, table=job_table, bootstrap=bootstrap),
-        candidate_store=PostgresPolicyLearningCandidateStore(dsn=dsn, table=candidate_table, bootstrap=bootstrap),
+    # The job surface keeps following POLICY_LEARNING_STORE_BACKEND; only the
+    # candidate backlog is upgraded to the durable authority by default.
+    job_store = (
+        PostgresPolicyLearningJobStore(dsn=dsn, table=job_table, bootstrap=bootstrap)
+        if resolution["requested_store_backend"] == "postgres"
+        else None
     )
+    store = PolicyLearningStore(
+        data_dir,
+        job_store=job_store,
+        candidate_store=PostgresPolicyLearningCandidateStore(
+            dsn=dsn, table=candidate_table, bootstrap=bootstrap
+        ),
+    )
+    store.authority_resolution = resolution
+    return store

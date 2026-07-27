@@ -25,6 +25,8 @@ from unittest import mock
 
 import pytest
 
+from conftest import TEST_SERVICE_TOKEN, auth_headers, authorized_client
+
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 _REPO_ROOT = SERVICE_DIR.parents[1]
@@ -167,10 +169,15 @@ def _install_authority(svc, records: list[dict], *, tenant_id: str = "tenant-a")
     return svc.DATASET_AUTHORITY
 
 
-def _client(svc):
-    from fastapi.testclient import TestClient
+def _client(svc, tenant_id: str = "tenant-a"):
+    """An authenticated client bound to one tenant.
 
-    return TestClient(svc.app)
+    The imitation-loop routes take their tenant from the verified request, so a
+    test that wants a second tenant asks for a second client rather than
+    putting a tenant id in the body.
+    """
+
+    return authorized_client(svc.app, tenant_id)
 
 
 def _assert_no_seed_leak(payload) -> None:
@@ -296,24 +303,34 @@ def test_discovery_is_scoped_to_one_tenant() -> None:
                 _agora_record("dsv-b2", tenant_id="tenant-b", order=3),
             ],
         )
-        client = _client(svc)
+        client_a = _client(svc, "tenant-a")
+        client_b = _client(svc, "tenant-b")
 
-        tick_a = client.post(
+        tick_a = client_a.post(
             "/api/policy-learning/shadow-eval-tick",
             json={"tick_id": "tick-a", "tenant_id": "tenant-a"},
         ).json()
         assert tick_a["candidate_count"] == 1
         assert tick_a["tenant_id"] == "tenant-a"
 
-        tick_b = client.post(
+        tick_b = client_b.post(
             "/api/policy-learning/shadow-eval-tick",
             json={"tick_id": "tick-b", "tenant_id": "tenant-b"},
         ).json()
         assert tick_b["candidate_count"] == 2
 
+        # Each tenant only ever sees its own candidates.
+        assert {
+            candidate["tick_id"]
+            for candidate in client_a.get("/api/policy-learning/candidates").json()
+        } == {"tick-a"}
+        assert {
+            candidate["tick_id"]
+            for candidate in client_b.get("/api/policy-learning/candidates").json()
+        } == {"tick-b"}
         by_tick = {
             candidate["tick_id"]: candidate["dataset_ref"]["tenant_id"]
-            for candidate in client.get("/api/policy-learning/candidates").json()
+            for candidate in svc.store.list_candidates()
         }
         assert by_tick == {"tick-a": "tenant-a", "tick-b": "tenant-b"}
 
@@ -380,16 +397,23 @@ def test_unreachable_authority_degrades_every_candidate_without_seed() -> None:
 
 
 def test_tick_requires_a_tenant_scope() -> None:
+    """The tenant comes from the verified request, and is mandatory."""
+
+    from fastapi.testclient import TestClient
+
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
         _install_authority(svc, [_agora_record("dsv-1", order=1)])
         os.environ.pop("POLICY_LEARNING_AGORA_TENANT_ID", None)
-        client = _client(svc)
 
-        resp = client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-noscope"})
-        assert resp.status_code == 503
-        assert resp.json()["detail"]["reason"] == "tenant_scope_unset"
-        assert client.get("/api/policy-learning/candidates").json() == []
+        unscoped = TestClient(
+            svc.app,
+            headers={"Authorization": f"Bearer {TEST_SERVICE_TOKEN}"},
+        )
+        resp = unscoped.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-noscope"})
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "TENANT_REQUIRED"
+        assert svc.store.list_candidates() == []
 
 
 def test_seed_mode_is_explicitly_non_product() -> None:
@@ -446,17 +470,24 @@ def test_same_dataset_version_in_two_tenants_is_not_deduped_together() -> None:
                 _agora_record("dsv-shared", tenant_id="tenant-b", evidence_id="ev-b", order=2),
             ],
         )
-        client = _client(svc)
+        client_a = _client(svc, "tenant-a")
+        client_b = _client(svc, "tenant-b")
 
-        client.post(
+        created_a = client_a.post(
             "/api/policy-learning/shadow-eval-tick",
             json={"tick_id": "tick-shared", "tenant_id": "tenant-a"},
-        )
-        client.post(
+        ).json()
+        created_b = client_b.post(
             "/api/policy-learning/shadow-eval-tick",
             json={"tick_id": "tick-shared", "tenant_id": "tenant-b"},
-        )
-        candidates = client.get("/api/policy-learning/candidates").json()
+        ).json()
+        assert created_a["candidate_count"] == 1
+        assert created_b["candidate_count"] == 1
+        # Same tick id, same dataset version id, different tenants: the derived
+        # candidate ids must not collide.
+        assert created_a["candidate_ids"] != created_b["candidate_ids"]
+
+        candidates = svc.store.list_candidates()
         assert len(candidates) == 2
         assert {c["dataset_ref"]["tenant_id"] for c in candidates} == {"tenant-a", "tenant-b"}
 

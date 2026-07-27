@@ -7,7 +7,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
@@ -18,9 +19,18 @@ from agora_dataset_authority import (
     configured_tenant_id,
     configured_user_id,
 )
+from inbound_authority import (
+    PolicyLearningAuthority,
+    PolicyLearningAuthorityError,
+    authority_configuration,
+    bind_tenant,
+    resolve_authority,
+)
 from store import (
     DEFAULT_CLAIM_BATCH_SIZE,
     DEFAULT_LEASE_SECONDS,
+    CandidateStoreCorrupt,
+    LeaseHeldError,
     LeaseLostError,
     STATUS_CLAIMED,
     STATUS_DEGRADED,
@@ -29,6 +39,8 @@ from store import (
     STATUS_PROPOSED,
     PolicyLearningStore,
     build_policy_learning_store,
+    candidate_dedupe_key,
+    candidate_id_for,
     candidate_tenant_id,
 )
 from services.research.imitation.agora_dataset_source import (
@@ -239,7 +251,46 @@ def _proposal_text(body: ProposalBody) -> str:
 
 
 app = FastAPI(title="Pantheon Policy Learning Service", version="0.1.0")
-store = build_policy_learning_store(_data_dir())
+store = build_policy_learning_store(_data_dir(), product_mode=_product_mode())
+
+
+@app.exception_handler(PolicyLearningAuthorityError)
+def _authority_error_handler(request: Request, exc: PolicyLearningAuthorityError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.to_detail()})
+
+
+@app.exception_handler(CandidateStoreCorrupt)
+def _corrupt_store_handler(request: Request, exc: CandidateStoreCorrupt) -> JSONResponse:
+    """Surface a damaged backlog as an outage, never as an empty backlog."""
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "CANDIDATE_STORE_CORRUPT",
+                "message": "The policy-learning candidate backlog is unreadable",
+                "path": exc.path,
+                "reason": exc.detail,
+                "candidate_authority": store.describe(),
+            }
+        },
+    )
+
+
+def require_authority(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+    x_pantheon_tenant: Optional[str] = Header(default=None),
+) -> PolicyLearningAuthority:
+    """Authenticate one imitation-loop request and bind it to one tenant."""
+
+    return resolve_authority(
+        authorization=authorization,
+        tenant_header=x_tenant_id,
+        tenant_alias=x_pantheon_tenant,
+    )
+
+
 register_fastapi_health_routes(
     app,
     "policy-learning",
@@ -252,6 +303,8 @@ register_fastapi_health_routes(
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
         "dataset_mode": _dataset_mode(),
         "dataset_authority": dataset_authority().describe(),
+        "candidate_authority": store.describe(),
+        "inbound_authority": authority_configuration(),
     },
 )
 
@@ -266,6 +319,8 @@ def health() -> Dict[str, Any]:
         "production_adapters_enabled": _production_adapters_allowed(),
         "dataset_mode": _dataset_mode(),
         "dataset_authority": dataset_authority().describe(),
+        "candidate_authority": store.describe(),
+        "inbound_authority": authority_configuration(),
     }
 
 
@@ -785,37 +840,25 @@ def run_worker_cycle(
     }
 
 
-def _dataset_ref_key(dataset_ref: Dict[str, Any]) -> str:
-    """Tenant-qualified dedupe key for a dataset reference.
-
-    Two tenants may legitimately hold the same-looking reference, so the tenant
-    is part of the key; otherwise one tenant's tick would suppress another's.
-    """
-
+def _dataset_version_id(dataset_ref: Dict[str, Any]) -> str:
     if not isinstance(dataset_ref, dict):
         return ""
-    version_id = str(
+    return str(
         dataset_ref.get("dataset_version_id") or dataset_ref.get("id") or dataset_ref.get("dataset_id") or ""
     ).strip()
-    if not version_id:
-        return ""
-    tenant = str(dataset_ref.get("tenant_id") or "").strip()
-    return f"{tenant}:{version_id}" if tenant else version_id
-
-
-def _next_candidate_id(timestamp: str, existing: set) -> str:
-    prefix = timestamp[:10].replace("-", "")
-    index = len(existing) + 1
-    candidate = f"sic-{prefix}-{index:03d}"
-    while candidate in existing:
-        index += 1
-        candidate = f"sic-{prefix}-{index:03d}"
-    return candidate
 
 
 @app.post("/api/policy-learning/shadow-eval-tick", status_code=201)
-def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
+def shadow_eval_tick(
+    body: ShadowEvalTickBody,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
     """Schedule a shadow / imitation evaluation tick over real trace datasets.
+
+    The tick runs inside the authenticated caller's tenant.  A ``tenant_id`` in
+    the body is only accepted when it repeats that tenant, so the route cannot
+    be used to schedule work, or to probe for datasets, in someone else's
+    scope.
 
     With no explicit ``dataset_refs`` the tick discovers tenant-scoped Agora
     DatasetVersions through the dataset authority.  If that authority cannot
@@ -829,16 +872,8 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
     timestamp = body.ticked_at or utc_now()
     tick_id = body.tick_id or f"shadow-tick-{timestamp[:10].replace('-', '')}"
     eval_type = body.eval_type.strip().lower() if body.eval_type else "shadow"
-    tenant_id, user_id = _resolve_tenant_scope(body.tenant_id, body.user_id)
-
-    existing_candidates = store.list_candidates()
-    # Duplicate ticks are absorbed on (tick_id, dataset version) so a scheduler
-    # restart or a doubled cron fire cannot re-propose the same work.
-    already_seen = {
-        _dataset_ref_key(c.get("dataset_ref") or {})
-        for c in existing_candidates
-        if c.get("tick_id") == tick_id
-    }
+    tenant_id = bind_tenant(authority, body.tenant_id)
+    _, user_id = _resolve_tenant_scope(tenant_id, body.user_id)
 
     dataset_refs = list(body.dataset_refs)
     dataset_source = "explicit_refs"
@@ -866,26 +901,38 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
     if body.max_datasets is not None and len(dataset_refs) > body.max_datasets:
         dataset_refs = dataset_refs[: body.max_datasets]
 
-    existing_ids = {str(c.get("candidate_id") or "") for c in existing_candidates}
     created_ids: List[str] = []
     skipped_ids: List[str] = []
+    rejected: List[Dict[str, Any]] = []
 
     for ref in dataset_refs:
-        ref_key = _dataset_ref_key(ref)
-        if ref_key and ref_key in already_seen:
-            skipped_ids.append(ref_key)
+        version_id = _dataset_version_id(ref)
+        if not version_id:
+            rejected.append({"reason": "dataset_version_id_missing", "dataset_ref": ref})
             continue
-        already_seen.add(ref_key)
-        candidate_id = _next_candidate_id(timestamp, existing_ids | set(created_ids))
+        ref_tenant = str(ref.get("tenant_id") or "").strip()
+        if ref_tenant and ref_tenant != tenant_id:
+            # An explicit ref naming another tenant is refused rather than
+            # re-stamped: re-stamping would attach this tenant's candidate to a
+            # dataset version it has no authority over.
+            rejected.append({"reason": "dataset_ref_tenant_mismatch", "dataset_ref": ref})
+            continue
+
+        bound_ref = dict(ref)
+        bound_ref["tenant_id"] = tenant_id
+        dedupe_key = candidate_dedupe_key(tenant_id, tick_id, version_id)
+        candidate_id = candidate_id_for(tenant_id, tick_id, version_id)
         candidate = {
             "id": candidate_id,
             "candidate_id": candidate_id,
+            "dedupe_key": dedupe_key,
             "tick_id": tick_id,
             "eval_type": eval_type,
-            "dataset_ref": ref,
+            "dataset_ref": bound_ref,
+            "dataset_version_id": version_id,
             "dataset_source": dataset_source,
             "dataset_mode": _dataset_mode(),
-            "tenant_id": str(ref.get("tenant_id") or tenant_id),
+            "tenant_id": tenant_id,
             "status": STATUS_PROPOSED,
             "attempt_count": 0,
             "production_training": "fail_closed",
@@ -895,9 +942,15 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": body.actor_id,
+            "scheduled_by": authority.actor_id,
         }
-        store.put_candidate(candidate)
-        created_ids.append(candidate_id)
+        # The store owns duplicate suppression.  A read-then-write check here
+        # would still let two concurrent ticks both observe "not present".
+        _, created = store.create_candidate_if_absent(candidate)
+        if created:
+            created_ids.append(candidate_id)
+        else:
+            skipped_ids.append(candidate_id)
 
     return {
         "status": "ok",
@@ -906,23 +959,30 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
         "dataset_source": dataset_source,
         "dataset_mode": _dataset_mode(),
         "tenant_id": tenant_id,
+        "actor_id": authority.actor_id,
         "seed_fallback_used": not _product_mode(),
         "candidate_count": len(created_ids),
         "skipped_count": len(skipped_ids),
         "skipped_ids": skipped_ids,
+        "rejected_refs": rejected,
         "candidate_ids": created_ids,
         "production_training": "fail_closed",
         "ticked_at": timestamp,
     }
 
 
-@app.get("/api/policy-learning/candidates")
-def list_candidates(
+def _tenant_candidates(
+    authority: PolicyLearningAuthority,
+    *,
     tick_id: Optional[str] = None,
     eval_type: Optional[str] = None,
     status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    candidates = store.list_candidates()
+    candidates = [
+        candidate
+        for candidate in store.list_candidates()
+        if candidate_tenant_id(candidate) == authority.tenant_id
+    ]
     if tick_id:
         candidates = [c for c in candidates if c.get("tick_id") == tick_id]
     if eval_type:
@@ -932,100 +992,156 @@ def list_candidates(
     return candidates
 
 
-@app.get("/api/policy-learning/candidates/{candidate_id}")
-def get_candidate(candidate_id: str) -> Dict[str, Any]:
+def _tenant_candidate(candidate_id: str, authority: PolicyLearningAuthority) -> Dict[str, Any]:
+    """Load one candidate inside the authenticated tenant.
+
+    A candidate owned by another tenant answers 404 rather than 403 so the
+    route cannot be used to enumerate which candidate ids exist elsewhere.
+    """
+
     candidate = store.get_candidate(candidate_id)
-    if not candidate:
+    if not candidate or candidate_tenant_id(candidate) != authority.tenant_id:
         raise HTTPException(status_code=404, detail="shadow imitation candidate not found")
     return candidate
 
 
+@app.get("/api/policy-learning/candidates")
+def list_candidates(
+    tick_id: Optional[str] = None,
+    eval_type: Optional[str] = None,
+    status: Optional[str] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    return _tenant_candidates(
+        authority,
+        tick_id=tick_id,
+        eval_type=eval_type,
+        status=status,
+    )
+
+
+@app.get("/api/policy-learning/candidates/{candidate_id}")
+def get_candidate(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    return _tenant_candidate(candidate_id, authority)
+
+
 @app.get("/api/policy-learning/worker/backlog")
-def get_worker_backlog() -> List[Dict[str, Any]]:
-    """Return the list of unclaimed pending items in the backlog."""
-    return list_candidates(status=STATUS_PROPOSED)
+def get_worker_backlog(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return the list of unclaimed pending items in this tenant's backlog."""
+    return _tenant_candidates(authority, status=STATUS_PROPOSED)
 
 
 @app.get("/api/policy-learning/worker/claims")
-def get_worker_claims() -> List[Dict[str, Any]]:
-    """Return the candidates currently leased by a worker."""
-    return list_candidates(status=STATUS_CLAIMED)
+def get_worker_claims(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return this tenant's candidates currently leased by a worker."""
+    return _tenant_candidates(authority, status=STATUS_CLAIMED)
 
 
 @app.get("/api/policy-learning/worker/degraded")
-def get_worker_degraded() -> List[Dict[str, Any]]:
+def get_worker_degraded(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
     """Return candidates whose dataset authority lookup degraded.
 
     These are separate from the DLQ: no training was attempted, and no seed
     data was substituted for the missing tenant-scoped dataset.
     """
-    return list_candidates(status=STATUS_DEGRADED)
+    return _tenant_candidates(authority, status=STATUS_DEGRADED)
 
 
 @app.get("/api/policy-learning/worker/dlq")
-def get_worker_dlq() -> List[Dict[str, Any]]:
-    """Return the list of failed items in the DLQ."""
-    return list_candidates(status=STATUS_FAILED)
+def get_worker_dlq(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return the list of failed items in this tenant's DLQ."""
+    return _tenant_candidates(authority, status=STATUS_FAILED)
 
 
-def _requeue(candidate: Dict[str, Any]) -> Dict[str, Any]:
-    candidate["status"] = STATUS_PROPOSED
-    candidate["updated_at"] = utc_now()
-    candidate.pop("error_message", None)
-    candidate.pop("degradation", None)
-    for field in ("lease_owner", "lease_token", "lease_expires_at", "lease_acquired_at"):
-        candidate.pop(field, None)
-    return store.put_candidate(candidate)
+def _requeue(candidate_id: str) -> Dict[str, Any]:
+    """Return a candidate to the backlog unless a worker still owns it."""
+
+    try:
+        return store.requeue_candidate(candidate_id)
+    except LeaseHeldError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CANDIDATE_LEASE_HELD", "message": str(exc)},
+        ) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="shadow imitation candidate not found") from exc
 
 
 @app.post("/api/policy-learning/worker/dlq/{candidate_id}/replay")
-def replay_dlq_item(candidate_id: str, body: Optional[WorkerClaimBody] = None) -> Dict[str, Any]:
+def replay_dlq_item(
+    candidate_id: str,
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
     """Return a failed or degraded candidate to the backlog and re-run it."""
-    candidate = get_candidate(candidate_id)
+    candidate = _tenant_candidate(candidate_id, authority)
     if candidate.get("status") not in (STATUS_FAILED, STATUS_DEGRADED):
         raise HTTPException(status_code=400, detail="candidate is not in DLQ")
-    _requeue(candidate)
     claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    _requeue(candidate_id)
     run_worker_cycle(
         worker_id=f"{claim.worker_id}-replay",
         batch_size=claim.batch_size,
         lease_seconds=claim.lease_seconds,
-        tenant_id=(claim.tenant_id or candidate_tenant_id(candidate)),
+        tenant_id=authority.tenant_id,
     )
-    return store.get_candidate(candidate_id) or candidate
+    return _tenant_candidate(candidate_id, authority)
 
 
 @app.post("/api/policy-learning/worker/retry/{candidate_id}")
-def retry_candidate(candidate_id: str, body: Optional[WorkerClaimBody] = None) -> Dict[str, Any]:
-    """Retry processing a candidate."""
-    candidate = get_candidate(candidate_id)
-    _requeue(candidate)
+def retry_candidate(
+    candidate_id: str,
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Retry processing a candidate this tenant owns."""
+    _tenant_candidate(candidate_id, authority)
     claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    _requeue(candidate_id)
     run_worker_cycle(
         worker_id=f"{claim.worker_id}-retry",
         batch_size=claim.batch_size,
         lease_seconds=claim.lease_seconds,
-        tenant_id=(claim.tenant_id or candidate_tenant_id(candidate)),
+        tenant_id=authority.tenant_id,
     )
-    return store.get_candidate(candidate_id) or candidate
+    return _tenant_candidate(candidate_id, authority)
 
 
 @app.post("/api/policy-learning/worker/claim")
-def claim_backlog(body: Optional[WorkerClaimBody] = None) -> Dict[str, Any]:
-    """Take an exclusive expiring lease on backlog work without processing it.
+def claim_backlog(
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Take an exclusive expiring lease on this tenant's backlog work.
 
-    Two workers calling this concurrently receive disjoint candidate sets.
+    Two workers calling this concurrently receive disjoint candidate sets, and
+    the claim never reaches outside the authenticated tenant.
     """
     claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
     claims = store.claim_candidates(
         worker_id=claim.worker_id,
         batch_size=claim.batch_size,
         lease_seconds=claim.lease_seconds,
-        tenant_id=claim.tenant_id or "",
+        tenant_id=authority.tenant_id,
     )
     return {
         "status": "ok",
         "worker_id": claim.worker_id,
+        "tenant_id": authority.tenant_id,
         "claimed_count": len(claims),
         "claims": [
             {
@@ -1040,51 +1156,70 @@ def claim_backlog(body: Optional[WorkerClaimBody] = None) -> Dict[str, Any]:
 
 
 @app.post("/api/policy-learning/worker/process")
-def trigger_backlog_processing(body: Optional[WorkerClaimBody] = None) -> Dict[str, Any]:
-    """Claim and process a batch of backlog work under lease."""
+def trigger_backlog_processing(
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Claim and process a batch of this tenant's backlog work under lease."""
     claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
     result = run_worker_cycle(
         worker_id=claim.worker_id,
         batch_size=claim.batch_size,
         lease_seconds=claim.lease_seconds,
-        tenant_id=claim.tenant_id or "",
+        tenant_id=authority.tenant_id,
     )
-    return {"status": "ok", **result}
+    return {"status": "ok", "tenant_id": authority.tenant_id, **result}
 
 
 @app.post("/api/policy-learning/worker/restart")
-def restart_worker(body: Optional[WorkerClaimBody] = None) -> Dict[str, Any]:
+def restart_worker(
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
     """Recover backlog work orphaned by a crashed or restarted worker.
 
     Only claims whose lease has expired return to the backlog; a candidate held
     by a live worker keeps its owner, so a restart of one worker cannot steal
     in-flight work from its peer.  Terminal candidates are left alone.
     """
-    released = store.release_expired_leases()
     claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    released = store.release_expired_leases()
+    tenant_released = [
+        candidate_id
+        for candidate_id in released
+        if candidate_tenant_id(store.get_candidate(candidate_id) or {}) == authority.tenant_id
+    ]
     result = run_worker_cycle(
         worker_id=claim.worker_id,
         batch_size=claim.batch_size,
         lease_seconds=claim.lease_seconds,
-        tenant_id=claim.tenant_id or "",
+        tenant_id=authority.tenant_id,
     )
     return {
         "status": "ok",
-        "released_count": len(released),
-        "released_candidate_ids": released,
+        "tenant_id": authority.tenant_id,
+        "released_count": len(tenant_released),
+        "released_candidate_ids": tenant_released,
         **result,
     }
 
 
 @app.get("/api/policy-learning/candidates/{candidate_id}/governance")
-def candidate_governance(candidate_id: str) -> Dict[str, Any]:
+def candidate_governance(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
     """Report the gates standing between a candidate and any runtime effect."""
-    candidate = get_candidate(candidate_id)
-    return _gate_evaluation(candidate)
+    return _gate_evaluation(_tenant_candidate(candidate_id, authority))
 
 
 @app.post("/api/policy-learning/candidates/{candidate_id}/promote", status_code=409)
-def promote_candidate(candidate_id: str) -> Dict[str, Any]:
+def promote_candidate(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
     """Fail closed: shadow candidates cannot be promoted from this service.
 
     A shadow imitation candidate is research output.  Promotion requires an
@@ -1092,7 +1227,7 @@ def promote_candidate(candidate_id: str) -> Dict[str, Any]:
     not hold, so this endpoint always refuses and never mutates the candidate,
     a registry artifact, or a RuntimeBinding.
     """
-    candidate = get_candidate(candidate_id)
+    candidate = _tenant_candidate(candidate_id, authority)
     raise HTTPException(status_code=409, detail=_gate_evaluation(candidate))
 
 
@@ -1132,6 +1267,13 @@ def _gate_evaluation(candidate: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.get("/api/policy-learning/worker/readback/{candidate_id}")
-def readback_candidate_target(candidate_id: str) -> Dict[str, Any]:
-    """Target readback for a candidate."""
-    return get_candidate(candidate_id)
+def readback_candidate_target(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Target readback for a candidate inside the authenticated tenant.
+
+    Readback returns the full record, including the dataset lineage and the
+    trained policy weights, so it is tenant-bound like every other route here.
+    """
+    return _tenant_candidate(candidate_id, authority)

@@ -9,6 +9,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+from conftest import authorized_client
+
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 _REPO_ROOT = SERVICE_DIR.parents[1]
@@ -189,12 +191,10 @@ def test_scheduler_run_tick_handles_url_error() -> None:
 
 def test_shadow_eval_tick_empty_tenant_creates_no_candidates() -> None:
     """A reachable authority holding no data for the tenant ticks empty."""
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
         _install_memory_authority(svc, [_agora_record("dsv-other", tenant_id="tenant-z")])
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         resp = client.post(
             "/api/policy-learning/shadow-eval-tick",
@@ -214,14 +214,12 @@ def test_shadow_eval_tick_empty_tenant_creates_no_candidates() -> None:
 
 def test_shadow_eval_tick_fails_closed_without_dataset_authority() -> None:
     """No authority means no candidates and no seed substitution."""
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
         from agora_dataset_authority import AgoraDatasetAuthority
 
         svc.DATASET_AUTHORITY = AgoraDatasetAuthority(backend="", dsn="")
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         resp = client.post(
             "/api/policy-learning/shadow-eval-tick",
@@ -237,11 +235,9 @@ def test_shadow_eval_tick_fails_closed_without_dataset_authority() -> None:
 
 
 def test_shadow_eval_tick_with_dataset_refs() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [
             {"id": "ds-trace-001", "type": "trace_dataset", "source": "agora_interaction"},
@@ -280,11 +276,9 @@ def test_shadow_eval_tick_with_dataset_refs() -> None:
 
 def test_shadow_eval_tick_idempotent_same_tick_id() -> None:
     """Duplicate ticks with same tick_id and same dataset refs must not create duplicates."""
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [{"id": "ds-idem-001", "type": "trace_dataset"}]
         body = {"tick_id": "tick-idem-001", "eval_type": "shadow", "dataset_refs": dataset_refs}
@@ -299,7 +293,8 @@ def test_shadow_eval_tick_idempotent_same_tick_id() -> None:
         payload = second.json()
         assert payload["candidate_count"] == 0
         assert payload["skipped_count"] == 1
-        assert "ds-idem-001" in payload["skipped_ids"]
+        # The repeat resolves to the same derived candidate id it skipped.
+        assert payload["skipped_ids"] == first.json()["candidate_ids"]
 
         # Exactly one candidate exists
         listed = client.get("/api/policy-learning/candidates", params={"tick_id": "tick-idem-001"})
@@ -307,11 +302,9 @@ def test_shadow_eval_tick_idempotent_same_tick_id() -> None:
 
 
 def test_shadow_eval_tick_different_tick_ids_create_separate_candidates() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [{"id": "ds-multi-001", "type": "trace_dataset"}]
 
@@ -331,11 +324,9 @@ def test_shadow_eval_tick_different_tick_ids_create_separate_candidates() -> Non
 
 
 def test_shadow_eval_tick_respects_max_datasets() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [
             {"id": f"ds-max-{i:03d}", "type": "trace_dataset"} for i in range(5)
@@ -355,11 +346,9 @@ def test_shadow_eval_tick_respects_max_datasets() -> None:
 
 def test_shadow_eval_tick_candidates_remain_fail_closed() -> None:
     """Shadow eval candidates must never activate production training automatically."""
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [{"id": "ds-gate-001", "type": "trace_dataset"}]
         resp = client.post(
@@ -378,22 +367,18 @@ def test_shadow_eval_tick_candidates_remain_fail_closed() -> None:
 
 
 def test_get_candidate_not_found() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         resp = client.get("/api/policy-learning/candidates/nonexistent-id")
         assert resp.status_code == 404
 
 
 def test_list_candidates_filter_by_eval_type() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         client.post(
             "/api/policy-learning/shadow-eval-tick",
@@ -425,15 +410,13 @@ def test_list_candidates_filter_by_eval_type() -> None:
 
 
 def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
         _install_memory_authority(
             svc,
             [_agora_record("dsv-limit-1", order=1), _agora_record("dsv-limit-2", order=2)],
         )
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         # 1. Propose candidates
         resp = client.post(

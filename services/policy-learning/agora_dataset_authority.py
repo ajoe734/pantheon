@@ -41,6 +41,33 @@ _MEMORY_BACKENDS = {"", "off", "false", "none", "memory", ":memory:"}
 _logger = logging.getLogger("policy-learning.agora-authority")
 
 
+def _dsn_has_credentials(dsn: str) -> bool:
+    """True when the connection will present an identity to Postgres.
+
+    ``agora.agora_dataset_records`` is owned by the Agora dataset-extraction
+    service.  A cross-service read of it must go through an authenticated read
+    role (DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY §3.2); an anonymous or
+    ``trust``-authenticated connection is not one, and reading another owner's
+    tenant-partitioned rows without an identity is exactly the failure this
+    task has to close.
+    """
+
+    if not dsn:
+        return False
+    for name in ("PGUSER", "PGPASSFILE", "PGSERVICE"):
+        if (os.getenv(name) or "").strip():
+            return True
+    try:
+        from psycopg.conninfo import conninfo_to_dict  # type: ignore[import]
+    except ImportError:  # pragma: no cover - driver absent is handled elsewhere
+        return "@" in dsn or "user=" in dsn
+    try:
+        parsed = conninfo_to_dict(dsn)
+    except Exception:
+        return False
+    return bool(str(parsed.get("user") or "").strip())
+
+
 class AgoraAuthorityUnavailable(RuntimeError):
     """The Agora dataset authority could not be resolved or queried.
 
@@ -55,6 +82,10 @@ class AgoraAuthorityUnavailable(RuntimeError):
 
     def to_dict(self) -> dict[str, Any]:
         return {"reason": self.reason, "detail": self.detail}
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def _env(name: str, default: str = "") -> str:
@@ -101,7 +132,8 @@ class AgoraDatasetAuthority:
     ) -> None:
         self._injected_records = list(records) if records is not None else None
         requested = (backend if backend is not None else _env(BACKEND_ENV)).strip().lower()
-        self.dsn = dsn if dsn is not None else (_env(DSN_ENV) or _env("DATABASE_URL"))
+        self._read_role_dsn = _env(DSN_ENV) if dsn is None else _clean(dsn)
+        self.dsn = self._read_role_dsn or (_env("DATABASE_URL") if dsn is None else "")
         self.schema = (schema if schema is not None else _env(SCHEMA_ENV)) or DEFAULT_SCHEMA
 
         self._unsupported = ""
@@ -130,8 +162,12 @@ class AgoraDatasetAuthority:
             "backend": self.backend,
             "schema": self.schema,
             "dsn_configured": bool(self.dsn),
+            "dedicated_read_role_dsn": bool(self._read_role_dsn),
+            "authenticated": self.backend != "postgres" or _dsn_has_credentials(self.dsn),
+            "session_access": "read_only",
             "records_table": f"{self.schema}.{RECORDS_TABLE}",
             "independent_of_policy_store_backend": True,
+            "seed_fallback": "none",
         }
 
     # -- resolution -----------------------------------------------------
@@ -161,6 +197,14 @@ class AgoraDatasetAuthority:
             )
         return resolved
 
+    def _require_authenticated(self) -> None:
+        if not _dsn_has_credentials(self.dsn):
+            raise AgoraAuthorityUnavailable(
+                "agora_authority_unauthenticated",
+                f"{DSN_ENV} (or DATABASE_URL) must carry a database identity so the "
+                "Agora dataset authority is read through an authenticated read role",
+            )
+
     def _connect(self) -> Any:
         try:
             import psycopg  # type: ignore[import]
@@ -169,13 +213,26 @@ class AgoraDatasetAuthority:
                 "agora_authority_driver_missing",
                 "psycopg is required to read the Postgres Agora dataset authority",
             ) from exc
+        self._require_authenticated()
         try:
-            return psycopg.connect(self.dsn)
+            connection = psycopg.connect(self.dsn)
         except Exception as exc:
             raise AgoraAuthorityUnavailable(
                 "agora_authority_unreachable",
                 f"Could not connect to the Agora dataset authority: {exc}",
             ) from exc
+        try:
+            # policy-learning is a non-owner reader of agora.*.  A read-only
+            # session makes that boundary enforced by Postgres rather than by
+            # this module remembering to only write SELECTs.
+            connection.read_only = True
+        except Exception as exc:
+            connection.close()
+            raise AgoraAuthorityUnavailable(
+                "agora_authority_read_only_unavailable",
+                f"Could not pin the Agora dataset authority session read-only: {exc}",
+            ) from exc
+        return connection
 
     # -- queries --------------------------------------------------------
 
