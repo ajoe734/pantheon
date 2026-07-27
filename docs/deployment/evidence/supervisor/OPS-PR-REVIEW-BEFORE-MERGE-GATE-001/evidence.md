@@ -160,10 +160,11 @@ compared it. The fix records the reviewed PR number, head sha, head branch and
 expected base inside the immutable `review_approved` audit event and compares
 those exact identities in the gate.
 
-**A failed auto-merge revocation did not stop the merge.**
-`disable_auto_merge` returns `False` when `gh pr merge --disable-auto` exits
-nonzero, and on the approved path the integrator ignored that and went on to
-the direct `--match-head-commit` merge:
+**An unverified auto-merge revocation did not stop the merge.**
+`disable_auto_merge` only trusted the local `gh pr merge --disable-auto` exit
+code. When the command failed, and also when it reported success without
+withdrawing the server-side `autoMergeRequest`, the approved path could still go
+on to the direct `--match-head-commit` merge:
 
 ```
 -> action=merged
@@ -172,8 +173,9 @@ the direct `--match-head-commit` merge:
 ```
 
 The armed request survives that merge attempt, so GitHub kept independent
-authority to land whatever head stood next. The integrator now blocks before
-emitting any merge call when a revocation it attempted did not succeed.
+authority to land whatever head stood next. The integrator now reads
+`autoMergeRequest` back from GitHub after every attempted revocation and blocks
+before emitting any merge call if the read is unavailable or still armed.
 
 **Archived task lookup changed the canonical task ID's case.**
 The archive writer stores `LUV-REACTIVATE-KW01-001.json`, preserving case and
@@ -321,12 +323,13 @@ waiting for checks to turn green. For a gated task the integrator:
 
 * blocks and opens an `INTEGRATION-UNBLOCK-*-REVIEW-GATE-*` task when the gate
   refuses, revoking any pending auto-merge request first;
-* blocks — before emitting any merge call, on the approved path included — when
-  a revocation it attempted failed. `gh pr merge --disable-auto` returning
-  nonzero means the merge grant is still armed and GitHub can still land the
-  next head on its own; approval of *this* head does not make it safe to merge
-  alongside a standing grant. A gate refusal keeps its own more precise reason,
-  so this guard adds a failure mode rather than masking one;
+* reads `autoMergeRequest` back after every attempted revocation and blocks —
+  before emitting any merge call, on the approved path included — when the
+  command failed, the readback is unavailable, or the request still reads armed.
+  `gh pr merge --disable-auto` returning zero is not sufficient proof: approval
+  of *this* head does not make it safe to merge alongside a standing grant. A
+  gate refusal keeps its own more precise reason, so this guard adds a failure
+  mode rather than masking one;
 * never force-pushes a rebase (`allow_push=False`), because replacing the head
   would discard the reviewed commit; if the branch needs a refreshed head the
   result is `waiting` with an explicit "owner refreshes, reviewer re-approves"
@@ -419,14 +422,15 @@ naming the head. This is a one-time cost paid in re-approvals, and it fails in
 the safe direction, but it does mean any task sitting in `review_approved` with
 an open PR at cutover needs one extra reviewer action.
 
-**A failed revocation stalls an otherwise mergeable PR.** When
+**A failed or unverified revocation stalls an otherwise mergeable PR.** When
 `gh pr merge --disable-auto` fails for an environmental reason — a `gh` auth
-blip, a transient GitHub error — an approved, green PR now blocks rather than
-merging. That is deliberate: the alternative is merging while a grant we could
-not withdraw is still armed. The same rule applies while either PR-opening
-helper is withholding auto-merge. The recovery is to revoke the request and
-rerun the helper or integrator; if another actor already revoked it, readback
-proves `autoMergeRequest=null` and the helper may continue.
+blip, a transient GitHub error — or when the follow-up read still reports an
+armed request, an approved, green PR now blocks rather than merging. That is
+deliberate: the alternative is merging while a grant we could not prove
+withdrawn is still armed. The same rule applies while either PR-opening helper
+is withholding auto-merge. The recovery is to revoke the request and rerun the
+helper or integrator; if another actor already revoked it, readback proves
+`autoMergeRequest=null` and the helper may continue.
 
 **Approval events are matched by task id in the audit.** A rotation that loses
 both the active tail and the archived `.gz` for an approval would make the gate

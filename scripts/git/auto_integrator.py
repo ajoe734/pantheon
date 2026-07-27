@@ -564,6 +564,41 @@ def disable_auto_merge(
     return result.returncode == 0
 
 
+def read_auto_merge_request(
+    number: int | None,
+    runner: CommandRunner,
+    *,
+    root: Path,
+) -> Any:
+    """Read the live auto-merge grant after a revocation attempt.
+
+    `gh pr merge --disable-auto` returning zero is not an authority signal by
+    itself: the request can remain armed if GitHub/gh reports success while the
+    server-side state was unchanged. The integrator must therefore re-read the
+    PR before it emits any direct merge command.
+    """
+
+    if number is None:
+        raise AutoIntegratorError("cannot verify autoMergeRequest without a PR number")
+    try:
+        payload = gh_json(
+            runner,
+            [
+                "pr",
+                "view",
+                str(number),
+                "--json",
+                "autoMergeRequest",
+            ],
+            cwd=root,
+        )
+    except (AutoIntegratorError, json.JSONDecodeError) as exc:
+        raise AutoIntegratorError(f"cannot verify autoMergeRequest after revocation: {exc}") from exc
+    if not isinstance(payload, Mapping) or "autoMergeRequest" not in payload:
+        raise AutoIntegratorError("cannot verify autoMergeRequest after revocation: malformed gh response")
+    return payload.get("autoMergeRequest")
+
+
 def has_auto_merge_request(pr: Mapping[str, Any]) -> bool:
     return bool(pr.get("autoMergeRequest"))
 
@@ -745,18 +780,30 @@ def integrate_candidate(
     # base was holding it back, and it would have merged the moment the base
     # caught up. Revoke first, then classify.
     revoked = False
+    revocation_read_error = ""
+    revocation_verified = False
     revocation_attempted = gated and has_auto_merge_request(pr)
     if revocation_attempted:
         revoked = disable_auto_merge(number, runner, root=root, execute=execute)
+        if execute and revoked:
+            try:
+                live_auto_merge_request = read_auto_merge_request(number, runner, root=root)
+            except AutoIntegratorError as exc:
+                revocation_read_error = str(exc)
+            else:
+                pr = {**pr, "autoMergeRequest": live_auto_merge_request}
+                revocation_verified = live_auto_merge_request is None
     if gated and not decision.allow_merge:
         detail = (
             f"PR #{number} is gated by review-before-merge and not mergeable: "
             f"{decision.reason} - {decision.detail}."
         )
-        if has_auto_merge_request(pr):
+        if revocation_read_error:
+            detail += f" {revocation_read_error}."
+        elif has_auto_merge_request(pr):
             detail += (
                 " Revoked the pending auto-merge request."
-                if revoked
+                if revoked and not execute
                 else " A pending auto-merge request is still set on this PR."
             )
         unblock = (
@@ -774,17 +821,24 @@ def integrate_candidate(
         )
         return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
 
-    if revocation_attempted and execute and not revoked:
+    if revocation_attempted and execute and (not revoked or not revocation_verified):
         # The gate approved this head, but `gh pr merge --disable-auto` failed,
-        # so the merge grant is still armed. Proceeding would emit a direct
-        # `--match-head-commit` merge while GitHub independently holds authority
-        # to land whatever head stands next -- exactly the fail-open shape this
-        # module exists to prevent. Stop before any merge call is emitted.
+        # or the post-revocation readback still shows the merge grant armed.
+        # Proceeding would emit a direct `--match-head-commit` merge while
+        # GitHub independently holds authority to land whatever head stands next
+        # -- exactly the fail-open shape this module exists to prevent. Stop
+        # before any merge call is emitted.
+        if not revoked:
+            reason = "`gh pr merge --disable-auto` failed"
+        elif revocation_read_error:
+            reason = revocation_read_error
+        else:
+            reason = "post-revocation readback still shows autoMergeRequest armed"
         detail = (
-            f"PR #{number} is approved for head {decision.head_oid} but "
-            "`gh pr merge --disable-auto` failed, so a pending auto-merge request is "
-            "still armed on it. Refusing to merge with a standing merge grant; revoke "
-            "it manually and re-run the integrator."
+            f"PR #{number} is approved for head {decision.head_oid} but {reason}, "
+            "so a pending auto-merge request may still be armed on it. Refusing "
+            "to merge with a standing merge grant; revoke it manually and re-run "
+            "the integrator."
         )
         unblock = (
             open_unblock_task(

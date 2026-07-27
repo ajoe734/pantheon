@@ -1511,7 +1511,10 @@ class IntegratorGateTests(unittest.TestCase):
 
     @staticmethod
     def _runner(pr: Mapping[str, Any] | None, **kwargs: Any) -> Any:
-        from test_auto_integrator import FakeRunner
+        try:
+            from test_auto_integrator import FakeRunner
+        except ModuleNotFoundError:
+            from scripts.git.test_auto_integrator import FakeRunner
 
         return FakeRunner(pr=pr, **kwargs)
 
@@ -1578,6 +1581,32 @@ class IntegratorGateTests(unittest.TestCase):
             ],
         )
 
+    def test_successful_revocation_that_still_reads_armed_never_merges(self) -> None:
+        """A zero exit from gh is not proof that GitHub withdrew the grant."""
+
+        runner = self._runner(
+            open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:45:00Z"}),
+            disable_auto_clears_request=False,
+        )
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("readback still shows autoMergeRequest armed", result.detail)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
+        self.assertFalse(any("--match-head-commit" in command for command in runner.commands))
+        self.assertFalse(
+            any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
+        )
+
     @staticmethod
     def _failing_disable_auto(runner: Any) -> None:
         """Make `gh pr merge --disable-auto` return 1 on this runner."""
@@ -1588,7 +1617,10 @@ class IntegratorGateTests(unittest.TestCase):
             command = [str(arg) for arg in args]
             if command[:3] == ["gh", "pr", "merge"] and "--disable-auto" in command:
                 runner.commands.append(command)
-                from test_auto_integrator import completed
+                try:
+                    from test_auto_integrator import completed
+                except ModuleNotFoundError:
+                    from scripts.git.test_auto_integrator import completed
 
                 return completed(command, returncode=1)
             return original_run(args, **kwargs)
@@ -1653,7 +1685,10 @@ class IntegratorGateTests(unittest.TestCase):
             if command[:3] == ["git", "rev-parse", "HEAD"]:
                 state["calls"] += 1
                 runner.commands.append(command)
-                from test_auto_integrator import completed
+                try:
+                    from test_auto_integrator import completed
+                except ModuleNotFoundError:
+                    from scripts.git.test_auto_integrator import completed
 
                 return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
             return original_run(args, **kwargs)
@@ -1711,7 +1746,10 @@ class IntegratorGateTests(unittest.TestCase):
             if command[:3] == ["git", "rev-parse", "HEAD"]:
                 state["calls"] += 1
                 runner.commands.append(command)
-                from test_auto_integrator import completed
+                try:
+                    from test_auto_integrator import completed
+                except ModuleNotFoundError:
+                    from scripts.git.test_auto_integrator import completed
 
                 return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
             return original_run(args, **kwargs)
@@ -1731,7 +1769,10 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
     def test_concurrent_open_prs_for_one_task_branch_fail_closed(self) -> None:
-        from test_auto_integrator import FakeRunner, completed
+        try:
+            from test_auto_integrator import FakeRunner, completed
+        except ModuleNotFoundError:
+            from scripts.git.test_auto_integrator import FakeRunner, completed
 
         class AmbiguousRunner(FakeRunner):
             def run(self, args: Sequence[str], **kwargs: Any):  # type: ignore[override]

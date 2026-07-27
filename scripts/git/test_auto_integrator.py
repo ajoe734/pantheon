@@ -17,12 +17,14 @@ class FakeRunner(auto_integrator.CommandRunner):
         rebase_returncode: int = 0,
         merged_pr: Mapping[str, Any] | None = None,
         merge_base_returncode: int = 0,
+        disable_auto_clears_request: bool = True,
     ) -> None:
         super().__init__()
-        self.pr = pr
-        self.merged_pr = merged_pr
+        self.pr = dict(pr) if pr is not None else None
+        self.merged_pr = dict(merged_pr) if merged_pr is not None else None
         self.rebase_returncode = rebase_returncode
         self.merge_base_returncode = merge_base_returncode
+        self.disable_auto_clears_request = disable_auto_clears_request
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
         if "--state" not in command:
@@ -64,6 +66,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         if command[:3] == ["git", "worktree", "remove"]:
             return completed(command)
         if command[:3] == ["gh", "pr", "merge"]:
+            if "--disable-auto" in command and self.disable_auto_clears_request and self.pr is not None:
+                self.pr = {**self.pr, "autoMergeRequest": None}
             return completed(command)
         if "scripts/ai_status.py" in joined:
             return completed(command)
