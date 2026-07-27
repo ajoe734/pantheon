@@ -2760,7 +2760,10 @@ def start_worker_for_request(
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
         "parent_run_id": parent_run_id,
-        "retry_count": 0,
+        # A retry is represented by a new worker record.  Carry the attempt
+        # number into that child instead of resetting its retry budget to zero;
+        # otherwise a process that repeatedly disappears can retry forever.
+        "retry_count": max(0, int(attempt_count) - 1),
         "next_retry_at": None,
         "last_error": None,
     }
@@ -11004,6 +11007,188 @@ def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -
         record.pop(key, None)
 
 
+def worker_retry_attempt_index(worker: dict[str, Any]) -> int:
+    """Return retries already consumed across a parent/child worker chain."""
+
+    return max(
+        int(worker.get("retry_count", 0) or 0),
+        max(0, int(worker.get("attempt_count", 0) or 0) - 1),
+    )
+
+
+def schedule_missing_process_retry(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    reason: str,
+) -> bool:
+    """Schedule a reconstructable missing-process retry within its total budget."""
+
+    retry = worker_retry_settings(
+        config,
+        str(worker.get("provider") or worker.get("agent_id") or ""),
+    )
+    if not retry.get("enabled", True):
+        return False
+    consumed = worker_retry_attempt_index(worker)
+    if consumed >= int(retry.get("max_attempts", 5)):
+        return False
+    try:
+        request = request_for_worker(config, worker)
+    except (KeyError, TypeError, ValueError):
+        request = None
+    if request is None:
+        return False
+    worker["retry_count"] = consumed
+    schedule_worker_retry(config, worker, reason)
+    return True
+
+
+def _prepare_missing_worker_terminal_outcome_locked(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    """Move an open task to a durable blocked outcome after process loss."""
+
+    if not config.get("paths", {}).get("status_file"):
+        return None
+    task_id = str(worker.get("task_id") or "").strip()
+    run_id = str(worker.get("run_id") or "").strip()
+    provider = str(worker.get("provider") or worker.get("agent_id") or "").strip()
+    if not task_id or not run_id or not provider:
+        return None
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return None
+    previous_status = str(task.get("status") or "").strip().lower()
+    settings = ready_dispatch_settings(config)
+    open_statuses = (
+        normalized_status_set(settings.get("owned_statuses"), ["todo", "in_progress"])
+        | normalized_status_set(settings.get("review_statuses"), ["review"])
+        | normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    )
+    if previous_status not in open_statuses:
+        return None
+
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "").strip()
+    expected_actor = str(
+        task.get("reviewer")
+        if dispatch_reason == REASON_REVIEW_READY or previous_status == "review"
+        else task.get("owner")
+        or ""
+    ).strip()
+    worker_actor = display_name_for(
+        config,
+        str(worker.get("agent_id") or worker.get("provider") or ""),
+    ).strip()
+    if expected_actor and worker_actor and worker_actor != expected_actor:
+        return None
+
+    blocker_kind = "missing_worker_terminal"
+    if any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == blocker_kind
+        for blocker in (status.get("blockers") or [])
+    ):
+        return None
+
+    timestamp = utc_now()
+    waiting_for = expected_actor or worker_actor or provider
+    message = (
+        f"Supervisor recorded terminal missing-worker outcome for task={task_id}, "
+        f"run={run_id}, provider={provider}: {reason} Retry budget was exhausted "
+        f"or the request could not be reconstructed; task moved from "
+        f"{previous_status} to blocked. Confirm the failure, then reopen or "
+        f"reassign through scripts/ai-status.sh."
+    )
+    task["status"] = "blocked"
+    task["waiting_for"] = waiting_for
+    task["last_update"] = timestamp
+    task["next"] = message
+    status.setdefault("blockers", []).append(
+        {
+            "task_id": task_id,
+            "owner": str(task.get("owner") or worker_actor or provider),
+            "waiting_for": waiting_for,
+            "message": message,
+            "status": "open",
+            "created_at": timestamp,
+            "blocker_kind": blocker_kind,
+            "previous_status": previous_status,
+            "provider": provider,
+            "worker_run_id": run_id,
+            "failure_reason": reason,
+            "dispatch_reason": dispatch_reason or None,
+        }
+    )
+    event = {
+        "event_id": "supervisor-missing-worker-terminal-"
+        + hashlib.sha256(
+            f"{task_id}\0{run_id}\0{provider}\0{reason}".encode("utf-8")
+        ).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_missing_worker_blocked",
+        "task_id": task_id,
+        "target_agent": waiting_for,
+        "provider": provider,
+        "worker_run_id": run_id,
+        "reason": reason,
+        "outcome": "terminal_failure",
+        "previous_status": previous_status,
+        "message": message,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
+    write_status(config, status, source="supervisor-missing-worker-outcome")
+    return event
+
+
+def record_missing_worker_terminal_outcome(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    """Persist and publish the terminal task outcome for a missing worker."""
+
+    if not config.get("paths", {}).get("status_file"):
+        return None
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        event = _prepare_missing_worker_terminal_outcome_locked(
+            config,
+            worker,
+            reason=reason,
+        )
+    if event is None:
+        return None
+    sync_status_pipeline(config)
+    write_activity_log(
+        config,
+        {
+            "type": event["type"],
+            "provider": event["provider"],
+            "task_id": event["task_id"],
+            "message": event["message"],
+            "worker_run_id": event["worker_run_id"],
+            "reason": event["reason"],
+            "outcome": event["outcome"],
+            "previous_status": event["previous_status"],
+        },
+    )
+    return event
+
+
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
     changed = False
     now = datetime.now(timezone.utc)
@@ -11013,6 +11198,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         "marker_updates": 0,
         "lease_refreshes": 0,
         "missing_process_workers_failed": 0,
+        "missing_process_workers_retried": 0,
+        "missing_process_workers_reassigned": 0,
+        "missing_process_tasks_blocked": 0,
         "expired_lease_workers_failed": 0,
         "started_queue_records_requeued": 0,
         "started_queue_records_failed": 0,
@@ -11111,6 +11299,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             reason = GENERIC_WORKER_EXIT_REASON
 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
+        failure_count: int | None = None
+        failure_kind = ""
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
@@ -11166,20 +11356,29 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     if expired_lease:
                         counts["expired_lease_workers_failed"] += 1
                     else:
-                        counts["missing_process_workers_failed"] += 1
+                        counts["missing_process_workers_reassigned"] += 1
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_missing_outcome",
+                                "provider": worker.get("provider"),
+                                "task_id": worker.get("task_id"),
+                                "message": failure_summary.get("summary") or detected_reason,
+                                "worker_run_id": worker.get("run_id"),
+                                "reason": failure_summary.get("summary") or detected_reason,
+                                "outcome": "reassigned",
+                                "reassigned_to": reassigned_to,
+                            },
+                        )
                     changed = True
                     continue
             if failure_response is rewrite_provider_health.FailureResponse.RETRY:
-                retry = worker_retry_settings(
+                retry_reason = failure_summary.get("summary") or detected_reason
+                if missing_process and schedule_missing_process_retry(
                     config,
-                    str(worker.get("provider") or worker.get("agent_id") or ""),
-                )
-                if int(worker.get("retry_count", 0)) < int(retry.get("max_attempts", 5)):
-                    schedule_worker_retry(
-                        config,
-                        worker,
-                        failure_summary.get("summary") or detected_reason,
-                    )
+                    worker,
+                    retry_reason,
+                ):
                     worker["last_error_raw_ref"] = raw_ref
                     write_activity_log(
                         config,
@@ -11196,12 +11395,85 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                             "worker_run_id": worker.get("run_id"),
                             "next_retry_at": worker.get("next_retry_at"),
                             "raw_ref": raw_ref,
+                            "reason": retry_reason,
+                            "outcome": "retry",
                         },
                     )
+                    counts["missing_process_workers_retried"] += 1
                     changed = True
                     continue
             reason = failure_summary.get("summary") or detected_reason
             worker["last_error_raw_ref"] = raw_ref
+        elif missing_process:
+            failure_kind = "missing_process"
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                reason,
+                failure_kind=failure_kind,
+            )
+
+        if missing_process:
+            if failure_count is None:
+                failure_count = record_task_failure_streak(
+                    state,
+                    worker,
+                    reason,
+                    failure_kind=failure_kind or "missing_process",
+                )
+            reassigned_to = maybe_reassign_task_after_worker_failure(
+                config,
+                state,
+                worker,
+                reason,
+                terminal=True,
+                failure_count=failure_count,
+                respect_threshold=True,
+            )
+            if reassigned_to:
+                worker["status"] = "reassigned"
+                worker["reassigned_to"] = reassigned_to
+                worker["last_event_at"] = utc_now()
+                worker["last_error"] = reason
+                finalize_queue_event_record(config, state, worker, "completed")
+                counts["missing_process_workers_reassigned"] += 1
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_missing_outcome",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": reason,
+                        "worker_run_id": worker.get("run_id"),
+                        "reason": reason,
+                        "outcome": "reassigned",
+                        "reassigned_to": reassigned_to,
+                    },
+                )
+                changed = True
+                continue
+            if schedule_missing_process_retry(config, worker, reason):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_retry_scheduled",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": (
+                            "Missing worker process found during boot reconciliation; "
+                            f"retry {worker.get('retry_count')} scheduled at "
+                            f"{worker.get('next_retry_at')}: {reason}"
+                        ),
+                        "worker_run_id": worker.get("run_id"),
+                        "next_retry_at": worker.get("next_retry_at"),
+                        "reason": reason,
+                        "outcome": "retry",
+                    },
+                )
+                counts["missing_process_workers_retried"] += 1
+                changed = True
+                continue
+
         worker["status"] = "failed"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = reason
@@ -11210,6 +11482,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             counts["expired_lease_workers_failed"] += 1
         else:
             counts["missing_process_workers_failed"] += 1
+            if record_missing_worker_terminal_outcome(
+                config,
+                worker,
+                reason=reason,
+            ):
+                counts["missing_process_tasks_blocked"] += 1
         write_activity_log(
             config,
             {
@@ -11218,6 +11496,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 "task_id": worker.get("task_id"),
                 "message": reason,
                 "worker_run_id": run_id,
+                "reason": reason,
+                "outcome": "terminal_failure",
             },
         )
         changed = True
@@ -11269,6 +11549,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         key: counts[key]
         for key in (
             "missing_process_workers_failed",
+            "missing_process_workers_retried",
+            "missing_process_workers_reassigned",
+            "missing_process_tasks_blocked",
             "expired_lease_workers_failed",
             "started_queue_records_requeued",
             "started_queue_records_failed",
