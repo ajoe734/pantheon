@@ -496,6 +496,39 @@ def run_rebase_smoke(
 ) -> tuple[bool, str]:
     fetch_refs(candidate, settings, runner, root=root)
     commands = tuple(extra_smoke_commands) or settings.smoke_commands
+
+    if not allow_push:
+        # Review-before-merge PRs are approved by exact head.  Pantheon task
+        # branches are composed by merging the current dev base into the task
+        # branch, so running `git rebase origin/dev` here would linearize a
+        # merge-rich, already-current graph and can report a false conflict.
+        # For gated delivery the only safe question is whether the reviewed
+        # head already contains the target base.  If it does, smoke that
+        # immutable head directly; if it does not, require the owner to refresh
+        # and get a new exact-head review.
+        ancestry = runner.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                f"origin/{settings.dev_branch}",
+                f"origin/{candidate.branch}",
+            ],
+            cwd=root,
+            check=False,
+        )
+        if ancestry.returncode != 0:
+            return False, "rebase_required"
+        with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
+            worktree = Path(tmp)
+            runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{candidate.branch}"], cwd=root)
+            try:
+                for command in commands:
+                    runner.run_shell(command, cwd=worktree)
+                return False, "clean_exact_head"
+            finally:
+                runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
+
     with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
         worktree = Path(tmp)
         runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{candidate.branch}"], cwd=root)
