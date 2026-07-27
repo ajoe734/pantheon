@@ -31,12 +31,17 @@ event pipeline instead of a polling JSONL scan.
   dead-letters after the attempt budget, and the controller tick raises with
   stage `registry_sync` instead of recording success.
 - **Immutable artifacts.** A Registry entry in `approved` or `retired` state is
-  never rewritten, and the terminal readback (not the write response) decides
-  the outcome, so an approval landing mid-write still blocks mutation.
+  never rewritten. StrategySpec registration uses the Registry's atomic
+  create-if-absent path, and terminal readback (not the write response) decides
+  the outcome, so an approval landing after the controller's probe but before
+  its POST still blocks mutation.
+- **Committed replay input.** Versioned jobs always load their source snapshot
+  from the transactionally committed version ledger. The caller-provided
+  source map remains only as a compatibility path for legacy unversioned jobs.
 
 ## Defects this work found and fixed
 
-All five were found or reproduced through acceptance regressions.
+All seven were found or reproduced through acceptance regressions.
 
 1. **Registry sync fell outside the seed's evidence lineage.** The worker
    resolved a version key for the evidence item, but the controller
@@ -76,6 +81,23 @@ All five were found or reproduced through acceptance regressions.
    a second seed identity. A versioned job now always derives its evidence
    item, bundle, and seed lineage from its admission-time source digest.
 
+6. **The Registry immutability probe had a TOCTOU overwrite window.** The
+   controller first read the stable Registry id and then issued a
+   non-conditional POST. If another actor created and approved that id between
+   the two requests, the POST replaced the approved entry with a draft. The
+   StrategySpec facade now calls the Registry's atomic `register_if_absent`
+   operation; the controller's POST receives the existing entry unchanged and
+   its terminal readback marks the job skipped as immutable. Both an in-memory
+   race and the real HTTP Registry service reproduce approval after the GET but
+   before the controller POST.
+
+7. **A caller map could replace a committed version's source payload.** When
+   the ledger held v1 and v2 for one source id, `run_pending()` preferred the
+   caller's source-id map. If that map contained v2, the v1 job was distilled
+   from v2 content even though its job digest and lineage named v1. Versioned
+   jobs now always use `source_for_job(job)`; a two-version regression proves
+   each delivered source digest equals the digest of the snapshot processed.
+
 ## Acceptance evidence
 
 All proofs live in
@@ -85,40 +107,33 @@ one class per acceptance criterion.
 | Acceptance | Result | Evidence |
 |---|---|---|
 | Committed normalized SourceRecord transactionally enqueues one versioned job | Pass | `TestVersionedAdmission` — duplicate admission yields one job and one version row; the job carries its own committed snapshot; a contradicting payload under the same identity rolls back the whole admission |
-| Concurrent workers claim with lease, revised content handled by digest | Pass | `TestConcurrentWorkers` — two spawned OS processes claim disjoint jobs, and a barrier-synchronized two-process run distills 40 sources to 40 distinct seeds with both workers demonstrably contending; stale and expired lease terminal transitions are rejected; revised content is a distinct version while an identical re-crawl is not |
+| Concurrent workers claim with lease, revised content handled by digest | Pass | `TestConcurrentWorkers` — two spawned OS processes claim disjoint jobs, and a barrier-synchronized two-process run distills 40 sources to 40 distinct seeds with both workers demonstrably contending; stale and expired lease terminal transitions are rejected; revised content is a distinct version while an identical re-crawl is not; v1 and v2 jobs ignore a caller map pointing only at v2 and each process its own committed snapshot |
 | Registry failure records controller failure and durable retry or DLQ | Pass | `TestRegistryFailureIsTruthful` — the tick raises at stage `registry_sync`, records no success, parks a durable retry, dead-letters with a redrivable payload after the attempt budget, replays to `done` on recovery, and preserves the first job's seed identity when a revision arrives during the outage |
-| Approved immutable artifacts remain unchanged | Pass | `TestApprovedArtifactsAreImmutable` — an approved entry is never written, approval landing between probe and readback still blocks mutation, and an accepted seed draft is not overwritten |
+| Approved immutable artifacts remain unchanged | Pass | `TestApprovedArtifactsAreImmutable` — an approved entry is never written, approval landing after the initial probe but before the atomic create is returned unchanged, approval after a new write but before readback still blocks completion, and an accepted seed draft is not overwritten |
 | Crash before or after Registry write replays to one terminal draft | Pass | `TestCrashReplay` — a crash before the write replays after lease expiry to one draft; a lost acknowledgement after a landed write replays by readback without a second Registry entry; repeated ticks stay idempotent |
 
 ## Proof required by the task packet
 
 | Proof | Result | How |
 |---|---|---|
-| Real source-to-registry service test | Pass | `TestRealSourceToRegistryService` serves the real `services/registry` FastAPI app over real HTTP on a real port and drives a full controller tick through it. Source lineage (`source_id`, `source_digest`, `source_event_version`) is read back over HTTP from the registered entry. No HTTP mock is used in this section. |
-| Two-worker and revised-content test | Pass | Genuinely independent OS processes via `multiprocessing` `spawn`, synchronized by a shared barrier so both processes contend on the same ledger and seed store. Thread coverage is retained only as `TestThreadRegressions` and is explicitly not the concurrency acceptance proof. |
+| Real source-to-registry service test | Pass | `TestRealSourceToRegistryService` serves the real `services/registry` FastAPI app over real HTTP on a real port and drives a full controller tick through it. Source lineage (`source_id`, `source_digest`, `source_event_version`) is read back over HTTP from the registered entry, and a second real-service proof creates and approves the stable id after the controller GET but before its POST and verifies approval survives. No HTTP mock is used in this section. |
+| Two-worker and revised-content test | Pass | Genuinely independent OS processes via `multiprocessing` `spawn`, synchronized by a shared barrier so both processes contend on the same ledger and seed store. A separate v1/v2 regression supplies only v2 in the caller map and verifies both job digests still match their processed committed snapshots. Thread coverage is retained only as `TestThreadRegressions` and is explicitly not the concurrency acceptance proof. |
 | Registry outage and replay | Pass | Both a simulated outage (`TestRegistryFailureIsTruthful`) and a real one against a port with nothing listening, then recovery against the real service (`test_real_service_outage_then_recovery_replays_once`). The intervening-revision regression proves the original job reuses the same digest-keyed bundle and seed identity. |
-| Approved-artifact immutability | Pass | `TestApprovedArtifactsAreImmutable`, including the approve-between-probe-and-write race. |
+| Approved-artifact immutability | Pass | `TestApprovedArtifactsAreImmutable`, including the exact approve-after-GET-before-POST race, plus the same race through the real Registry HTTP service and a direct facade regression proving same-id registration cannot overwrite approval. |
 
 ## Validation
 
 Commands rerun in this task worktree with the checkout-scoped
 `.venv-pantheon/bin/python3` after merging `origin/dev`
-`4580fc5d18a13ec70dcc18952646c584bec74bcc` at local merge
-`f3caca2742b7454e1224dfb5f9b284507476a162`. A later refresh merged
-`4688bd252911b91ea0459a38a694c5faa53e3bbd` at
-`014c9b9fa6bc56c061fe1acaed8adfa45140170f`; that delta only added unrelated
-L12-IMIT closeout evidence, and the focused 62-test suite passed again after
-the refresh:
+`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09` at local merge
+`7fce60810e0a1c0eeb7753001681010b01918fb5`:
 
-- Exact expiry, crash-before/after, outage/recovery, and intervening-revision
-  regression selection — 8 passed.
-- `pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py` — 62 passed.
-- `pytest services/source_ingestion` — the first run had one failure in the
-  unchanged L12-SRC multi-process reconciliation race; that isolated case then
-  passed 3/3, and the complete rerun passed 754 tests with 2 skipped.
-- `pytest services/registry services/research/strategy_spec` — 229 passed
-  (regression cover for the shared `JsonlRegistryStore` change and the
-  conversion path).
+- Exact controller, direct Registry facade, committed v1/v2 snapshot, in-memory
+  approve-before-POST, and real HTTP approve-before-POST selection — 6 passed.
+- `pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py` — 65 passed.
+- `pytest services/source_ingestion` — 757 passed with 2 skipped.
+- `pytest services/registry services/research/strategy_spec` — 230 passed
+  (including the direct same-id approved StrategySpec regression).
 - Multiprocess seed test repeated 3× for stability — passed each time.
 - ProductEvidence schema, companion checksum, ten-rule evidence validator,
   commit-trailer check, and `git diff --check` — passed on the manifest
@@ -130,10 +145,12 @@ the refresh:
 
 ## Composition boundary
 
-This task owns the distillation worker, its controller's Registry sink, and the
-shared JSONL registry store's read-modify-write safety. It does not change seed
-schema or materializer API, the Registry HTTP contract, or the source
-ingestion controller surface owned by `L12-SRC-001`, the allowed overlap task.
+This task owns the distillation worker, its controller's Registry sink, the
+narrow StrategySpec facade change from overwriting register to atomic
+create-if-absent, and the shared JSONL registry store's read-modify-write
+safety. It does not change seed schema or materializer API, Registry lifecycle
+transitions, or the source ingestion controller surface owned by
+`L12-SRC-001`, the allowed overlap task.
 
 This packet does not claim hosted deployment, a real external crawl, live
 broker or capital authority, or any approval-gate change.

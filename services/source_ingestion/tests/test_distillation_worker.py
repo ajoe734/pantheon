@@ -147,12 +147,12 @@ class TestEnqueueFromSourceRecord:
         assert seed.status == StrategySpecSeedStatus.DRAFT
         assert "momentum" in seed.feature_hints or "lightgbm" in " ".join(seed.feature_hints).lower()
 
-    def test_run_pending_missing_source_marks_failed(self, tmp_path: Path) -> None:
+    def test_legacy_run_pending_missing_source_marks_failed(self, tmp_path: Path) -> None:
         worker, queue, _ = _make_worker(tmp_path)
         source = _normalized_source()
-        worker.enqueue_from_source_record(source)
+        queue.enqueue(source.source_id)
 
-        result = worker.run_pending({})  # empty lookup map
+        result = worker.run_pending({})  # legacy jobs still require caller lookup
 
         assert result.processed == 1
         assert result.failed == 1
@@ -325,8 +325,8 @@ class TestIdempotency:
         worker, queue, seed_store = _make_worker(tmp_path)
         source = _normalized_source()
 
-        # First run with missing source map → fail
-        worker.enqueue_from_source_record(source)
+        # A legacy unversioned job still depends on the caller map.
+        queue.enqueue(source.source_id)
         worker.run_pending({})  # fails
 
         failed = [j for j in queue.list_all() if j.status == DistillationJobStatus.FAILED]
