@@ -1,0 +1,27 @@
+L12-CAP-001 — Six-Binding Crash/Restart Isolation Drill
+======================================================
+Captured: 2026-07-26T22:06:25Z
+Image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+
+Command:
+  /home/lupin/pantheon/.venv/bin/python -m unittest -v \
+    services.execution.lean_runtime.test_signal_isolation.TestSixBindingRestartIsolationDrill
+
+Observed case:
+  test_six_binding_restart_isolation ... ok
+
+Result:
+  Ran 1 test in 2.683s
+  OK
+
+Six OS processes claim one signal apiece from six binding-scoped queues and exit
+without ack. Restarted processes recover only their own expired claims, verify
+runtime/binding/capital-pool identity, and ack them. The assertion requires all
+six unique signal IDs exactly once and zero pending, in-flight, or DLQ residue.
+
+Post-merge isolated repeat:
+  services.execution.lean_runtime.test_signal_isolation
+  Ran 39 tests in 5.987s
+  OK
+
+STATUS: OWNER PROOF PASSED; INDEPENDENT REVIEW PENDING
