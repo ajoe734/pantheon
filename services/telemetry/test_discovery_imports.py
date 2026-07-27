@@ -223,6 +223,12 @@ def provisioned_interpreter() -> str:
     below is always a proof about the real provisioning path and never depends
     on the developer having bootstrapped first.
 
+    The script is invoked exactly as the guide documents — no
+    ``--dependency-python``, no ``PANTHEON_DEPENDENCY_PYTHON`` — so it has to
+    resolve the dependency interpreter on its own. That keeps the AC2 proof
+    honest on an auto-worker host, where ``sys.executable`` may well be the bare
+    system interpreter with no pytest in it.
+
     Deliberately not a ``skipTest``: an environment where provisioning fails is
     an environment where AC2 is unproven, and that must read as a failure.
     """
@@ -600,11 +606,21 @@ class TestAC2ModesUnderInstalledDistribution(UnittestRunAssertions, unittest.Tes
         cls.python = provisioned_interpreter()
 
     def test_m1_pytest_from_foreign_cwd(self):
+        # Deliberately not a skip. Provisioning selects a dependency interpreter
+        # and fails closed unless the environment it hands back can import
+        # pytest, so a pytest-less provisioned interpreter is a provisioning
+        # regression — the exact one this task was rejected on — and it must
+        # read as a failure of M1, not as an unproven mode.
         probe = _run(
             [self.python, "-c", "import pytest"], cwd=REPO_ROOT, env=_child_env()
         )
-        if probe.returncode != 0:  # pragma: no cover - environment without pytest
-            self.skipTest("pytest is not installed in the provisioned interpreter")
+        self.assertEqual(
+            probe.returncode,
+            0,
+            "the provisioned interpreter cannot import pytest, so M1 is unrunnable; "
+            "scripts/dev/provision_python_distribution.py is required to fail closed "
+            f"rather than return it:\n{probe.stdout}{probe.stderr}",
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             proc = _run(
