@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Bound supervisor task-state lock latency and projection truth
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Remediation PR #4263 merged to dev at `52aa8a623e68336e1965d7241950cb3c22f0c827` with Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance green. Final executable candidate `2abc735b0` passed the real 2050-event / 134.852 MiB benchmark with eight governed approve/assign/note/reopen commands across four workers during seventeen full `run_once` cycles at 1.296s p95/max and exact event-2066 projection; full related validation passed (685 tests, 82 subtests). Land this delivery-evidence update, then hand off to Codex2 for fresh independent review.
+- Next: Codex2 independent review approved: PRs #4263/#4264 merged to dev; candidate 2abc735b full suite 685 passed plus 82 subtests; fresh governed 2050-event 134.852 MiB benchmark completed 8/8 commands across 4 workers and 16 run_once cycles at 1.840s p95/max with exact event-2066 projection; required checks and lock/projection/termination boundaries verified.
 
 ## Summary
 縮短 supervisor task-state/runtime-admission 鎖持有時間，修正 caught_up 語意，讓 approve/assign 與 heartbeat 不再被數分鐘 projection 阻塞。
