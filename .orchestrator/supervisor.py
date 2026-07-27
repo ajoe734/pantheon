@@ -1690,7 +1690,15 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
-def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | None]:
+WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS = 30
+
+
+def _fetch_worker_base_ref(
+    repo_root: Path,
+    base_ref: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> tuple[bool, str | None]:
     """Refresh the exact remote-tracking ref used to lease worker worktrees.
 
     ``git fetch origin dev`` updates ``FETCH_HEAD`` but does not necessarily
@@ -1698,6 +1706,11 @@ def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | 
     refspec tracks only another branch (the live command checkout tracked only
     ``master``).  Worktree creation and freshness checks consume the remote-
     tracking ref, so fetch it with an explicit source and destination.
+
+    ``timeout_seconds`` bounds the network wait. The pre-admission caller leaves
+    it unset because it runs outside every lock; the recovery caller sets it
+    because it runs inside the supervisor cycle, where an unbounded fetch would
+    charge its wait to the runtime-admission hold.
     """
 
     normalized = str(base_ref or "").strip()
@@ -1709,13 +1722,17 @@ def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | 
     if not refspec:
         return False, "missing_base_ref"
 
-    proc = subprocess.run(
-        ["git", "fetch", "origin", refspec, "--quiet"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "fetch", "origin", refspec, "--quiet"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"git fetch timed out after {timeout_seconds}s"
     if proc.returncode == 0:
         return True, None
     details = (proc.stderr or proc.stdout or "").strip()
@@ -1752,7 +1769,11 @@ def _worker_base_ref_precondition(
     if repo_root is None:
         return False, f"base_ref_not_prefetched:{normalized}"
 
-    _fetched, fetch_error = _fetch_worker_base_ref(repo_root, normalized)
+    _fetched, fetch_error = _fetch_worker_base_ref(
+        repo_root,
+        normalized,
+        timeout_seconds=WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
+    )
     if not _git_ref_exists(repo_root, normalized):
         return False, (
             f"base_ref_unresolved:{normalized}:"

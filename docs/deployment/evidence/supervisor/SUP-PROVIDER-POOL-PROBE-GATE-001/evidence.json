@@ -104,7 +104,9 @@
         ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_worktree_creation_succeeds_across_a_redispatch_boundary",
         ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_unresolvable_base_still_fails_closed",
         ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_missing_base_ref_name_fails_closed",
-        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_standalone_maintenance_outside_a_cycle_is_unaffected"
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_standalone_maintenance_outside_a_cycle_is_unaffected",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_recovery_fetch_is_time_bounded_inside_the_cycle",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_a_hung_recovery_fetch_still_accepts_an_already_resolving_ref"
       ]
     },
     "7_clean_owner_exit_cannot_loop": {
@@ -126,7 +128,7 @@
   "verification": {
     "provisioning": "python3 scripts/dev/provision_python_distribution.py",
     "command": "cd .orchestrator && \"$PANTHEON_PY\" -m pytest -q test_provider_permissions.py test_supervisor.py test_supervisor_watchdog.py",
-    "result": "572 passed, 10 subtests passed",
+    "result": "574 passed, 10 subtests passed",
     "raw": [
       "raw/orchestrator-suites.txt",
       "raw/acceptance-selections.txt",

@@ -67,7 +67,7 @@ Five coupled control-plane hazards, all observed on the live dev VM fleet:
 | 3 | Shared-credential Antigravity aliases are not independent capacity | `ProviderProbeGateTest.test_antigravity_aliases_sharing_a_token_share_one_probe`, `…_declared_quota_group_shares_capacity` |
 | 4 | A supervisor loop report spawns no fresh provider CLI smoke when none is due | `CachedProviderCapabilityLoopTests.test_loop_report_reuses_cached_probes_when_none_are_due` (drives the real `supervisor.probe_provider_reports`) |
 | 5 | Watchdog/sync report or repair the actual active root | `SupervisorRootCoherenceTests` (5 tests) plus `raw/sync-dev-root-split-smoke.txt` |
-| 6 | Base-ref readiness survives a recovery/redispatch boundary; still fails closed | `WorkerBaseRefPreconditionTests` (6 tests, incl. a real `git worktree add` across an empty context and an unresolvable-ref fail-closed case) |
+| 6 | Base-ref readiness survives a recovery/redispatch boundary; still fails closed | `WorkerBaseRefPreconditionTests` (8 tests, incl. a real `git worktree add` across an empty context, a bounded recovery fetch, and an unresolvable-ref fail-closed case) |
 | 7 | A clean owner exit cannot loop `owned_in_progress_dispatch` | `MissingHandoffBlockerTests` (3 tests) plus `PollWorkersRecoveryTests.test_completion_stage_blocks_prepared_head_without_handoff`, `…_keeps_generic_exit_when_no_head_was_prepared`, `test_worker_prepared_review_head_requires_an_owner_dispatch` |
 | 8 | PR against `dev`, checks, independent review, merge, live root repair | Recorded in `evidence.json` `delivery` / `live_repair` once the PR merges |
 
@@ -78,7 +78,7 @@ python3 scripts/dev/provision_python_distribution.py
 PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
 cd .orchestrator && "$PANTHEON_PY" -m pytest -q \
   test_provider_permissions.py test_supervisor.py test_supervisor_watchdog.py
-# 572 passed, 10 subtests passed
+# 574 passed, 10 subtests passed
 ```
 
 Raw output: `raw/orchestrator-suites.txt`, `raw/acceptance-selections.txt`.

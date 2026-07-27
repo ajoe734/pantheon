@@ -11481,6 +11481,46 @@ class WorkerBaseRefPreconditionTests(unittest.TestCase):
             self.assertTrue(created, error)
             self.assertTrue((worktree / "tracked.txt").exists())
 
+    def test_recovery_fetch_is_time_bounded_inside_the_cycle(self) -> None:
+        """The pre-admission fetch runs outside every lock; this one does not.
+
+        An unbounded recovery fetch would charge its network wait to the
+        runtime-admission hold that approve/assign/note commands queue behind.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                with mock.patch.object(
+                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                ) as fetch:
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+        self.assertTrue(ready, error)
+        self.assertEqual(
+            fetch.call_args.kwargs["timeout_seconds"],
+            supervisor.WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def test_a_hung_recovery_fetch_still_accepts_an_already_resolving_ref(self) -> None:
+        """A fetch timeout is not proof the ref is missing; only rev-parse is."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                with mock.patch.object(
+                    supervisor,
+                    "_fetch_worker_base_ref",
+                    return_value=(False, "git fetch timed out after 30s"),
+                ):
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+        self.assertTrue(ready, error)
+
     def test_unresolvable_base_still_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._origin_backed_repo(tmpdir)
