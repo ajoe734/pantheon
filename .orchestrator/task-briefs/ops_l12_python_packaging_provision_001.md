@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Independent review approved: implementation candidate dd64fd9d4833766eeb32e7a18901a65a73a5df49 and reviewer-evidence head 733f43f9a155f31b6843e590b478b15790b9b8bf verified. Fresh bare /usr/bin/python3 bootstrap passed 40 tests/23 subtests; telemetry passed 353/1 pre-existing skip/35 subtests; bare discovery ran 20 with only 2 intended ambient-pytest skips; unprovisioned M2/M3 and unsafe explicit/current-mode controls failed closed; finalized evidence gate passed 10/36 subtests and checksum/source digests matched; exact-head push 30268773783 and pull_request 30268774097 each have all four jobs green; PR #4232 remains open, BEHIND, and auto-merge disabled for Codex owner closeout.
+- Next: PR #4232 merged the reviewed delivery from exact head ca9d91b0209bad18dd9330c8301de9f4ba0a1e01 into dev as squash commit 3802799f81778c93728d9dbbe4028289f153c718 after both push and pull_request Branch CI runs passed all four jobs. Fresh bare /usr/bin/python3 bootstrap passed; focused packaging/discovery/evidence gates passed 50 tests/59 subtests; telemetry passed 353 tests/1 pre-existing NATS skip/35 subtests; checksum matched. This task-brief-only follow-up preserves those implementation and review artifacts while restoring merge-commit ancestry for the governed owner done gate, whose active runtime does not treat a squash-merged head as an ancestor.
 
 ## Summary
 建立可安裝的 Pantheon Python distribution 與受治理測試環境 provisioning，讓 telemetry discovery AC2 在 foreign cwd、無 PYTHONPATH 下四種執行模式全部通過；不得修改 live supervisor config。
