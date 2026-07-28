@@ -380,8 +380,8 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "At canonical journal sequence 3158, owner Codex and reviewer Codex2 are distinct. This owner cut intentionally records no formal Codex2 verdict; independent review remains the blocking closeout gate.",
-      "status": "pending"
+      "proof": "At canonical journal sequence 3158, owner Codex and reviewer Codex2 are distinct and PR #4285 owner-receipt head 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 is bound by this cut. Codex2 later independently approved the compose-integrated exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 through the canonical GitHub review bridge at 2026-07-28T14:50:42Z; owner closeout does not self-approve.",
+      "status": "pass"
     }
   },
   "acceptance": [
@@ -439,13 +439,13 @@
   ],
   "residual_risks": {
     "independent_review": {
-      "blocking_for_this_task": true,
-      "containment": "Keep the task out of review_approved/done until Codex2 independently validates the committed manifest and implementation.",
-      "description": "At canonical journal sequence 3158, Codex owns the v1.0.0 cut and Codex2 remains the distinct reviewer. Independent exact-head approval is pending for delivery receipt 0d40d19678d1b153c873ad663d9e2e6027e3a5e2.",
-      "expiry": "On governed Codex2 approval or concrete changes-requested decision.",
+      "blocking_for_this_task": false,
+      "containment": "The canonical review binding records reviewer Codex2, PR #4285, and exact head 0fc918b747cf38262360b6045dadd25f157ed9d9; any later delivery-head change requires a new independent verdict.",
+      "description": "Codex2 completed independent review of PR #4285 owner-receipt head 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 after composition and approved exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 at 2026-07-28T14:50:42Z after validating the committed manifest, implementation ancestry, checks, and scoped acceptance suite.",
+      "expiry": "Resolved by governed Codex2 approval at 2026-07-28T14:50:42Z.",
       "owner": "Codex2",
-      "recheck_trigger": "Task enters review with the evidence commit and PR available.",
-      "severity": "blocking"
+      "recheck_trigger": "The reviewed delivery head or bound evidence path changes.",
+      "severity": "low"
     },
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
@@ -602,6 +602,15 @@
       "sequence": 8,
       "sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
       "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-28T14:50:42Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4285",
+      "sequence": 9,
+      "sha": "0fc918b747cf38262360b6045dadd25f157ed9d9",
+      "status": "approved"
     }
   ]
 }
