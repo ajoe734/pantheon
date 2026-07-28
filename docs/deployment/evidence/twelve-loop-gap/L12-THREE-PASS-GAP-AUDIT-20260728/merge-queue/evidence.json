@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "in_progress",
+  "observed_at": "2026-07-28T13:32:45Z",
+  "scope": {
+    "owned_layer": "Exact-head composition, gate verification, root-freeze release, merge, and post-merge receipt for the protected L12 closeout queue.",
+    "not_changing": [
+      "L12 runtime implementation",
+      "canonical reviewer decisions",
+      "branch protection configuration",
+      "provider configuration",
+      "hosted deployment"
+    ],
+    "source_graph": "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/execution-tasks.json"
+  },
+  "gate_policy": {
+    "base": "dev",
+    "required_contexts": [
+      "Commit trailers",
+      "Runtime mirror guard",
+      "Smoke acceptance",
+      "Pantheon canonical review gate",
+      "Pantheon root merge freeze 2026-07-27"
+    ],
+    "strict_base": true,
+    "auto_merge_must_remain_disabled": true,
+    "merge_rule": "Release the root-freeze context for one current exact head only after assigned-reviewer approval and all mechanical checks are green."
+  },
+  "queue": [
+    {
+      "pr": 4218,
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "state": "merged",
+      "merge_commit": "9e4bb8e1fa9495d8802da58336b05ae68c7756ad"
+    },
+    {
+      "pr": 4287,
+      "task_id": "L12-GITHUB-REVIEW-BRIDGE-001",
+      "state": "merged",
+      "merge_commit": "091ac6978"
+    },
+    {
+      "pr": 4286,
+      "task_id": "L12-DIST-001",
+      "state": "merged",
+      "reviewed_head": "e91382b508b42456d75747fdf3cef92c7850d2ad",
+      "merge_commit": "cf94be38a548a31df020456904ea10ff95ffb4dd",
+      "checks": "Branch CI, canonical review gate, and root merge freeze all succeeded."
+    },
+    {
+      "pr": 4290,
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "state": "review_pending",
+      "head": "f77358301fdecd93de26c4ca96bc688e5ab2b969",
+      "composed_dev": "061408b09aa06943813c97334054bfa29b79e236",
+      "checks": "Two Branch CI runs passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance.",
+      "pending": [
+        "Claude exact-head approval",
+        "canonical review context success",
+        "single-head root-freeze release",
+        "exact-head merge"
+      ]
+    },
+    {
+      "pr": 4293,
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "state": "owner_active",
+      "head": "f3203ecb9fc8daa10450e20f5e9cd5c53a64ce2e",
+      "pending": [
+        "compose preceding queue merge",
+        "fresh Branch CI",
+        "Claude exact-head approval",
+        "single-head root-freeze release",
+        "exact-head merge"
+      ]
+    },
+    {
+      "pr": 4285,
+      "task_id": "L12-EVO-001",
+      "state": "review_pending_behind",
+      "head": "3c3a9baf28a7a465d3d853270be9d5481fd561c3",
+      "checks": "Current-head Branch CI is green; canonical and root gates are absent.",
+      "pending": [
+        "compose all preceding queue merges",
+        "fresh Branch CI",
+        "Claude exact-head approval",
+        "single-head root-freeze release",
+        "exact-head merge",
+        "owner done/archive closeout"
+      ]
+    }
+  ]
+}
