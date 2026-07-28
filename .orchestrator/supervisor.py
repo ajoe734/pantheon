@@ -86,7 +86,7 @@ from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
-from watch_events import queue_delivery_event, run_scan, trim_seen_events
+from watch_events import queue_delivery_event, _run_scan_locked, trim_seen_events
 
 # SUPERVISOR-REWRITE cutover modules (parallel package, pure — no supervisor
 # import, so this is not circular). These are the phase-1/phase-3 clean
@@ -6739,7 +6739,7 @@ def refresh_provider_auth_before_dispatch(
     try:
         probe = probe_provider_auth(config, provider_key, force=True)
     except Exception as exc:  # probe failure is explicit not-ready, never a launch bypass
-        probe = {
+                probe = {
             "provider": provider_key,
             "ready": False,
             "status": "probe_error",
@@ -6769,9 +6769,11 @@ def refresh_provider_auth_before_dispatch(
     else:
         capability["local_cli_worker_supported"] = False
         capability["supports_auto_approve"] = False
-    if capability["auth_ready"] is False and previously_ready is not False:
-        # Persist the flip so the next capability scan re-probes on the
-        # failed-probe interval instead of reusing the stale ready cache.
+    if capability["auth_ready"] != previously_ready:
+        # Persist auth transitions in both directions so the next dispatch gate
+        # consumes the same live pre-dispatch probe result.  Only persisting
+        # ready->not-ready left a stale not-ready capability on disk after a
+        # successful recovery probe, parking healthy lanes behind old auth data.
         try:
             write_provider_capabilities(config, report=provider_report)
         except Exception:  # a report write must never block or bypass dispatch gating
@@ -13861,7 +13863,7 @@ def _run_once_locked(
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:
-            changed = _safe_phase("run_scan", run_scan, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
+            changed = _safe_phase("run_scan", _run_scan_locked, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
             state = load_runtime_state(config)
             stamp_supervisor_runtime_state(
                 config,
