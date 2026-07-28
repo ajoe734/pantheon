@@ -2,9 +2,9 @@
 
 Owner: Codex2
 Reviewer: Codex
-Status: owner implementation and acceptance proof ready; independent review pending
+Status: committed-replay lineage repair and owner proof ready; independent review pending
 
-This cut scanned through authoritative task-state journal sequence 2976. The
+This cut scanned through authoritative task-state journal sequence 3186. The
 canonical row at that boundary reports `in_progress`, owner `Codex2`, reviewer
 `Codex`; later journal events are outside this owner cut.
 
@@ -38,6 +38,11 @@ event pipeline instead of a polling JSONL scan.
 - **Committed replay input.** Versioned jobs always load their source snapshot
   from the transactionally committed version ledger. The caller-provided
   source map remains only as a compatibility path for legacy unversioned jobs.
+- **Pure Registry projection.** Registry delivery validates the committed
+  source digest, version key, seed, evidence item, and evidence bundle as one
+  coherent lineage set, then builds the payload only from those objects. It
+  never resolves mutable production-note files by `source_id` during delivery
+  or replay.
 
 ## Defects this work found and fixed
 
@@ -98,6 +103,21 @@ All seven were found or reproduced through acceptance regressions.
    jobs now always use `source_for_job(job)`; a two-version regression proves
    each delivered source digest equals the digest of the snapshot processed.
 
+8. **Registry delivery re-read mutable production notes by source id.** Even
+   after the worker loaded the committed SourceRecord and materialized the
+   digest-keyed seed, `_build_registry_payload()` searched `source_dirs` for a
+   same-id Markdown file and silently replaced the request's seed, evidence
+   bundle, title, and StrategySpec payload. Registry payload construction now
+   has one path: validate the `RegistrySyncRequest` against the job digest and
+   convert its exact committed source, seed, and evidence item.
+
+9. **A retry could change the Registry checksum only because time advanced.**
+   A retry refreshed the mutable seed with a new `created_at`; that timestamp is
+   embedded in the StrategySpec and therefore changes its checksum. A write
+   that landed before acknowledgement could be rejected as conflicting on the
+   next attempt. Same-version refresh now preserves the seed's original
+   materialization timestamp, making replay payload bytes deterministic.
+
 ## Acceptance evidence
 
 All proofs live in
@@ -108,9 +128,9 @@ one class per acceptance criterion.
 |---|---|---|
 | Committed normalized SourceRecord transactionally enqueues one versioned job | Pass | `TestVersionedAdmission` — duplicate admission yields one job and one version row; the job carries its own committed snapshot; a contradicting payload under the same identity rolls back the whole admission |
 | Concurrent workers claim with lease, revised content handled by digest | Pass | `TestConcurrentWorkers` — two spawned OS processes claim disjoint jobs, and a barrier-synchronized two-process run distills 40 sources to 40 distinct seeds with both workers demonstrably contending; stale and expired lease terminal transitions are rejected; revised content is a distinct version while an identical re-crawl is not; v1 and v2 jobs ignore a caller map pointing only at v2 and each process its own committed snapshot |
-| Registry failure records controller failure and durable retry or DLQ | Pass | `TestRegistryFailureIsTruthful` — the tick raises at stage `registry_sync`, records no success, parks a durable retry, dead-letters with a redrivable payload after the attempt budget, replays to `done` on recovery, and preserves the first job's seed identity when a revision arrives during the outage |
+| Registry failure records controller failure and durable retry or DLQ | Pass | `TestRegistryFailureIsTruthful` — the tick raises at stage `registry_sync`, records no success, parks a durable retry, dead-letters with a redrivable payload after the attempt budget, replays to `done` on recovery, and preserves the first job's seed identity when a revision arrives during the outage; `TestCommittedReplayLineage` proves a valid same-id note cannot replace the committed payload |
 | Approved immutable artifacts remain unchanged | Pass | `TestApprovedArtifactsAreImmutable` — an approved entry is never written, approval landing after the initial probe but before the atomic create is returned unchanged, approval after a new write but before readback still blocks completion, and an accepted seed draft is not overwritten |
-| Crash before or after Registry write replays to one terminal draft | Pass | `TestCrashReplay` — a crash before the write replays after lease expiry to one draft; a lost acknowledgement after a landed write replays by readback without a second Registry entry; repeated ticks stay idempotent |
+| Crash before or after Registry write replays to one terminal draft | Pass | `TestCrashReplay` — a crash before the write replays after lease expiry to one draft; a lost acknowledgement after a landed write replays by readback without a second Registry entry; `TestCommittedReplayLineage` mutates a valid same-id note and crosses a timestamp boundary after write-ack loss, then proves identical checksum/seed/bundle/item lineage and `already_terminal`; repeated ticks stay idempotent |
 
 ## Proof required by the task packet
 
@@ -118,7 +138,7 @@ one class per acceptance criterion.
 |---|---|---|
 | Real source-to-registry service test | Pass | `TestRealSourceToRegistryService` serves the real `services/registry` FastAPI app over real HTTP on a real port and drives a full controller tick through it. Source lineage (`source_id`, `source_digest`, `source_event_version`) is read back over HTTP from the registered entry, and a second real-service proof creates and approves the stable id after the controller GET but before its POST and verifies approval survives. No HTTP mock is used in this section. |
 | Two-worker and revised-content test | Pass | Genuinely independent OS processes via `multiprocessing` `spawn`, synchronized by a shared barrier so both processes contend on the same ledger and seed store. A separate v1/v2 regression supplies only v2 in the caller map and verifies both job digests still match their processed committed snapshots. Thread coverage is retained only as `TestThreadRegressions` and is explicitly not the concurrency acceptance proof. |
-| Registry outage and replay | Pass | Both a simulated outage (`TestRegistryFailureIsTruthful`) and a real one against a port with nothing listening, then recovery against the real service (`test_real_service_outage_then_recovery_replays_once`). The intervening-revision regression proves the original job reuses the same digest-keyed bundle and seed identity. |
+| Registry outage and replay | Pass | Both a simulated outage (`TestRegistryFailureIsTruthful`) and a real one against a port with nothing listening, then recovery against the real service (`test_real_service_outage_then_recovery_replays_once`). The intervening-revision regression proves the original job reuses the same digest-keyed bundle and seed identity. The write-ack-loss regression mutates a valid same-id note between attempts and proves the landed payload is byte-identical on `already_terminal` replay with no DLQ. |
 | Approved-artifact immutability | Pass | `TestApprovedArtifactsAreImmutable`, including the exact approve-after-GET-before-POST race, plus the same race through the real Registry HTTP service and a direct facade regression proving same-id registration cannot overwrite approval. |
 
 ## Validation
@@ -163,6 +183,68 @@ Validation rerun in `/tmp/pantheon-4193-dist-repair.hPWFnF`:
 - `git diff --check` — pass.
 - Negative control: the same two-process scenario with the JSONL lease stubbed
   out lost 1–2 of 40 seeds on every run, confirming the proof is not vacuous.
+
+## Historical merged-delivery owner closeout cut — 2026-07-28
+
+PR #4193 exact head
+`1a32aeb86e59a79a0ea7be7f3f1c36e839931f80` passed its push and
+pull-request Branch CI gates plus the Human/Ops canonical-review and root-merge
+release statuses, then merged to `dev` as
+`1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86` at
+`2026-07-27T22:10:42Z`.
+
+The exact merged head contains both corrections from Codex's last formal
+rejection:
+
+- same-id StrategySpec registration rejects conflicting content or lineage
+  instead of accepting an unrelated existing row as idempotent success;
+- distillation replay validates the complete draft/candidate Registry readback
+  before acknowledging `already_terminal`.
+
+Codex2 revalidated the merged task bytes after fast-forwarding this worktree to
+`origin/dev` `11858f4d445565064e630cce9b89ea8b475a6598`:
+
+- `.venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py` — 113 passed, 3 warnings.
+- `.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion` — 758 passed, 2 skipped, 3 warnings.
+- `.venv-pantheon/bin/python3 -m pytest -q services/registry services/research/strategy_spec` — 231 passed, 17 warnings.
+
+The Human/Ops merge release proves publication of the repaired implementation,
+but it is not recorded as Codex's governed independent reviewer verdict. This
+owner cut therefore remains fail-closed for `review_approved` and `done` until
+Codex reviews the post-repair bytes and binds the committed
+[`evidence.json`](evidence.json) through the governed approval command.
+
+## Committed-replay lineage repair cut — 2026-07-28
+
+Codex's next independent negative proof found that PR #4286 exact head
+`12ec4214ea431e74cfd4c1a222d30f8d2512f5a4` still allowed Registry delivery to
+resolve a mutable same-id production note after source-version admission. The
+job could report `registry_synced` and `done` while the Registry entry carried a
+different title, seed, evidence bundle, and checksum than the committed
+SourceRecord transaction.
+
+Runtime anchor `d642eec8bd9c436f2dce52932d86551f2bdc622d` removes that filesystem
+read path, fail-closed validates request digest/lineage coherence, and preserves
+the seed's admission-time timestamp across same-version retry refresh. The two
+new `TestCommittedReplayLineage` regressions prove:
+
+- a valid same-id production note with conflicting content cannot replace the
+  committed SourceRecord title, hypothesis, seed id, evidence bundle/item ids,
+  or StrategySpec checksum;
+- after a Registry write lands and its acknowledgement is lost, mutating that
+  note and crossing a seed timestamp boundary still yields the exact same
+  request lineage and Registry payload; replay returns `already_terminal`,
+  performs no second write, reaches `done`, and creates no dead letter.
+
+Codex2 reran the following in the checkout-scoped environment:
+
+- `.venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py` — 115 passed, 3 warnings.
+- `.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion` — 760 passed, 2 skipped, 3 warnings.
+- `.venv-pantheon/bin/python3 -m pytest -q services/registry services/research/strategy_spec` — 231 passed, 17 warnings.
+
+This remains owner evidence only. PR #4286 must receive fresh checks on the new
+receipt head, and Codex must independently review that exact head before any
+`review_approved` transition.
 
 ## Composition boundary
 
