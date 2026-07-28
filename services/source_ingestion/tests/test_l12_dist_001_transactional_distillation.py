@@ -19,6 +19,7 @@ named ``*_threads_*``; they are not the concurrency acceptance proof.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import multiprocessing as mp
 import socket
@@ -203,6 +204,62 @@ def _write_evidence(config: DistillationControllerConfig, *records: SourceRecord
             handle.write(
                 json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n"
             )
+
+
+def _write_valid_production_note(
+    directory: Path,
+    *,
+    source_id: str,
+    title: str,
+    hypothesis: str,
+) -> Path:
+    """Write mutable same-id markdown that the production resolver accepts."""
+
+    path = directory / f"{source_id}.md"
+    path.write_text(
+        f"""# {title}
+Source Record ID: {source_id}
+Date: 2026-07-28
+Author: mutable-note-author
+Access: research
+License: internal_research
+Confidence: 0.91
+
+## Hypothesis
+{hypothesis}
+
+## Universe
+- Symbols: MUTABLE_NOTE_UNIVERSE
+- Venues: MUTABLE_NOTE_VENUE
+- Asset class: equity
+
+## Frequency
+daily
+
+## Risk Caps
+- Max position pct: 2%
+- Max gross exposure pct: 20%
+
+## Data Requirements
+- mutable-note-data
+
+## Feature Hints
+- mutable-note-feature
+
+## Label Hints
+- mutable-note-label
+
+## Evaluation
+- Metrics: sharpe_ratio, max_drawdown
+
+## Strategy Seed
+- Backend hint: mutable-note-backend
+- Holding period: 2 days
+- Risk notes: mutable-note-risk
+""",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _fresh_state() -> ControllerState:
@@ -782,6 +839,167 @@ class TestRegistryFailureIsTruthful:
             original.source_id, original_job.source_digest
         ).seed_id == original_seed_id
         assert len(StrategySpecSeedStore(seed_path).list_all()) == 2
+
+
+# ---------------------------------------------------------------------------
+# Committed replay lineage: Registry payloads never re-read mutable notes
+# ---------------------------------------------------------------------------
+
+class TestCommittedReplayLineage:
+    def test_valid_same_id_note_cannot_replace_committed_snapshot_lineage(
+        self, tmp_path: Path, registry: _RecordingRegistry
+    ) -> None:
+        config = _controller_config(tmp_path)
+        source = _normalized_source(
+            "src-committed-note-conflict",
+            title="Transactionally committed source title",
+        )
+        mutable_title = "Mutable same-id production note title"
+        mutable_hypothesis = "Mutable note bytes must never replace committed lineage."
+        _write_valid_production_note(
+            tmp_path,
+            source_id=source.source_id,
+            title=mutable_title,
+            hypothesis=mutable_hypothesis,
+        )
+        _write_evidence(config, source)
+
+        result, error, _ = _run_tick(config, _DummyLoopWriter())
+
+        assert error is None
+        assert result["actual"]["synced_count"] == 1
+        seed = StrategySpecSeedStore(config.seed_store_path).list_all()[0]
+        registry_id = _registry_id_for(source)
+        entry = registry.entries[registry_id]["entry"]
+        strategy_spec = entry["metadata"]["strategy_spec"]
+        assert strategy_spec["title"] == source.title
+        assert (
+            strategy_spec["hypothesis"]
+            == source.metadata["strategy_seed"]["hypothesis"]
+        )
+        assert mutable_title not in json.dumps(entry)
+        assert mutable_hypothesis not in json.dumps(entry)
+
+        assert entry["source_seed_id"] == seed.seed_id
+        assert entry["producer_run_id"] == seed.seed_id
+        assert entry["evaluation_summary"]["source_seed_id"] == seed.seed_id
+        assert (
+            entry["evaluation_summary"]["evidence_bundle_id"]
+            == seed.evidence_bundle_id
+        )
+        assert entry["metadata"]["source_seed_id"] == seed.seed_id
+        assert entry["metadata"]["evidence_bundle_id"] == seed.evidence_bundle_id
+        evidence_refs = strategy_spec["evidence_refs"]
+        assert evidence_refs[0]["ref_id"] == seed.evidence_bundle_id
+        assert evidence_refs[1]["ref_id"] == seed.evidence_item_ids[0]
+        expected_checksum = "sha256:" + hashlib.sha256(
+            json.dumps(
+                strategy_spec,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        assert entry["checksum"] == expected_checksum
+
+    def test_note_mutation_after_write_ack_loss_replays_identical_payload(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        registry: _RecordingRegistry,
+    ) -> None:
+        config = _controller_config(tmp_path, retry_base_seconds=0)
+        source = _normalized_source(
+            "src-note-mutation-replay",
+            title="Committed replay snapshot",
+        )
+        note_path = _write_valid_production_note(
+            tmp_path,
+            source_id=source.source_id,
+            title="Mutable note before write",
+            hypothesis="First mutable note hypothesis.",
+        )
+        _write_evidence(config, source)
+
+        real_sync = distillation_controller_module._make_registry_sync(config)
+        request_lineages: list[tuple[str, str, str, str | None]] = []
+        terminal_statuses: list[str] = []
+
+        def recording_sync(request: RegistrySyncRequest) -> RegistrySyncResult:
+            request_lineages.append(
+                (
+                    request.seed.seed_id,
+                    request.evidence_bundle.evidence_bundle_id,
+                    request.evidence_item.evidence_item_id,
+                    request.version_key,
+                )
+            )
+            sync_result = real_sync(request)
+            terminal_statuses.append(sync_result.status)
+            return sync_result
+
+        monkeypatch.setattr(
+            distillation_controller_module,
+            "_make_registry_sync",
+            lambda _: recording_sync,
+        )
+
+        registry.drop_ack_after_write = True
+        _, first_error, _ = _run_tick(config, _DummyLoopWriter())
+
+        assert isinstance(first_error, DistillationControllerError)
+        assert first_error.stage == "registry_sync"
+        registry_id = _registry_id_for(source)
+        landed_entry = json.loads(json.dumps(registry.entries[registry_id]))
+        landed_payload = landed_entry["entry"]
+        first_lineage = request_lineages[0]
+        assert landed_payload["source_seed_id"] == first_lineage[0]
+        assert landed_payload["producer_run_id"] == first_lineage[0]
+        assert (
+            landed_payload["evaluation_summary"]["evidence_bundle_id"]
+            == first_lineage[1]
+        )
+        assert (
+            landed_payload["metadata"]["strategy_spec"]["evidence_refs"][1]["ref_id"]
+            == first_lineage[2]
+        )
+
+        note_path.write_text(
+            note_path.read_text(encoding="utf-8")
+            .replace("Mutable note before write", "Mutable note after write")
+            .replace(
+                "First mutable note hypothesis.",
+                "Second mutated hypothesis that conflicts with the first.",
+            ),
+            encoding="utf-8",
+        )
+        # Cross a seed timestamp boundary so replay stability cannot be an
+        # accidental consequence of both attempts landing in the same second.
+        time.sleep(1.1)
+        registry.drop_ack_after_write = False
+
+        result, replay_error, _ = _run_tick(config, _DummyLoopWriter())
+
+        assert replay_error is None
+        assert result["actual"]["synced_count"] == 1
+        assert terminal_statuses == ["already_terminal"]
+        assert request_lineages == [first_lineage, first_lineage]
+        assert registry.write_attempts == [registry_id]
+        assert registry.writes == [registry_id]
+        assert registry.entries[registry_id] == landed_entry
+        replayed_payload = registry.entries[registry_id]["entry"]
+        assert replayed_payload["checksum"] == landed_payload["checksum"]
+        assert (
+            replayed_payload["source_seed_id"]
+            == landed_payload["source_seed_id"]
+        )
+        assert (
+            replayed_payload["evaluation_summary"]["evidence_bundle_id"]
+            == landed_payload["evaluation_summary"]["evidence_bundle_id"]
+        )
+        job = DistillationJobQueue(config.job_queue_path).get(source.source_id)
+        assert job.status == DistillationJobStatus.DONE.value
+        assert DistillationJobQueue(config.job_queue_path).list_dead_letters() == []
 
 
 # ---------------------------------------------------------------------------

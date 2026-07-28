@@ -36,6 +36,7 @@ from services.source_ingestion.distillation_worker import (
     RegistrySyncRequest,
     RegistrySyncResult,
     make_distillation_worker,
+    source_version_digest,
 )
 from services.source_ingestion.pg_store import build_source_evidence_repository
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -252,37 +253,56 @@ def _versioned_registry_id(source: SourceRecord, job: DistillationJob) -> str:
 
 def _build_registry_payload(
     *,
-    config: DistillationControllerConfig,
     request: RegistrySyncRequest,
     registry_id: str,
 ) -> dict[str, Any]:
-    from services.research.strategy_spec.production_distillation import (
-        ProductionStrategySpecDistiller,
-    )
     from services.research.strategy_spec.conversion import (
         StrategySpecConversionService,
     )
 
     source = request.source
     job = request.job
-    registry_payload: dict[str, Any] | None = None
-    try:
-        distiller = ProductionStrategySpecDistiller(source_dirs=config.source_dirs)
-        distiller._resolve_markdown(source.source_id)
-        registry_payload = dict(distiller.distill_registry_payload(source.source_id))
-    except Exception:
-        # Convert from the exact evidence item the seed was materialized from.
-        # Re-synthesizing it here would produce an item id outside the seed's
-        # lineage whenever the worker resolved a different version key.
-        conversion = StrategySpecConversionService().convert_seed(
-            seed=request.seed,
-            source_records=[source],
-            evidence_items=[request.evidence_item],
-            strategy_id=f"strat-{source.source_id}-{job.source_digest[-12:]}",
-            title=source.title,
-            version="1.0.0",
+    committed_digest = source_version_digest(source)
+    if job.source_digest and committed_digest != job.source_digest:
+        raise RuntimeError(
+            f"Registry sync source digest mismatch for {source.source_id}: "
+            f"job={job.source_digest}, committed={committed_digest}"
         )
-        registry_payload = dict(conversion.registry_payload)
+    if request.version_key != (job.source_digest or None):
+        raise RuntimeError(
+            f"Registry sync version key mismatch for {source.source_id}: "
+            f"request={request.version_key}, job={job.source_digest or None}"
+        )
+
+    seed_source_ids = tuple(request.seed.source_ids)
+    seed_item_ids = tuple(request.seed.evidence_item_ids)
+    bundle_source_ids = tuple(request.evidence_bundle.source_ids)
+    bundle_item_ids = tuple(request.evidence_bundle.evidence_item_ids)
+    if (
+        request.seed.evidence_bundle_id
+        != request.evidence_bundle.evidence_bundle_id
+        or seed_source_ids != bundle_source_ids
+        or seed_item_ids != bundle_item_ids
+        or request.evidence_item.source_id != source.source_id
+        or request.evidence_item.evidence_item_id not in seed_item_ids
+        or source.source_id not in seed_source_ids
+    ):
+        raise RuntimeError(
+            f"Registry sync request lineage mismatch for source {source.source_id}"
+        )
+
+    # Registry delivery and replay must be a pure projection of the committed
+    # SourceRecord plus the exact seed/evidence lineage materialized for this
+    # version. Never resolve mutable production-note bytes by source_id here.
+    conversion = StrategySpecConversionService().convert_seed(
+        seed=request.seed,
+        source_records=[source],
+        evidence_items=[request.evidence_item],
+        strategy_id=f"strat-{source.source_id}-{job.source_digest[-12:]}",
+        title=source.title,
+        version="1.0.0",
+    )
+    registry_payload = dict(conversion.registry_payload)
 
     metadata = dict(registry_payload.get("metadata") or {})
     metadata["distillation"] = {
@@ -308,7 +328,6 @@ def _make_registry_sync(
         job = request.job
         registry_id = _versioned_registry_id(source, job)
         payload = _build_registry_payload(
-            config=config,
             request=request,
             registry_id=registry_id,
         )
