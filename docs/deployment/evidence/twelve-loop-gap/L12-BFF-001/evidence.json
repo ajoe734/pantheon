@@ -3,37 +3,37 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-BFF-001 product-level task evidence admission.",
-    "note": "Schema-normalized Codex2 owner evidence for the BFF-owned implementation and composed incidents authority. Independent Codex approval is intentionally absent.",
+    "note": "Schema-normalized Codex closeout evidence for the merged BFF-owned implementation and composed incidents authority. Antigravity's independent approval of the prior exact head is recorded; this v2.1.0 review-receipt cut still requires fresh exact-head approval before merge.",
     "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This owner cut must pass all ten fail-closed evidence rules, and a record_log entry is appended whenever the accepted cut or review state changes.",
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This v2.1.0 owner closeout cut must pass all ten fail-closed evidence rules, and a record_log entry is appended whenever the accepted cut or review state changes.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T20:51:06Z",
-    "evidence_cut_semantics": "Owner evidence cut v1.0.0. Canonical task state was verified through journal sequence 2968. BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete in delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743. The BFF payload contains no caller-supplied RuntimeBinding fields; exact incident replay is idempotent; HTTP 409 remains visible in DLQ; and retention preserves active incident and unfinished delivery dependencies through restart and recovery. The receipt passed the required workflows, and this manifest passes all ten fail-closed evidence rules. Hosted activation and independent reviewer approval are not claimed.",
+    "evidence_cut_at": "2026-07-28T20:36:13Z",
+    "evidence_cut_semantics": "Owner evidence cut v2.1.0. Canonical task state was verified through journal sequence 3988. PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1, and the unchanged BFF, telemetry, and incidents implementation is bound by closeout receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a. The accepted 168-test cut covers strict non-trading admission, replica/restart durability, complete registry and error-rate triggers, retry/DLQ/replay, real IncidentCase create/resolve, and retention-safe recovery. Antigravity independently approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326; this receipt recut records that decision without reusing it for the new head. The receipt passed all four Branch CI jobs, and this manifest passes all ten fail-closed evidence rules. Hosted activation, fresh exact-head review of v2.1.0, and Human/Ops root merge-freeze release are not claimed.",
     "id": "L12-BFF-001",
-    "overall_admission": "implementation_ready",
-    "owner": "Codex2",
+    "overall_admission": "merged_implementation_closeout_review_recorded",
+    "owner": "Codex",
     "phase": "Twelve Loop Remediation / BFF",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
-    "reviewer": "Codex",
+    "reviewer": "Antigravity",
     "target_environment": "dev integration and bounded local nonprod BFF",
-    "target_maturity": "implementation_ready_pending_review",
+    "target_maturity": "merged_pending_fresh_exact_head_review",
     "task_branch": "task/L12-BFF-001",
-    "title": "Implement durable infrastructure health telemetry and incident recovery"
+    "title": "Close out merged durable BFF health telemetry and incident recovery"
   },
   "authorities": {
     "actual_state": [
-      "Canonical task-state journal sequence 2968 committed at 2026-07-27T20:48:26Z: owner Codex2, reviewer Codex, status in_progress, review_file bound to this manifest",
+      "Canonical task-state journal sequence 3988 committed at 2026-07-28T20:31:20Z: owner Codex, reviewer Antigravity, status review_approved, review_file bound to this manifest",
       "BFF delivery outbox, DLQ, replay audit, and incident mapping",
       "strict infrastructure-health telemetry admission in services/telemetry"
     ],
@@ -53,7 +53,6 @@
       "L12-VERIFY-OBS-001 hosted target stop and recovery proof"
     ],
     "evidence_changed_files": [
-      ".orchestrator/task-briefs/l12_bff_001.md",
       "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md",
       "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
       "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.sha256"
@@ -109,55 +108,76 @@
         "subject": "L12-BFF-001: anchor retention-safe recovery"
       },
       {
-        "bound_content_digest": "content-digest:sha256:ad7ac102d1de7039c2a0e55b11dc91c16a9838fc9cd2813fe3fb68a5c8984152",
-        "delivery_state": "v1_delivery_receipt_head",
-        "note": "Carries the digest-bound README and final implementation sources. The evidence-only follow-up changes evidence.json and evidence.sha256, which are outside the content digest.",
-        "receipt_role": "current_delivery_receipt",
+        "delivery_state": "v1_delivery_receipt_superseded_by_final_merge",
+        "note": "Historical v1 receipt; PR #4274 advanced before merge and this commit is no longer the closeout receipt.",
         "sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
         "subject": "L12-BFF-001: finalize retention recovery receipt"
+      },
+      {
+        "delivery_state": "merged_implementation_head",
+        "note": "Immutable final PR #4274 head. Its implementation source bytes remain unchanged in the v2 closeout receipt.",
+        "sha": "414546226003bce04a60f2d5941d999e96afd075",
+        "subject": "Merge branch 'dev' into task/L12-BFF-001"
+      },
+      {
+        "delivery_state": "v2_closeout_receipt_superseded_by_review_receipt",
+        "note": "Historical v2.0.0 receipt; Antigravity approved the evidence-only follow-up at 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549, and v2.1.0 now carries that external decision inside the task manifest.",
+        "sha": "544d865617d716bf37d4a26204107fdc073b9e61",
+        "subject": "L12-BFF-001: anchor merged closeout receipt"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:e65597338b07a1429961ed0e79bf85b66730a3427dd3cc6c520f3afff129883e",
+        "delivery_state": "v2_1_review_receipt_head",
+        "note": "Carries the README that records Antigravity's prior exact-head review decision plus the unchanged final implementation sources. The evidence-only follow-up changes evidence.json and evidence.sha256, which remain outside the content digest and require fresh exact-head review.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+        "subject": "L12-BFF-001: anchor reviewed closeout receipt"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+      "head_sha": "414546226003bce04a60f2d5941d999e96afd075",
+      "merge_commit": "7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1",
+      "merged_at": "2026-07-27T22:14:45Z",
       "number": 4274,
+      "state": "merged",
       "url": "https://github.com/ajoe734/pantheon/pull/4274"
     },
     "required_checks": [
       {
-        "completed_at": "2026-07-27T20:49:50Z",
+        "completed_at": "2026-07-28T20:34:56Z",
         "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
-        "run_id": 30304230246,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "event": "push",
+        "head_sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+        "run_id": 30396931441,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30396931441/job/90402094683",
         "workflow": "Commit trailers"
       },
       {
-        "completed_at": "2026-07-27T20:49:52Z",
+        "completed_at": "2026-07-28T20:34:57Z",
         "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
-        "run_id": 30304230246,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "event": "push",
+        "head_sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+        "run_id": 30396931441,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30396931441/job/90402094768",
         "workflow": "Runtime mirror guard"
       },
       {
-        "completed_at": "2026-07-27T20:50:14Z",
+        "completed_at": "2026-07-28T20:35:23Z",
         "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
-        "run_id": 30304230246,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "event": "push",
+        "head_sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+        "run_id": 30396931441,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30396931441/job/90402094756",
         "workflow": "Python packaging provision"
       },
       {
-        "completed_at": "2026-07-27T20:50:39Z",
+        "completed_at": "2026-07-28T20:35:49Z",
         "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
-        "run_id": 30304230246,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "event": "push",
+        "head_sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+        "run_id": 30396931441,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30396931441/job/90402191151",
         "workflow": "Smoke acceptance"
       }
     ]
@@ -166,8 +186,8 @@
     "commands": [
       {
         "claim_scope": "current",
-        "command": "python3 scripts/dev/provision_python_distribution.py",
-        "conclusion": "The checkout-scoped .venv-pantheon was provisioned and verified.",
+        "command": ".venv-pantheon/bin/python -m pip install -r requirements.txt -r services/control-plane/bff/requirements.txt -r services/telemetry/requirements.txt -r services/incidents/requirements.txt pytest and python3 scripts/dev/provision_python_distribution.py --check-only",
+        "conclusion": "The checkout-scoped .venv-pantheon has the repository and service-local dependencies, resolves Pantheon imports from a foreign cwd, and imports pytest.",
         "result": "pass"
       },
       {
@@ -178,36 +198,64 @@
       },
       {
         "claim_scope": "current",
-        "command": "python3 -m py_compile services/control-plane/bff/downstream_health_monitor.py services/control-plane/bff/main.py services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/incidents/consumer.py services/incidents/main.py services/incidents/test_main_routes.py",
+        "command": ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/downstream_health_monitor.py services/control-plane/bff/main.py services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/incidents/consumer.py services/incidents/main.py services/incidents/test_main_routes.py",
         "conclusion": "All task-owned Python sources compiled without error.",
         "result": "pass"
       },
       {
         "claim_scope": "current",
-        "command": "git diff --check origin/dev...HEAD",
+        "command": "git diff --check",
         "conclusion": "No whitespace errors.",
         "result": "pass"
       },
       {
         "claim_scope": "current",
-        "command": "rg -n consume-infrastructure-health services/incidents services/incident",
+        "command": "rg -n consume-infrastructure-health services/incidents",
         "conclusion": "services/incidents/main.py exposes POST /api/incidents/consume-infrastructure-health and services/incidents/test_main_routes.py covers create, exact replay, conflicting replay, fake RuntimeBinding payload isolation, and status-route resolve.",
         "result": "pass"
       },
       {
         "claim_scope": "current",
-        "command": "gh pr view 4274 --json headRefOid,mergeStateStatus,reviewDecision,state and gh api repos/ajoe734/pantheon/commits/fd5165b36f7cf5da014029839cca8d740a87a743/check-runs",
-        "conclusion": "Point-in-time receipt observation: pull request head fd5165b36f7cf5da014029839cca8d740a87a743 was open and review-required; all four Branch CI jobs in pull_request run 30304230246 succeeded.",
+        "command": "git merge-base --is-ancestor 414546226003bce04a60f2d5941d999e96afd075 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1 and git merge-base --is-ancestor 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1 8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+        "conclusion": "PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 is contained by merge 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1, which is contained by closeout receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4274 --repo ajoe734/pantheon --json headRefOid,mergeCommit,mergedAt,state,statusCheckRollup and gh api repos/ajoe734/pantheon/commits/8d833becbf9d6d537c19dae1157ee6412ba4a21a/check-runs",
+        "conclusion": "Point-in-time delivery observation: PR #4274 head 414546226003bce04a60f2d5941d999e96afd075 is merged as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1 with its final Branch CI green; closeout receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a also passed all four Branch CI jobs in push run 30396931441.",
         "observations": [
           {
-            "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
-            "observed_at": "2026-07-27T20:51:06Z",
+            "head_sha": "414546226003bce04a60f2d5941d999e96afd075",
+            "observed_at": "2026-07-28T20:36:13Z",
             "pull_request": 4274,
-            "subject": "pull_request:4274 delivery receipt head and required checks",
-            "value": "OPEN; REVIEW_REQUIRED; receipt run 30304230246: Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance success"
+            "subject": "pull_request:4274 immutable final head, merge commit, and required checks",
+            "value": "MERGED as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1; final-head Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance success"
+          },
+          {
+            "head_sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+            "observed_at": "2026-07-28T20:36:13Z",
+            "subject": "closeout receipt push checks",
+            "value": "Push run 30396931441: Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance success"
           }
         ],
-        "observed_at": "2026-07-27T20:51:06Z",
+        "observed_at": "2026-07-28T20:36:13Z",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh api repos/ajoe734/pantheon/commits/3c0aae0d95a020e0fc225d9bcb27f9e1c2911549/status and AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show L12-BFF-001",
+        "conclusion": "Point-in-time review observation: canonical reviewer Antigravity approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549, and GitHub status id 51244708326 records Pantheon canonical review gate success. This v2.1.0 evidence-only follow-up does not reuse that old-head approval.",
+        "observations": [
+          {
+            "head_sha": "3c0aae0d95a020e0fc225d9bcb27f9e1c2911549",
+            "observed_at": "2026-07-28T20:36:13Z",
+            "pull_request": 4316,
+            "subject": "prior exact-head independent review decision",
+            "value": "Antigravity approve recorded at 2026-07-28T19:49:05Z; Pantheon canonical review gate success status id 51244708326"
+          }
+        ],
+        "observed_at": "2026-07-28T20:36:13Z",
         "result": "pass"
       },
       {
@@ -217,9 +265,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T20:51:06Z",
-    "validated_base_sha": "852da0aa71d4e0d0293d5fcc8b5dff6d886386f7",
-    "validated_head_sha": "content-digest:sha256:ad7ac102d1de7039c2a0e55b11dc91c16a9838fc9cd2813fe3fb68a5c8984152"
+    "validated_at": "2026-07-28T20:36:13Z",
+    "validated_base_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "validated_head_sha": "content-digest:sha256:e65597338b07a1429961ed0e79bf85b66730a3427dd3cc6c520f3afff129883e"
   },
   "deployment": {
     "applicable": false,
@@ -229,7 +277,7 @@
     },
     "environment": "dev integration",
     "identity_admission": {
-      "proof": "At canonical journal sequence 2968, the BFF infrastructure telemetry client fails closed without a service JWT, exact tenant header, and allowlisted producer authority.",
+      "proof": "At canonical journal sequence 3988, the BFF infrastructure telemetry client fails closed without a service JWT, exact tenant header, and allowlisted producer authority.",
       "status": "pass"
     },
     "public_bff_base_url": "not_applicable_until_composed_hosted_verification",
@@ -316,8 +364,8 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "At canonical journal sequence 2968, owner Codex2 and reviewer Codex are distinct. Independent approval is pending and is not asserted in this evidence cut.",
-      "status": "pending"
+      "proof": "At canonical journal sequence 3988, owner Codex and reviewer Antigravity are distinct. Antigravity independently approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326. This v2.1.0 review-receipt cut records that decision and still requires fresh exact-head approval before merge.",
+      "status": "pass"
     }
   },
   "acceptance": [
@@ -386,36 +434,36 @@
     "incident_authority_route": {
       "blocking_for_this_task": false,
       "containment": "The BFF persists and retries the exact non-trading incident intent; it never falls back to a fake RuntimeBinding or clears the mapping before authority confirmation.",
-      "description": "Delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743 exposes and tests POST /api/incidents/consume-infrastructure-health. Generic POST /api/incidents remains RuntimeBinding-backed; the new route maps infrastructure subject evidence inside the incidents authority and ignores caller-supplied fake RuntimeBinding fields.",
-      "expiry": "When the task pull request is independently reviewed and merged into dev.",
+      "description": "Final PR #4274 head 414546226003bce04a60f2d5941d999e96afd075 and closeout receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a expose and test POST /api/incidents/consume-infrastructure-health. Generic POST /api/incidents remains RuntimeBinding-backed; the infrastructure route maps subject evidence inside the incidents authority and ignores caller-supplied fake RuntimeBinding fields.",
+      "expiry": "Closed for local integration when PR #4274 merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1; hosted proof remains separately delegated.",
       "owner": "L12-BFF-001 / services/incidents",
       "recheck_trigger": "After task CI/review or after hosted L12-VERIFY-OBS-001 verification.",
       "severity": "low"
     },
     "independent_review": {
       "blocking_for_this_task": true,
-      "containment": "The owner keeps overall_admission at implementation_ready and does not assert review_approved or done.",
-      "description": "At canonical journal sequence 2968, Codex2 owns this cut and Codex remains the distinct reviewer. Independent exact-head approval is pending for the implementation carried by delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743.",
-      "expiry": "When Codex records an exact-head review decision.",
-      "owner": "Codex",
+      "containment": "The owner records the prior independent verdict but does not reuse it for the v2.1.0 head or assert done before fresh review, root-freeze release, and merge.",
+      "description": "At canonical journal sequence 3988, Codex owns this v2.1.0 cut and Antigravity is the distinct reviewer. Antigravity approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326. The v2.1.0 evidence-only follow-up binds PR #4274 head 414546226003bce04a60f2d5941d999e96afd075 through delivery receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a and requires a fresh exact-head decision.",
+      "expiry": "When Antigravity records a fresh exact-head review decision for v2.1.0.",
+      "owner": "Antigravity",
       "recheck_trigger": "Any task branch head change or reviewer decision.",
       "severity": "medium"
     },
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
       "containment": "The README and all sequence-required manifest claims bind the same journal sequence so a reviewer can identify later task-state movement.",
-      "description": "Canonical task-state journal sequence 2968, committed at 2026-07-27T20:48:26Z, is the point-in-time owner/reviewer/status snapshot for this cut. Later journal events do not retroactively alter this recorded observation.",
+      "description": "Canonical task-state journal sequence 3988, committed at 2026-07-28T20:31:20Z, is the point-in-time owner/reviewer/status snapshot for this cut. Later journal events do not retroactively alter this recorded observation.",
       "expiry": "At independent review or any owner/reviewer/status change.",
-      "owner": "Codex2",
+      "owner": "Codex",
       "recheck_trigger": "A newer governed task-state read.",
       "severity": "low"
     },
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
-      "containment": "The v1.0.0 evidence-only commit changes only evidence.json and evidence.sha256; every content-bound artifact remains byte-identical to the receipt tree.",
-      "description": "Delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743 carries the v1.0.0 bound README and final implementation sources with all required checks green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
+      "containment": "The v2.1.0 evidence-only commit changes only evidence.json and evidence.sha256; every content-bound artifact remains byte-identical to the receipt tree.",
+      "description": "Delivery receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a carries the v2.1.0 bound README and the unchanged final implementation sources with all required checks green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
       "expiry": "When the evidence-only commit lands on the task branch.",
-      "owner": "Codex2",
+      "owner": "Codex",
       "recheck_trigger": "Any change to a digest-bound artifact.",
       "severity": "low"
     }
@@ -438,16 +486,16 @@
       "strict_telemetry_admitted": true
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "The v1.0.0 companion checksum seals this manifest, while delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743 binds the finalized source and README bytes without recursive self-hashing.",
+    "self_hash_reason": "The v2.1.0 companion checksum seals this manifest, while delivery receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a binds the finalized source and README bytes without recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md@v1.0.0": "4bbe5756b3f521761987a4b1a9224d64becc472f281765867265d3c25923343f",
-      "services/control-plane/bff/downstream_health_monitor.py@v1.0.0": "c5d2291c65348e1122e7c8dbb6ea2f8501f275e22656cfade49a6a408fdc5e36",
-      "services/control-plane/bff/main.py@v1.0.0": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
-      "services/control-plane/bff/test_bff_downstream_health_monitor.py@v1.0.0": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
-      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py@v1.0.0": "25f1c791e24ebdd93643ce207db36d508246a7b06707ffcecb7b48624386b654",
-      "services/incidents/consumer.py@v1.0.0": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
-      "services/incidents/main.py@v1.0.0": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
-      "services/incidents/test_main_routes.py@v1.0.0": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md@v2.1.0": "fc8c1d91102453c98373ef6f7b38b849b58a15d1749369bea7de27330b466e3e",
+      "services/control-plane/bff/downstream_health_monitor.py@v2.1.0": "c5d2291c65348e1122e7c8dbb6ea2f8501f275e22656cfade49a6a408fdc5e36",
+      "services/control-plane/bff/main.py@v2.1.0": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py@v2.1.0": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py@v2.1.0": "25f1c791e24ebdd93643ce207db36d508246a7b06707ffcecb7b48624386b654",
+      "services/incidents/consumer.py@v2.1.0": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
+      "services/incidents/main.py@v2.1.0": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
+      "services/incidents/test_main_routes.py@v2.1.0": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
     }
   },
   "record_log": [
@@ -504,6 +552,33 @@
       "sequence": 6,
       "sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
       "status": "implementation_ready_pending_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "merged_implementation_closeout_receipt_ready",
+      "recorded_at": "2026-07-28T19:31:02Z",
+      "reference": "PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 merged as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1; closeout receipt 544d865617d716bf37d4a26204107fdc073b9e61 passed push run 30392172314.",
+      "sequence": 7,
+      "sha": "544d865617d716bf37d4a26204107fdc073b9e61",
+      "status": "merged_implementation_closeout_pending_review"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "independent_closeout_evidence_review_approved",
+      "recorded_at": "2026-07-28T19:49:05Z",
+      "reference": "PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549; Pantheon canonical review gate success status id 51244708326.",
+      "sequence": 8,
+      "sha": "3c0aae0d95a020e0fc225d9bcb27f9e1c2911549",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "review_decision_receipt_ready",
+      "recorded_at": "2026-07-28T20:36:13Z",
+      "reference": "Review-receipt anchor 8d833becbf9d6d537c19dae1157ee6412ba4a21a records the prior exact-head Antigravity decision and passed push run 30396931441.",
+      "sequence": 9,
+      "sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
+      "status": "review_receipt_pending_fresh_exact_head_review"
     }
   ]
 }
