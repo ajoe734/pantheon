@@ -5,23 +5,35 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Archive current L12 gaps and execution graph
 - Status: review
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Claude
-- Next: Claude changes-requested review on PR #4290 exact head eb71c14ff4c84efc0531cf36d115121454a9f0cd accepted for the closeout brief metadata only. Keep the merged audit facts from PR #4288, but bind this follow-up review_file to the canonical reviewer Claude and current review status before governed approval.
+- Next: Claude must independently review the exact new PR #4290 head and, if
+  accepted, bind this file as `review_file` during governed approval.
 
 ## Summary
 歸檔 2026-07-28 三輪 L12 gap 盤點，並準備 machine-readable execution task graph 供 supervisor fleets 後續平行派工。
 
+## Current Review Binding
+- Review file:
+  `.orchestrator/task-briefs/l12_three_pass_gap_audit_20260728.md`
+- Review state: `review`, pending Claude exact-head review.
+- Task owner: `Codex2`.
+- Independent reviewer: `Claude`.
+- Earlier PR #4290 heads `eb71c14ff4c84efc0531cf36d115121454a9f0cd`
+  and `1e6278c4c1202d4ff0f1fbd34ebdc093423d8116` are superseded for
+  closeout review. Their status records are historical evidence only.
+
 ## Review And Delivery Evidence
-- Reviewed PR: `https://github.com/ajoe734/pantheon/pull/4288`
-- Reviewed head: `a80e725617c2fc607128bf0d517fa037103041b3`
-- Merge commit: `77ae23f09c5f4f855dd9b5c16625b4c36bf0d955`
+- Reviewed delivery PR: `https://github.com/ajoe734/pantheon/pull/4288`
+- Reviewed delivery head: `a80e725617c2fc607128bf0d517fa037103041b3`
+- Delivery merge commit: `77ae23f09c5f4f855dd9b5c16625b4c36bf0d955`
 - Branch CI Gate run: `30359397859` (`success`)
 - Orchestrator Sync run: `30360088230` (`success`)
 - Historical canonical review status:
   `Pantheon canonical review gate = success` at status id `51215088595`,
-  recorded by Codex2 for PR #4288 before this follow-up closeout review.
-- Current closeout reviewer: `Claude`
+  recorded by Codex2 for PR #4288 before ownership was reassigned.
+  Because Codex2 is now the owner, that status does not satisfy the current
+  independent closeout review.
 - Reviewed artifact packet:
   `docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728`
 
