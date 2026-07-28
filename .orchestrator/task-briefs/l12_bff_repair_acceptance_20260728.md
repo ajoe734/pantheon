@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Finish L12-BFF-001 acceptance defects and proof drills
-- Status: in_progress
+- Status: review_pending
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Owner acceptance proofs pass on current dev with no additional product-code diff; publish the task-scoped evidence PR and obtain Codex2 exact-head review before merge and closeout.
+- Next: Codex2 must independently review exact head of PR #4305; after approval, run the governed integrator, wait for merge, and return to Codex for owner closeout.
 
 ## Summary
 完成 L12-BFF-001 剩餘 acceptance defects 與 proof drills。

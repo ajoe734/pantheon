@@ -5,7 +5,7 @@
     "title": "Finish L12-BFF-001 acceptance defects and proof drills",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "in_progress_pending_independent_review",
+    "status": "review_pending_independent_exact_head_decision",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-BFF-REPAIR-ACCEPTANCE-20260728",
@@ -41,6 +41,14 @@
       "companion_checksum": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.sha256",
       "ten_rule_validator": "pass",
       "checksum": "pass"
+    },
+    "follow_up_delivery": {
+      "pull_request": 4305,
+      "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4305",
+      "owner_evidence_commit": "0701c124f167c97f1b52177f97611e916fab17a3",
+      "state_at_handoff": "open",
+      "auto_merge": "disabled_pending_exact_head_review",
+      "reviewer": "Codex2"
     }
   },
   "proof_drills": [
@@ -139,7 +147,7 @@
       "id": "AC5",
       "criterion": "Open a task PR for exact-head independent review, root-freeze, and merge.",
       "status": "pending",
-      "proof": "Owner evidence is ready; the task PR and Codex2 exact-head review remain the next governed lifecycle steps."
+      "proof": "PR #4305 is open with auto-merge disabled; Codex2 exact-head review, root-freeze, merge, and owner closeout remain pending."
     }
   ],
   "verification": {
@@ -182,7 +190,7 @@
     "independent_decision": "pending",
     "exact_task_pr_head": "pending",
     "canonical_review_event_id": "pending",
-    "note": "The historical PR #4274 review proves the source implementation merge only. Codex2 must independently review this follow-up task PR exact head and bind this manifest before owner closeout."
+    "note": "The historical PR #4274 review proves the source implementation merge only. Codex2 must independently review PR #4305 exact head and bind this manifest before governed integration and owner closeout."
   },
   "known_limitations": [
     "The real-target drill is local and loopback-bound; it is not hosted dev deployment evidence.",

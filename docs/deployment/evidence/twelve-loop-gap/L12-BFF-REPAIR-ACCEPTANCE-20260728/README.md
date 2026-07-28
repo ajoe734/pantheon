@@ -44,9 +44,12 @@ routes rather than treating mocked delivery as write-owner proof.
 ## Review state
 
 Owner proof is complete. Codex2 must independently review the exact task PR
-head and bind this manifest through the governed review transition. An open
-PR, green CI, or the historical review of PR #4274 does not approve this
-follow-up evidence cut.
+head of [PR #4305](https://github.com/ajoe734/pantheon/pull/4305) and bind
+this manifest through the governed review transition. The owner evidence
+commit is `0701c124f167c97f1b52177f97611e916fab17a3`. The PR is open with
+auto-merge disabled by the review-before-merge policy. An open PR, green CI,
+or the historical review of PR #4274 does not approve this follow-up evidence
+cut.
 
 Machine-readable acceptance mapping, exact commands, delivery identities, and
 known limitations are in `evidence.json`. `evidence.sha256` binds this README
