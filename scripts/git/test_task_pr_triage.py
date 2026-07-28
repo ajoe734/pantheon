@@ -73,6 +73,7 @@ class PullRequestClassificationTests(unittest.TestCase):
     def classify(self, item=None, *, archives=None, history=None, active=None, reachable=False):
         return triage.classify_pr(
             item or pr(),
+            triage_task_id="OPS-TASK-PR-TRIAGE-002",
             repository="ajoe734/pantheon",
             dev_reachable=reachable,
             trailers={
@@ -318,6 +319,7 @@ class ValidationTests(unittest.TestCase):
             return_value={"Task-ID": "TASK-001", "LLM-Agent": "Claude"},
         ):
             report, manifest = triage.build_report(
+                task_id="OPS-TASK-PR-TRIAGE-002",
                 repository="ajoe734/pantheon",
                 remote="origin",
                 base_ref="origin/dev",
@@ -343,6 +345,32 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("1 remain open and 0 are now closed or merged", markdown)
         self.assertIn("Repository-wide, **2** task PRs are open", markdown)
         self.assertNotIn("2 remain open and 0 are now closed or merged", markdown)
+        self.assertEqual(report["task_id"], "OPS-TASK-PR-TRIAGE-002")
+        self.assertEqual(manifest["task_id"], "OPS-TASK-PR-TRIAGE-002")
+        self.assertIn("# OPS-TASK-PR-TRIAGE-002 evidence report", markdown)
+
+    def test_closure_comment_names_the_invoking_triage_task(self):
+        result = triage.classify_pr(
+            pr(),
+            triage_task_id="OPS-TASK-PR-TRIAGE-002",
+            repository="ajoe734/pantheon",
+            dev_reachable=False,
+            trailers={
+                "Task-ID": "TASK-001",
+                "LLM-Agent": "Claude",
+                "Reviewer": "Codex",
+            },
+            active_tasks={},
+            archives={"task-001": archive()},
+            history_by_number={},
+        )
+
+        self.assertTrue(result["close_authorized"])
+        self.assertTrue(
+            result["closure_comment"].startswith(
+                "OPS-TASK-PR-TRIAGE-002 evidence-based disposition"
+            )
+        )
 
     def test_refresh_completes_before_base_sha_capture(self):
         events = []
@@ -437,6 +465,27 @@ class ValidationTests(unittest.TestCase):
         }
         manifest = {"mode": "apply", "candidate_count": 0, "candidates": []}
         with self.assertRaisesRegex(triage.TriageError, "dry-run-only"):
+            triage.validate_report(report, manifest, 0)
+
+    def test_rejects_mismatched_triage_task_identity(self):
+        report = {
+            "task_id": "OPS-TASK-PR-TRIAGE-002",
+            "cohort_prs": [],
+            "branches": [],
+            "summary": {
+                "cohort_pr_count": 0,
+                "cohort_open_pr_count": 0,
+                "cohort_resolved_pr_count": 0,
+                "global_open_task_pr_count": 0,
+            },
+        }
+        manifest = {
+            "task_id": "OPS-TASK-PR-TRIAGE-001",
+            "mode": "dry-run-only",
+            "candidate_count": 0,
+            "candidates": [],
+        }
+        with self.assertRaisesRegex(triage.TriageError, "task_id"):
             triage.validate_report(report, manifest, 0)
 
     def test_rejects_candidate_with_open_pr(self):
