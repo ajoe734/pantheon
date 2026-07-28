@@ -60,3 +60,15 @@ Disposition counts:
 - `superseded`: 4
 
 The machine-readable report contains every branch, joined PR history, active/archive state, reachability, age, and exclusion reasons. The separate dry-run manifest includes only heads older than the retention window that have no open PR and are already ancestors of current `dev`.
+
+## Review and closeout
+
+Claude independently approved PR #4296 at exact head
+`d3ece4f503dc557ef7d7bb40fc5dbdc9e8b22396` on 2026-07-28. The required
+`Pantheon canonical review gate` status and all 9 visible checks succeeded.
+
+That reviewed head was still `BEHIND` `dev`. The owner must compose the current
+base and publish this closeout-only evidence refresh; because either action
+changes the PR head, the resulting exact head requires a fresh Claude review
+before merge. No PR closure, PR merge, or branch deletion is authorized by
+this evidence refresh.
