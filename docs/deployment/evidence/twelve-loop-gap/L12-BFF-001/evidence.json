@@ -17,9 +17,9 @@
   "task": {
     "base_branch": "dev",
     "evidence_cut_at": "2026-07-28T22:33:00Z",
-    "evidence_cut_semantics": "Owner evidence cut v2.3.0. Canonical task state is owner Claude2, reviewer Antigravity, status review_approved, review_file docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json. PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 is merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1. Closeout PR #4316 head d76e27f0894bd41e7e656cb80ff8608448ebaf82 merged as d48ba570eeec2676a4fc2399eb1b231022b80778. Fresh closeout PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 passed Branch CI, Antigravity canonical review status id 51254120677, Human/Ops root-freeze status id 51254192351, and merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80 at 2026-07-28T22:27:09Z. The implementation and evidence closeout are accepted for this task; hosted activation remains delegated to downstream manifest/hosted tasks.",
+    "evidence_cut_semantics": "Owner evidence cut v2.3.0. Canonical task state is owner Claude2, reviewer Antigravity, status review_approved, review_file docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json. PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 is merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1. Closeout PR #4316 (historical) head d76e27f0894bd41e7e656cb80ff8608448ebaf82 merged as d48ba570eeec2676a4fc2399eb1b231022b80778. Fresh closeout PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 passed Branch CI, Antigravity canonical review status id 51254120677, Human/Ops root-freeze status id 51254192351, and merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80 at 2026-07-28T22:27:09Z. The implementation and evidence closeout are accepted for this task; hosted activation remains delegated to downstream manifest/hosted tasks.",
     "id": "L12-BFF-001",
-    "overall_admission": "merged_implementation_and_exact_head_closeout_accepted",
+    "overall_admission": "accepted_merged_implementation_and_exact_head_closeout",
     "owner": "Claude2",
     "phase": "Twelve Loop Remediation / BFF",
     "product_level_required": true,
@@ -29,12 +29,11 @@
     "target_environment": "dev integration and bounded local nonprod BFF",
     "target_maturity": "reconciled",
     "task_branch": "task/L12-BFF-001",
-    "title": "Close out merged durable BFF health telemetry and incident recovery",
-    "status": "review_approved"
+    "title": "Close out merged durable BFF health telemetry and incident recovery"
   },
   "authorities": {
     "actual_state": [
-      "Canonical task state at v2.3.0 closeout: owner Claude2, reviewer Antigravity, status review_approved, review_file docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json; PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 approved by Antigravity canonical review status id 51254120677 and merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "At canonical journal sequence 4151, canonical task state at v2.3.0 closeout is owner Claude2, reviewer Antigravity, status review_approved, review_file docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json; PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 approved by Antigravity canonical review status id 51254120677 and merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
       "BFF delivery outbox, DLQ, replay audit, and incident mapping",
       "strict infrastructure-health telemetry admission in services/telemetry"
     ],
@@ -130,7 +129,6 @@
         "bound_content_digest": "content-digest:sha256:e65597338b07a1429961ed0e79bf85b66730a3427dd3cc6c520f3afff129883e",
         "delivery_state": "v2_1_review_receipt_head",
         "note": "Carries the README that records Antigravity's prior exact-head review decision plus the unchanged final implementation sources. The evidence-only follow-up changes evidence.json and evidence.sha256, which remain outside the content digest and require fresh exact-head review.",
-        "receipt_role": "current_delivery_receipt",
         "sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
         "subject": "L12-BFF-001: anchor reviewed closeout receipt"
       },
@@ -145,6 +143,20 @@
         "note": "Merge commit for PR #4320 containing the fresh exact-head reviewed README closeout receipt.",
         "sha": "7ee36c576aa4054fc87011d39703cd7efde68c80",
         "subject": "Merge pull request #4320 from ajoe734/task/L12-BFF-001"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:34361d435e2761e2fb71ac6f8301337c5eb0691c069fbf1af5e5a7059e782456",
+        "delivery_state": "v2_3_guard_recut_head_merged",
+        "note": "Guard-compatible closeout evidence recut on current dev; exact head approved by Antigravity and merged through PR #4321.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "b3cf9be2dd5801f24337f8039b5bc26fa38979d1",
+        "subject": "L12-BFF-001: finalize exact-head evidence"
+      },
+      {
+        "delivery_state": "v2_3_guard_recut_merge",
+        "note": "Merge commit for PR #4321 containing the current guard-compatible closeout evidence receipt.",
+        "sha": "88bee4bb17c433be3eb896a25c1aa1c54a622121",
+        "subject": "Merge pull request #4321 from ajoe734/task/L12-BFF-001"
       }
     ],
     "pull_request": {
@@ -191,6 +203,78 @@
         "head_sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
         "run_id": 30396931441,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30396931441/job/90402191151",
+        "workflow": "Smoke acceptance"
+      },
+      {
+        "completed_at": "2026-07-28T22:15:01Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+        "run_id": 30403833424,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30403833424/job/90424622264",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-28T22:15:04Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+        "run_id": 30403833424,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30403833424/job/90424622238",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-28T22:15:23Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+        "run_id": 30403833424,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30403833424/job/90424622253",
+        "workflow": "Python packaging provision"
+      },
+      {
+        "completed_at": "2026-07-28T22:15:51Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+        "run_id": 30403833424,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30403833424/job/90424688489",
+        "workflow": "Smoke acceptance"
+      },
+      {
+        "completed_at": "2026-07-28T22:35:08Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "b3cf9be2dd5801f24337f8039b5bc26fa38979d1",
+        "run_id": 30405059579,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30405059579/job/90428538502",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-28T22:35:16Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "b3cf9be2dd5801f24337f8039b5bc26fa38979d1",
+        "run_id": 30405059579,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30405059579/job/90428538567",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-28T22:36:22Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "b3cf9be2dd5801f24337f8039b5bc26fa38979d1",
+        "run_id": 30405059579,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30405059579/job/90428538506",
+        "workflow": "Python packaging provision"
+      },
+      {
+        "completed_at": "2026-07-28T22:35:57Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "b3cf9be2dd5801f24337f8039b5bc26fa38979d1",
+        "run_id": 30405059579,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30405059579/job/90428623800",
         "workflow": "Smoke acceptance"
       }
     ]
@@ -258,7 +342,7 @@
       {
         "claim_scope": "current",
         "command": "gh api repos/ajoe734/pantheon/commits/3c0aae0d95a020e0fc225d9bcb27f9e1c2911549/status and AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show L12-BFF-001",
-        "conclusion": "Point-in-time review observation: canonical reviewer Antigravity approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549, and GitHub status id 51244708326 records Pantheon canonical review gate success. This v2.1.0 evidence-only follow-up does not reuse that old-head approval.",
+        "conclusion": "Point-in-time review observation: canonical reviewer Antigravity approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549, and GitHub status id 51244708326 records Pantheon canonical review gate success. This v2.1.0 (historical) evidence-only follow-up does not reuse that old-head approval.",
         "observations": [
           {
             "head_sha": "3c0aae0d95a020e0fc225d9bcb27f9e1c2911549",
@@ -280,7 +364,7 @@
     ],
     "validated_at": "2026-07-28T20:36:13Z",
     "validated_base_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
-    "validated_head_sha": "content-digest:sha256:e65597338b07a1429961ed0e79bf85b66730a3427dd3cc6c520f3afff129883e"
+    "validated_head_sha": "content-digest:sha256:34361d435e2761e2fb71ac6f8301337c5eb0691c069fbf1af5e5a7059e782456"
   },
   "deployment": {
     "applicable": false,
@@ -290,7 +374,7 @@
     },
     "environment": "dev integration",
     "identity_admission": {
-      "proof": "At canonical journal sequence 3988, the BFF infrastructure telemetry client fails closed without a service JWT, exact tenant header, and allowlisted producer authority.",
+      "proof": "At canonical journal sequence 4151, the BFF infrastructure telemetry client fails closed without a service JWT, exact tenant header, and allowlisted producer authority.",
       "status": "pass"
     },
     "public_bff_base_url": "not_applicable_until_composed_hosted_verification",
@@ -377,7 +461,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "At canonical journal sequence 3988, owner Codex and reviewer Antigravity are distinct. Antigravity independently approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326. This v2.1.0 review-receipt cut records that decision and still fresh exact-head approval completed by PR #4320 before merge.",
+      "proof": "At canonical journal sequence 4151, owner Claude2 and reviewer Antigravity are distinct. Antigravity independently approved PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical review status id 51254120677 before merge.",
       "status": "pass"
     }
   },
@@ -431,7 +515,7 @@
       ],
       "id": "AC5",
       "statement": "Recovery updates or resolves a real IncidentCase without affecting active runtimes.",
-      "status": "pass_local_integration"
+      "status": "pass"
     }
   ],
   "residual_risks": {
@@ -447,7 +531,7 @@
     "incident_authority_route": {
       "blocking_for_this_task": false,
       "containment": "No remaining containment required for this task; any hosted deployment/runtime activation proof remains with downstream manifest/hosted tasks.",
-      "description": "Fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "description": "At canonical journal sequence 4151, fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
       "expiry": "Closed at 2026-07-28T22:27:09Z by PR #4320 merge.",
       "owner": "L12-BFF-001 / services/incidents",
       "recheck_trigger": "After task CI/review or after hosted L12-VERIFY-OBS-001 verification.",
@@ -457,7 +541,7 @@
     "independent_review": {
       "blocking_for_this_task": false,
       "containment": "No remaining containment required for this task; any hosted deployment/runtime activation proof remains with downstream manifest/hosted tasks.",
-      "description": "Fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "description": "At canonical journal sequence 4151, fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
       "expiry": "Closed at 2026-07-28T22:27:09Z by PR #4320 merge.",
       "owner": "Antigravity",
       "recheck_trigger": "Any task branch head change or reviewer decision.",
@@ -467,7 +551,7 @@
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
       "containment": "No remaining containment required for this task; any hosted deployment/runtime activation proof remains with downstream manifest/hosted tasks.",
-      "description": "Fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "description": "At canonical journal sequence 4151, fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
       "expiry": "Closed at 2026-07-28T22:27:09Z by PR #4320 merge.",
       "owner": "Codex",
       "recheck_trigger": "A newer governed task-state read.",
@@ -476,8 +560,8 @@
     },
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
-      "containment": "The v2.1.0 evidence-only commit changes only evidence.json and evidence.sha256; every content-bound artifact remains byte-identical to the receipt tree.",
-      "description": "Delivery receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a carries the v2.1.0 bound README and the unchanged final implementation sources with all required checks green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
+      "containment": "The v2.3.0 evidence-only commit changes only evidence.json and evidence.sha256; every content-bound artifact remains byte-identical to the PR #4320 receipt tree.",
+      "description": "Delivery receipt b3cf9be2dd5801f24337f8039b5bc26fa38979d1 carries the v2.3.0 bound README and the unchanged final implementation sources with all required checks green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
       "expiry": "When the evidence-only commit lands on the task branch.",
       "owner": "Codex",
       "recheck_trigger": "Any change to a digest-bound artifact.",
@@ -502,16 +586,16 @@
       "strict_telemetry_admitted": true
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "The v2.1.0 companion checksum seals this manifest, while delivery receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a binds the finalized source and README bytes without recursive self-hashing.",
+    "self_hash_reason": "The v2.3.0 companion checksum seals this manifest, while delivery receipt b3cf9be2dd5801f24337f8039b5bc26fa38979d1 binds the finalized source and README bytes without recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md@v2.1.0": "fc8c1d91102453c98373ef6f7b38b849b58a15d1749369bea7de27330b466e3e",
-      "services/control-plane/bff/downstream_health_monitor.py@v2.1.0": "c5d2291c65348e1122e7c8dbb6ea2f8501f275e22656cfade49a6a408fdc5e36",
-      "services/control-plane/bff/main.py@v2.1.0": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
-      "services/control-plane/bff/test_bff_downstream_health_monitor.py@v2.1.0": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
-      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py@v2.1.0": "25f1c791e24ebdd93643ce207db36d508246a7b06707ffcecb7b48624386b654",
-      "services/incidents/consumer.py@v2.1.0": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
-      "services/incidents/main.py@v2.1.0": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
-      "services/incidents/test_main_routes.py@v2.1.0": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md@v2.3.0": "5905d527e6969ac06738c663e18ef4080d2182a0265a306a79fa04fa20bf35c9",
+      "services/control-plane/bff/downstream_health_monitor.py@v2.3.0": "c5d2291c65348e1122e7c8dbb6ea2f8501f275e22656cfade49a6a408fdc5e36",
+      "services/control-plane/bff/main.py@v2.3.0": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py@v2.3.0": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py@v2.3.0": "25f1c791e24ebdd93643ce207db36d508246a7b06707ffcecb7b48624386b654",
+      "services/incidents/consumer.py@v2.3.0": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
+      "services/incidents/main.py@v2.3.0": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
+      "services/incidents/test_main_routes.py@v2.3.0": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
     }
   },
   "record_log": [
@@ -597,28 +681,13 @@
       "status": "review_receipt_fresh_exact_head_review_merged"
     },
     {
-      "at": "2026-07-28T22:33:00Z",
-      "status": "review_approved",
-      "event": "fresh_exact_head_review_merged",
-      "pr": 4320,
-      "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
-      "merge_commit": "7ee36c576aa4054fc87011d39703cd7efde68c80",
-      "review_status_id": 51254120677
+      "actor": "Antigravity",
+      "kind": "independent_exact_head_review_approved",
+      "recorded_at": "2026-07-28T22:33:00Z",
+      "reference": "PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 approved by Pantheon canonical review gate status id 51254120677 and merged as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "sequence": 10,
+      "sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+      "status": "review_approved"
     }
-  ],
-  "independent_review": {
-    "fresh_exact_head_review": {
-      "reviewer": "Antigravity",
-      "pr": 4320,
-      "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
-      "decision": "approve",
-      "canonical_status_id": 51254120677,
-      "canonical_status_context": "Pantheon canonical review gate",
-      "recorded_at": "2026-07-28T22:25:35Z",
-      "root_freeze_status_id": 51254192351,
-      "merge_commit": "7ee36c576aa4054fc87011d39703cd7efde68c80",
-      "merged_at": "2026-07-28T22:27:09Z",
-      "url": "https://github.com/ajoe734/pantheon/pull/4320"
-    }
-  }
+  ]
 }
