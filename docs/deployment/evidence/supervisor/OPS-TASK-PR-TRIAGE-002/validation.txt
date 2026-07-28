@@ -1,0 +1,73 @@
+OPS-TASK-PR-TRIAGE-002 validation
+snapshot: 2026-07-28T13:40:12Z
+base: origin/dev=65802d99bf5ddca1213f6742af74dc125216fa82
+
+PASS prerequisite
+  governed show OPS-PR-REVIEW-BEFORE-MERGE-GATE-001
+  canonical source=archive, status=done
+  PR #4218 merged as 9e4bb8e1fa9495d8802da58336b05ae68c7756ad
+
+PASS focused tests
+  python3 -m unittest scripts/git/test_task_pr_triage.py
+  Ran 26 tests; OK
+
+PASS Python compilation
+  python3 -m py_compile scripts/git/task_pr_triage.py scripts/git/test_task_pr_triage.py
+
+PASS live generation
+  python3 scripts/git/task_pr_triage.py generate \
+    --task-id OPS-TASK-PR-TRIAGE-002 \
+    --repository ajoe734/pantheon \
+    --remote origin \
+    --base-ref origin/dev \
+    --status-root "$PANTHEON_STATUS_ROOT" \
+    --as-of 2026-07-28T13:40:12Z \
+    --overdue-hours 24 \
+    --retention-days 30 \
+    --expected-cohort-count 24 \
+    --refresh \
+    --output /tmp/ops-task-pr-triage-002-report.json \
+    --markdown /tmp/ops-task-pr-triage-002-report.md \
+    --deletion-manifest /tmp/ops-task-pr-triage-002-deletion-manifest.json
+  result: 24 overdue PRs; 2214 branches; 1305 deletion dry-run candidates
+
+PASS immutable ancestry and report validation
+  python3 scripts/git/task_pr_triage.py validate \
+    --report /tmp/ops-task-pr-triage-002-report.json \
+    --deletion-manifest /tmp/ops-task-pr-triage-002-deletion-manifest.json \
+    --expected-cohort-count 24
+  result: valid: 24 PRs, 2214 branches, 1305 deletion dry-run candidates
+
+PASS fail-closed closure preview
+  python3 scripts/git/task_pr_triage.py close-superseded \
+    --report /tmp/ops-task-pr-triage-002-report.json
+  result: {"mode":"dry-run","actions":[]}
+
+PASS machine assertions
+  report task_id=OPS-TASK-PR-TRIAGE-002
+  manifest task_id=OPS-TASK-PR-TRIAGE-002
+  cohort=24, open=24, unique PR numbers=24
+  dispositions=12 active-repair + 8 conflict-needs-owner + 4 protected-retain
+  closure_candidates=0
+  branch manifest mode=dry-run-only
+  branch manifest candidate_count=1305 and equals candidate array length
+
+PASS artifact SHA-256
+  29afaf9bd87705c6f253c59594358a8d8fad74a0423367640c255d2079b7190e  triage-report.json
+  3f241b18f7e473e08bed1a42330570e68d512d22604527be2b5e183af58fdbc5  README.md
+  ec42b1881642e91d4b80288bb23ad56c59f6fe4978532a3cce00ecb6834fe83e  branch-deletion-dry-run.json
+
+PASS live exact-head readback
+  gh pr list --repo ajoe734/pantheon --state open --base dev
+  all 24 cohort PRs remain open at the head SHA recorded in triage-report.json
+
+PASS final repository checks
+  jq -e evidence.json
+  sha256sum -c for all three generated artifacts
+  git diff --check
+
+NO MUTATION
+  PR closures: 0
+  PR merges: 0
+  branch deletions: 0
+  direct protected-branch pushes: 0
