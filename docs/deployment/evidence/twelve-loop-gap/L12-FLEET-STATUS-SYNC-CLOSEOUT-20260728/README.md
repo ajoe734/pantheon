@@ -19,9 +19,10 @@ current `dev` `a6d56c366f7436574e6d2d241b47564558beac74`. Its current exact head
 - `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json`;
 - `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md`.
 
-Auto-merge remains disabled. At this evidence cut, all eight visible Branch CI
-check runs are green and the PR is mergeable but blocked pending the governed
-review-before-merge gate.
+Auto-merge remains disabled. All eight visible Branch CI check runs are green.
+The dedicated Codex2 reviewer dispatch approved exact head
+`6b2fd109a885d7eb26a985d621ef3ef9d3e26753`; Pantheon canonical review gate
+status id `51241172509` is successful.
 
 ## Independent reproduction
 
@@ -48,9 +49,14 @@ the inherited command runtime failed closed because
 `ORCH_TASK_ID=L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728` did not match
 `L12-FLEET-STATUS-SYNC-001`. That is the expected safety result.
 
-The dedicated Codex2 reviewer dispatch for `L12-FLEET-STATUS-SYNC-001` must
-record the exact-head approval. Human/Ops root freeze, PR merge, and the parent
-owner's canonical `done`/archive remain pending at this cut.
+The dedicated Codex2 reviewer dispatch for `L12-FLEET-STATUS-SYNC-001`
+recorded the exact-head approval at `2026-07-28T18:55:18Z`. The GitHub review
+endpoint returned 422 because Pantheon agents share one GitHub account; the
+required canonical commit status was recorded successfully and is the
+repository's authoritative review gate.
+
+Human/Ops root freeze, PR merge, and the parent owner's canonical
+`done`/archive remain pending at this cut.
 
 Machine-readable identities, commands, acceptance state, and limitations are
 recorded in `evidence.json`.

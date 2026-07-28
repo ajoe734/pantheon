@@ -5,13 +5,13 @@
     "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence",
     "owner": "Codex2",
     "reviewer": "Codex",
-    "status": "owner_evidence_anchored_parent_closeout_pending",
+    "status": "owner_evidence_anchored_parent_review_approved",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
-    "evidence_cut_at": "2026-07-28T18:52:58Z",
-    "overall_admission": "verification_pass_parent_review_freeze_merge_and_archive_pending"
+    "evidence_cut_at": "2026-07-28T18:55:18Z",
+    "overall_admission": "parent_exact_head_review_approved_freeze_merge_and_archive_pending"
   },
   "scope": {
     "owned_layer": "Task-scoped receipt for refreshing and closing the already-merged fleet status synchronization delivery.",
@@ -50,7 +50,7 @@
     "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
     "state": "open",
     "mergeable": true,
-    "merge_state": "blocked_pending_governed_review",
+    "merge_state": "blocked_pending_root_freeze_and_exact_head_merge",
     "auto_merge": false,
     "branch_ci": {
       "status": "pass",
@@ -63,10 +63,22 @@
       ]
     },
     "canonical_task": {
-      "status": "review",
+      "status": "review_approved",
       "owner": "Codex",
       "reviewer": "Codex2",
       "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json"
+    },
+    "canonical_review": {
+      "status": "success",
+      "reviewed_at": "2026-07-28T18:55:18Z",
+      "reviewer": "Codex2",
+      "pull_request": 4297,
+      "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
+      "base": "dev",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51241172509,
+      "github_review_submission_error": "gh: Unprocessable Entity (HTTP 422)",
+      "note": "Pantheon agents share one GitHub account, so the required exact-head commit status is authoritative rather than a self-review."
     },
     "changed_files": [
       ".orchestrator/task-briefs/l12_fleet_status_sync_001.md",
@@ -120,7 +132,14 @@
     "command": "approve",
     "result": "expected_fail_closed",
     "error": "status command task mismatch: argv task L12-FLEET-STATUS-SYNC-001 != ORCH_TASK_ID L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
-    "required_path": "The dedicated Codex2 review_ready_dispatch for L12-FLEET-STATUS-SYNC-001 records canonical approval."
+    "required_path": "The dedicated Codex2 review_ready_dispatch for L12-FLEET-STATUS-SYNC-001 recorded canonical approval.",
+    "dedicated_dispatch_result": {
+      "status": "review_approved",
+      "recorded_at": "2026-07-28T18:55:18Z",
+      "pull_request": 4297,
+      "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
+      "canonical_status_id": 51241172509
+    }
   },
   "acceptance": [
     {
@@ -138,8 +157,8 @@
     {
       "id": "AC3",
       "criterion": "Obtain exact-head independent review.",
-      "status": "verification_pass_canonical_approval_pending",
-      "proof": "Codex2 completed exact-head inspection and reproduction, but the wrapper lease cannot mutate the parent task; the dedicated parent reviewer dispatch must record the governed approval."
+      "status": "pass",
+      "proof": "The dedicated Codex2 reviewer dispatch approved PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753; Pantheon canonical review gate status id 51241172509 is successful."
     },
     {
       "id": "AC4",
@@ -159,7 +178,7 @@
     "status": "pending",
     "decision": "independent_review_required_after_parent_closeout_receipt",
     "review_targets": [
-      "Confirm PR #4297 exact-head approval, root-freeze, and merge identities after the dedicated parent reviewer dispatch completes.",
+      "Confirm Human/Ops root-freeze and PR #4297 exact-head merge identities.",
       "Confirm L12-FLEET-STATUS-SYNC-001 reaches canonical done/archive without implementation restart.",
       "Verify this wrapper manifest and checksum before binding it as REVIEW_FILE."
     ]
@@ -173,11 +192,20 @@
       "status": "parent_closeout_pending",
       "sha": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
       "reference": "PR #4297 is refreshed on current dev and independently reproduced; canonical parent approval correctly remains with the dedicated review dispatch."
+    },
+    {
+      "sequence": 2,
+      "actor": "Codex2",
+      "kind": "dedicated_parent_exact_head_review_approved",
+      "recorded_at": "2026-07-28T18:55:18Z",
+      "status": "review_approved",
+      "sha": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
+      "reference": "Pantheon canonical review gate status id 51241172509 approved PR #4297 exact head; source task returned to Codex for root-freeze, merge, and owner closeout."
     }
   ],
   "known_limitations": [
     "This task does not claim hosted deployment, runtime activation, program-level twelve-loop completion, or capital authority.",
     "The legacy top-level source_pr/source_head fields are disclosed but are not migrated by this closeout.",
-    "Canonical parent approval, root-freeze, merge, and owner done/archive are pending at this evidence cut."
+    "Human/Ops root-freeze, merge, and owner done/archive are pending at this evidence cut."
   ]
 }

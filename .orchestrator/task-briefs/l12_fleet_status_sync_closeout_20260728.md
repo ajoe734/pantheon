@@ -10,8 +10,8 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex2
 - Reviewer: Codex
 - Phase: Twelve Loop Remediation / Wave 0 Fleet Status Sync Closeout
-- Last update: 2026-07-28T18:52:58Z
-- Next: PR #4297 is refreshed on current dev at exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753. The dedicated Codex2 reviewer dispatch must record canonical exact-head approval before Human/Ops root freeze, merge, and owner done/archive.
+- Last update: 2026-07-28T18:55:18Z
+- Next: Codex2 approved PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 through canonical review gate status id 51241172509. Human/Ops root freeze, exact-head merge, and owner done/archive remain.
 
 ## Summary
 刷新並完成 L12-FLEET-STATUS-SYNC-001 closeout；不得重做已 merged implementation。
@@ -26,11 +26,14 @@ Do not read `current-work.md` by default for implementation context.
 - The refreshed PR changes only the source task brief and two closeout evidence
   files. Codex2 reproduced 168 status/guard tests and the projection refresh
   test, then verified JSON, mirror parity, diff, ancestry, and green Branch CI.
+- The dedicated reviewer dispatch approved exact head
+  `6b2fd109a885d7eb26a985d621ef3ef9d3e26753`; canonical review gate status id
+  `51241172509` is successful and the source task is `review_approved`.
 - This wrapper worker is leased only to
   `L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728`. Its attempt to mutate the parent
   task correctly failed closed with a task-mismatch guard, so the dedicated
-  `L12-FLEET-STATUS-SYNC-001` reviewer dispatch retains canonical approval
-  authority.
+  `L12-FLEET-STATUS-SYNC-001` reviewer dispatch retained and exercised
+  canonical approval authority.
 
 ## Dependencies
 - none
