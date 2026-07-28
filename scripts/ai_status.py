@@ -6403,7 +6403,18 @@ def resolve_approval_binding(
     *,
     warn_if_unbound: bool = True,
 ) -> dict[str, Any]:
-    """Bind an approval to the exact pull-request head the reviewer inspected."""
+    """Bind an approval to the exact pull-request head the reviewer inspected.
+
+    `scripts/git/task_review_merge_gate.py` compares these identities against
+    the PR standing at merge time.  Without them an approval is only a
+    timestamp, and a timestamp cannot tell an unchanged head from a head that
+    was replaced with an *older* commit -- which is a head no reviewer saw.
+
+    A PR-backed task therefore refuses an unbound approval. Not every task
+    produces a PR, so non-PR tasks may still approve without a binding; when
+    requested, they receive a warning that a later merge gate would fail
+    closed with `approval_head_binding_missing`.
+    """
 
     task_id = str(task.get("id") or "").strip()
     raw_pr = os.environ.get("REVIEW_PR", "").strip().lstrip("#")
@@ -6640,6 +6651,8 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "type": "review_approved",
             "task_id": task_id,
             "message": message,
+            # The audit event is the immutable copy the merge gate reads; the
+            # task row copy is a convenience for `show`.
             **({APPROVAL_BINDING_KEY: dict(binding)} if binding else {}),
             **(
                 {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
