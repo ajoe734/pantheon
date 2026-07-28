@@ -4,7 +4,7 @@
   "owner": "Codex",
   "reviewer": "Codex2",
   "status": "in_progress",
-  "observed_at": "2026-07-28T14:32:34Z",
+  "observed_at": "2026-07-28T15:34:14Z",
   "scope": {
     "owned_layer": "Exact-head composition, gate verification, root-freeze release, merge, and post-merge receipt for the protected L12 closeout queue.",
     "not_changing": [
@@ -30,13 +30,13 @@
     "merge_rule": "Release the root-freeze context for one current exact head only after assigned-reviewer approval and all mechanical checks are green."
   },
   "queue_state": {
-    "current_dev": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
+    "current_dev": "9f7f95e1a10a46248a81b26159e373f75525222f",
     "remaining_prs": [
-      4285
+      4300
     ],
     "blocked": true,
-    "blocked_reason": "PR #4285 exact head is current-base and Branch CI green, but its canonical review status and root-freeze release remain absent.",
-    "next_owner_action": "A task-scoped L12-EVO-001 worker hands exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 to Codex2 for independent review."
+    "blocked_reason": "PR #4300 is behind current dev. Its approval binds the old head 607df32e1dc658080a282858aa1441967c3df700, so the root-freeze release remains withheld until a current-dev head passes fresh checks and receives a new exact-head Codex2 approval.",
+    "next_owner_action": "The OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728 owner must compose current dev, push the new exact head, and hand that head to Codex2 for independent re-review."
   },
   "queue": [
     {
@@ -92,16 +92,36 @@
     {
       "pr": 4285,
       "task_id": "L12-EVO-001",
-      "state": "waiting_exact_head_review",
-      "head": "0fc918b747cf38262360b6045dadd25f157ed9d9",
-      "current_dev": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
-      "merge_state_status": "BLOCKED",
-      "base_commits_behind": 0,
-      "task_commits_ahead": 6,
-      "checks": "Both fresh Branch CI runs passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance; canonical review and root-freeze contexts are absent.",
+      "state": "merged_and_closed",
+      "reviewed_head": "0fc918b747cf38262360b6045dadd25f157ed9d9",
+      "merge_commit": "8a35d0e3dc429acb579816df1f40f2ad24b59919",
+      "closeout_pr": 4302,
+      "closeout_reviewed_head": "27956cb1c1001d6ebe1acd99cb5c79902a930d18",
+      "closeout_merge_commit": "9f7f95e1a10a46248a81b26159e373f75525222f",
+      "checks": "Exact-head Branch CI, Codex2 canonical review, and root merge freeze succeeded on PR #4285; reviewed closeout evidence merged through PR #4302.",
+      "canonical_task_state": "done"
+    },
+    {
+      "pr": 4301,
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "state": "merged_waiting_owner_closeout",
+      "reviewed_head": "25f238f94282f2cd8541ff488b003b5e983fd864",
+      "merge_commit": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
+      "checks": "Branch CI, Codex2 canonical review, and root merge freeze all succeeded.",
+      "canonical_task_state": "review_approved"
+    },
+    {
+      "pr": 4300,
+      "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+      "state": "behind_waiting_exact_head_reapproval",
+      "reviewed_head": "607df32e1dc658080a282858aa1441967c3df700",
+      "current_dev": "9f7f95e1a10a46248a81b26159e373f75525222f",
+      "merge_state_status": "BEHIND",
+      "checks": "Historical Branch CI and canonical review passed at 607df32e1dc658080a282858aa1441967c3df700; root merge freeze is absent.",
       "pending": [
-        "task-scoped L12-EVO owner handoff binds PR #4285 and exact head 0fc918b747cf38262360b6045dadd25f157ed9d9",
-        "Codex2 exact-head approval",
+        "compose current dev without changing the reviewed task artifact",
+        "fresh Branch CI on the new exact head",
+        "Codex2 exact-head reapproval",
         "single-head root-freeze release",
         "exact-head merge",
         "owner done/archive closeout"
