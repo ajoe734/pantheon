@@ -154,7 +154,7 @@
     },
     "delivery_via_review_gate": {
       "status": "pending_re_review",
-      "evidence": "PR #4296 head updated to 380a8f480acd837dd7f73066a6a2a5f1b6acca59 after composing tip of origin/dev (including merge commit 748d5b34a). Ready for reviewer Codex re-approval."
+      "evidence": "PR #4296 head updated to 70e9859c6f4d39bcc63cfc9203e25f2ca7f10783 after composing latest origin/dev tip. Ready for reviewer Codex re-approval."
     }
   },
   "validation": [
@@ -190,11 +190,11 @@
   "review": {
     "status": "pending",
     "reviewer": "Codex",
-    "reviewed_head": "380a8f480acd837dd7f73066a6a2a5f1b6acca59",
+    "reviewed_head": "70e9859c6f4d39bcc63cfc9203e25f2ca7f10783",
     "decision": "pending",
     "pr": 4296,
-    "recorded_at": "2026-07-28T19:54:30Z",
-    "note": "Re-review requested for exact head 380a8f480 after composing origin/dev tip into task branch."
+    "recorded_at": "2026-07-28T20:29:32Z",
+    "note": "Re-review requested for exact head 70e9859c6f4d39bcc63cfc9203e25f2ca7f10783 after composing latest origin/dev tip into task branch."
   },
   "safety": {
     "pr_closed": [],
