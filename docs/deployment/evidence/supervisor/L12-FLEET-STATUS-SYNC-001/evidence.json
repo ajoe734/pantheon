@@ -1,0 +1,227 @@
+{
+  "schema_version": "supervisor_status_sync_closeout_evidence.v1",
+  "schema_status": {
+    "status": "owner_evidence_ready_for_independent_review",
+    "product_level_required": false,
+    "note": "Task-scoped closeout evidence for an already-merged dashboard/status drift detector. This manifest does not claim a deployment, hosted activation, or capital authority."
+  },
+  "task": {
+    "id": "L12-FLEET-STATUS-SYNC-001",
+    "title": "Stop stale supervisor status/source_ref regressions",
+    "phase": "Fleet control",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-FLEET-STATUS-SYNC-001",
+    "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md"
+  },
+  "scope": {
+    "owned_layer": "Task-scoped evidence and acceptance mapping for the status/dashboard drift detector already merged by PR #4282.",
+    "not_changing": [
+      "The merged scripts/ai_status.py implementation or its regression tests",
+      "Generated ai-status.json, current-work.md, dashboard-bundle.json, or docs-site mirrors",
+      "Supervisor dispatch, authoritative journal, GitHub review-gate, or task-state transition logic",
+      "Canonical architecture, deployment, or capital-control semantics"
+    ],
+    "composes_with": [
+      "PR #4282 exact implementation head e806affaa279f8b9d4b41bae6117a9431c99b90e",
+      "PR #4282 merge commit a0020c5ac50e510467a5e80c412c7703245cf4dd on dev",
+      "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001 authoritative assignment/projection coverage"
+    ],
+    "implementation_files": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "closeout_files": [
+      ".orchestrator/task-briefs/l12_fleet_status_sync_001.md",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md"
+    ]
+  },
+  "delivery_observation": {
+    "implementation_pull_request": {
+      "number": 4282,
+      "url": "https://github.com/ajoe734/pantheon/pull/4282",
+      "state": "MERGED",
+      "base": "dev",
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "exact_head": "e806affaa279f8b9d4b41bae6117a9431c99b90e",
+      "merge_commit": "a0020c5ac50e510467a5e80c412c7703245cf4dd",
+      "merged_at": "2026-07-27T22:24:51Z",
+      "head_is_ancestor_of_origin_dev": true,
+      "merge_is_ancestor_of_origin_dev": true
+    },
+    "changed_files": [
+      {
+        "path": "scripts/ai_status.py",
+        "additions": 152,
+        "deletions": 0
+      },
+      {
+        "path": "scripts/test_ai_status.py",
+        "additions": 83,
+        "deletions": 0
+      }
+    ],
+    "github_checks": {
+      "status": "pass",
+      "observed": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Python packaging provision",
+        "Smoke acceptance",
+        "Forward to orchestrator",
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "note": "All visible PR #4282 check runs and status contexts were successful when re-read on 2026-07-28."
+    },
+    "historical_review": {
+      "reviewer": "Codex2",
+      "binding": "Pantheon canonical review gate success at e806affaa279f8b9d4b41bae6117a9431c99b90e",
+      "note": "GitHub reviews are empty because Pantheon uses one shared GitHub account; the canonical exact-head status context, not a GitHub review identity, carried the independent review gate."
+    }
+  },
+  "live_projection_observation": {
+    "observed_at": "2026-07-28T13:50:38Z",
+    "governed_show": {
+      "source": "active",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    "current_work": {
+      "task_present": true,
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Claude"
+    },
+    "dashboard": {
+      "task_present": true,
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "task_source": "active",
+      "task_status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "normalized_source_ref": {}
+    },
+    "mirror_sha256": {
+      "ai_status": "31e9af95b24df3c5e15897efebbb6f0568462f171d824fc2ea163d65914ff8fc",
+      "current_work": "f122f9e1b8d55f8d986fa70cd36cc1221e1df62b1952b2b4c277414d6804c8e0",
+      "dashboard_bundle": "cab375f99151a6e05940090c75d385ed50b773920f6a90aeae05053cee43b1ec",
+      "note": "For each value, the status-root file and its docs-site mirror had the same digest."
+    },
+    "legacy_source_metadata": {
+      "source_pr": "https://github.com/ajoe734/pantheon/pull/4277",
+      "source_head": "2a2d6b7c50d60a940a891d9e18e0ea8a1e7a961e",
+      "finding": "These are legacy top-level dispatch fields, not dashboard source_ref.head_sha. The dashboard normalizes source_ref to an empty object and therefore does not present the old head as the delivery binding. The current task title and next action explicitly identify PR #4282, its exact head, and its merge commit."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Governed show and generated current-work/dashboard agree on task existence.",
+      "status": "pass",
+      "evidence": [
+        "live_projection_observation.governed_show",
+        "live_projection_observation.current_work",
+        "live_projection_observation.dashboard",
+        "live_projection_observation.mirror_sha256"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "A divergent file-only or ghost task cannot override the authoritative journal, and a stale projection cannot regenerate derived views.",
+      "status": "pass",
+      "evidence": [
+        "scripts/test_ai_status.py::TaskStateShadowTests::test_authoritative_load_ignores_divergent_file_and_save_advances_journal",
+        "scripts/test_ai_status.py::TaskStateShadowTests::test_derived_views_skip_a_stale_projection"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "A stale structured source_ref.head_sha is explicitly flagged against later exact-head evidence; a merged delivery left non-terminal is explicitly flagged for closeout.",
+      "status": "pass_with_legacy_input_note",
+      "evidence": [
+        "scripts/test_ai_status.py::PortableStateRenderingTests::test_dashboard_flags_merged_delivery_that_still_needs_closeout",
+        "scripts/test_ai_status.py::PortableStateRenderingTests::test_dashboard_uses_structured_delivery_evidence_for_closeout_drift",
+        "live_projection_observation.legacy_source_metadata"
+      ],
+      "note": "The live task row still carries older top-level source_pr/source_head fields rather than structured source_ref. The dashboard does not expose those fields as source_ref; exact PR #4282 delivery identity is explicit in the task title/next and this manifest. No claim is made that PR #4282 migrated legacy source fields."
+    },
+    {
+      "id": "AC4",
+      "statement": "A journal-backed bridge assignment survives the next authoritative projection refresh.",
+      "status": "pass",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "The already-merged implementation is closed out without restarting or broadening implementation.",
+      "status": "pass_pending_independent_closeout_review",
+      "evidence": [
+        "delivery_observation.implementation_pull_request",
+        "scope.not_changing",
+        "review"
+      ]
+    }
+  ],
+  "verification": {
+    "implementation_pr_record": {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py scripts/test_supervisor_runtime_health.py",
+      "result": "173 passed, 31 subtests passed",
+      "source": "PR #4282 commit message, PR body, and Human/Ops delivery event"
+    },
+    "owner_rerun": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass; checkout-scoped .venv-pantheon provisioned and import paths verified from a foreign working directory"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
+        "result": "168 passed, 31 subtests passed in 30.58s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'dashboard_flags_merged_delivery_that_still_needs_closeout or dashboard_uses_structured_delivery_evidence_for_closeout_drift or derived_views_skip_a_stale_projection or authoritative_load_ignores_divergent_file_and_save_advances_journal'",
+        "result": "4 passed, 148 deselected in 0.65s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py -k 'authoritative_bridge_dispatch_survives_next_projection_cycle'",
+        "result": "1 passed, 26 deselected in 1.31s"
+      },
+      {
+        "command": "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev && git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass"
+      }
+    ],
+    "broad_rerun_limit": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py scripts/test_supervisor_runtime_health.py",
+      "result": "172 passed, 31 subtests passed, 1 failed",
+      "failure": "scripts/test_supervisor_runtime_health.py::test_health_fails_on_stale_heartbeat",
+      "classification": "outside PR #4282 changed files and unrelated to the focused status/source_ref regressions",
+      "detail": "The temporary repo had no supervisor PID but the host's real supervisor lock was visible, so evaluate_runtime_health correctly reported supervisor_process_alive while reporting supervisor_heartbeat_fresh false. The focused task suites pass; this ambient singleton-lock coupling is not hidden or claimed green."
+    }
+  },
+  "review": {
+    "reviewer": "Claude",
+    "status": "pending",
+    "decision": "independent_review_required",
+    "review_targets": [
+      "Verify PR #4282 exact head and merge ancestry.",
+      "Verify the focused acceptance tests and the live show/current-work/dashboard snapshot.",
+      "Decide whether AC3's documented legacy top-level source_pr/source_head input is acceptable for this evidence-only closeout or requires a concrete reopen.",
+      "Bind this manifest as REVIEW_FILE when approving the exact closeout-evidence PR head."
+    ]
+  }
+}
