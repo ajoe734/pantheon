@@ -1471,6 +1471,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ]
 
     def test_approve_records_the_reviewed_pr_head_binding(self) -> None:
+        """The merge gate compares these identities; free text is not a binding."""
+
         bridge_evidence = {
             "repository": "ajoe734/pantheon",
             "pr": 4218,
@@ -1557,6 +1559,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(self._approval_events(), [])
 
     def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
+        """Not every task has a PR, so the refusal belongs to the merge gate."""
+
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             ai_status.command_approve(self.state, ["REG-002", "Approved."])
 

@@ -1,0 +1,587 @@
+{
+  "schema_version": "supervisor_runtime_repair_evidence.v1",
+  "schema_status": {
+    "note": "Task-scoped owner evidence manifest for a delivery-governance repair in the task PR helpers. This is not a product-level loop manifest: the task changes git helper decision logic and its own regression suite, and claims no hosted activation, deployment, or capital authority.",
+    "product_level_required": false,
+    "status": "task_scoped"
+  },
+  "task": {
+    "id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+    "title": "Gate task auto-merge on exact independent review when required",
+    "phase": "Fleet delivery governance",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.md"
+  },
+  "scope": {
+    "owned_layer": "Canonical review-before-merge gate for task/<TASK-ID> PRs: policy resolution from the canonical task row and case-preserving task archive, structural binding of an approval to the exact reviewed PR number, head sha and expected base, fail-closed merge authority/revocation readback, and immutable exact-head ancestry/smoke in task_finalize.sh, safe_pr.sh, and auto_integrator.py.",
+    "not_changing": "No .orchestrator/config.json edit, no task-owned change to the current-dev review_approved transition or GitHub review bridge, no hand-edited task board, no branch protection change, and no change to the publish/promote or hotfix PR paths, which are not task PRs and do not call these helpers. Current dev now refuses an unbound approval for a PR-backed task and projects an exact-head reviewer decision through github_review_bridge.py; this task preserved that stricter baseline while resolving the ai_status.py composition conflict.",
+    "implementation_changed_files": [
+      "scripts/git/task_review_merge_gate.py",
+      "scripts/git/task_finalize.sh",
+      "scripts/git/safe_pr.sh",
+      "scripts/git/auto_integrator.py",
+      "scripts/git/test_task_review_merge_gate.py",
+      "scripts/git/test_auto_integrator.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "doc_changed_files": [
+      "docs/conventions/GIT_WORKFLOW.md",
+      "scripts/git/auto_integrator_contract.md"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
+      "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.md",
+      "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt",
+      "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/validation.txt"
+    ]
+  },
+  "observed_failures": [
+    {
+      "id": "OF1",
+      "summary": "PR #4212 (task/SUP-WORKER-TRUTH-RECONCILE-001) opened 2026-07-26T20:02:43Z and merged 2026-07-26T20:04:01Z with reviewDecision empty while the canonical task was in_progress; the independent rejection arrived at 2026-07-26T20:12:48Z, after the merge.",
+      "live_source": "gh pr view 4212 --json mergedAt,reviewDecision,headRefOid,commits; /home/lupin/pantheon/ai-activity-log.jsonl SUP-WORKER-TRUTH-RECONCILE-001 slice",
+      "root_cause": "task_finalize.sh and safe_pr.sh ran `gh pr merge --auto --merge` unconditionally at PR-open time, and dev branch protection requires 0 approvals, so CI green was the only remaining gate."
+    },
+    {
+      "id": "OF2",
+      "summary": "PRs #4213 and #4214 (task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001) merged at 2026-07-26T20:18:15Z and 2026-07-26T20:22:27Z with no review_approved audit record for the task and the canonical row still in_progress.",
+      "live_source": "gh pr view 4213/4214 --json mergedAt,reviewDecision; /home/lupin/pantheon/ai-activity-log.jsonl OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 slice",
+      "root_cause": "Same unconditional auto-merge path; the owner's own progress note at 20:25:10Z records 'merged to dev; awaiting Antigravity review'."
+    },
+    {
+      "id": "OF3",
+      "summary": "auto_integrator.py selected review_approved tasks but never checked which reviewer approved, which head they approved, or whether the approval was still live.",
+      "root_cause": "integrate_candidate went straight from PR eligibility and CI rollup to `gh pr merge`, with no binding between the canonical approval and the PR head oid."
+    },
+    {
+      "id": "OF4",
+      "summary": "auto_integrator.py could rebase a task branch, force-push the new head, and enable auto-merge on a head no reviewer had seen.",
+      "root_cause": "run_rebase_smoke pushed with --force-with-lease whenever the rebase changed the branch, then called merge_command(auto=True)."
+    },
+    {
+      "id": "OF5",
+      "summary": "Two open PRs on one task branch resolved to the first row returned by GitHub.",
+      "root_cause": "fetch_pr_for_task took listing[0] without checking for ambiguity, so a second open PR could supply a different head than the approved one."
+    },
+    {
+      "id": "OF6",
+      "summary": "PR #4217 (task/OPS-CI-PR-TRAILER-RANGE-001) merged at 2026-07-26T21:43:27Z as 71aea154b8a1ab6e652e02018f47c57f26513de0 with autoMergeRequest=null, reviews=[], mergedBy ajoe734, while the canonical task was in_progress with reviewer Codex2.",
+      "live_source": "gh pr view 4217 --json mergedAt,mergeCommit,mergedBy,autoMergeRequest,reviews,headRefOid; gh api repos/ajoe734/pantheon/commits/1e968f302e3b27285d78df0a42dfac2a24a80831",
+      "root_cause": "A gate that only refuses `--auto` leaves the plain `gh pr merge` entry point open. Merge authority has to be denied from canonical task state, independently of which GitHub call performs the merge."
+    },
+    {
+      "id": "OF7",
+      "summary": "PR #4222 (task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001) enabled auto-merge at 2026-07-26T21:54:25Z and merged 67 seconds later at 21:55:32Z with reviews=[]; reviewer Codex2 rejected the merged tree at 22:15:44Z, twenty minutes after it landed.",
+      "live_source": "gh pr view 4222 --json autoMergeRequest,mergedAt,mergeCommit,reviews; /home/lupin/pantheon/ai-activity-log.jsonl OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 slice (reopen at 22:15:44Z)",
+      "root_cause": "Enabling auto-merge is itself the grant of merge authority. Deferring the check to merge time leaves GitHub holding an unconditional promise to merge."
+    },
+    {
+      "id": "OF8",
+      "summary": "PR #4225 (same task) had auto-merge enabled at 2026-07-26T22:42:46Z on head 3c2d883700afc3e92568a013bb8e11ec8539031b while the canonical task was in_progress and unapproved. Human/Ops disabled it by hand before checks completed.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085760093",
+      "root_cause": "Same as OF7; the only reason no unauthorized merge occurred is that a human intervened inside the CI window."
+    },
+    {
+      "id": "OF9",
+      "summary": "The OF8 attempt escalated: PR #4225 head 3c2d883700afc3e92568a013bb8e11ec8539031b merged at 2026-07-26T23:01:39Z as 8d1b5077996a2d27aafb83ff5756f0290d0e90bc, mergedBy ajoe734, autoMergeRequest=null, reviews=[], while Human/Ops exact-head do-not-merge notes stood at 22:43:10Z and 22:52:13Z.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085835878; gh pr view 4225 --json mergedAt,mergeCommit,mergedBy,autoMergeRequest,reviews",
+      "root_cause": "All Pantheon agents share one GitHub account, so GitHub-side identity cannot distinguish owner from reviewer. Only canonical task state can, and an explicit do-not-merge instruction in the audit was not treated as revoking an approval."
+    },
+    {
+      "id": "OF10",
+      "summary": "PR #4227 (task/SUP-COMMAND-RUNTIME-REFRESH-001) enabled auto-merge at 2026-07-26T23:10:54Z; the head then moved to 5fb21c80ba21fcdfd9f304d66b57f56362f9dc60 committed at 23:13:21Z, and GitHub merged that newer head at 23:14:41Z as e376955ff8ac3555871932457865ed1fd0beee83 with reviews=[] and the canonical task still in_progress.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085863351; gh pr view 4227 --json autoMergeRequest,mergedAt,mergeCommit,reviews; gh api repos/ajoe734/pantheon/commits/5fb21c80ba21fcdfd9f304d66b57f56362f9dc60",
+      "root_cause": "An auto-merge request survives a head change. Merge authority granted for one commit was still armed when a different commit became the head, so the delivery that landed was never the delivery the request described. The payload was Stage-1 docs/evidence with the live swap still blocked, which does not waive review-before-merge."
+    },
+    {
+      "id": "OF11",
+      "summary": "PR #4226 (task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001) enabled auto-merge at 2026-07-26T23:06:04Z on head 4628dc721b0e1b434303fac679c01a9afa05b108 and merged at 23:07:09Z as 1cf27337e9197c8bc0840e466f55019065e3576e with reviewDecision empty and reviews=[]. It was the third unreviewed merge on that one task branch after #4222 and #4225.",
+      "live_source": "gh pr view 4226 --json autoMergeRequest,mergedAt,mergeCommit,reviewDecision,reviews; gh api repos/ajoe734/pantheon/commits/4628dc721b0e1b434303fac679c01a9afa05b108",
+      "root_cause": "Same unconditional auto-merge grant. Nothing about a task branch that has already merged unreviewed twice changed the third attempt's outcome, which is what a gate derived from canonical state rather than PR history has to fix."
+    },
+    {
+      "id": "OF12",
+      "summary": "PR #4230 (task/OPS-CI-PR-TRAILER-RANGE-001) enabled auto-merge at 2026-07-26T23:33:20Z on head 1bb2b839bad3258d7c5fe353e957e6a5fec08545 and merged at 23:34:22Z as 643181a067ec5c344faac0766c69de0d5cfb32eb with every required check green, reviewDecision empty, reviews=[], latestReviews=[], mergedBy ajoe734, while the canonical task was in_progress with reviewer Codex2 since 23:28:46Z.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085938374; gh pr view 4230 --json autoMergeRequest,mergedAt,mergeCommit,reviewDecision,reviews,latestReviews; /home/lupin/pantheon/ai-activity-log.jsonl OPS-CI-PR-TRAILER-RANGE-001 slice",
+      "root_cause": "Green CI was the only thing standing between the push and the merge. CI proves the delivery builds; it is not the independent canonical review the task contract requires, and no GitHub-side signal on a single shared account can supply that."
+    },
+    {
+      "id": "OF13",
+      "summary": "Open PR #4201 (task/P0-TW-PAPER-ACTIVATE-001, owner Antigravity, reviewer Claude) still had auto-merge armed on head dc5d7128bad1717b23b6c750076b0cb47a213ae3 with reviewDecision empty and reviews=[] while the canonical task was in_progress. Only mergeStateStatus=BEHIND kept it from merging; Human/Ops disabled auto-merge without touching the branch.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085953216; gh pr view 4201 --json mergeStateStatus,autoMergeRequest,reviewDecision,reviews,headRefOid",
+      "root_cause": "The first pass revoked a standing auto-merge request only on the blocked path, and on the approved path only just before the merge call. A gated PR that resolves to waiting - which is exactly what BEHIND produces - kept its request. A stale base is not a safety property: it expires the moment the base catches up."
+    },
+    {
+      "id": "OF14",
+      "summary": "The gate lowercased archived task filenames even though the canonical archive writer preserves task-id case. On the production filesystem ai-task-archive/tasks/LUV-REACTIVATE-KW01-001.json existed while the gate returned source=missing.",
+      "live_source": "Codex2 independent review of PR #4218 head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6; ai-task-archive/tasks/LUV-REACTIVATE-KW01-001.json",
+      "root_cause": "load_task_contract built `<task-id.lower()>.json` instead of the archive writer's case-preserving, percent-escaped filename."
+    },
+    {
+      "id": "OF15",
+      "summary": "task_finalize.sh and safe_pr.sh swallowed `gh pr merge --disable-auto` failure and then printed that auto-merge was off. A standing autoMergeRequest could remain armed after either helper returned success.",
+      "live_source": "Codex2 independent review of PR #4218 head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6; helper lines formerly ending in `|| true`",
+      "root_cause": "Neither helper read autoMergeRequest before or after revocation, so it could not distinguish already-off from failed-and-still-armed state."
+    },
+    {
+      "id": "OF16",
+      "summary": "The same merge-boundary failure repeated on 2026-07-27 while PR #4218 was awaiting exact-head review: #4259, #4260, #4263, and #4264 merged to dev with latestReviews=[]. #4264 merged during the manual auto-merge revocation race window.",
+      "live_source": "gh pr view 4259/4260/4263/4264 --json mergedAt,mergeCommit,latestReviews,autoMergeRequest; dev head advanced to 4974824687ef5c3acf665fa22a4306e5d3d664f1",
+      "root_cause": "The installed dev helpers still predated this branch, so GitHub could finalize an already-granted auto-merge before the helper/integrator gate was merged and installed."
+    },
+    {
+      "id": "OF17",
+      "summary": "Independent exact-head review rejected PR #4218 head 9d54d773c67588cb28ea63da838deee352ec744a even though origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd was its exact merge-base (0 base-only commits), GitHub reported MERGEABLE, all checks were green, and autoMergeRequest was null: the gated integrator still ran git rebase origin/dev and reproduced (False, rebase_conflict), so it could never reach the match-head merge.",
+      "live_source": "Codex2 independent review of PR #4218 head 9d54d773c67588cb28ea63da838deee352ec744a; git rev-list --left-right --count origin/dev...head; exact-head run_rebase_smoke reproduction",
+      "root_cause": "run_rebase_smoke treated the reviewed gated path like the merge-then-review path. Rebasing an already-current merge-rich graph was both unnecessary and capable of false conflicts; the immutable reviewed head needed an ancestry check and detached smoke instead."
+    }
+  ],
+  "live_regressions": [
+    {
+      "pr": 4212,
+      "task": "SUP-WORKER-TRUTH-RECONCILE-001",
+      "entry_point": "auto-merge enabled at PR open",
+      "fixture": "PrematureMergeRegressionTests::test_pr_4212_supervisor_worker_truth_reconcile"
+    },
+    {
+      "pr": 4213,
+      "task": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "entry_point": "auto-merge enabled at PR open",
+      "fixture": "PrematureMergeRegressionTests::test_pr_4213_telemetry_lineage_test_isolation"
+    },
+    {
+      "pr": 4214,
+      "task": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "entry_point": "auto-merge enabled at PR open",
+      "fixture": "PrematureMergeRegressionTests::test_pr_4214_telemetry_lineage_test_isolation_followup"
+    },
+    {
+      "pr": 4217,
+      "task": "OPS-CI-PR-TRAILER-RANGE-001",
+      "entry_point": "direct gh pr merge, autoMergeRequest=null",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4217_direct_merge_without_any_auto_merge_request"
+    },
+    {
+      "pr": 4222,
+      "task": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "entry_point": "auto-merge enabled, completed 67s later",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4222_auto_merge_enable_and_completion_both_fail_closed"
+    },
+    {
+      "pr": 4225,
+      "task": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "entry_point": "auto-merge enable attempt, then a direct merge by the same credential",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4225_premature_auto_merge_enable_is_refused, ::test_pr_4225_direct_merge_by_the_same_credential_is_refused"
+    },
+    {
+      "pr": 4226,
+      "task": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "entry_point": "auto-merge enabled, completed 65s later",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4226_third_merge_on_one_unapproved_task_branch"
+    },
+    {
+      "pr": 4227,
+      "task": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "entry_point": "auto-merge request that outlived the head it landed",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4227_auto_merge_creation_and_completion_fail_closed, ::test_pr_4227_auto_merge_request_outlived_the_head_it_landed, ::test_pr_4227_docs_only_payload_claims_do_not_waive_review"
+    },
+    {
+      "pr": 4230,
+      "task": "OPS-CI-PR-TRAILER-RANGE-001",
+      "entry_point": "auto-merge enabled with all required checks green",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4230_green_ci_is_not_canonical_reviewer_approval, ::test_the_shared_credential_cannot_enable_auto_merge, ::test_the_shared_credential_cannot_finalize_a_merge"
+    },
+    {
+      "pr": 4201,
+      "task": "P0-TW-PAPER-ACTIVATE-001",
+      "entry_point": "auto-merge armed on a BEHIND PR; did not merge only because the base was stale",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request, ::test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up, ::test_approval_binds_the_head_that_would_actually_merge; IntegratorGateTests::test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe, ::test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request"
+    }
+  ],
+  "merge_entry_point_coverage": [
+    {
+      "entry_point": "task_finalize.sh",
+      "control": "asks the gate and resolves a unique existing PR before push; a gated existing PR has autoMergeRequest revoked and verified off before its head changes, unreadable or ambiguous discovery aborts before push, post-push state is verified again, and a new PR is opened without the auto-merge label",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge, ::test_task_finalize_revokes_existing_pr_before_pushing_new_head, ::test_task_finalize_ambiguous_pr_lookup_fails_before_push, ::test_task_finalize_revokes_a_standing_request_and_verifies_it_off, ::test_task_finalize_fails_closed_when_revocation_leaves_request_armed"
+    },
+    {
+      "entry_point": "safe_pr.sh",
+      "control": "same pre-push existing-PR resolution and revocation boundary; unreadable lookup aborts before push, the gated path verifies off again after push/open, and a failed or ineffective revoke cannot continue",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_revokes_existing_pr_before_pushing_new_head, ::test_safe_pr_unreadable_pr_lookup_fails_before_push, ::test_safe_pr_distinguishes_an_already_off_request, ::test_safe_pr_revokes_a_standing_request_and_verifies_it_off, ::test_safe_pr_fails_closed_when_revocation_leaves_request_armed"
+    },
+    {
+      "entry_point": "auto_integrator.py",
+      "control": "gate runs before the CI and merge-state probes; a gated PR checks whether current origin/dev is an ancestor of the exact approved oid, smokes that immutable oid in a detached worktree without rebase or push when current, and requires owner refresh plus reapproval only when the base is genuinely absent; it then merges only with --match-head-commit <approved-oid> and never with --auto; after every attempted revocation the integrator reads live autoMergeRequest and blocks before any merge call when that read is unavailable or still armed, regardless of the disable command exit status",
+      "proof": "scripts/git/test_task_review_merge_gate.py::RealGitExactHeadIntegrationTests::test_current_merge_rich_exact_head_reaches_match_head_merge_without_rewrite; IntegratorGateTests (including ::test_gated_pr_needing_a_rebase_is_not_force_pushed, ::test_successful_revocation_that_still_reads_armed_never_merges, ::test_unreadable_revocation_readback_never_reaches_the_merge, ::test_failed_auto_merge_revocation_never_reaches_the_merge, and ::test_nonzero_revocation_can_continue_only_when_readback_proves_off)"
+    },
+    {
+      "entry_point": "auto-merge creation (`gh pr merge --auto`, GitHub UI, or API)",
+      "control": "allow_auto_merge is False for every gated task in every state, including an approved exact head; revoke_auto_merge is set whenever a request is standing",
+      "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_the_shared_credential_cannot_enable_auto_merge, ::test_an_approved_task_never_unlocks_auto_merge_creation"
+    },
+    {
+      "entry_point": "an auto-merge request already standing on a gated PR",
+      "control": "the integrator revokes it immediately after the gate decision, before the CI and merge-state probes, so a PR that resolves to blocked or waiting cannot keep it; a BEHIND base is not treated as protection",
+      "proof": "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe, ::test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request"
+    },
+    {
+      "entry_point": "auto-merge finalization by GitHub",
+      "control": "a request enabled before the current head is refused outright, so GitHub cannot land a head the request never covered",
+      "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_pr_4227_shape_is_refused_even_when_this_head_is_approved"
+    },
+    {
+      "entry_point": "direct `gh pr merge` / GitHub merge API by the shared credential",
+      "control": "the decision reads no PR-side identity, review, or check state, so the same account that authors, approves and merges cannot satisfy the gate",
+      "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_the_shared_credential_cannot_finalize_a_merge, ::test_pr_4217_direct_merge_without_any_auto_merge_request, ::test_pr_4225_direct_merge_by_the_same_credential_is_refused",
+      "limitation": "A human or agent holding the GitHub credential can still press merge outside every Pantheon helper. The gate cannot prevent that; it denies merge authority to all repository tooling and makes the resulting state auditable. Preventing it entirely needs branch protection to require a review, which is outside this task's no-config-edit scope."
+    },
+    {
+      "entry_point": "an approved head replaced on the PR before the merge",
+      "control": "the approval carries the reviewed PR number, head sha and expected base, and the gate compares each exactly; a replacement head is refused whether it is newer or older than the approval, and an approval with no binding cannot open the gate at all",
+      "proof": "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Canonical task marked review-before-merge never enables or performs merge before exact assigned reviewer approval.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_approved_gated_pr_revokes_a_standing_auto_merge_request_first",
+        "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_pr_4227_auto_merge_creation_and_completion_fail_closed",
+        "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_pr_4227_docs_only_payload_claims_do_not_waive_review",
+        "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt sections 1 and 2"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Approval is structurally bound to the exact task PR head, PR number, expected base, reviewer identity, and a non-stale timestamp, and the gate compares those identities exactly.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/ai_status.py::resolve_approval_binding records REVIEW_PR / REVIEW_HEAD_SHA / REVIEW_BASE as review_binding on the immutable review_approved audit event and the task row",
+        "scripts/git/task_review_merge_gate.py::parse_approval_binding and ::evaluate_gate",
+        "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_approve_records_the_reviewed_pr_head_binding",
+        "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_approve_refuses_an_abbreviated_head_sha",
+        "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests",
+        "scripts/git/test_task_review_merge_gate.py::ApprovedPathTests",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_head_change_after_approval_blocks",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_approval_by_another_agent_blocks",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_wrong_base_branch_blocks",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_future_approval_timestamp_blocks",
+        "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt sections 5 and 6"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Reviewer rejection, head change, head replacement with an older commit, missing state, GitHub ambiguity, a failed or unverified auto-merge revocation, and concurrent finalize all fail closed.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_reviewer_rejection_after_approval_blocks",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_reviewer_rebinding_after_approval_blocks",
+        "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests::test_pre_dated_head_replacement_is_refused",
+        "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests::test_unbound_approval_cannot_open_the_gate",
+        "scripts/git/test_task_review_merge_gate.py::UnreadableStateTests",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_fails_closed_when_revocation_leaves_request_armed",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_revokes_existing_pr_before_pushing_new_head",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_ambiguous_pr_lookup_fails_before_push",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_fails_closed_when_revocation_leaves_request_armed",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_revokes_existing_pr_before_pushing_new_head",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_unreadable_pr_lookup_fails_before_push",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_successful_revocation_that_still_reads_armed_never_merges",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_unreadable_revocation_readback_never_reaches_the_merge",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_auto_merge_revocation_never_reaches_the_merge",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_nonzero_revocation_can_continue_only_when_readback_proves_off",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_gated_pr_needing_a_rebase_is_not_force_pushed",
+        "scripts/git/auto_integrator.py::integrate_candidate reads live autoMergeRequest after every attempted revocation and blocks on unreadable or still-armed state before merge_command can pass --match-head-commit for gated tasks"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Tasks explicitly governed as merge-then-review retain their documented integration behavior.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_merge_then_review_task_still_enables_auto_merge",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_merge_then_review_task_keeps_its_documented_behavior"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Regression fixtures cover PRs 4212, 4213 and 4214 without impersonating owner or reviewer.",
+      "status": "pass",
+      "note": "Extended beyond the canonical statement: the eight later live regressions on PRs 4201, 4217, 4222, 4225 (auto-merge enable and direct merge), 4226, 4227 and 4230 are covered by the same data-only convention. See the live_regressions table, and merge_entry_point_coverage for the per-entry-point controls.",
+      "evidence_refs": [
+        "scripts/git/test_task_review_merge_gate.py::PrematureMergeRegressionTests",
+        "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests",
+        "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt section 3"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/validation.txt",
+        "scripts/git/test_task_review_merge_gate.py::UnreadableStateTests::test_archived_task_row_is_still_gated (uppercase production-shape archive filename)",
+        "scripts/git/test_task_review_merge_gate.py::RealGitExactHeadIntegrationTests::test_current_merge_rich_exact_head_reaches_match_head_merge_without_rewrite"
+      ]
+    }
+  ],
+  "non_interference": {
+    "config_mutation": "none",
+    "task_board_hand_edit": "none",
+    "owner_or_reviewer_impersonation": "none; every fixture is recorded state supplied as test data",
+    "publish_promote_path": "untouched; promote/<v> PRs are not task/<TASK-ID> PRs and do not call these helpers",
+    "hotfix_path": "untouched for the same reason",
+    "branch_protection": "repository files in this PR do not mutate branch protection. During the 2026-07-27 live race window, Ops temporarily required the `Pantheon canonical review gate` status on dev with admin enforcement; that external hold is containment until OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 productizes the GitHub-level check.",
+    "merge_then_review_path": "preserved byte-for-byte when the canonical contract permits the declaration",
+    "fail_direction": "every unresolvable read, ambiguity, or error withholds merge authority; nothing widens it"
+  },
+  "validation": {
+    "revalidation": {
+      "actor": "Codex",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, revocation-readback, and immutable-head integration defects. After Codex repaired the earlier paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, and reran the full matrix. Later stale-base reviews were composed without rewriting reviewed history. The latest independent review rejected exact head 9d54d773c67588cb28ea63da838deee352ec744a because the gated integrator still rebased an already-current merge-rich graph and reproduced a false conflict. Codex anchored the finding, changed the gated path to ancestry-check and smoke the reviewer-bound oid directly, added a real-git merge-rich regression, composed dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09, and reran the required individual and combined validation on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461. After unrelated PR #4276 advanced dev without touching task files, Codex composed current dev 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 at 253d7b6978f42f60b0d03340de87cfeb9824eb0c and reran the 101-case gate/integrator core plus static checks before reviewer dispatch. On the 2026-07-28 resumed dispatch, PR #4218 head 47aabeb8555eacc88a52fa2297375b4f0156e40d conflicted with current dev 11858f4d445565064e630cce9b89ea8b475a6598. Codex anchored the dispatch, composed dev at b05189382fe70426b23a7180b51c891f8dce95b0, reconciled only ai_status.py and test_ai_status.py, preserved the newer GitHub review bridge, and passed the 360-case focused matrix plus 31 subtests.",
+      "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
+      "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
+      "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
+      "stale_base_rejected_review_head": "23109d468ea1c5ccda9318253d5b4221eac92d61",
+      "stale_pr_base": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
+      "stale_base_anchor_commit": "e0038d729c812095ff411c73580ac6556840ceb8",
+      "revocation_readback_rejected_review_head": "dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3",
+      "revocation_readback_rejected_base": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+      "revocation_readback_anchor_commit": "aff6e98ae538db7d1593309d0431d12bfb271549",
+      "latest_rejected_dispatched_head": "30b57020d73ba7aefd261a12326b83114d83eec2",
+      "latest_rejected_observed_pr_head": "4cfd09852fc3dcaf6490cd25e6d5a35e5d6b6873",
+      "latest_rejection_anchor_commit": "456982f4d8566befb60b54d221065c4573cc423f",
+      "withdrawn_live_candidate_head": "f93ab06e67eff8e5e197172608a97d0e3b01fb77",
+      "pre_push_revocation_anchor_commit": "d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20",
+      "live_pre_push_probe_head": "c6d38ea7e9b5bbc7f2480768120478894e522f38",
+      "previous_validated_dev_base": "b79d3a540a797fe69851f4dbb3a119ddb647cf9a",
+      "previous_validated_tree_commit": "f22ea3561ca3578febd4402c39b4bd2643dbec8c",
+      "latest_stale_review_head": "7d275dafdee4e2320d0bb897c72b0075523c06e0",
+      "latest_stale_review_anchor_commit": "6ea640bf655e8aea6f90f1639071a3c84aaa6a6d",
+      "superseded_pushed_head": "e918cbd8de14c4aaff0be4d16d950a590b3eacd8",
+      "superseded_pushed_base": "4580fc5d19b5bff8c0014006324c56d6368ec5dc",
+      "superseded_pushed_reason": "Dev advanced through PR #4265 after the safe push but before reviewer handoff; this head was never dispatched for review.",
+      "validated_dev_base": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+      "validated_tree_commit": "8d142e58a983ee9ea0def27091a295a1937ea461",
+      "validated_tree_object": "30a297772138e9655e2840fee624764f5adc3ced",
+      "validated_base_only_commit_count": 0,
+      "validated_head_only_commit_count": 63,
+      "review_dispatch_dev_base": "852da0aa71d4e0d0293d5fcc8b5dff6d886386f7",
+      "review_dispatch_compose_commit": "253d7b6978f42f60b0d03340de87cfeb9824eb0c",
+      "review_dispatch_tree_object": "b647fe57ba8f5f697901789e647084e2c941a08b",
+      "review_dispatch_base_only_commit_count": 0,
+      "review_dispatch_head_only_commit_count": 65,
+      "review_dispatch_verification": "The four new dev commits from unrelated PR #4276 did not overlap task files; 101 gate/integrator cases and static checks passed after composition.",
+      "post_reopen_review_base": "7f545a33bf41e5682dc67f50333c84b42f09d17e",
+      "post_reopen_review_compose_commit": "e7a47e8efa27c6f3627b1abf5adcef7be075a886",
+      "post_reopen_review_tree_object": "b1a6f7ba0e385e896cf00415f9688df2adce7b63",
+      "post_reopen_review_base_only_commit_count": 0,
+      "post_reopen_review_head_only_commit_count": 67,
+      "post_reopen_review_verification": "After Codex2 rejected head 5f904bc7cc2666525e7e5432ec599c341e57aaa7 because origin/dev advanced to 7f545a33bf41e5682dc67f50333c84b42f09d17e, Codex composed that base without conflicts. The implementation diff is unchanged by the compose; 101 gate/integrator tests, static gates, and the 346-case focused git/status suite passed before this evidence refresh.",
+      "resumed_dispatch_anchor_commit": "de306595d8a84ebce323e0aaaa0efdf8ed5f16b5",
+      "current_dev_base": "11858f4d445565064e630cce9b89ea8b475a6598",
+      "current_dev_compose_commit": "b05189382fe70426b23a7180b51c891f8dce95b0",
+      "current_dev_tree_object": "7c88a1b1ea0babfdb70cf1fb86d76642d4ec2703",
+      "current_dev_base_only_commit_count": 0,
+      "current_dev_head_only_commit_count": 70,
+      "current_dev_overlap": [
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py"
+      ],
+      "current_dev_resolution": "Preserved current dev's PR-backed unbound-approval refusal and GitHub review bridge while retaining the immutable review_binding documentation and tests. No task gate, helper, integrator, or policy code conflicted.",
+      "current_dev_verification": "92 gate, 9 integrator, 58 helper, 2 refspec, 24 triage, 17 index, 152 ai-status, and 6 GitHub review bridge tests passed individually; the combined matrix passed 360 cases plus 31 subtests.",
+      "post_containment_dev_base": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
+      "post_containment_compose_commit": "8a05394974f88b95a686aeb62add7b14f9fe6cc6",
+      "post_containment_reason": "#4263/#4264 repeated the same unreviewed auto-merge race while old helpers were still installed; dev branch protection was temporarily held by the `Pantheon canonical review gate` status and this branch was revalidated on the new base.",
+      "immutable_smoke_rejected_review_head": "9d54d773c67588cb28ea63da838deee352ec744a",
+      "immutable_smoke_rejected_base": "4688bd252911b91ea0459a38a694c5faa53e3bbd",
+      "immutable_smoke_finding_anchor_commit": "4cbf8cbe5f99478b1ac2b4cf932b64c548ac46ae",
+      "immutable_smoke_repair_anchor_commit": "bfbd34f14c1ff7559cf89464e64397de496590b5"
+    },
+    "commands": [
+      {
+        "command": "python3 <scratch>/reproduce_gate.py f9b6760d6",
+        "conclusion": "Pre-fix task_finalize.sh emits `--label auto-merge` and `pr merge task/ABC-001 --auto --merge` for an in_progress task with an independent reviewer; post-fix emits `pr merge task/ABC-001 --disable-auto` and no auto-merge label on the identical fixture",
+        "result": "reproduced_and_fixed"
+      },
+      {
+        "command": "python3 <scratch>/repro.py prefix|postfix  (modules at reviewed head 190fb7fe8 vs now)",
+        "conclusion": "Finding 1 reproduced pre-fix: approving head bbbb... then replacing the PR head with cccc... committed BEFORE the approval returned allow_merge=True reason=exact_head_approved; post-fix the same fixture returns allow_merge=False reason=approval_head_mismatch. Finding 2 reproduced pre-fix: `gh pr merge --disable-auto` returning 1 on an approved gated PR still produced action=merged and emitted `gh pr merge 100 --merge --match-head-commit bbbb...`; post-fix the same fixture returns action=blocked after readback still shows the request armed and emits no later merge call",
+        "result": "reproduced_and_fixed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py",
+        "conclusion": "Ran 92 tests - OK; includes the real-git merge-rich exact-head integration regression, uppercase production-shape archive lookup, pre-push existing-PR revocation, unreadable/ambiguous pre-push lookup guards, helper revocation regressions, and integrator exit-zero/still-armed, unreadable-readback, nonzero/still-armed, and nonzero/already-off cases",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest -v scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_failed_auto_merge_revocation_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off",
+        "conclusion": "Ran the four exact revocation-readback regressions covering exit-zero/still-armed, unreadable, nonzero/still-armed, and nonzero/already-off - OK",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py -q",
+        "conclusion": "101 gate/integrator tests passed under package-mode pytest; verifies the regression fixtures use the same auto_integrator module identity and the real-git exact-head path",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_git_helpers_refspec.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py",
+        "conclusion": "346 passed, 31 subtests passed on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461 after composing current dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py; bash -n; py_compile; git diff --check; check_commit_trailers",
+        "conclusion": "101 gate/integrator cases and static checks passed on dispatch compose commit 253d7b6978f42f60b0d03340de87cfeb9824eb0c after unrelated PR #4276 advanced dev to 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 without touching task files",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py; bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh; .venv-pantheon/bin/python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/auto_integrator.py scripts/ai_status.py; python3 -m json.tool evidence.json; git diff --check; python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "conclusion": "101 gate/integrator cases and static gates passed on post-reopen compose commit e7a47e8efa27c6f3627b1abf5adcef7be075a886 after origin/dev advanced to 7f545a33bf41e5682dc67f50333c84b42f09d17e",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_git_helpers_refspec.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py",
+        "conclusion": "346 passed, 31 subtests passed on post-reopen compose commit e7a47e8efa27c6f3627b1abf5adcef7be075a886 after composing current dev 7f545a33bf41e5682dc67f50333c84b42f09d17e",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q",
+        "conclusion": "351 passed, 45 subtests passed in a sequential post-compose run through PR #4260",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py",
+        "conclusion": "Ran 9 tests - OK",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py",
+        "conclusion": "Ran 58 tests - OK",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py",
+        "conclusion": "2 passed; task_start.sh, task_finalize.sh, and safe_pr.sh fetch dev into the verified remote-tracking ref instead of relying on a master-only remote.origin.fetch mapping",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py",
+        "conclusion": "Ran 24 tests - OK",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_index_safety.py",
+        "conclusion": "Ran 17 tests - OK",
+        "result": "pass"
+      },
+      {
+        "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh scripts/git/nightly_publish.sh && .venv-pantheon/bin/python3 -m py_compile scripts/git/auto_integrator.py scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/ai_status.py scripts/test_ai_status.py && .venv-pantheon/bin/python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json && git diff --check origin/dev...HEAD",
+        "conclusion": "shell syntax ok; relevant Python modules compile; evidence JSON parses; diff check clean",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "conclusion": "commit trailers valid for the task branch range",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/test_ai_status.py",
+        "conclusion": "Ran 144 tests - OK on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461 after composing current dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
+        "conclusion": "evidence manifest parses",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py; test_auto_integrator.py; test_git_workflow_helpers.py; pytest test_task_git_helpers_refspec.py; test_task_pr_triage.py; test_index_safety.py; scripts/test_ai_status.py; test_github_review_bridge.py",
+        "conclusion": "On current-dev compose b05189382fe70426b23a7180b51c891f8dce95b0: 92 gate, 9 integrator, 58 helper, 2 refspec, 24 triage, 17 index, 152 ai-status, and 6 GitHub review bridge tests passed individually",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_git_helpers_refspec.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_github_review_bridge.py",
+        "conclusion": "360 passed, 31 subtests passed on compose commit b05189382fe70426b23a7180b51c891f8dce95b0 after composing current dev 11858f4d445565064e630cce9b89ea8b475a6598 and preserving its GitHub review bridge",
+        "result": "pass"
+      }
+    ],
+    "cwd": "task worktree /tmp/pantheon-ops-pr-review-gate-rebuild"
+  },
+  "residual_risks": {
+    "command_runtime_bootstrap": {
+      "severity": "medium",
+      "blocking_for_this_task": false,
+      "description": "At the 2026-07-28 revalidation the governed command runtime was 11858f4d445565064e630cce9b89ea8b475a6598. It contains exact-head review_binding and the GitHub review bridge, but it cannot contain this task's unmerged task_review_merge_gate.py and helper/integrator changes.",
+      "containment": "Keep PR #4218 auto-merge disabled, let Codex2 approve the exact pushed head through the governed bridge, and merge only that head. Treat helper/integrator runtime activation as unproven until the normal command-runtime refresh reports a merged SHA containing PR #4218.",
+      "recheck_trigger": "PANTHEON_COMMAND_RUNTIME_SHA does not contain the merged PR #4218 head after normal command-runtime refresh."
+    },
+    "integrator_dependency": {
+      "severity": "medium",
+      "blocking_for_this_task": false,
+      "description": "A gated PR no longer merges by itself. After approval the merge comes from `python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>`, run by cron or directly. If that lane is not running, approved PRs stay open instead of merging.",
+      "containment": "This is the intended fail-closed direction: an unmerged approved PR is recoverable, a merged unreviewed commit is not. Both helpers print the exact follow-up command, and chair review already flags task PRs open past 24 h.",
+      "recheck_trigger": "An approved task PR open for more than one auto-integrator interval."
+    },
+    "audit_rotation": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "The approval record is read from the active activity audit plus its rotated .gz archives. If both were lost, the gate would report approval_record_missing and block.",
+      "containment": "Fail closed; recovery is a fresh reviewer approval.",
+      "recheck_trigger": "A gated merge blocked with approval_record_missing on a task whose row is review_approved."
+    },
+    "assign_treated_as_revocation": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "An `assign` event after an approval revokes it even when owner and reviewer are unchanged.",
+      "containment": "Deliberate: the 2026-07-26 timeline includes a post-merge reviewer rebinding. Recovery is one reviewer re-approval.",
+      "recheck_trigger": "Repeated approval_revoked blocks caused by no-op reassignments."
+    },
+    "do_not_merge_note_matching": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "A `note` event whose message contains do not merge, changes required, rejects, rejected, or revert now revokes a standing approval. The match is on message text, so an unrelated note that quotes one of those phrases will also revoke.",
+      "containment": "The signal only ever blocks; it can never unlock a merge. A false positive costs one reviewer re-approval, which is the same recovery as any other revocation. It exists because the #4225 and #4222 do-not-merge instructions were recorded as notes rather than as reopen or blocker events.",
+      "recheck_trigger": "approval_revoked with revocation_type note:do_not_merge on a task whose reviewer did not intend to reject."
+    },
+    "auto_merge_request_revocation": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "A gated PR now has any standing auto-merge request revoked before the exact-head merge, and an approved head is refused outright when the request predates it. The integrator and both PR-opening helpers verify the grant is absent; an unreadable or still-armed state blocks.",
+      "containment": "Already-off is a no-op. A standing request is revoked and read back. A failed command is tolerated only if the readback proves another actor already turned it off; any request still present aborts the helper or integrator.",
+      "recheck_trigger": "A helper or integrator reports that autoMergeRequest remains armed after revocation."
+    },
+    "canonical_state_trust": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "The merge-authority decision trusts the governed status wrapper and immutable audit, because all Pantheon task PRs share one GitHub author. Current dev additionally projects that governed exact-head decision into a real GitHub review or the branch-policy-recognized `Pantheon canonical review gate` status.",
+      "containment": "ai_status.py binds the command root, runtime SHA, repository, PR number, head branch, exact head sha, and base before changing canonical state; github_review_bridge.py fails before the canonical transition when GitHub cannot represent the verdict.",
+      "recheck_trigger": "A review_approved PR-backed task lacks matching github_review_bridge evidence or the required canonical status on its exact head."
+    },
+    "legacy_unbound_approvals": {
+      "severity": "medium",
+      "blocking_for_this_task": false,
+      "description": "Approvals recorded before this change carry no review_binding, so a gated PR whose only approval predates the cutover blocks with approval_head_binding_missing.",
+      "containment": "Fails in the safe direction. Recovery is one re-approval naming the head; task_finalize.sh and safe_pr.sh print the complete command. Current dev refuses an unbound approval for a known PR-backed task and still permits a non-PR task to approve without a binding.",
+      "recheck_trigger": "A gated merge blocked with approval_head_binding_missing on a review_approved task."
+    },
+    "failed_revocation_stalls_a_green_pr": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "When `gh pr merge --disable-auto` fails for an environmental reason, the live readback is unavailable, or the request remains armed despite a zero exit, an approved and green gated PR blocks instead of merging.",
+      "containment": "Deliberate: the alternative is merging while a grant that could not be proved withdrawn is still armed. A nonzero command may continue only when readback proves another actor already turned the request off; otherwise the blocked result names the manual revocation and re-run.",
+      "recheck_trigger": "An INTEGRATION-UNBLOCK-*-AUTO-MERGE-REVOCATION-FAILED task."
+    }
+  }
+}
