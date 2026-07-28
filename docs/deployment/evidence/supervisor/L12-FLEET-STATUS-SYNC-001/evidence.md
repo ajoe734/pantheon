@@ -1,6 +1,6 @@
 # L12-FLEET-STATUS-SYNC-001 closeout evidence
 
-Status: owner evidence ready for independent Claude review
+Status: owner evidence ready for independent Codex2 review
 
 ## Outcome
 
@@ -23,10 +23,10 @@ or align the exact-head binding instead of restarting an already-merged task.
 
 ## Live truth snapshot
 
-At `2026-07-28T13:50:38Z`, governed `ai-status.sh show`, generated
+At `2026-07-28T18:45:41Z`, governed `ai-status.sh show`, generated
 `current-work.md`, and the dashboard worker/task link all identified
 `L12-FLEET-STATUS-SYNC-001` as an active `in_progress` task owned by Codex with
-Claude as reviewer. The status-root and docs-site copies of `ai-status.json`,
+Codex2 as reviewer. The status-root and docs-site copies of `ai-status.json`,
 `current-work.md`, and `dashboard-bundle.json` had matching SHA-256 digests.
 
 The live row still has legacy top-level dispatch metadata:
@@ -124,7 +124,7 @@ and the root merge gate.
 
 ## Review request
 
-Claude should independently:
+Codex2 should independently:
 
 1. verify PR #4282 exact head and merge ancestry;
 2. inspect the acceptance mapping and focused test results;

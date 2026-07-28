@@ -10,7 +10,7 @@
     "title": "Stop stale supervisor status/source_ref regressions",
     "phase": "Fleet control",
     "owner": "Codex",
-    "reviewer": "Claude",
+    "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-FLEET-STATUS-SYNC-001",
@@ -86,20 +86,20 @@
     }
   },
   "live_projection_observation": {
-    "observed_at": "2026-07-28T13:50:38Z",
+    "observed_at": "2026-07-28T18:45:41Z",
     "governed_show": {
       "source": "active",
       "task_id": "L12-FLEET-STATUS-SYNC-001",
       "status": "in_progress",
       "owner": "Codex",
-      "reviewer": "Claude"
+      "reviewer": "Codex2"
     },
     "current_work": {
       "task_present": true,
       "task_id": "L12-FLEET-STATUS-SYNC-001",
       "status": "in_progress",
       "owner": "Codex",
-      "reviewer": "Claude"
+      "reviewer": "Codex2"
     },
     "dashboard": {
       "task_present": true,
@@ -107,13 +107,13 @@
       "task_source": "active",
       "task_status": "in_progress",
       "owner": "Codex",
-      "reviewer": "Claude",
+      "reviewer": "Codex2",
       "normalized_source_ref": {}
     },
     "mirror_sha256": {
-      "ai_status": "31e9af95b24df3c5e15897efebbb6f0568462f171d824fc2ea163d65914ff8fc",
-      "current_work": "f122f9e1b8d55f8d986fa70cd36cc1221e1df62b1952b2b4c277414d6804c8e0",
-      "dashboard_bundle": "cab375f99151a6e05940090c75d385ed50b773920f6a90aeae05053cee43b1ec",
+      "ai_status": "610891ebb049d0791366d123e2a6959081318beecfb50e9c59d7b098a69fd683",
+      "current_work": "caa1bef0b0b5d6172326741ae41da8d45ea419f726a967e2f499e5ce0adef4a8",
+      "dashboard_bundle": "ce8483cb5e40b2135a59f62181c02188ceb7a6f1bf141233c0261fe188635077",
       "note": "For each value, the status-root file and its docs-site mirror had the same digest."
     },
     "legacy_source_metadata": {
@@ -214,7 +214,7 @@
     }
   },
   "review": {
-    "reviewer": "Claude",
+    "reviewer": "Codex2",
     "status": "pending",
     "decision": "independent_review_required",
     "review_targets": [
