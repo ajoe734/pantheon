@@ -1,0 +1,350 @@
+Resumed-dispatch revalidation by Codex on 2026-07-28. PR #4218 head
+47aabeb8555eacc88a52fa2297375b4f0156e40d was auto-merge-off but conflicted
+with current origin/dev 11858f4d445565064e630cce9b89ea8b475a6598. Codex
+anchored the dispatch at de306595d8a84ebce323e0aaaa0efdf8ed5f16b5 and
+composed that dev base at b05189382fe70426b23a7180b51c891f8dce95b0 (tree
+object 7c88a1b1ea0babfdb70cf1fb86d76642d4ec2703). Only scripts/ai_status.py
+and scripts/test_ai_status.py conflicted. The resolution preserved current
+dev's stricter PR-backed approval refusal and GitHub review bridge while
+retaining the immutable exact-head review-binding documentation. The graph
+had 0 base-only and 70 head-only commits.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 92 tests in 5.709s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.004s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.363s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.30s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 3.059s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 152 tests in 15.857s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_github_review_bridge.py
+Ran 6 tests in 0.001s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused gate/helper/status/bridge matrix
+360 passed, 31 subtests passed in 61.81s
+
+Review-dispatch refresh by Codex on 2026-07-27 after Codex2 rejected PR #4218
+head 5f904bc7cc2666525e7e5432ec599c341e57aaa7 because origin/dev advanced
+after dispatch. Codex composed origin/dev
+7f545a33bf41e5682dc67f50333c84b42f09d17e at
+e7a47e8efa27c6f3627b1abf5adcef7be075a886 (tree object
+b1a6f7ba0e385e896cf00415f9688df2adce7b63); the graph had 0 base-only
+and 67 head-only commits. The compose was conflict-free and did not change the
+task implementation diff.
+
+== .venv-pantheon/bin/python3 -m pytest -q gate + integrator core
+101 passed in 12.73s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused git/status matrix
+346 passed, 31 subtests passed in 52.32s
+
+Review-dispatch refresh by Codex on 2026-07-27 after unrelated PR #4276
+advanced origin/dev to 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 without
+touching task files. Codex composed that base at
+253d7b6978f42f60b0d03340de87cfeb9824eb0c (tree object
+b647fe57ba8f5f697901789e647084e2c941a08b); the graph had 0 base-only
+and 65 head-only commits.
+
+== .venv-pantheon/bin/python3 -m pytest -q gate + integrator core
+101 passed in 13.15s
+
+== bash -n; py_compile; git diff --check; check_commit_trailers
+OK
+
+Revalidated by Codex on 2026-07-27 after independent exact-head review rejected
+PR #4218 head 9d54d773c67588cb28ea63da838deee352ec744a. The reviewed graph already
+contained origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd (0 base-only
+commits), GitHub reported MERGEABLE, all checks were green, and
+autoMergeRequest was null, but the gated integrator still ran git rebase and
+reproduced (False, rebase_conflict). Codex anchored that finding at
+4cbf8cbe5f99478b1ac2b4cf932b64c548ac46ae, changed the gated path to verify
+origin/dev is an ancestor of the reviewer-bound oid and smoke that immutable
+oid in a detached worktree, and added a real-git merge-rich graph regression
+that reaches gh pr merge --match-head-commit without rebase or push.
+
+After composing current origin/dev
+b81edf76dfc14087dd7d5e3a6599448cb9d0bb09, Codex validated compose commit
+8d142e58a983ee9ea0def27091a295a1937ea461 (tree object
+30a297772138e9655e2840fee624764f5adc3ced). The tested graph had 0 base-only
+commits and 63 head-only commits.
+
+== .venv-pantheon/bin/python scripts/git/test_task_review_merge_gate.py
+Ran 92 tests in 6.750s
+OK
+
+== .venv-pantheon/bin/python scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 6.266s
+OK
+
+== .venv-pantheon/bin/python -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.42s
+
+== .venv-pantheon/bin/python scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.006s
+OK
+
+== .venv-pantheon/bin/python scripts/git/test_index_safety.py
+Ran 17 tests in 3.726s
+OK
+
+== .venv-pantheon/bin/python scripts/test_ai_status.py
+Ran 144 tests in 15.656s
+OK
+
+== .venv-pantheon/bin/python -m pytest -q focused git/status matrix
+346 passed, 31 subtests passed in 66.94s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
+Revalidated again by Codex on 2026-07-27 after dev advanced through PR #4265
+immediately after the safe push of e918cbd8de14c4aaff0be4d16d950a590b3eacd8.
+That pushed candidate retained autoMergeRequest=null and was not dispatched for
+review. Codex composed current origin/dev
+4688bd252911b91ea0459a38a694c5faa53e3bbd and validated compose commit
+64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab (tree object
+b8429eb957c4e54067e9a623264eb67c0375b873). The tested graph had 0 base-only
+commits and 56 head-only commits.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 91 tests in 7.462s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.004s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.918s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.48s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 4.155s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 144 tests in 19.613s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused git/status matrix
+345 passed, 31 subtests passed in 70.94s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
+Revalidated by Codex on 2026-07-27 after independent exact-head review rejected
+PR #4218 head 7d275dafdee4e2320d0bb897c72b0075523c06e0 as behind current
+origin/dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc. Codex anchored the
+rejection at 6ea640bf655e8aea6f90f1639071a3c84aaa6a6d, composed current dev
+without rewriting prior reviewed history, and validated compose commit
+fac2040230d24497b747d2189c77fafb1a774382 (tree object
+e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e). The tested graph had 0
+base-only commits and 54 head-only commits.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 91 tests in 5.769s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.003s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.712s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.31s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.006s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 3.874s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 144 tests in 16.094s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused git/status matrix
+345 passed, 31 subtests passed in 59.32s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
+Post-containment revalidated by Codex on 2026-07-27 after #4263/#4264 advanced
+dev to 4974824687ef5c3acf665fa22a4306e5d3d664f1 and the temporary
+`Pantheon canonical review gate` branch-protection hold was installed. The task
+branch now composes that dev head at merge tree
+8a05394974f88b95a686aeb62add7b14f9fe6cc6 before the evidence refresh commit.
+Local focused validation passed:
+
+== python3 -m json.tool evidence.json; bash -n; py_compile; git diff --check
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 91 tests in 5.979s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.894s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.40s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 3.713s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 144 tests in 13.956s
+OK
+
+== /home/lupin/pantheon/.venv/bin/python -m pytest focused git/status suite -q
+345 passed, 31 subtests passed in 57.24s
+
+Revalidated by Codex after an independent review dispatch named PR #4218 head
+30b57020d73ba7aefd261a12326b83114d83eec2 but observed that the PR had already
+moved to 4cfd09852fc3dcaf6490cd25e6d5a35e5d6b6873. Codex2 rejected reuse of
+that old-head review. The earlier exact-head review of
+dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3 had reproduced a zero
+`gh pr merge --disable-auto` exit with the live request still armed and the
+integrator still emitting its exact-head merge. The repair reads live
+autoMergeRequest after every attempted integrator revocation and blocks on an
+unreadable or still-armed result; a nonzero command may continue only when the
+readback proves another actor already turned the request off.
+
+The task branch contains authoritative origin/dev
+b79d3a540a797fe69851f4dbb3a119ddb647cf9a, fetched through the explicit
+remote-tracking refspec and composed by
+f22ea3561ca3578febd4402c39b4bd2643dbec8c. The validated implementation tree
+is f22ea3561ca3578febd4402c39b4bd2643dbec8c; the following task commit changes
+task-scoped evidence only. The final implementation pass also normalizes the
+gate/integrator regression imports to one `scripts.git.auto_integrator` module
+identity, so package-mode pytest and direct script execution exercise the same
+CommandFailure class.
+
+Live task_finalize of candidate f93ab06e67eff8e5e197172608a97d0e3b01fb77
+also proved that an existing PR made `gh pr create` return nonzero after the
+push but before autoMergeRequest readback/revocation. PR #4218 was already off
+and did not merge; the owner withdrew that handoff. The repair anchored at
+d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20 now resolves the unique PR and
+verifies its merge grant off before push, aborts unreadable or ambiguous lookup
+before push, and verifies off again after push/open.
+
+Live task_finalize on c6d38ea7e9b5bbc7f2480768120478894e522f38 then
+resolved existing PR #4218, proved auto-merge already off before push, reused
+the PR, proved it off after push/open, and returned zero. Dev advanced during
+that run, so the candidate was not handed off; the branch composed the current
+base above and reran validation.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+----------------------------------------------------------------------
+Ran 91 tests in 13.826s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+----------------------------------------------------------------------
+Ran 9 tests in 0.008s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+----------------------------------------------------------------------
+Ran 58 tests in 5.270s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.55s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+----------------------------------------------------------------------
+Ran 24 tests in 0.007s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+----------------------------------------------------------------------
+Ran 17 tests in 7.979s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+----------------------------------------------------------------------
+Ran 142 tests in 25.167s
+OK
+
+== .venv-pantheon/bin/python3 -m unittest -v
+   IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges
+   IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge
+   IntegratorGateTests.test_failed_auto_merge_revocation_never_reaches_the_merge
+   IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off
+----------------------------------------------------------------------
+Ran 4 tests in 0.014s
+OK
+
+== /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py -q
+100 passed in 29.49s
+
+== /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q
+343 passed, 31 subtests passed in 70.39s
+
+== /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q
+351 passed, 45 subtests passed in 65.77s
+
+== bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh scripts/git/nightly_publish.sh
+syntax ok
+
+== py_compile
+compile ok
+
+== .venv-pantheon/bin/python3 -m json.tool evidence.json
+evidence manifest parses
+
+== git diff --check origin/dev...HEAD
+diff check clean
+
+== python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+trailers ok

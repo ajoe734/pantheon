@@ -20,6 +20,15 @@ or unblock task
 - The PR head must be `task/<TASK-ID>` and the base must be `dev`.
 - Draft PRs, truly missing PRs, failing checks, missing checks, dirty merge
   states, and rebase conflicts are not merged.
+- Merge authority is delegated to `scripts/git/task_review_merge_gate.py`.
+  For a task whose canonical contract requires independent review the
+  integrator merges only the exact reviewer-approved head, never enables
+  GitHub auto-merge, never force-pushes a rebase over the reviewed head, and
+  revokes an auto-merge request it finds on a gated PR — including on the
+  approved path, since a standing request would outlive the merge and arm the
+  next push (the PR #4227 shape).
+- Two open PRs claiming the same task branch fail closed instead of resolving
+  to the first row.
 - If the open PR is already gone because GitHub merged it before the status
   row moved to `done`, the integrator may verify the merged PR's merge commit
   is already in `origin/dev` and run the normal owner `done` reconciliation.
@@ -37,15 +46,31 @@ For each eligible task, capped by `max_tasks_per_run`:
    merge commit is already in `origin/dev`; if found, reconcile the task to
    `done` and stop.
 4. If no open or already-merged PR exists, create a missing-PR unblock task.
-5. Require green GitHub status rollup.
-6. Fetch `origin/dev` and the task branch.
-7. Create a temporary detached worktree for the task branch.
-8. Rebase that worktree onto `origin/dev`.
-9. Run configured smoke commands.
-10. If the rebase changed the task branch and `--execute` is active, push with
-   `--force-with-lease` and enable auto-merge so CI can re-run.
-11. If no push was needed and the PR is still mergeable, run `gh pr merge`.
-12. After merge, run `scripts/ai_status.py done` as the task owner so the normal
+5. Evaluate the review-before-merge gate against this exact PR head. Any
+   pending auto-merge request on a gated PR is revoked here, before the CI and
+   merge-state probes, whatever the gate decided - a PR that ends up `waiting`
+   because it is `BEHIND` must not keep one. A gated PR that is not approved is
+   then blocked at this step.
+6. Read `autoMergeRequest` back after every revocation attempt. The command
+   exit status is diagnostic only: zero can leave the grant armed, while
+   nonzero can race with another actor that already turned it off. If the
+   readback is unavailable or still armed, block before any merge call is
+   emitted - approval of this head does not make it safe to merge alongside a
+   standing grant.
+7. Require green GitHub status rollup.
+8. Fetch `origin/dev` and the task branch.
+9. Create a temporary detached worktree for the task branch.
+10. Rebase that worktree onto `origin/dev`.
+11. Run configured smoke commands.
+12. Merge-then-review tasks only: if the rebase changed the task branch and
+    `--execute` is active, push with `--force-with-lease` and enable
+    auto-merge so CI can re-run. A gated task branch is never pushed; if it
+    needs a refreshed head the result is `waiting` and the owner must rebase
+    and obtain a new approval for the new head.
+13. If no push was needed and the PR is still mergeable, run `gh pr merge`,
+    with `--match-head-commit <approved-oid>` for a gated task so a concurrent
+    finalize cannot slip a different head into the merge.
+14. After merge, run `scripts/ai_status.py done` as the task owner so the normal
     delivery gate archives the task.
 
 ## Configuration

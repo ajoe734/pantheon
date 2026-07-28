@@ -808,7 +808,22 @@ def _antigravity_auth_probe(
     rotation_slot: str | None = None
     model = str(provider_settings.get("model") or "").strip()
     if rotation.get("enabled"):
-        rotation_slot = model_rotation.active_slot(config, provider_id) or model_rotation.SLOT_PRIMARY
+        rotation_slot = model_rotation.active_slot(config, provider_id)
+        if rotation_slot is None:
+            # Every rotation model is already cooling, so there is nothing left
+            # to probe: re-probing the exhausted primary cannot succeed, and the
+            # quota_reached path below would call cool_slot again and SHORTEN the
+            # running cooldown to a fresh interval. Report not-ready without
+            # spending a call; the next probe after a cooldown expires retries.
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method=method,
+                error="Every Antigravity rotation model is cooling after quota exhaustion.",
+                status="rotation_models_cooling",
+                metadata={**metadata, "rotation_slot": None},
+            )
         slot_model = model_rotation.model_for_slot(rotation, rotation_slot)
         if slot_model:
             model = slot_model
