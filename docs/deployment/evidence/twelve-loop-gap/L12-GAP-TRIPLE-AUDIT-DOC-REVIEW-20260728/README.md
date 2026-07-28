@@ -66,11 +66,13 @@ GitHub and the governed status command root:
   list covering Codex collaboration subagents, manual
   `.orchestrator/config.json` edits, dependency-blocked bulk wake events, and
   same-author GitHub approval.
-- The gap claims the audit makes about other lanes still hold: #4297, #4311,
-  #4312, and #4316 are all `OPEN` and `BLOCKED`; `L12-BFF-001` is still
-  `review_approved` with owner `Codex` and reviewer `Antigravity`. The heads of
-  #4312 and #4316 have advanced since the 19:00Z/20:30Z audit snapshots, which
-  is expected branch churn and does not change the recorded gap.
+- The gap claims the audit makes about other lanes held at the cut: #4297,
+  #4311, #4312, and #4316 were all `OPEN` and `BLOCKED`, and `L12-BFF-001` was
+  still `review_approved` with owner `Codex` and reviewer `Antigravity`. The
+  heads of #4312 and #4316 had advanced since the 19:00Z/20:30Z audit
+  snapshots, which is expected branch churn and did not change the recorded
+  gap. #4316 has since merged; see the cross-lane table under "Merge
+  boundary".
 - The audit's own statement that the archived audit and execution packet are
   not yet live `dev` truth, because #4314 is still open and blocked, was
   accurate at the `21:00:32Z` cut. It was superseded three minutes later; see
@@ -112,9 +114,64 @@ truth". That sentence is now superseded by this merge. Correcting it is the
 audit document lane's work, not this review task's; this packet records the
 supersession rather than editing the merged document.
 
-The root merge freeze itself is not lifted as a general condition. It was
-satisfied for this one exact head. #4297, #4311, #4312, and #4316 remain
-separately gated.
+The root merge freeze itself is not lifted as a general condition. It is
+supplied per exact head by the root gate lane.
+
+### Cross-lane PR states, `2026-07-28T21:14:58Z`
+
+Cross-lane pull-request state is fast-moving and every claim below is
+point-in-time. Re-read it from GitHub rather than from this file.
+
+| PR | State at 21:00:32Z | State at 21:14:58Z |
+| --- | --- | --- |
+| #4314 | `OPEN` / `BLOCKED` | `MERGED` at 21:01:27Z as `fe1d5b628` |
+| #4316 | `OPEN` / `BLOCKED` | `MERGED` at 21:11:26Z as `d48ba570e` |
+| #4297 | `OPEN` / `BLOCKED` | `OPEN` / `BEHIND` |
+| #4311 | `OPEN` / `BLOCKED` | `OPEN` / `BEHIND` |
+| #4312 | `OPEN` / `BLOCKED` | `OPEN` / `BEHIND` |
+
+The root gate lane drained #4314 and #4316 during this closeout window. That
+drain is the root gate lane's work and is recorded here only because it
+supersedes the 21:00:32Z snapshot; this review task did not perform it and
+does not claim it.
+
+## Closeout delivery state
+
+This packet is delivered by
+[PR #4318](https://github.com/ajoe734/pantheon/pull/4318) on
+`task/L12-GAP-TRIPLE-AUDIT-DOC-REVIEW-20260728`. Branch CI is green on the
+rebuilt head.
+
+A commit was unavoidable even for a review-only task.
+`delivery_gates.require_commit_hash` with
+`commit_conventions.subject_must_include_task_id` forces the worktree HEAD
+subject to contain this task id, and `delivery_gates.require_merged_pr` forces
+that HEAD to be an ancestor of `origin/dev`. `done` cannot run until this
+closeout PR merges.
+
+The branch history was rebuilt once. The `Commit trailers` gate rejected the
+first closeout subject at 73 chars against a 72-char limit, and a
+subject-length failure cannot be repaired by a follow-up commit because the
+gate scans the whole `origin/dev..HEAD` range. Heads `048dea8dc` and
+`0aca6401a` were superseded. Neither carried a reviewer approval, and
+`docs/conventions/GIT_WORKFLOW.md` § 7.2 allows force push on `task/*`, so no
+reviewed head was rewritten.
+
+`scripts/git/task_review_merge_gate.py` currently fails closed on #4318 with
+`declared_head_branch_mismatch`: the canonical row's `github`,
+`review_binding`, and `source_ref` all name the reviewed subject PR #4314 on
+`task/L12-GAP-TRIPLE-AUDIT-DOC-20260728`, not this task's own closeout branch.
+That is expected for a review-only row and is not owner-runnable to fix.
+Unblocking needs, in order:
+
+1. `Antigravity` approves #4318 at its exact head with `REVIEW_PR=4318` and
+   `REVIEW_HEAD_SHA=<head>`, which rebinds the canonical row to the closeout
+   PR;
+2. `Human/Ops` supplies `Pantheon root merge freeze 2026-07-27` on that same
+   exact head;
+3. `python3 scripts/git/auto_integrator.py --execute --task-id
+   L12-GAP-TRIPLE-AUDIT-DOC-REVIEW-20260728` merges the approved exact head;
+4. the owner runs the governed `done` command.
 
 ## Explicit non-claims
 
