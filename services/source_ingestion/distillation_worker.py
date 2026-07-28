@@ -1477,8 +1477,13 @@ class DistillationWorker:
                 )
                 return "skipped", "immutable"
             mode = MaterializationMode.REFRESH
+            # Registry retries refresh the mutable seed from the same committed
+            # version. Preserve its admission-time timestamp because it is part
+            # of the StrategySpec payload and therefore its checksum.
+            materialization_created_at = seed.created_at
         else:
             mode = MaterializationMode.CREATE_IF_ABSENT
+            materialization_created_at = None
 
         is_refresh = mode == MaterializationMode.REFRESH
 
@@ -1492,6 +1497,7 @@ class DistillationWorker:
                 mode=mode,
                 requested_by=self._created_by,
                 idempotency_key=job.idempotency_key,
+                created_at=materialization_created_at,
             )
         except (SeedMaterializationError, ValueError, Exception) as exc:
             failure_status = self._queue.mark_retry_or_dead_letter(

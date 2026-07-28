@@ -121,6 +121,41 @@ def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
     }
 
 
+def test_helper_claim_disable_is_actionable_by_default() -> None:
+    # Regression for 2026-07-27: live helper_claim.enabled was flipped false with
+    # no commit and no activity-log record, and the drift guard could not see it
+    # because the nested flag was not on the critical list.
+    repo = {"ready_dispatcher": {"helper_claim": {"enabled": True, "task_statuses": ["todo"]}}}
+    live = {"ready_dispatcher": {"helper_claim": {"enabled": False, "task_statuses": ["todo"]}}}
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert [item["path"] for item in report["drift"]] == ["ready_dispatcher.helper_claim.enabled"]
+    # Sibling helper_claim tuning stays live-owned; only the on/off toggle is critical.
+    assert all(item["path"] != "ready_dispatcher.helper_claim.task_statuses" for item in report["drift"])
+
+
+def test_helper_claim_fix_restores_enabled_without_touching_siblings(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo.json"
+    live_path = tmp_path / "live.json"
+    repo_path.write_text(
+        json.dumps({"ready_dispatcher": {"helper_claim": {"enabled": True, "claim_idle_work": False}}}),
+        encoding="utf-8",
+    )
+    live_path.write_text(
+        json.dumps({"ready_dispatcher": {"helper_claim": {"enabled": False, "claim_idle_work": True}}}),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--repo-config", str(repo_path), "--live-config", str(live_path), "--fix"])
+
+    assert exit_code == 0
+    fixed = json.loads(live_path.read_text(encoding="utf-8"))["ready_dispatcher"]["helper_claim"]
+    assert fixed["enabled"] is True
+    assert fixed["claim_idle_work"] is True
+
+
 def test_task_state_shadow_mode_drift_is_actionable_by_default() -> None:
     report = find_drift(
         {"task_state_store": {"mode": "shadow"}},
