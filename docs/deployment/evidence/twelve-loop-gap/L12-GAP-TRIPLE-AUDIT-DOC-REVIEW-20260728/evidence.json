@@ -99,7 +99,12 @@
         "Smoke acceptance",
         "Pantheon canonical review gate"
       ],
-      "also_blocked_by_same_gate": [4297, 4311, 4312, 4316]
+      "also_blocked_by_same_gate": [
+        4297,
+        4311,
+        4312,
+        4316
+      ]
     },
     "at_freshness_addendum": {
       "observed_at": "2026-07-28T21:03:22Z",
@@ -118,13 +123,33 @@
       "point_in_time": true,
       "note": "Cross-lane pull-request state is fast-moving. Re-read it from GitHub rather than from this manifest. The root gate lane drained #4314 and #4316 during this closeout window; this review task did not perform that drain and does not claim it.",
       "merged": [
-        {"pr": 4314, "merged_at": "2026-07-28T21:01:27Z", "merge_commit": "fe1d5b6281ad25429b0c3a1e451cea886349e2ce"},
-        {"pr": 4316, "merged_at": "2026-07-28T21:11:26Z", "merge_commit": "d48ba570eeec2676a4fc2399eb1b231022b80778"}
+        {
+          "pr": 4314,
+          "merged_at": "2026-07-28T21:01:27Z",
+          "merge_commit": "fe1d5b6281ad25429b0c3a1e451cea886349e2ce"
+        },
+        {
+          "pr": 4316,
+          "merged_at": "2026-07-28T21:11:26Z",
+          "merge_commit": "d48ba570eeec2676a4fc2399eb1b231022b80778"
+        }
       ],
       "still_open": [
-        {"pr": 4297, "state": "OPEN", "merge_state_status": "BEHIND"},
-        {"pr": 4311, "state": "OPEN", "merge_state_status": "BEHIND"},
-        {"pr": 4312, "state": "OPEN", "merge_state_status": "BEHIND"}
+        {
+          "pr": 4297,
+          "state": "OPEN",
+          "merge_state_status": "BEHIND"
+        },
+        {
+          "pr": 4311,
+          "state": "OPEN",
+          "merge_state_status": "BEHIND"
+        },
+        {
+          "pr": 4312,
+          "state": "OPEN",
+          "merge_state_status": "BEHIND"
+        }
       ]
     },
     "root_freeze_owner": "Human/Ops",
@@ -138,7 +163,10 @@
     "branch_ci": "green on the rebuilt head",
     "history_rebuild": {
       "reason": "The Commit trailers gate rejected the first closeout subject at 73 chars against a 72-char limit. A subject-length failure cannot be repaired by a follow-up commit because the gate scans the whole origin/dev..HEAD range.",
-      "superseded_heads": ["048dea8dc340430aae0bd2421ae9e0adb062e82d", "0aca6401a58b75f1998fdc8e019504b827013681"],
+      "superseded_heads": [
+        "048dea8dc340430aae0bd2421ae9e0adb062e82d",
+        "0aca6401a58b75f1998fdc8e019504b827013681"
+      ],
       "reviewed_head_rewritten": false,
       "policy_basis": "docs/conventions/GIT_WORKFLOW.md 7.2 allows force push on task/* branches; neither superseded head carried a reviewer approval."
     },
@@ -148,11 +176,23 @@
       "detail": "The canonical row's github, review_binding, and source_ref all name the reviewed subject PR #4314 on task/L12-GAP-TRIPLE-AUDIT-DOC-20260728, not this task's own closeout branch. The gate fails closed and revokes auto-merge.",
       "owner_runnable": false,
       "unblock_requires": [
-        "Antigravity approves PR #4318 at its exact head with REVIEW_PR=4318 and REVIEW_HEAD_SHA=<head>, which rebinds the canonical row to the closeout PR.",
+        "Owner runs the governed handoff to Antigravity, returning the row to review without disturbing the existing review_binding.",
+        "Antigravity approves PR #4318 at its exact head with REVIEW_PR=4318 and REVIEW_HEAD_SHA=<head>, which rebinds the canonical row to the closeout PR, and binds REVIEW_FILE to this manifest.",
         "Human/Ops supplies Pantheon root merge freeze 2026-07-27 on that same exact head.",
         "python3 scripts/git/auto_integrator.py --execute --task-id L12-GAP-TRIPLE-AUDIT-DOC-REVIEW-20260728 merges the approved exact head.",
         "Owner then runs the governed done command."
-      ]
+      ],
+      "owner_runnable_precondition": {
+        "correction": "An earlier revision of this packet listed the reviewer rebind as step 1. That step cannot run from review_approved.",
+        "constraint": "scripts/ai_status.py command_approve refuses unless task status == 'review'.",
+        "governed_transition": "scripts/ai_status.py command_handoff is owner-only, has no status precondition, sets status to 'review', and refuses any target that is not the already assigned reviewer, so it cannot reassign owner or reviewer.",
+        "performed_by_owner": true
+      },
+      "review_file_binding": {
+        "canonical_row_review_file": null,
+        "expected_path": "docs/deployment/evidence/twelve-loop-gap/L12-GAP-TRIPLE-AUDIT-DOC-REVIEW-20260728/evidence.json",
+        "note": "Reviewer should bind REVIEW_FILE at approve time; otherwise the owner must carry it on the final done command."
+      }
     },
     "why_a_commit_was_required": "delivery_gates.require_commit_hash with commit_conventions.subject_must_include_task_id forces the worktree HEAD subject to contain this task id, and delivery_gates.require_merged_pr forces that HEAD to be an ancestor of origin/dev. A review-only task with no commit cannot satisfy either, so done cannot run until this closeout PR merges."
   },

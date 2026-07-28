@@ -161,17 +161,43 @@ reviewed head was rewritten.
 `declared_head_branch_mismatch`: the canonical row's `github`,
 `review_binding`, and `source_ref` all name the reviewed subject PR #4314 on
 `task/L12-GAP-TRIPLE-AUDIT-DOC-20260728`, not this task's own closeout branch.
-That is expected for a review-only row and is not owner-runnable to fix.
+That is expected for a review-only row. Only the reviewer can rebind it, but
+the rebind has an owner-runnable precondition that an earlier revision of this
+packet missed.
+
+`command_approve` in `scripts/ai_status.py` refuses unless the row is in
+`review`:
+
+```
+if task.get("status") != "review":
+    raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
+```
+
+The row is `review_approved`, so dispatching `Antigravity` without first
+returning the row to `review` would fail closed. `command_handoff` is the
+governed transition: it is owner-only, has no status precondition, sets the
+row to `review`, and refuses any target that is not the already assigned
+reviewer, so it cannot reassign owner or reviewer.
+
 Unblocking needs, in order:
 
-1. `Antigravity` approves #4318 at its exact head with `REVIEW_PR=4318` and
+1. the owner runs `handoff` to `Antigravity`, returning the row to `review`
+   without disturbing the existing `review_binding`;
+2. `Antigravity` approves #4318 at its exact head with `REVIEW_PR=4318` and
    `REVIEW_HEAD_SHA=<head>`, which rebinds the canonical row to the closeout
-   PR;
-2. `Human/Ops` supplies `Pantheon root merge freeze 2026-07-27` on that same
+   PR, and binds `REVIEW_FILE` to this manifest;
+3. `Human/Ops` supplies `Pantheon root merge freeze 2026-07-27` on that same
    exact head;
-3. `python3 scripts/git/auto_integrator.py --execute --task-id
+4. `python3 scripts/git/auto_integrator.py --execute --task-id
    L12-GAP-TRIPLE-AUDIT-DOC-REVIEW-20260728` merges the approved exact head;
-4. the owner runs the governed `done` command.
+5. the owner runs the governed `done` command.
+
+Steps 3 and 4 remain outside owner authority; step 1 is not, and has been
+performed as part of this closeout.
+
+The canonical row carries no `review_file`. The reviewer should bind
+`REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-GAP-TRIPLE-AUDIT-DOC-REVIEW-20260728/evidence.json`
+at step 2; otherwise the owner must carry it on the final `done` command.
 
 ## Explicit non-claims
 
