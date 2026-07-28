@@ -1171,6 +1171,30 @@ EOF
             self.assertEqual(record["status"], "quota_reached")
             self.assertEqual(run_command.call_count, 2)
 
+    def test_antigravity_auth_probe_skips_when_every_model_cools(self) -> None:
+        # Observed 2026-07-28: with both slots cooling the probe fell back to the
+        # primary, spent a call on a model already known exhausted, and its
+        # quota_reached path re-cooled that slot -- shortening a longer running
+        # cooldown (an 18:00Z entry was clobbered to 13:02Z).
+        import model_rotation
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            model_rotation.cool_slot(config, "antigravity", model_rotation.SLOT_PRIMARY, seconds=36000)
+            model_rotation.cool_slot(config, "antigravity", model_rotation.SLOT_FALLBACK)
+            before = json.loads(model_rotation.cooldown_file_path(config).read_text(encoding="utf-8"))
+
+            run_command = mock.Mock(side_effect=AssertionError("must not probe while every model cools"))
+            p1, p2, p3 = self._probe_patches(run_command)
+            with p1, p2, p3:
+                record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+            self.assertFalse(record["ready"])
+            self.assertEqual(record["status"], "rotation_models_cooling")
+            self.assertEqual(run_command.call_count, 0)
+            # The longer cooldown survives untouched.
+            after = json.loads(model_rotation.cooldown_file_path(config).read_text(encoding="utf-8"))
+            self.assertEqual(after, before)
+
     def test_antigravity_auth_probe_quota_without_rotation_stays_down(self) -> None:
         config = {
             "providers": {"antigravity": {"antigravity": {"cli": "agy", "model": "gemini-3.6-flash-low"}}},
