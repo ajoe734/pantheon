@@ -2,6 +2,8 @@
 
 Observation time: `2026-07-28T19:00:00Z`
 
+Freshness addendum: `2026-07-28T20:30:00Z`
+
 Repository base for this document branch: `origin/dev = a6d56c366f7436574e6d2d241b47564558beac74`
 
 Live status root inspected: `/home/lupin/pantheon`
@@ -14,6 +16,53 @@ This refresh is a third-pass re-audit of the current post-repair state.  It is
 not a completion claim.  Its purpose is to state exactly why the twelve-loop
 program is still not operational, what development and validation remain, and
 which work can be split into real supervisor/auto-worker fleet lanes.
+
+## 2026-07-28T20:30Z Current-State Addendum
+
+This addendum supersedes older per-row facts below when the older 19:00Z
+snapshot conflicts with live state.  The three-pass audit remains useful as the
+gap inventory, but the execution queue must use this fresher state.
+
+Current live facts:
+
+- `OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728` is running through the
+  intended real fleet lane: owner `Antigravity`, reviewer `Claude2`.  This is
+  supervisor/auto-worker dispatch, not Codex collaboration subagents.
+- PR #4312 is open at head
+  `c213a7a657d6cf661ec67b1d09682250fbad0247`; Branch CI is green.  Claude2
+  review is still required because the evidence still has at least one live
+  truth mismatch: `antigravity1-1-20260728T190729Z-8aeb78de` is recorded as
+  `running`/“Current Active”, while live worker-runtime status shows it
+  completed with `exit_code=0` and `finished_at=2026-07-28T19:09:57Z`.
+- The current provider truth is per-slot, not per-family:
+  - `claude`: `ready=false`, `auth_not_ready`, checked
+    `2026-07-28T19:29:28Z`;
+  - `claude2`: `ready=true`, `ready`, checked `2026-07-28T19:29:29Z`;
+  - `claude1-1`..`claude1-4`: present slots, all `auth_not_ready`, checked
+    from `2026-07-28T19:29:30Z` through `2026-07-28T19:29:34Z`;
+  - `antigravity` / `antigravity1-1`..`antigravity1-4`: ready under the
+    shared Antigravity credential group at `2026-07-28T19:29:39Z`.
+- `L12-BFF-001` is no longer `todo`; it is `review_approved` and repeatedly
+  revalidated, but cannot be marked `done` because PR #4316 remains blocked by
+  the required `Pantheon root merge freeze 2026-07-27` status / exact-head root
+  gate.
+- #4297 (`L12-FLEET-STATUS-SYNC-001`) is blocked because the canonical reviewer
+  changed after approval; Antigravity must independently re-approve the exact
+  head, then the root merge-freeze gate must be supplied.
+- #4311 (`L12-GAP-MERGE-QUEUE-20260728`) remains blocked by the same root
+  merge-freeze gate class after internal review/check evidence.
+- The archived audit and execution packet are still not on the live `dev`
+  branch because PR #4314 itself remains open and blocked.  Therefore the
+  documentation work is prepared, not yet accepted as live repo truth.
+
+Current dispatch rule:
+
+- Prioritize real supervisor lanes with `Antigravity` owners and `Claude2`
+  reviewers where they are live-ready.
+- Do not assign new work to aggregate `Claude` unless a current readiness probe
+  proves it; `Claude2` is the healthy Claude-family lane.
+- Do not use Codex collaboration subagents as a substitute for fleets.
+- Do not edit `.orchestrator/config.json` as a dispatch shortcut.
 
 ## Evidence Snapshot
 
@@ -61,7 +110,7 @@ which are runnable, and which are still blocked by dependencies.
 
 | Task | Live status | Current truth | Gap |
 | --- | --- | --- | --- |
-| `L12-BFF-001` | `todo` | Owner `Claude`, reviewer `Codex`; dependencies are satisfied. | It is not executing because the Claude lane is unavailable. Formal BFF closeout/restart proof remains absent. |
+| `L12-BFF-001` | `review_approved` | Owner `Codex`, reviewer `Antigravity`; PR #4316 exact head `3c0aae0d95a020e0fc225d9bcb27f9e1c2911549` has green checks and repeated local closeout revalidation. | Cannot move to `done` until the exact-head root merge-freeze gate / PR merge acceptance exists; do not invent reviewer/root evidence. |
 | `L12-MANIFEST-001` | `todo` | Depends on all domain loop rows plus `L12-BFF-001`. | Not eligible until BFF and prerequisite closeout rows are terminal. Manifest activation proof is missing. |
 | `L12-TRUTH-001` | `todo` | Depends on `L12-MANIFEST-001`. | Backend/controller/operator truth contract is missing. |
 | `L12-FE-TRUTH-001` | `todo` | Depends on `L12-TRUTH-001`. | Cross-repo `execute-plans` frontend truth implementation and browser evidence are missing. |
@@ -75,7 +124,7 @@ which are runnable, and which are still blocked by dependencies.
 | `L12-GAP-MERGE-QUEUE-20260728` | `review` | PR #4311 exact head `80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d`; Branch CI and Pantheon canonical review gate are green. | GitHub merge remains blocked for the same independent-review/root-freeze class. |
 | `L12-GAP-CLOSEOUT-RECONCILE-20260728` | `in_progress` | Depends on `L12-GAP-MERGE-QUEUE-20260728`. | Not eligible to finish until #4311 is reviewed, merged, and reconciled. |
 | `L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728` | `in_progress` | Active worker is recording wrapper evidence around `L12-FLEET-STATUS-SYNC-001`. | Cannot close until #4297 is merged/done or formally recorded as blocked by independent GitHub approval. |
-| `OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728` | `review` | PR #4312 exact head `1e6eb0ebfc23e070120cbb70cf44c903277f3642`. | PR is `BEHIND`; Commit trailers checks fail; readiness result is negative and must be reviewed as fail-closed evidence, not as provider availability. |
+| `OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728` | `review` | PR #4312 exact head `c213a7a657d6cf661ec67b1d09682250fbad0247`; owner `Antigravity`, reviewer `Claude2`; Branch CI is green. | Still needs Claude2 acceptance or another repair for live-truth consistency, especially the stale `antigravity1-1-20260728T190729Z-8aeb78de` running/completed mismatch. |
 
 Pass 1 verdict:
 
@@ -95,7 +144,7 @@ This pass checks whether open PRs and current checks prove mergeability.
 | --- | --- | --- | --- | --- | --- |
 | #4297 | `L12-FLEET-STATUS-SYNC-001` | `6b2fd109a885d7eb26a985d621ef3ef9d3e26753` | `OPEN`, `MERGEABLE`, `mergeStateStatus=BLOCKED`, empty `reviewDecision` | Branch CI green; `Pantheon canonical review gate` success | Needs independent GitHub PR approval and/or root merge-freeze status that current identity cannot supply. |
 | #4311 | `L12-GAP-MERGE-QUEUE-20260728` | `80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d` | `OPEN`, `MERGEABLE`, `mergeStateStatus=BLOCKED`, empty `reviewDecision` | Branch CI green; `Pantheon canonical review gate` success | Same independent GitHub/root-freeze gate class. |
-| #4312 | `OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728` | `1e6eb0ebfc23e070120cbb70cf44c903277f3642` | `OPEN`, `MERGEABLE`, `mergeStateStatus=BEHIND` | Runtime mirror and packaging pass; smoke skipped; Commit trailers fail | Needs trailer repair/rebase and review. |
+| #4312 | `OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728` | `c213a7a657d6cf661ec67b1d09682250fbad0247` | `OPEN`, `MERGEABLE`, `mergeStateStatus=BLOCKED` | Branch CI green | Needs Claude2 exact-head review and any remaining evidence repair; do not approve solely on green CI. |
 
 The available GitHub connector was tested against #4297 and returned:
 
@@ -122,18 +171,20 @@ creating stale events, duplicate workers, or unauthorized closeout.
 These are already running or immediately reviewable:
 
 1. `L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728`
-   - owner lane: Codex2;
+   - preferred owner lane: Antigravity or Claude2 if available; preserve the
+     canonical Antigravity exact-head review requirement for #4297;
    - task: finish wrapper evidence for #4297 and record the exact blocker if
      branch protection cannot be satisfied;
    - must not approve or mark done for `L12-FLEET-STATUS-SYNC-001`.
 2. `L12-GAP-MERGE-QUEUE-20260728`
-   - reviewer lane: Codex2;
+   - preferred reviewer lane: Antigravity or Claude2 if available; current row
+     is blocked by root merge-freeze after internal evidence;
    - task: finish #4311 independent review and record whether GitHub/root-freeze
      blocks merge.
 3. `OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728`
-   - reviewer lane: Codex2;
-   - task: review #4312, repair Commit trailers/rebase if assigned back, and
-     preserve negative readiness truth.
+   - active lane: owner `Antigravity`, reviewer `Claude2`;
+   - task: review #4312 exact head `c213a7a657d6cf661ec67b1d09682250fbad0247`
+     or newer repair head, and preserve per-slot readiness truth.
 
 ### Ready only after external/root gate
 
@@ -149,9 +200,8 @@ These are already running or immediately reviewable:
 6. `L12-GAP-CLOSEOUT-RECONCILE-20260728`
    - can resume after #4311 is merged or formally blocked.
 7. `L12-BFF-001`
-   - dependencies are satisfied, but owner is Claude and Claude is unavailable;
-   - requires either restored Claude lane or governed reassignment to an
-     available lane.
+   - is `review_approved`, not `todo`;
+   - requires exact-head root gate / PR #4316 merge acceptance before `done`.
 8. `L12-MANIFEST-001`
    - can start only after `L12-BFF-001` and required closeouts are terminal.
 9. `L12-TRUTH-001`
@@ -185,8 +235,8 @@ Pass 3 verdict:
    cannot provide independent GitHub approval for #4297/#4311.
 2. **Root merge-freeze gate gap**: #4297/#4311 remain `BLOCKED` despite green
    Branch CI and Pantheon canonical review gates.
-3. **Provider readiness gap**: OpenClaw lacks `OPENCLAW_GATEWAY_URL`; Claude is
-   not available to the runner environment.
+3. **Provider readiness gap**: readiness is per-slot.  `claude2` is currently
+   ready; aggregate `claude` and `claude1-1`..`claude1-4` remain auth-not-ready.
 4. **Provider routing gap**: aggregate `Antigravity` dispatch was blocked, while
    concrete `antigravity1_1` slot dispatch succeeded.  This proves a routing
    issue without proving provider readiness.
@@ -218,4 +268,3 @@ Machine-readable split:
 The packet is structured to let healthy real supervisor workers drain parallel
 review/repair lanes first, then unlock manifest/truth/verifier/hosted work in
 dependency order.
-

@@ -2,6 +2,8 @@
 
 Recorded at: `2026-07-28T19:00:00Z`
 
+Freshness addendum: `2026-07-28T20:30:00Z`
+
 This evidence packet records the documentation and execution-task split created
 after the live fleet dispatch audit.
 
@@ -33,3 +35,17 @@ The resulting execution packet separates:
 
 No `.orchestrator/config.json` edit is included in this documentation packet.
 
+## 20:30Z Refresh
+
+The audit and execution packet now include a freshness addendum for the live
+fleet state observed after the original 19:00Z snapshot:
+
+- #4312 is now owned by `Antigravity` and reviewed by `Claude2` through real
+  supervisor/auto-worker runs.
+- `claude2` is documented as the healthy Claude-family slot; aggregate
+  `claude` remains auth-not-ready.
+- `L12-BFF-001` is documented as `review_approved` but root-gate blocked, not
+  as a plain `todo` item.
+- The execution split prefers `Antigravity` and `Claude2` lanes where live
+  readiness supports them, and continues to exclude Codex collaboration
+  subagents and config edits.

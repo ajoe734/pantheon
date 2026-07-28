@@ -8,6 +8,8 @@ Source audit:
 Machine-readable task split:
 `docs/bff/execution-tasks/2026-07-28-twelve-loop-current-gap-drain/tasks.json`
 
+Freshness addendum: `2026-07-28T20:30:00Z`
+
 ## Goal
 
 Drain the current twelve-loop gaps without pretending the program is already
@@ -17,8 +19,9 @@ collaboration subagents are not part of this packet.
 ## Dispatch Principles
 
 - Do not edit `.orchestrator/config.json` as a dispatch shortcut.
-- Prefer healthy real supervisor workers.  Use Claude/Antigravity only when
-  their readiness is proven by current runtime evidence.
+- Prefer healthy real supervisor workers.  As of the 20:30Z addendum, prefer
+  `Antigravity` owner lanes and `Claude2` reviewer lanes when available; do not
+  assign new work to aggregate `Claude` unless a fresh readiness probe proves it.
 - When aggregate provider lanes fail but concrete slots are valid, dispatch to
   the concrete slot and record the routing finding.
 - Do not dispatch dependency-blocked downstream tasks.  The supervisor stale
@@ -40,25 +43,31 @@ These lanes can run concurrently now:
    - finishes #4311 review evidence;
    - records GitHub/root-freeze blocker if still blocked.
 3. `OPS-L12-PROVIDER-READINESS-REVIEW-DRAIN-20260728`
-   - reviews #4312;
-   - repairs trailer/rebase if returned to owner;
-   - preserves the negative readiness verdict.
+   - current live lane is owner `Antigravity`, reviewer `Claude2`;
+   - reviews #4312 head `c213a7a657d6cf661ec67b1d09682250fbad0247`;
+   - must verify live worker-runtime truth, especially that
+     `antigravity1-1-20260728T190729Z-8aeb78de` is completed, not running;
+   - preserves per-slot truth: `claude2` ready, aggregate `claude` not ready,
+     Antigravity ready.
 4. `OPS-L12-GITHUB-ROOT-GATE-UNBLOCK-20260728`
    - Human/Ops or independent GitHub identity lane;
    - supplies or records the missing independent approval/root-freeze gate.
 
-## Wave 1 - Provider And BFF Unblock
+## Wave 1 - Provider And BFF/Root-Gate Unblock
 
-Runs after Wave 0 clarifies whether Claude/OpenClaw are truly available:
+Runs after Wave 0 clarifies whether provider/root gates are truly available:
 
 1. `OPS-L12-OPENCLAW-GATEWAY-CONFIG-20260728`
    - configure or document absence of `OPENCLAW_GATEWAY_URL`;
    - rerun OpenClaw readiness smoke.
 2. `OPS-L12-CLAUDE-CLI-READINESS-20260728`
-   - restore/verify Claude CLI binary/auth or formally keep Claude paused.
+   - restore/verify aggregate Claude CLI binary/auth or formally keep it
+     paused;
+   - do not conflate aggregate `Claude` with healthy `Claude2`.
 3. `L12-BFF-001`
-   - restore BFF closeout on a healthy lane or governed reassignment;
-   - produce formal closeout/archive evidence.
+   - current status is `review_approved`, not `todo`;
+   - do not run `done` until PR #4316 is exact-head root-gated/merged and the
+     committed review evidence is internally consistent.
 
 ## Wave 2 - Manifest And Truth
 
@@ -97,9 +106,13 @@ unit-test-only proof.
 ## Current Known Blockers To Preserve
 
 - #4297: Branch CI and Pantheon canonical review gate are green; GitHub merge is
-  still blocked because the current identity cannot approve its own PR.
-- #4311: same blocked class after canonical review gate success.
-- #4312: behind and Commit trailers failing.
-- OpenClaw: `OPENCLAW_GATEWAY_URL` missing.
-- Claude: current readiness evidence reports missing/unavailable CLI/auth.
-
+  still blocked by independent approval / root merge-freeze authority.  The
+  current task row says Antigravity must re-approve exact head
+  `6b2fd109a885d7eb26a985d621ef3ef9d3e26753`.
+- #4311: same root merge-freeze blocked class after canonical review evidence.
+- #4312: current head `c213a7a657d6cf661ec67b1d09682250fbad0247` has green CI
+  but still requires Claude2 review for live-truth consistency.
+- #4316 / `L12-BFF-001`: `review_approved`, but blocked by the required
+  `Pantheon root merge freeze 2026-07-27` status and merge acceptance.
+- Claude family: `claude2` is currently ready; aggregate `claude` and
+  `claude1-1`..`claude1-4` are auth-not-ready.
