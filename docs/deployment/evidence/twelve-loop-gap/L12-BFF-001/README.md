@@ -1,18 +1,27 @@
 # L12-BFF-001 closeout evidence
 
-Status: merged implementation accepted for closeout; independent Codex2 review
-of the closeout-only evidence PR is pending.
+Status: merged implementation accepted for closeout; Antigravity independently
+approved the prior closeout evidence cut, and this review-receipt recut requires
+fresh exact-head review before merge.
 
-This owner cut v2.0.0 does not restart BFF implementation. It recuts the
+This owner cut v2.1.0 does not restart BFF implementation. It recuts the
 task-scoped record against immutable [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
 head `414546226003bce04a60f2d5941d999e96afd075`, merged to `dev` as
 `7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1` at
 `2026-07-27T22:14:45Z`.
 
-The canonical task-state scan boundary is journal sequence 3829, committed at
-`2026-07-28T19:27:16Z`: owner `Codex`, reviewer `Codex2`, status
-`in_progress`, and review file
+The canonical task-state scan boundary is journal sequence 3988, committed at
+`2026-07-28T20:31:20Z`: owner `Codex`, reviewer `Antigravity`, status
+`review_approved`, and review file
 `docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json`.
+
+Antigravity independently approved PR #4316 exact head
+`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549` at
+`2026-07-28T19:49:05Z`. The governed GitHub review bridge recorded canonical
+status `Pantheon canonical review gate` as success with status id
+`51244708326`. Because v2.1.0 commits that previously external decision into
+the task review manifest, it changes the PR head and does not reuse that
+approval for the new head.
 
 ## Accepted implementation
 
@@ -68,4 +77,6 @@ Those claims remain with `L12-MANIFEST-001` and `L12-VERIFY-OBS-001`.
 
 The companion `evidence.json` binds this README and the unchanged implementation
 sources through an anchor receipt, records the immutable PR #4274 head and
-merge, and intentionally leaves independent review pending for Codex2.
+merge, preserves Antigravity's independent decision on v2.0.0 head
+`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549`, and leaves fresh exact-head review
+pending for the v2.1.0 evidence-only follow-up.
