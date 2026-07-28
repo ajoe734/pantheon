@@ -179,8 +179,20 @@
     "config_edited": false
   },
   "validation": {
+    "verified_at": "2026-07-28T21:57:43Z",
     "pytest_suite": "services/openclaw-gateway-adapter/tests/",
     "pytest_passed": 117,
-    "openclaw_smoke_passed": 6
+    "openclaw_smoke_command": "bash scripts/openclaw-smoke-test.sh",
+    "openclaw_smoke_passed": 6,
+    "manifest_checks": [
+      "python3 -m json.tool evidence.json",
+      "sha256sum -c evidence.sha256",
+      "git diff --check"
+    ],
+    "live_cross_check": {
+      "provider_capabilities_path": "/home/lupin/pantheon/.orchestrator/provider_capabilities.json",
+      "provider_probe_records_matched": 7,
+      "worker_status_records_matched": 4
+    }
   }
 }

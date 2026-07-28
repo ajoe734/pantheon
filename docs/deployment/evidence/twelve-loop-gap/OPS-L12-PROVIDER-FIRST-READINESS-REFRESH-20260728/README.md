@@ -65,3 +65,5 @@ The status above is the pre-handoff owner snapshot. A later governed handoff or 
 
 - `PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)" && "$PANTHEON_PY" -m pytest services/openclaw-gateway-adapter/tests/`: 117 passed.
 - `bash scripts/openclaw-smoke-test.sh`: 6 passed.
+- `python3 -m json.tool evidence.json` and `sha256sum -c evidence.sha256`: passed.
+- Exact-field comparison against `/home/lupin/pantheon/.orchestrator/provider_capabilities.json` and the four cited `/home/lupin/pantheon/.orchestrator/worker-runtime/status/*.json` records: 7 provider probes and 4 worker runs matched at `2026-07-28T21:57:43Z`.
