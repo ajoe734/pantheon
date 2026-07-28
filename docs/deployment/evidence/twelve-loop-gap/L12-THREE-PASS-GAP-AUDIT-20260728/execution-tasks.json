@@ -1,117 +1,206 @@
 {
-  "schema_version": "pantheon.l12.three_pass_gap_execution_graph.v1",
+  "schema_version": "pantheon.l12.three_pass_gap_execution_graph.v3",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
-  "observation_time": "2026-07-28T12:08:10Z",
-  "base_commit": "11858f4d445565064e630cce9b89ea8b475a6598",
+  "observation_time": "2026-07-28T16:24:00Z",
+  "base_commit": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
   "status_root": "/home/lupin/pantheon",
   "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
-  "hosted": {
-    "frontend_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-    "served_frontend_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
-    "served_bff_commit": "be956c07aca889043ef301389412b6744452f20b",
-    "verdict": "stale_for_l12_acceptance"
+  "dependency_semantics": "depends_on is the dispatch DAG for remaining or completed support nodes in this packet. Already archived domain prerequisites are listed separately and are not redispatched.",
+  "satisfied_external_prerequisites": [
+    "L12-SRC-001",
+    "L12-ALPHA-001",
+    "L12-TEACH-001",
+    "L12-AGORA-001",
+    "L12-IMIT-001",
+    "L12-CONS-001",
+    "L12-DEP-001",
+    "L12-CAP-001",
+    "L12-TEL-001",
+    "L12-REC-001",
+    "L12-EVO-001"
+  ],
+  "snapshot": {
+    "post_4300_merge": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
+    "status_command_health": "healthy_after_transient_fail_closed_recovery",
+    "status_recovery_observation": "A governed show briefly returned status_recovery_pending for status_activity_outbox at 16:24Z; a later governed show succeeded without direct state-file edits.",
+    "open_closeout_pr": {
+      "number": 4297,
+      "head_sha": "b24b454108dc2137f2b24d226c57ec1192bcf026",
+      "state": "OPEN",
+      "merge_state": "BEHIND"
+    },
+    "hosted_deployment": {
+      "manifest_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+      "frontend_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+      "bff_commit": "be956c07aca889043ef301389412b6744452f20b",
+      "deployment_state": "accepted",
+      "verdict": "healthy historical pair but stale for the post-4300 L12 program"
+    }
   },
-  "fleet_snapshot": {
-    "supervisor_pid": 1041099,
-    "running_workers": 3,
-    "queue_depth": 3,
-    "observed_running_tasks": [
-      "L12-DIST-001",
-      "L12-GITHUB-REVIEW-BRIDGE-001",
-      "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"
-    ],
-    "observed_running_provider_families": [
-      "codex"
-    ],
-    "claude_antigravity_priority_observed": false
+  "dispatch_policy": {
+    "real_supervisor_workers_only": true,
+    "codex_conversation_subagents_count": false,
+    "do_not_edit_live_config_for_priority": true,
+    "owner_and_reviewer_source": "canonical task row at observation time",
+    "provider_readiness_rule": "OPS-L12-PROVIDER-FIRST-READINESS-20260728 is completed time-bounded evidence, not a permanent health claim. Re-probe current provider readiness at dispatch time.",
+    "reassignment_rule": "Only a supervisor-written canonical reassignment changes owner or reviewer. This graph does not invent fallback ownership.",
+    "status_write_rule": "Before every post-merge mutation, run the governed status command. If status recovery is pending, record the exact blocker and do not edit generated state files."
   },
+  "dispatch_gate": {
+    "audit_pull_request": 4304,
+    "audit_must_merge_before_new_dispatch": true,
+    "exact_head_review_required": true,
+    "governed_status_recheck_required": true,
+    "on_status_recovery_pending": "Fail closed and leave a truthful blocker; do not create, assign, or start canonical tasks until governed reads recover."
+  },
+  "current_blockers": [
+    {
+      "id": "L12-DIST-001",
+      "status": "review_approved",
+      "reason": "PRs #4193 and #4286 are merged, but the canonical row is still nonterminal and requires owner finalization or reconcile-safe evidence."
+    },
+    {
+      "id": "L12-FLEET-WORKER-OUTCOME-001",
+      "status": "review_approved",
+      "reason": "PR #4301 is merged, but the canonical row is still nonterminal and lacks a bound review_file for normal closeout."
+    },
+    {
+      "id": "L12-BFF-001",
+      "status": "todo",
+      "reason": "PR #4274 implementation and the retained-history repair are merged. The evidence must be recut for the final merged head and current Claude/Codex owner-reviewer pair, independently reviewed, merged, and archived. Do not restart implementation absent a new concrete review finding."
+    },
+    {
+      "id": "L12-FLEET-STATUS-SYNC-001",
+      "status": "todo",
+      "reason": "Implementation PR #4282 is merged, but closeout PR #4297 is open and behind current dev."
+    }
+  ],
   "tasks": [
     {
       "id": "L12-GAP-MERGE-QUEUE-20260728",
-      "title": "Finish exact-head review and merge queue for L12 blockers",
-      "type": "new_wrapper_task",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "parallel_group": "immediate",
+      "title": "Drain reviewed L12 closeout PRs through the exact-head merge gate",
+      "type": "existing_dispatch_control_task",
+      "repository": "ajoe734/pantheon",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "parallel_group": "wave0_merge_reconcile",
+      "dispatch_action": "continue_existing_task",
       "depends_on": [],
-      "related_existing_tasks": [
-        "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
-        "L12-DIST-001",
-        "L12-EVO-001",
-        "L12-GITHUB-REVIEW-BRIDGE-001"
-      ],
       "acceptance": [
-        "PR #4218 exact head is independently reviewed, released through the root merge gate, merged, and task-state closeout is recorded.",
-        "PR #4285 exact head is independently reviewed, released through the root merge gate, merged, and L12-EVO-001 is eligible for done/archive.",
-        "PR #4286 exact head completes all checks, is independently reviewed, released through the root merge gate, merged, and L12-DIST-001 is eligible for done/archive.",
-        "PR #4287 exact head is independently reviewed, released through the root merge gate, merged, and L12-GITHUB-REVIEW-BRIDGE-001 is eligible for done/archive."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/merge-queue"
+        "Record the exact reviewed head and merge identity for each scoped L12 closeout PR.",
+        "Do not merge stale, unreviewed, or auto-merge-armed heads.",
+        "Do not restart implementation while draining the closeout queue."
       ]
     },
     {
       "id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
-      "title": "Reconcile merged nonterminal L12 rows to canonical done/archive",
-      "type": "new_wrapper_task",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "parallel_group": "immediate_after_each_merge",
+      "title": "Reconcile merged nonterminal L12 rows to canonical done and archive",
+      "type": "existing_dispatch_control_task",
+      "repository": "ajoe734/pantheon",
+      "status": "in_progress",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "parallel_group": "wave0_merge_reconcile",
+      "dispatch_action": "continue_existing_task",
       "depends_on": [
         "L12-GAP-MERGE-QUEUE-20260728"
       ],
       "related_existing_tasks": [
         "L12-DIST-001",
-        "L12-EVO-001",
-        "L12-BFF-001",
-        "L12-FLEET-STATUS-SYNC-001",
-        "L12-FLEET-WORKER-OUTCOME-001",
-        "L12-GITHUB-REVIEW-BRIDGE-001"
+        "L12-FLEET-WORKER-OUTCOME-001"
       ],
       "acceptance": [
-        "No implementation is restarted for tasks that already have merged delivery PRs.",
-        "Each referenced task has exact merged evidence, independent review evidence, and canonical task state reaches done or a truthful nonterminal blocker.",
-        "L12-BFF-001 active-without-worker mismatch is eliminated by redispatch or formal closeout.",
-        "L12-FLEET-WORKER-OUTCOME-001 orphaned task-worktree artifact blocker is resolved without absorbing unrelated state."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/closeout-reconcile"
+        "Use existing canonical reconciliation rather than creating a duplicate wrapper task.",
+        "Bind the exact merged evidence and delivery identities required by reconcile_merged_done.",
+        "If a guard rejects either row, preserve the exact failed invariant as a canonical blocker."
+      ]
+    },
+    {
+      "id": "L12-BFF-001",
+      "title": "Close out merged durable BFF health telemetry and incident recovery",
+      "type": "existing_loop_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "parallel_group": "wave0_bff_closeout",
+      "dispatch_action": "resume_existing_task_after_audit_merge",
+      "depends_on": [],
+      "acceptance": [
+        "Do not restart implementation absent a new concrete independent-review finding.",
+        "Recut evidence against PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075, merge 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1, current owner/reviewer, retained-history recovery, and the 168-test cut.",
+        "Validate the evidence and checksum, obtain exact-head review, merge the closeout-only update, and archive the canonical task.",
+        "Leave hosted JWT, retained-volume, and real target stop/recovery proof to L12-VERIFY-OBS-001."
+      ]
+    },
+    {
+      "id": "L12-FLEET-STATUS-SYNC-001",
+      "title": "Refresh and close merged fleet status synchronization delivery",
+      "type": "existing_fleet_control_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "parallel_group": "wave0_status_closeout",
+      "dispatch_action": "resume_existing_task_after_audit_merge",
+      "depends_on": [],
+      "acceptance": [
+        "Compose current dev into PR #4297 or replace it with one clean closeout-only PR.",
+        "Do not restart implementation already merged through PR #4282.",
+        "Obtain fresh exact-head review, merge, and canonical done/archive."
       ]
     },
     {
       "id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
-      "title": "Restore or truthfully fail-close Claude and Antigravity priority fleet readiness",
-      "type": "new_support_task",
+      "title": "Record time-bounded provider-first readiness",
+      "type": "completed_support_task",
+      "repository": "ajoe734/pantheon",
+      "status": "done",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "immediate",
+      "parallel_group": "completed_support",
+      "dispatch_action": "none_completed",
       "depends_on": [],
-      "related_existing_tasks": [
-        "L12-FLEET-001"
-      ],
       "acceptance": [
-        "Run current Claude and Antigravity readiness probes without editing .orchestrator/config.json.",
-        "If healthy, prove at least one real supervisor worker starts on a Claude or Antigravity lane.",
-        "If not healthy, record fail-closed provider facts and keep healthy supervisor workers draining L12 tasks."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728"
+        "Retain the archived readiness evidence as a point-in-time observation only.",
+        "Re-probe provider readiness at each real dispatch without editing live config."
+      ]
+    },
+    {
+      "id": "L12-SIGNOFF-001",
+      "title": "Provide protected Human-Ops closeout verdict enforcement",
+      "type": "completed_support_task",
+      "repository": "ajoe734/pantheon",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "parallel_group": "completed_support",
+      "dispatch_action": "none_completed",
+      "depends_on": [],
+      "acceptance": [
+        "Retain the merged protected-verdict enforcement as a prerequisite.",
+        "Do not infer that a final program verdict has already been issued."
       ]
     },
     {
       "id": "L12-MANIFEST-001",
       "title": "Activate all required loop workers under one safe runtime manifest",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "activation",
+      "parallel_group": "wave1_manifest",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-GAP-CLOSEOUT-RECONCILE-20260728"
+        "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+        "L12-BFF-001",
+        "L12-FLEET-STATUS-SYNC-001"
       ],
       "acceptance": [
-        "All twelve required loop workers are present in one safe runtime manifest.",
-        "Readback proves desired, actual, degraded, and provenance state for the manifest.",
+        "All twelve required loop workers are represented in one safe runtime manifest.",
+        "Readback proves desired, actual, degraded, and provenance state.",
         "Stack restart preserves or recovers worker lifecycle without duplicate effects."
       ]
     },
@@ -119,9 +208,12 @@
       "id": "L12-TRUTH-001",
       "title": "Integrate twelve-loop controller records and operator truth",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "parallel_group": "truth",
+      "parallel_group": "wave2_truth",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-MANIFEST-001"
       ],
@@ -136,28 +228,33 @@
       "title": "Render twelve-loop authoritative truth in the hosted frontend",
       "type": "existing_cross_repo_task",
       "repository": "ajoe734/execute-plans",
+      "status": "todo",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "parallel_group": "truth",
+      "parallel_group": "wave2_truth",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-TRUTH-001"
       ],
       "acceptance": [
-        "Frontend on execute-plans dev renders the twelve-loop truth contract without using legacy front-ai-trading-system.",
-        "Desktop and mobile browser evidence proves the hosted UI shows truthful nonterminal states.",
-        "Safe live BFF settings are preserved."
+        "Frontend on execute-plans dev renders the twelve-loop truth contract.",
+        "Desktop and mobile browser evidence proves truthful nonterminal states.",
+        "Safe live BFF settings and strict fallback are preserved."
       ]
     },
     {
       "id": "L12-VERIFY-KNOW-001",
       "title": "Prove Source, Distillation, and Alpha product flows",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "verifier",
+      "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-TRUTH-001",
-        "L12-FE-TRUTH-001"
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
       ],
       "acceptance": [
         "Real Source, Distillation, and Alpha transitions pass with durable evidence.",
@@ -168,12 +265,15 @@
       "id": "L12-VERIFY-LEARN-001",
       "title": "Prove Teaching, Agora, Imitation, and Consultation product flows",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "verifier",
+      "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-TRUTH-001",
-        "L12-FE-TRUTH-001"
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
       ],
       "acceptance": [
         "Real Teaching, Agora, Imitation, and Consultation flows pass.",
@@ -184,9 +284,12 @@
       "id": "L12-VERIFY-RUNTIME-001",
       "title": "Prove Deployment and governed-paper Capital recovery",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "verifier",
+      "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-MANIFEST-001",
         "L12-TRUTH-001"
@@ -200,33 +303,40 @@
       "id": "L12-VERIFY-OBS-001",
       "title": "Prove Telemetry, Reconciliation, Evolution, and BFF Health chains",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "verifier",
+      "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-TRUTH-001",
-        "L12-FE-TRUTH-001"
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
       ],
       "acceptance": [
         "Telemetry, Reconciliation, Evolution, and BFF health chains pass.",
-        "Incident, postmortem, and approved-action dispatch are durable and truthfully degraded on failure."
+        "Hosted BFF JWT, retained volume, target stop/recovery, retry, DLQ, and replay behavior are proved."
       ]
     },
     {
       "id": "L12-HOSTED-001",
       "title": "Deploy and restart-drill the complete twelve-loop candidate",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "parallel_group": "hosted",
+      "parallel_group": "wave4_hosted",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
+        "L12-FE-TRUTH-001",
         "L12-VERIFY-KNOW-001",
         "L12-VERIFY-LEARN-001",
         "L12-VERIFY-RUNTIME-001",
         "L12-VERIFY-OBS-001"
       ],
       "acceptance": [
-        "Hosted manifest binds exact current FE and BFF commits/images.",
+        "Hosted manifest binds exact current FE and BFF commits and images.",
         "Full-stack restart preserves or recovers in-flight work with no duplicate effects.",
         "Desktop, mobile, auth, tenant, safety, and no-live-capital evidence pass."
       ]
@@ -235,17 +345,21 @@
       "id": "L12-CLOSE-001",
       "title": "Admit evidence and close the twelve-loop program",
       "type": "existing_program_task",
+      "repository": "ajoe734/pantheon",
+      "status": "todo",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "parallel_group": "closeout",
+      "parallel_group": "wave5_closeout",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-HOSTED-001",
         "L12-TRUTH-001",
         "L12-SIGNOFF-001"
       ],
       "acceptance": [
-        "Protected Human/Ops closeout verdict is consumed once.",
-        "Final closeout is bound to exact catalog, manifest, deployment identities, and verifier evidence."
+        "A protected Human/Ops closeout verdict is consumed once.",
+        "Final closeout is bound to the exact catalog, manifest, deployment identities, and verifier evidence.",
+        "Canonical reviewer remains distinct from the protected Human/Ops verdict authority."
       ]
     }
   ]
