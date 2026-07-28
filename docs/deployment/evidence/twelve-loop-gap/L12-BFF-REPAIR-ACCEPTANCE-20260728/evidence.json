@@ -5,12 +5,13 @@
     "title": "Finish L12-BFF-001 acceptance defects and proof drills",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "review_pending_independent_exact_head_decision",
+    "status": "review_approved_owner_closeout_ready",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-BFF-REPAIR-ACCEPTANCE-20260728",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json",
-    "evidence_cut_at": "2026-07-28T16:33:17Z"
+    "evidence_cut_at": "2026-07-28T18:27:00Z",
+    "overall_admission": "review_approved_owner_closeout_ready"
   },
   "scope": {
     "owned_layer": "Task-scoped acceptance reconfirmation and reproducible proof evidence for the merged L12-BFF-001 implementation.",
@@ -46,9 +47,25 @@
       "pull_request": 4305,
       "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4305",
       "owner_evidence_commit": "0701c124f167c97f1b52177f97611e916fab17a3",
-      "state_at_handoff": "open",
-      "auto_merge": "disabled_pending_exact_head_review",
-      "reviewer": "Codex2"
+      "state_at_handoff": "merged",
+      "auto_merge": "disabled_until_exact_head_review_and_root_freeze",
+      "reviewer": "Codex2",
+      "exact_task_pr_head": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+      "canonical_review_gate": {
+        "context": "Pantheon canonical review gate",
+        "state": "success",
+        "status_id": 51237901514,
+        "reviewer": "Codex2"
+      },
+      "root_merge_freeze": {
+        "context": "Pantheon root merge freeze",
+        "state": "success",
+        "status_id": 51238030508,
+        "actor": "Human/Ops"
+      },
+      "merge_commit": "8934292632704ed4eb5c942a416a0d09f3e78c06",
+      "merged_at": "2026-07-28T18:08:19Z",
+      "head_merged_to_dev": true
     }
   },
   "proof_drills": [
@@ -146,8 +163,8 @@
     {
       "id": "AC5",
       "criterion": "Open a task PR for exact-head independent review, root-freeze, and merge.",
-      "status": "pending",
-      "proof": "PR #4305 is open with auto-merge disabled; Codex2 exact-head review, root-freeze, merge, and owner closeout remain pending."
+      "status": "pass",
+      "proof": "Codex2 independently approved PR #4305 exact head e603207718d7b463510a7d9f82e35908c2cdbb2b, the Pantheon canonical review gate passed as GitHub status id 51237901514, Human/Ops recorded root merge freeze status id 51238030508, and PR #4305 merged to dev as 8934292632704ed4eb5c942a416a0d09f3e78c06."
     }
   ],
   "verification": {
@@ -187,11 +204,69 @@
   },
   "review": {
     "reviewer": "Codex2",
-    "independent_decision": "pending",
-    "exact_task_pr_head": "pending",
-    "canonical_review_event_id": "pending",
-    "note": "The historical PR #4274 review proves the source implementation merge only. Codex2 must independently review PR #4305 exact head and bind this manifest before governed integration and owner closeout."
+    "status": "review_approved",
+    "independent_decision": "approve",
+    "reviewed_at": "2026-07-28T18:00:54Z",
+    "exact_task_pr_head": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+    "canonical_review_event_id": "51237901514",
+    "note": "Codex2 independently reviewed PR #4305 exact head e603207718d7b463510a7d9f82e35908c2cdbb2b. The review verified local/origin/GitHub heads, task-scoped evidence files, green Branch CI, 168 focused tests, nine L12 drills, five incidents app-route tests, ten-rule validation, companion checksums, jq structure, py_compile, diff/ancestry checks, AC1-AC4 implementation proof, and the declared hosted-proof boundary. AC5 was completed by root freeze and PR merge before this owner closeout cut."
   },
+  "owner_closeout": {
+    "owner": "Codex",
+    "accepted_at": "2026-07-28T18:27:00Z",
+    "observation_recut": false,
+    "verification": [
+      "PR #4305 final head e603207718d7b463510a7d9f82e35908c2cdbb2b merged to dev as 8934292632704ed4eb5c942a416a0d09f3e78c06.",
+      "Canonical review gate status id 51237901514 and root merge freeze status id 51238030508 were bound before merge.",
+      "This closeout cut changes only task-scoped evidence artifacts and does not claim hosted BFF deployment, protected service-JWT provisioning, retained hosted volume, hosted restart, or program-level twelve-loop completion."
+    ]
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "actor": "Codex",
+      "kind": "owner_evidence_ready_for_independent_review",
+      "recorded_at": "2026-07-28T16:33:17Z",
+      "status": "owner_asserted_pass_pending_independent_review",
+      "sha": "0701c124f167c97f1b52177f97611e916fab17a3",
+      "reference": "Owner evidence cut for PR #4305 with 168 focused tests, nine L12 drills, five incidents app-route tests, ten-rule validator, and checksums passing; exact-head review was intentionally pending."
+    },
+    {
+      "sequence": 2,
+      "actor": "Codex2",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-28T18:00:54Z",
+      "status": "review_approved",
+      "sha": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+      "reference": "Governed canonical review_approved decision for PR #4305 exact head e603207718d7b463510a7d9f82e35908c2cdbb2b; review verified task scope, green CI, reproduced focused tests/drills/checksums, accepted AC1-AC4, and kept hosted-proof claims explicitly delegated."
+    },
+    {
+      "sequence": 3,
+      "actor": "Human/Ops",
+      "kind": "root_merge_freeze",
+      "recorded_at": "2026-07-28T18:06:37Z",
+      "status": "success",
+      "sha": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+      "reference": "Root merge freeze status id 51238030508 bound the exact reviewed PR #4305 head before merge."
+    },
+    {
+      "sequence": 4,
+      "actor": "GitHub",
+      "kind": "reviewed_head_merged_to_dev",
+      "recorded_at": "2026-07-28T18:08:19Z",
+      "status": "merged",
+      "sha": "8934292632704ed4eb5c942a416a0d09f3e78c06",
+      "reference": "PR #4305 merged the exact reviewed task head to dev after the Pantheon canonical review gate and root merge freeze succeeded."
+    },
+    {
+      "sequence": 5,
+      "actor": "Codex",
+      "kind": "owner_closeout_adoption",
+      "recorded_at": "2026-07-28T18:27:00Z",
+      "status": "review_approved_owner_closeout_ready",
+      "reference": "Owner closeout adopted the already approved and merged PR #4305 result, refreshed task-scoped evidence state from pending to done-eligible, and preserved the non-hosted acceptance boundary."
+    }
+  ],
   "known_limitations": [
     "The real-target drill is local and loopback-bound; it is not hosted dev deployment evidence.",
     "This task does not prove the currently served hosted BFF commit, protected service-JWT provisioning, retained hosted volume, or a hosted restart.",
