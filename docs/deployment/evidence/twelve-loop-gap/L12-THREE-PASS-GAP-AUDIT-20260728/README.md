@@ -31,4 +31,3 @@ Core verdict:
   to the later L12 merges.
 
 This packet makes no all-loop completion claim.
-

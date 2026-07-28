@@ -30,4 +30,3 @@ audit. The canonical graph is:
   provider blockers truthfully.
 - Do not restart implementation for already merged tasks. Close them out from
   exact merged delivery evidence.
-
