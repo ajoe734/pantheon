@@ -1,6 +1,6 @@
 # OPS-L12 Provider-First Readiness Refresh Evidence
 
-Observation cut: `2026-07-28T19:15:35Z`
+Observation cut: `2026-07-28T19:30:00Z`
 
 This evidence manifest captures refreshed provider-first readiness probes and real fleet dispatch proof without configuration edits.
 
@@ -9,16 +9,16 @@ This evidence manifest captures refreshed provider-first readiness probes and re
 - **Supervisor Antigravity CLI Provider** (`antigravity` / `antigravity1-1`): Delivery mode `antigravity` via `.orchestrator/bin/agy`. Active auto worker provider in live supervisor config.
 - **OpenClaw Assistant Provider** (`openclaw`): Delivery mode `openclaw_adapter`. Upstream assistant gateway for Management AI/OpenClaw dev bridge integration.
 
-## Direct Forced Probes (Observation Cut `2026-07-28T19:15:35Z`)
+## Direct Forced Probes (Observation Cut `2026-07-28T19:30:00Z`)
 
-- **Antigravity CLI**: `ready=true`, status=`ready`, method=`agy_prompt_oauth` (`OAuth token valid`, primary model `gemini-3.6-flash-low`).
+- **Antigravity CLI**: `ready=true`, status=`ready`, method=`agy_prompt_oauth` (`OAuth token valid`, primary model `gemini-3.6-flash-low`, checked_at=`2026-07-28T19:29:39Z`).
 - **Claude Family Per-Slot Breakdown**:
-  - `claude`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed`). Fail-closed.
-  - `claude2`: `ready=true`, status=`ready`, method=`claude_auth_status_refresh` (`OAuth credentials verified`). Dispatchable.
-  - `claude1-1`: `ready=false`, status=`auth_not_ready` (`Slot claude1-1 not present in live provider_capabilities.json providers map`). Fail-closed.
-  - `claude1-2`: `ready=false`, status=`auth_not_ready` (`Slot claude1-2 not present in live provider_capabilities.json providers map`). Fail-closed.
-  - `claude1-3`: `ready=false`, status=`auth_not_ready` (`Slot claude1-3 not present in live provider_capabilities.json providers map`). Fail-closed.
-  - `claude1-4`: `ready=false`, status=`auth_not_ready` (`Slot claude1-4 not present in live provider_capabilities.json providers map`). Fail-closed.
+  - `claude`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed.`, checked_at=`2026-07-28T19:29:28Z`). Fail-closed.
+  - `claude2`: `ready=true`, status=`ready`, method=`claude_auth_status_refresh` (`OAuth credentials verified`, checked_at=`2026-07-28T19:29:29Z`). Dispatchable.
+  - `claude1-1`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed.`, checked_at=`2026-07-28T19:29:30Z`). Fail-closed.
+  - `claude1-2`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed.`, checked_at=`2026-07-28T19:29:31Z`). Fail-closed.
+  - `claude1-3`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed.`, checked_at=`2026-07-28T19:29:32Z`). Fail-closed.
+  - `claude1-4`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed.`, checked_at=`2026-07-28T19:29:34Z`). Fail-closed.
 
 ## Real Fleet Dispatch Raw References
 
@@ -46,4 +46,5 @@ This evidence manifest captures refreshed provider-first readiness probes and re
 
 - `PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)" && "$PANTHEON_PY" -m pytest services/openclaw-gateway-adapter/tests/`: 117 passed.
 - `bash scripts/openclaw-smoke-test.sh`: 6 passed.
+
 

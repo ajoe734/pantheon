@@ -41,7 +41,7 @@
       "status": "auth_not_ready",
       "method": "claude_auth_status_refresh",
       "error": "Claude CLI authentication is missing or OAuth refresh failed.",
-      "checked_at": "2026-07-28T19:15:29Z",
+      "checked_at": "2026-07-28T19:29:28Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "fail_closed_not_dispatchable"
     },
@@ -52,7 +52,7 @@
       "status": "ready",
       "method": "claude_auth_status_refresh",
       "error": null,
-      "checked_at": "2026-07-28T19:15:30Z",
+      "checked_at": "2026-07-28T19:29:29Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "ready_dispatchable"
     },
@@ -62,8 +62,8 @@
       "ready": false,
       "status": "auth_not_ready",
       "method": "claude_auth_status_refresh",
-      "error": "Slot claude1-1 not present in live provider_capabilities.json providers map",
-      "checked_at": "2026-07-28T19:29:00Z",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:30Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "fail_closed_not_dispatchable"
     },
@@ -73,8 +73,8 @@
       "ready": false,
       "status": "auth_not_ready",
       "method": "claude_auth_status_refresh",
-      "error": "Slot claude1-2 not present in live provider_capabilities.json providers map",
-      "checked_at": "2026-07-28T19:29:00Z",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:31Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "fail_closed_not_dispatchable"
     },
@@ -84,8 +84,8 @@
       "ready": false,
       "status": "auth_not_ready",
       "method": "claude_auth_status_refresh",
-      "error": "Slot claude1-3 not present in live provider_capabilities.json providers map",
-      "checked_at": "2026-07-28T19:29:00Z",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:32Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "fail_closed_not_dispatchable"
     },
@@ -95,8 +95,8 @@
       "ready": false,
       "status": "auth_not_ready",
       "method": "claude_auth_status_refresh",
-      "error": "Slot claude1-4 not present in live provider_capabilities.json providers map",
-      "checked_at": "2026-07-28T19:29:00Z",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:34Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "fail_closed_not_dispatchable"
     },
@@ -107,7 +107,7 @@
       "status": "ready",
       "method": "agy_prompt_oauth",
       "error": null,
-      "checked_at": "2026-07-28T19:15:35Z",
+      "checked_at": "2026-07-28T19:29:39Z",
       "metadata": {
         "oauth_token": "/home/lupin/.gemini/antigravity-cli/antigravity-oauth-token",
         "probe_model": "gemini-3.6-flash-low",
