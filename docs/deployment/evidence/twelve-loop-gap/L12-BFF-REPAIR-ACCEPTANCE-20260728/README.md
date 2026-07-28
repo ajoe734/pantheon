@@ -1,6 +1,6 @@
 # L12 BFF repair acceptance evidence
 
-Evidence cut: `2026-07-28T16:33:17Z`.
+Evidence cut: `2026-07-28T18:27:00Z`.
 
 ## Owner verdict
 
@@ -41,15 +41,22 @@ the real telemetry application route and durable admission ledger. The
 incidents route drill separately exercises the real incidents application
 routes rather than treating mocked delivery as write-owner proof.
 
-## Review state
+## Review and closeout state
 
-Owner proof is complete. Codex2 must independently review the exact task PR
-head of [PR #4305](https://github.com/ajoe734/pantheon/pull/4305) and bind
-this manifest through the governed review transition. The owner evidence
-commit is `0701c124f167c97f1b52177f97611e916fab17a3`. The PR is open with
-auto-merge disabled by the review-before-merge policy. An open PR, green CI,
-or the historical review of PR #4274 does not approve this follow-up evidence
-cut.
+Codex2 independently approved the exact task PR head of
+[PR #4305](https://github.com/ajoe734/pantheon/pull/4305),
+`e603207718d7b463510a7d9f82e35908c2cdbb2b`, through the governed Pantheon
+canonical review gate. The canonical review status id is `51237901514`.
+
+Human/Ops then bound the same exact head with root merge freeze status id
+`51238030508`, and PR #4305 merged to `dev` as
+`8934292632704ed4eb5c942a416a0d09f3e78c06`.
+
+This owner closeout cut records that AC5 is now complete and that the manifest
+is ready for the governed `done` transition. It does not recut the hosted
+boundary or claim hosted BFF deployment, protected service-JWT provisioning,
+retained hosted volume, hosted restart, or program-level twelve-loop
+completion.
 
 Machine-readable acceptance mapping, exact commands, delivery identities, and
 known limitations are in `evidence.json`. `evidence.sha256` binds this README
