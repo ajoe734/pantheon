@@ -1,27 +1,45 @@
 # L12-BFF-001 closeout evidence
 
-Status: merged implementation accepted for closeout; Antigravity independently
-approved the prior closeout evidence cut, and this review-receipt recut requires
-fresh exact-head review before merge.
+Status: merged implementation and merged closeout evidence accepted. Antigravity
+independently approved the exact head of the merged closeout pull request, and
+this owner cut v2.2.0 records that decision and closes the task-scoped
+independent-review risk.
 
-This owner cut v2.1.0 does not restart BFF implementation. It recuts the
+This owner cut v2.2.0 does not restart BFF implementation. It recuts the
 task-scoped record against immutable [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
 head `414546226003bce04a60f2d5941d999e96afd075`, merged to `dev` as
 `7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1` at
 `2026-07-27T22:14:45Z`.
 
-The canonical task-state scan boundary is journal sequence 3988, committed at
-`2026-07-28T20:31:20Z`: owner `Codex`, reviewer `Antigravity`, status
-`review_approved`, and review file
+The canonical task-state scan boundary is journal sequence 4151, committed at
+`2026-07-28T22:01:10Z`: owner `Claude2`, reviewer `Antigravity`, status
+`in_progress`, and review file
 `docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json`.
 
-Antigravity independently approved PR #4316 exact head
-`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549` at
-`2026-07-28T19:49:05Z`. The governed GitHub review bridge recorded canonical
-status `Pantheon canonical review gate` as success with status id
-`51244708326`. Because v2.1.0 commits that previously external decision into
-the task review manifest, it changes the PR head and does not reuse that
-approval for the new head.
+## Independent review
+
+Antigravity independently approved
+[PR #4316](https://github.com/ajoe734/pantheon/pull/4316) exact head
+`d76e27f0894bd41e7e656cb80ff8608448ebaf82` at `2026-07-28T21:10:27Z`. The
+governed GitHub review bridge recorded the canonical status context
+`Pantheon canonical review gate` as success with status id `51249966792`, the
+Human/Ops root merge-freeze context was released with status id `51250024960`,
+and PR #4316 merged to `dev` as
+`d48ba570eeec2676a4fc2399eb1b231022b80778` at `2026-07-28T21:11:26Z`.
+
+That decision covers the merged bytes of this evidence directory, so the
+independent-review risk this record previously left open is now closed rather
+than deferred again. The earlier decision on PR #4316 head
+`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549` is retained in the manifest record
+log as the superseded prior verdict.
+
+The v2.2.0 delta is closure metadata only: the manifest is rebound to canonical
+owner `Claude2`, its admission is recut to the accepted merged-closeout state,
+AC5 is admitted at the reconciled maturity this task targets, and the
+independent-review residual risk is closed against the exact-head decision
+above. No implementation, telemetry, incidents, deployment, or reviewer
+authority changes with it. It is delivered through its own task pull request and
+passes the same canonical review gate before merge.
 
 ## Accepted implementation
 
@@ -67,6 +85,16 @@ PR #4274's final head passed Commit trailers, Runtime mirror guard, Python
 packaging provision, and Smoke acceptance. The Pantheon canonical review gate
 and the Human/Ops root merge-freeze context also passed before merge.
 
+## AC5 admission
+
+AC5 asks that recovery updates or resolves a real `IncidentCase` without
+affecting active runtimes. It is admitted as passing at this task's reconciled
+target maturity on the incidents-owned route, its five application-route tests,
+and the local target stop/recovery drill, all merged to `dev`. It is not a claim
+about the hosted dev deployment: hosted activation stays open as the
+non-blocking `hosted_credentials_and_volume` and `incident_authority_route`
+residual risks, owned by `L12-MANIFEST-001` and `L12-VERIFY-OBS-001`.
+
 ## Closeout boundary
 
 This closeout changes only the task evidence under this directory. It does not
@@ -77,6 +105,6 @@ Those claims remain with `L12-MANIFEST-001` and `L12-VERIFY-OBS-001`.
 
 The companion `evidence.json` binds this README and the unchanged implementation
 sources through an anchor receipt, records the immutable PR #4274 head and
-merge, preserves Antigravity's independent decision on v2.0.0 head
-`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549`, and leaves fresh exact-head review
-pending for the v2.1.0 evidence-only follow-up.
+merge, carries Antigravity's exact-head decision on
+`d76e27f0894bd41e7e656cb80ff8608448ebaf82` inside the task manifest, and leaves
+no blocking residual risk for owner closeout.
