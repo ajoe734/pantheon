@@ -35,3 +35,13 @@ tool-permission failure.
 The machine-readable evidence, external artifact hashes captured during owner
 closeout, acceptance mapping, and exact verification commands are in
 `evidence.json`. `evidence.sha256` binds this README and the manifest.
+
+## Exact-head review state
+
+PR #4300 was reopened after `dev` advanced. The owner composed
+`9f7f95e1a10a46248a81b26159e373f75525222f` and reran the focused evidence
+checks. The earlier Codex2 approval and canonical review status were bound to
+PR head `607df32e1dc658080a282858aa1441967c3df700`; they remain historical
+evidence only and must not authorize the refreshed head. The task therefore
+remains `in_progress` until Codex2 independently reviews and approves the new
+exact PR head.

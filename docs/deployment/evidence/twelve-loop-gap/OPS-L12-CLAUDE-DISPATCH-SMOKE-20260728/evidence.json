@@ -5,12 +5,12 @@
     "title": "Read-only Claude supervisor dispatch smoke",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "owner_closeout_evidence_ready_pending_exact_head_review",
+    "status": "in_progress_pending_fresh_exact_head_review",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.json",
-    "evidence_cut_at": "2026-07-28T14:01:20Z"
+    "evidence_cut_at": "2026-07-28T15:48:29Z"
   },
   "scope": {
     "owned_layer": "Read-only supervisor-to-Claude dispatch and provider/runtime result evidence.",
@@ -116,6 +116,12 @@
   "repository_proof": {
     "smoke_head": "061408b09aa06943813c97334054bfa29b79e236",
     "smoke_head_is_ancestor_of_owner_closeout_origin_dev": true,
+    "refreshed_base_ref": "origin/dev",
+    "refreshed_base_sha": "9f7f95e1a10a46248a81b26159e373f75525222f",
+    "refreshed_base_is_ancestor_of_task_head": true,
+    "task_pr": 4300,
+    "prior_reviewed_head": "607df32e1dc658080a282858aa1441967c3df700",
+    "prior_review_is_merge_authority_for_refreshed_head": false,
     "tracked_diff_during_smoke": [],
     "cached_diff_during_smoke": [],
     "remote_task_branch_during_review": null,
@@ -144,32 +150,32 @@
     }
   ],
   "verification": {
-    "validated_at": "2026-07-28T14:01:20Z",
+    "validated_at": "2026-07-28T15:48:29Z",
     "commands": [
       {
         "command": "AI_NAME=Codex \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
         "result": "pass",
-        "conclusion": "Canonical task row is review_approved with owner Codex and reviewer Codex2."
+        "conclusion": "Canonical task row is in_progress with owner Codex and reviewer Codex2; its prior review binding names old PR head 607df32e1dc658080a282858aa1441967c3df700."
       },
       {
-        "command": "jq . /home/lupin/pantheon/.orchestrator/worker-runtime/status/claude1-1-20260728T132440Z-0ed52b7d.json",
+        "command": "jq '{run_id, task_id, agent, owner, reviewer, status, status_command_runtime, started_at, finished_at, exit_code, signal, command0: .command[0]}' /home/lupin/pantheon/.orchestrator/worker-runtime/status/claude1-1-20260728T132440Z-0ed52b7d.json",
         "result": "pass",
-        "conclusion": "Runner identity, command, timing, runtime SHA, exit 143, and signal 15 match the reviewed evidence."
+        "conclusion": "Runner identity, command, timing, nested status_command_runtime.source_sha, exit 143, and signal 15 match the evidence."
       },
       {
-        "command": "sed -n '2,30p' <claude-stream-log> | jq -s '<tool-call, tool-result-error, and terminal-result projection>'",
+        "command": "jq -R -s 'split(\"\\n\") | map(try fromjson catch empty) | <init, rate-limit, tool-call, tool-result-error, and terminal-result projection>' <claude-stream-log>",
         "result": "pass",
         "conclusion": "Seven Bash/Read tool calls, zero tool-result errors, no permission denials, and terminal_reason aborted_streaming."
       },
       {
-        "command": "jq -r 'select(.task_id == \"OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728\") | <task event projection>' \"$PANTHEON_STATUS_ROOT/ai-activity-log.jsonl\"",
+        "command": "sha256sum /home/lupin/pantheon/.orchestrator/worker-runtime/status/claude1-1-20260728T132440Z-0ed52b7d.json /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T132440798151Z-claude1-1-claude1_1-30630e.log",
         "result": "pass",
-        "conclusion": "Dispatch start, corrected handoff, independent review approval, and post-run preempt/supersede ordering match the manifest."
+        "conclusion": "External runner and Claude stream artifacts remain byte-identical to the hashes recorded in this manifest."
       },
       {
-        "command": "git merge-base --is-ancestor 061408b09aa06943813c97334054bfa29b79e236 origin/dev && git diff --name-status && git diff --cached --name-status",
+        "command": "git merge-base --is-ancestor 061408b09aa06943813c97334054bfa29b79e236 origin/dev && git merge-base --is-ancestor 9f7f95e1a10a46248a81b26159e373f75525222f HEAD && git diff --check",
         "result": "pass",
-        "conclusion": "Runtime SHA is on current dev ancestry; no tracked or cached smoke diff existed before owner closeout artifacts were added."
+        "conclusion": "Runtime SHA remains on dev ancestry, refreshed dev SHA is composed into the task branch, and the task-owned evidence diff has no whitespace errors."
       }
     ]
   },
@@ -179,8 +185,10 @@
     "initial_reviewed_at": "2026-07-28T13:52:59Z",
     "initial_reviewed_runtime_head": "061408b09aa06943813c97334054bfa29b79e236",
     "initial_review_event_id": "ai-status-event-f41cb05955d75ebc3b1ff4d99efbfc9e5b14ab09327d7205e276675d172a6c3f",
-    "exact_task_pr_head_binding": "pending",
-    "note": "The independent runtime review passed before owner closeout materialized this manifest. The merge gate must receive a new Codex2 approval bound to the exact PR head before merge."
+    "prior_exact_task_pr_head": "607df32e1dc658080a282858aa1441967c3df700",
+    "prior_exact_head_approval_reusable": false,
+    "fresh_exact_task_pr_head_binding": "pending",
+    "note": "The independent runtime review passed before owner closeout materialized this manifest. After dev advanced and the task head changed, the task was reopened. The merge gate must receive a fresh Codex2 approval bound to the refreshed exact PR head before merge."
   },
   "known_limitations": [
     "The Claude run was intentionally interrupted before it could complete task work; this smoke proves dispatch-to-running and provider/runtime reporting only.",
