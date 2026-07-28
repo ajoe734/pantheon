@@ -39,6 +39,7 @@ The reconciled source of truth is:
 - [Parallel fleet execution plan](archive/PARALLEL_FLEET_EXECUTION_PLAN_2026-07-26.md)
 - [Current-state fleet and twelve-loop gap overlay, 2026-07-27](archive/CURRENT_STATE_FLEET_GAP_OVERLAY_2026-07-27.md)
 - [Current-state fleet gap delta, 2026-07-27T18:37Z](archive/CURRENT_STATE_FLEET_GAP_DELTA_2026-07-27T1837Z.md)
+- [Three-pass current gap audit, 2026-07-28T12:08Z](archive/THREE_PASS_GAP_AUDIT_2026-07-28T1208Z.md)
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`
 
 ## Baseline verdict
