@@ -1,77 +1,82 @@
-# L12-BFF-001 owner evidence
+# L12-BFF-001 closeout evidence
 
-Status: BFF implementation ready; independent Codex review pending.
+Status: merged implementation accepted for closeout; Antigravity independently
+approved the prior closeout evidence cut, and this review-receipt recut requires
+fresh exact-head review before merge.
 
-Delivery: [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
-targets `dev`. The BFF and incidents authority compose locally and now await
-independent exact-head review plus normal PR gates.
+This owner cut v2.1.0 does not restart BFF implementation. It recuts the
+task-scoped record against immutable [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
+head `414546226003bce04a60f2d5941d999e96afd075`, merged to `dev` as
+`7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1` at
+`2026-07-27T22:14:45Z`.
 
-This owner evidence receipt uses canonical task-state journal sequence 2968,
-committed at `2026-07-27T20:48:26Z`, as its point-in-time task snapshot. The
-canonical snapshot scan boundary is journal sequence 2968: owner `Codex2`,
-reviewer `Codex`, status `in_progress`, and review file
+The canonical task-state scan boundary is journal sequence 3988, committed at
+`2026-07-28T20:31:20Z`: owner `Codex`, reviewer `Antigravity`, status
+`review_approved`, and review file
 `docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json`.
 
-The BFF health controller now emits the strict non-trading
-`pantheon.infrastructure-health/1` contract, enumerates the complete configured
-downstream registry, and persists probe windows, target state, error-rate
-windows, delivery intent, incident mappings, claims, retries, dead letters and
-replay audit in a shared SQLite WAL store under `BFF_DATA_DIR`.
+Antigravity independently approved PR #4316 exact head
+`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549` at
+`2026-07-28T19:49:05Z`. The governed GitHub review bridge recorded canonical
+status `Pantheon canonical review gate` as success with status id
+`51244708326`. Because v2.1.0 commits that previously external decision into
+the task review manifest, it changes the PR head and does not reuse that
+approval for the new head.
 
-Telemetry delivery uses a service JWT plus explicit tenant and producer
-authority. Stable event IDs are derived from tenant, producer, component, probe
-kind and probe window. Telemetry, incident-open and incident-resolve deliveries
-reuse that source event ID and are dependency ordered. A recovery never clears
-the incident mapping before the incidents authority confirms the transition.
+## Accepted implementation
 
-`POST /bff/v5/downstream-health/dlq/replay` is operator-only, MFA-bound, and
-requires `approval_ref` plus `reason`; the actor and replay result are persisted.
+The merged BFF health controller:
 
-## Verified
+- emits the strict non-trading `pantheon.infrastructure-health/1` contract
+  without fabricated RuntimeBinding identity;
+- enumerates the complete configured downstream registry and triggers on
+  interval failures and error-rate spikes;
+- persists probe windows, target state, error windows, delivery intent,
+  incident mappings, claims, retries, dead letters, and replay audit in a
+  shared SQLite WAL store;
+- uses stable source event IDs across telemetry, incident-open, and
+  incident-resolve delivery with dependency ordering; and
+- exposes an operator-only, MFA- and approval-bound exact DLQ replay path.
 
-The delivery receipt tree is based on dev
-`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09`. Its exact receipt commit and
-required GitHub checks are recorded in `evidence.json` after that commit's
-checks complete.
+The incidents service owns
+`POST /api/incidents/consume-infrastructure-health`. It creates a real
+non-trading `IncidentCase`, treats exact replay as idempotent, rejects
+conflicting replay, ignores caller-supplied fake RuntimeBinding fields, and
+resolves recovery through the canonical incident status route.
 
-```text
-.venv-pantheon/bin/python -m pytest -q \
-  services/control-plane/bff/test_bff_downstream_health_monitor.py \
-  services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py \
-  services/telemetry/test_infrastructure_health_ingest.py \
-  services/incidents/test_main_routes.py
+## Accepted proof
 
-168 tests collected and passed
-```
+The merged repair-acceptance record in PR #4305 independently revalidated the
+PR #4274 delivery with:
 
-The tests include a monitor-built event admitted through the real strict
-telemetry HTTP route and durable admission ledger, two monitor replicas sharing
-one state store, restart readback, stable event ID dedupe, error-rate emission,
-MFA/approval-bound DLQ replay, a real local HTTP target stop/restart probe, and
-the incidents-owned non-trading `POST /api/incidents/consume-infrastructure-health`
-route. The post-review repair also proves incident authority HTTP 409 is not
-treated as an idempotent success, leaves conflicting delivery intent visible in
-DLQ, and bounds retained durable history with trigger-maintained delivery
-status counters so health reads do not scale with outbox history. The latest
-recovery-after-retention regression additionally ages and prunes delivered
-history, proves the active incident-open dependency is retained, restarts the
-monitor on the same SQLite WAL store, and confirms that recovery reaches the
-real incident resolve route with zero delivery backlog.
+- 168 focused BFF, telemetry, and incidents tests;
+- nine L12-specific drills covering strict admission, restart and two-replica
+  dedupe, retry/DLQ/replay, registry coverage, error-rate triggering, local
+  target stop/recovery, durable incident mapping, and recovery after retention;
+- five incidents application-route tests covering non-trading create, exact
+  replay, conflict rejection, fake RuntimeBinding isolation, and canonical
+  resolution; and
+- the ten-rule product-evidence validator and companion checksums.
 
-## Incident authority composition
+The recovery-after-retention drill ages and prunes delivered history, retains
+the active incident-open dependency, restarts the monitor on the same durable
+store, and completes recovery telemetry plus incident resolution with zero
+delivery backlog.
 
-`services/incidents/main.py` now exposes
-`POST /api/incidents/consume-infrastructure-health`. The route is separate from
-generic `POST /api/incidents`: the BFF payload does not include
-`binding_id`/`deployment_stage`, and the incident authority maps
-`tenant_id + producer + component + source_event_id` into a stable non-trading
-infrastructure incident namespace.
+PR #4274's final head passed Commit trailers, Runtime mirror guard, Python
+packaging provision, and Smoke acceptance. The Pantheon canonical review gate
+and the Human/Ops root merge-freeze context also passed before merge.
 
-The route creates the real `IncidentCase`, treats exact replay as idempotent,
-rejects conflicting replay, ignores caller-supplied fake RuntimeBinding fields,
-and resolves through the canonical status route. `L12-VERIFY-OBS-001` still
-must run the hosted target stop/recovery proof with the manifest-issued BFF
-service JWT and retained BFF volume before hosted deployment closeout.
+## Closeout boundary
 
-The machine-readable acceptance, content digest, delivery receipt checks, and
-independent-review placeholder are in `evidence.json`.
+This closeout changes only the task evidence under this directory. It does not
+claim that the hosted dev BFF currently serves this implementation, that a
+protected BFF service JWT is provisioned, that `BFF_DATA_DIR` is retained by
+the hosted manifest, or that the program-level hosted restart drill has run.
+Those claims remain with `L12-MANIFEST-001` and `L12-VERIFY-OBS-001`.
+
+The companion `evidence.json` binds this README and the unchanged implementation
+sources through an anchor receipt, records the immutable PR #4274 head and
+merge, preserves Antigravity's independent decision on v2.0.0 head
+`3c0aae0d95a020e0fc225d9bcb27f9e1c2911549`, and leaves fresh exact-head review
+pending for the v2.1.0 evidence-only follow-up.
