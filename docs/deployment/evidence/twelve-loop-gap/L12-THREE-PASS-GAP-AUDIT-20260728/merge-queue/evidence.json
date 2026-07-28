@@ -4,7 +4,7 @@
   "owner": "Codex",
   "reviewer": "Codex2",
   "status": "in_progress",
-  "observed_at": "2026-07-28T14:25:07Z",
+  "observed_at": "2026-07-28T14:32:34Z",
   "scope": {
     "owned_layer": "Exact-head composition, gate verification, root-freeze release, merge, and post-merge receipt for the protected L12 closeout queue.",
     "not_changing": [
@@ -30,13 +30,13 @@
     "merge_rule": "Release the root-freeze context for one current exact head only after assigned-reviewer approval and all mechanical checks are green."
   },
   "queue_state": {
-    "current_dev": "ba727a676856e77c7b723f33f5b9e7ceb5ce1392",
+    "current_dev": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
     "remaining_prs": [
       4285
     ],
     "blocked": true,
-    "blocked_reason": "PR #4285 is behind dev and has neither an exact-head canonical review status nor a root-freeze release.",
-    "next_owner_action": "L12-EVO-001 owner composes current origin/dev, pushes the new head, waits for fresh Branch CI, and hands the exact head to Codex2."
+    "blocked_reason": "PR #4285 exact head is current-base and Branch CI green, but its canonical review status and root-freeze release remain absent.",
+    "next_owner_action": "A task-scoped L12-EVO-001 worker hands exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 to Codex2 for independent review."
   },
   "queue": [
     {
@@ -92,16 +92,15 @@
     {
       "pr": 4285,
       "task_id": "L12-EVO-001",
-      "state": "waiting_owner_compose",
-      "head": "6c631ae074a3c1be185f1cf99091012823e02a8e",
-      "current_dev": "ba727a676856e77c7b723f33f5b9e7ceb5ce1392",
-      "merge_state_status": "BEHIND",
-      "base_commits_behind": 3,
-      "task_commits_ahead": 4,
-      "checks": "Old-head Branch CI is green; canonical review and root-freeze contexts are absent and cannot be reused after composition.",
+      "state": "waiting_exact_head_review",
+      "head": "0fc918b747cf38262360b6045dadd25f157ed9d9",
+      "current_dev": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
+      "merge_state_status": "BLOCKED",
+      "base_commits_behind": 0,
+      "task_commits_ahead": 6,
+      "checks": "Both fresh Branch CI runs passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance; canonical review and root-freeze contexts are absent.",
       "pending": [
-        "L12-EVO owner composes current origin/dev and pushes a new exact head",
-        "fresh Branch CI",
+        "task-scoped L12-EVO owner handoff binds PR #4285 and exact head 0fc918b747cf38262360b6045dadd25f157ed9d9",
         "Codex2 exact-head approval",
         "single-head root-freeze release",
         "exact-head merge",

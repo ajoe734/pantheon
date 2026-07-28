@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: PR #4285 head `6c631ae074a3c1be185f1cf99091012823e02a8e` is `BEHIND` current `origin/dev` `ba727a676856e77c7b723f33f5b9e7ceb5ce1392`. Wait for the L12-EVO owner to compose and push a new head, fresh green checks, and Codex2 exact-head approval before releasing either protected status or merging.
+- Next: PR #4285 exact head `0fc918b747cf38262360b6045dadd25f157ed9d9` composes current `dev` `d97c25d3cc8860118dd4d0f3c9fafd38490d89c0` and both Branch CI runs are green. A task-scoped L12-EVO worker must hand this exact head to Codex2; only an ensuing exact-head approval may release the canonical review and root-freeze contexts before merge.
 
 ## Summary
 - Drain the protected L12 closeout PR queue one exact reviewed head at a time.
@@ -52,11 +52,13 @@ Generated in the worker workspace because the supervisor root did not have a tas
   root-released, and merged as
   `ba727a676856e77c7b723f33f5b9e7ceb5ce1392`; its canonical task is done.
 - `#4285`: remains open at
-  `6c631ae074a3c1be185f1cf99091012823e02a8e`. GitHub reports `BEHIND`;
-  the branch is three base commits behind and four task commits ahead of
-  current `origin/dev`. The old-head Branch CI checks are green, but the
-  canonical review and root-freeze contexts are absent. Root release remains
-  withheld until owner composition, fresh CI, and Codex2 exact-head approval.
+  `0fc918b747cf38262360b6045dadd25f157ed9d9`. The head composes current `dev`
+  `d97c25d3cc8860118dd4d0f3c9fafd38490d89c0`, is zero base commits behind
+  and six task commits ahead, and both fresh Branch CI runs passed Commit
+  trailers, Runtime mirror guard, Python packaging provision, and Smoke
+  acceptance. GitHub reports `BLOCKED` because the canonical review and
+  root-freeze contexts are absent. Root release remains withheld until the
+  L12-EVO task-scoped handoff and Codex2 exact-head approval.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
