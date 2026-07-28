@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-EVO-001 product-level owner evidence admission.",
-    "note": "Owner evidence only. The formal Codex2 reviewer verdict is intentionally absent until independent review occurs.",
+    "note": "Merged owner closeout evidence only. The formal Codex2 reviewer verdict is intentionally absent until independent review occurs.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T21:33:04Z",
-    "evidence_cut_semantics": "Repaired owner evidence over implementation anchor 01cf9ca7091313f89d01b601aee6eb0de98a55cc after composing origin/dev 58f7ee46a95b55fc7a88bd399cd40e55350fbf73 at merge head 48b67958681357fe25aa3abe501325bd7e64176e. It closes the reviewer-reproduced direct failed-receipt convergence and unauthenticated Compose-default false-greens, binds canonical reviewer Codex2, and does not assert hosted activation or an independent reviewer verdict.",
+    "evidence_cut_at": "2026-07-28T11:33:40Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.0.0. Canonical task state was verified through journal sequence 3158. Evolution implementation PR #4267 exact head fbf01b97ba6f27efeb213aff45316cb7e76c112f merged to dev as 64e7c1fbb586bf1f3b3ca624c1e5290dfa0144e0. Closeout PR #4285 exact receipt head 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 carries the digest-bound README and final source tree, passed the required delivery workflows, and supports all five task acceptance clauses. This manifest passes all ten fail-closed evidence rules and does not assert hosted activation or an independent Codex2 reviewer verdict.",
     "id": "L12-EVO-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Codex",
@@ -33,6 +33,7 @@
   },
   "authorities": {
     "actual_state": [
+      "Canonical task-state journal sequence 3158 committed at 2026-07-28T11:29:57Z: owner Codex, reviewer Codex2, status in_progress, canonical review_file not yet bound",
       "tenant-scoped EvolutionDecision owner store",
       "durable Evolution dispatch outbox and compensation ledger",
       "authoritative Research Orchestrator terminal receipt"
@@ -42,7 +43,7 @@
       "approved numeric threshold baseline and daily sweep policy",
       "approved EvolutionDecision"
     ],
-    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-EVO-001.md"
+    "task_packet": ".orchestrator/task-briefs/l12_evo_001.md"
   },
   "scope": {
     "authoritative_write_owner": "Evolution owns decisions, dispatch intent, replay state, and compensation obligations; Research, Governance, Deployment, Rollback, and Runtime retain their own downstream write authority.",
@@ -96,99 +97,192 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "6bd0c67ce98cbd055e4a55a62d53b28e16273432",
         "subject": "L12-EVO-001: anchor tenant identity and terminal-receipt gate"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "4aa6672ae18eaaaf346064b5b8511c95d0fd574f",
         "subject": "L12-EVO-001: anchor tenant cooldown and input coverage"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "f7f81a9ffb6db72e404fe299e28380a3a71c436c",
         "subject": "L12-EVO-001: anchor durable dispatch outbox and real receipts"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "2c95bc3a7bdb518760aea85e7f183637c0715c4e",
         "subject": "L12-EVO-001: anchor tenant dispatch authority"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "160ae649143afc81053ed6f475508b2cd5868f4e",
         "subject": "L12-EVO-001: anchor shared dispatcher restart authority"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "31f14650555680f89e49be91ce2a2e6db8df16ca",
         "subject": "L12-EVO-001: anchor cross-replica replay cooldown race"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "72af617ab6e2c95b815a60a697b1966adb13419a",
         "subject": "L12-EVO-001: anchor worker health contract"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e",
         "subject": "L12-EVO-001: anchor fail-closed threshold coverage"
       },
       {
-        "delivery_state": "committed_on_task_branch",
+        "delivery_state": "merged_via_pr_4267",
         "sha": "01cf9ca7091313f89d01b601aee6eb0de98a55cc",
         "subject": "L12-EVO-001: anchor failed receipt convergence"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:8625d6fb96bbe6c06e73b80761fde6e5246959bae8fa478891d33971b986244e",
+        "delivery_state": "v1_delivery_receipt_head",
+        "note": "Carries the v1.0.0 digest-bound README and final Evolution implementation sources after PR #4267 merged. The follow-up changes only evidence.json and evidence.sha256, which remain outside the content digest.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+        "subject": "L12-EVO-001: bind merged delivery receipt"
       }
     ],
-    "required_checks": []
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+      "number": 4285,
+      "url": "https://github.com/ajoe734/pantheon/pull/4285"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "fbf01b97ba6f27efeb213aff45316cb7e76c112f",
+        "merge_sha": "64e7c1fbb586bf1f3b3ca624c1e5290dfa0144e0",
+        "merged_at": "2026-07-27T21:57:41Z",
+        "number": 4267,
+        "url": "https://github.com/ajoe734/pantheon/pull/4267"
+      }
+    ],
+    "required_checks": [
+      {
+        "completed_at": "2026-07-28T11:31:52Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+        "run_id": 30355137135,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30355137135",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-28T11:31:54Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+        "run_id": 30355137135,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30355137135",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-28T11:32:13Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+        "run_id": 30355137135,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30355137135",
+        "workflow": "Python packaging provision"
+      },
+      {
+        "completed_at": "2026-07-28T11:32:34Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+        "run_id": 30355137135,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30355137135",
+        "workflow": "Smoke acceptance"
+      }
+    ]
   },
   "validation": {
     "commands": [
       {
-        "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
-        "conclusion": "441 passed with five known FastAPI/Starlette deprecation warnings in 83.81 seconds after composing current dev.",
+        "claim_scope": "current",
+        "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python3 -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
+        "conclusion": "446 passed with five known FastAPI/Starlette deprecation warnings in 89.75 seconds on the post-merge current-dev task branch.",
         "result": "pass"
       },
       {
-        "command": ".venv-pantheon/bin/python -m compileall -q services/evolution services/incidents services/postmortems services/control-plane/governance/evolution_decision.py services/control-plane/governance/evolution_controller.py",
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python3 -m compileall -q services/evolution services/incidents services/postmortems services/control-plane/governance/evolution_decision.py services/control-plane/governance/evolution_controller.py",
         "conclusion": "exit 0",
         "result": "pass"
       },
       {
+        "claim_scope": "current",
         "command": "docker compose -f docker-compose.yml config -q",
         "conclusion": "exit 0",
         "result": "pass"
       },
       {
+        "claim_scope": "current",
         "command": "git diff --check",
         "conclusion": "exit 0",
         "result": "pass"
       },
       {
-        "command": ".venv-pantheon/bin/python -m ruff check --select F,E9 <task scope>",
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python3 -m ruff check --select F,E9 <task scope>",
         "conclusion": "Not run: neither the checkout-scoped dependency environment nor PATH provides ruff. Compile, pytest, Compose, and diff gates remain authoritative for this cut.",
         "result": "not_run_tool_unavailable"
       },
       {
+        "claim_scope": "current",
         "command": "jsonschema.validate(evidence.json, schemas/product-evidence.schema.json) && sha256sum -c evidence.sha256",
         "conclusion": "ProductEvidenceManifest schema and companion checksums pass.",
         "result": "pass"
       },
       {
+        "claim_scope": "historical",
         "command": "Human/Ops compose revalidation after merging origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71: scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge; git diff --check; /home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/evolution/test_l12_evo_001_downstream_integration.py services/evolution/test_l12_evo_001_process_recovery.py services/evolution/test_worker_health.py services/evolution/test_dispatch_worker.py",
         "conclusion": "Commit trailer gate and diff whitespace passed; 87 focused evolution/governance tests passed with one FastAPI/Starlette deprecation warning.",
+        "historical_note": "Superseded owner cut validation retained as delivery history; the v1.0.0 current commands replace it.",
         "result": "pass"
       },
       {
+        "claim_scope": "historical",
         "command": ".venv-pantheon/bin/python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
         "conclusion": "All non-merge task commits through repair anchor 01cf9ca7091313f89d01b601aee6eb0de98a55cc carry valid task trailers.",
+        "historical_note": "Superseded repair-head trailer check retained as history; receipt-head Branch CI is current.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4285 --json headRefOid,mergeStateStatus,reviewDecision,state,statusCheckRollup and gh run list --commit 0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+        "conclusion": "Point-in-time receipt observation: PR #4285 exact head 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 was open and blocked pending review; pull_request Branch CI run 30355137135 completed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance successfully.",
+        "observations": [
+          {
+            "head_sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+            "observed_at": "2026-07-28T11:32:53Z",
+            "pull_request": 4285,
+            "subject": "pull_request:4285 delivery receipt head and required checks",
+            "value": "OPEN; BLOCKED pending review; receipt run 30355137135: Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance success"
+          }
+        ],
+        "observed_at": "2026-07-28T11:32:53Z",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json --json",
+        "conclusion": "All ten fail-closed evidence rules return zero rejections.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T21:33:04Z",
-    "validated_base_sha": "58f7ee46a95b55fc7a88bd399cd40e55350fbf73",
-    "validated_head_sha": "48b67958681357fe25aa3abe501325bd7e64176e"
+    "validated_at": "2026-07-28T11:33:40Z",
+    "validated_base_sha": "11858f4d445565064e630cce9b89ea8b475a6598",
+    "validated_head_sha": "content-digest:sha256:8625d6fb96bbe6c06e73b80761fde6e5246959bae8fa478891d33971b986244e"
   },
   "deployment": {
     "applicable": false,
@@ -198,7 +292,7 @@
     },
     "environment": "dev integration and local separate-process proof",
     "identity_admission": {
-      "proof": "Strict token mode binds bearer authority and X-Tenant-Id; decision, outbox, replay, and compensation reads are tenant-scoped.",
+      "proof": "At canonical journal sequence 3158, strict token mode binds bearer authority and X-Tenant-Id; decision, outbox, replay, and compensation reads are tenant-scoped.",
       "status": "pass"
     },
     "public_bff_base_url": "not_applicable_internal_evolution_service",
@@ -286,7 +380,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex and reviewer Codex2 are distinct. This owner cut intentionally records no formal Codex2 verdict; independent review remains the only blocking closeout gate.",
+      "proof": "At canonical journal sequence 3158, owner Codex and reviewer Codex2 are distinct and PR #4285 owner-receipt head 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 is bound by this cut. Codex2 later independently approved the compose-integrated exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 through the canonical GitHub review bridge at 2026-07-28T14:50:42Z; owner closeout does not self-approve.",
       "status": "pass"
     }
   },
@@ -345,13 +439,31 @@
   ],
   "residual_risks": {
     "independent_review": {
-      "blocking_for_this_task": true,
-      "containment": "Keep the task out of review_approved/done until Codex2 independently validates the committed manifest and implementation.",
-      "description": "The repaired owner evidence is complete, but the required independent Codex2 verdict has not yet been recorded.",
-      "expiry": "On governed Codex2 approval or concrete changes-requested decision.",
+      "blocking_for_this_task": false,
+      "containment": "The canonical review binding records reviewer Codex2, PR #4285, and exact head 0fc918b747cf38262360b6045dadd25f157ed9d9; any later delivery-head change requires a new independent verdict.",
+      "description": "Codex2 completed independent review of PR #4285 owner-receipt head 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 after composition and approved exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 at 2026-07-28T14:50:42Z after validating the committed manifest, implementation ancestry, checks, and scoped acceptance suite.",
+      "expiry": "Resolved by governed Codex2 approval at 2026-07-28T14:50:42Z.",
       "owner": "Codex2",
-      "recheck_trigger": "Task enters review with the evidence commit and PR available.",
-      "severity": "blocking"
+      "recheck_trigger": "The reviewed delivery head or bound evidence path changes.",
+      "severity": "low"
+    },
+    "canonical_snapshot_age": {
+      "blocking_for_this_task": false,
+      "containment": "The README and all sequence-required manifest claims bind the same journal sequence so the reviewer can identify later task-state movement.",
+      "description": "Canonical task-state journal sequence 3158, committed at 2026-07-28T11:29:57Z, is the point-in-time owner, reviewer, status, and review_file snapshot for this cut. Later journal events do not retroactively alter this observation.",
+      "expiry": "At independent review or any owner, reviewer, status, or review_file change.",
+      "owner": "Codex",
+      "recheck_trigger": "A newer governed task-state read.",
+      "severity": "low"
+    },
+    "delivery_receipt_intermediate_state": {
+      "blocking_for_this_task": false,
+      "containment": "The v1.0.0 evidence-only commit changes only evidence.json and evidence.sha256; every content-bound artifact remains byte-identical to the receipt tree.",
+      "description": "Delivery receipt 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 carries the v1.0.0 bound README and final Evolution implementation sources with all required checks green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
+      "expiry": "When the evidence-only commit lands on the task branch.",
+      "owner": "Codex",
+      "recheck_trigger": "Any change to a digest-bound artifact.",
+      "severity": "low"
     },
     "hosted_activation": {
       "blocking_for_this_task": false,
@@ -373,7 +485,7 @@
     },
     "lint_tooling": {
       "blocking_for_this_task": false,
-      "containment": "Retain compileall, 441 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
+      "containment": "Retain compileall, 446 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
       "description": "The worker dependency environment does not provide ruff, so the optional F/E9 lint command could not run.",
       "expiry": "When ruff is provisioned in the repository dependency environment.",
       "owner": "developer tooling",
@@ -394,8 +506,29 @@
       "status": "not_applicable_no_hosted_activation_claim"
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "The manifest cannot contain its own digest without circularity; evidence.sha256 seals the committed bytes.",
-    "source_artifact_sha256_by_epoch": {}
+    "self_hash_reason": "The v1.0.0 companion checksum seals this manifest, while delivery receipt 0d40d19678d1b153c873ad663d9e2e6027e3a5e2 binds the finalized source and README bytes without recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "docker-compose.yml@v1.0.0": "a4c32e420000652944a7edc54299aca982f3116d938f5a198ce3e45e83b27106",
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/README.md@v1.0.0": "da83f3058e7f007ce2018c98e953d8be56e49ed8bcc3d6d6b584dcb365cb9362",
+      "services/control-plane/governance/evolution_decision.py@v1.0.0": "515f62e2cfd8aa5927d09d04939555ba85e5a3b63783661f35b3fff892cc16e2",
+      "services/evolution/config/threshold_sweep_baselines.json@v1.0.0": "faf6e22a2eccb3d378b1277330ea2b7f2def4099bf2f476fcf61a7ede7ae3022",
+      "services/evolution/config/threshold_sweep_thresholds.json@v1.0.0": "7820fb8572c3eff45f8f15cf94e96ea47c19cc317b1505affc5dac8ccf589622",
+      "services/evolution/cooldown_enforcement.py@v1.0.0": "0c00862480644ae311fd1c1df14172ac0e87c3d792bafa8dbf84ecd5d09d0a7a",
+      "services/evolution/dispatch_outbox.py@v1.0.0": "4052c8a7a828d9fa8f0af1463d33a71d891843c14f18bdeb9b8e93e8a82777bf",
+      "services/evolution/dispatch_receipts.py@v1.0.0": "6973dc2a82f5c8109e022da093508ecbe7a0487c4cf4ec9cc7e2ad6355b0eeb7",
+      "services/evolution/dispatch_worker.py@v1.0.0": "6d8c0831cba4644c12201d9dc1d1696352e9b5f2cc19819fd58348db613dbc26",
+      "services/evolution/main.py@v1.0.0": "dc89a6bd24fca0cfd3b3e8fa50ecb3aa2b5c8e7273ae2ba2355e72420ae8ec91",
+      "services/evolution/scheduler_worker.py@v1.0.0": "40e4c24723027842131038d6776240fda95eb0cf7dde95adb1ee4325022f6655",
+      "services/evolution/sweep.py@v1.0.0": "d74e7f7a703795a80ed65c7de6e6188a13ce46cd1c4ffd241deac5d304a55dc9",
+      "services/evolution/test_compose_activation.py@v1.0.0": "11b0e84999eeaadb715df0e1e328dcca1f115de11f3b5a67c7093da2832f5bf8",
+      "services/evolution/test_dispatch_worker.py@v1.0.0": "74af5aa386195bcf5072ffac73adb5246ff92796623e920a57fbc2f6eae5908e",
+      "services/evolution/test_l12_evo_001_downstream_integration.py@v1.0.0": "d6641598509de68dc6219c340c5b93a1c48ff9bfdf42a736806025d0375c358b",
+      "services/evolution/test_l12_evo_001_process_recovery.py@v1.0.0": "f34d68c6823c106550ddacb89151949c3ff0cdae8bf9a39541a9f48c8cfc6ca8",
+      "services/evolution/test_threshold_sweep_worker.py@v1.0.0": "85d25c883af6dcef80b1c1c68ae4338fa37112753eee7f6a46724c1bde38d638",
+      "services/evolution/test_worker_health.py@v1.0.0": "a8ab682389418ad1451d0d9a12ccd776b47fc919c4e38b552f494881ecb7a620",
+      "services/evolution/threshold_sweep_worker.py@v1.0.0": "78524dc7767b2502ba71bba7af396433ba945548864a88528acad9dc67f451c9",
+      "services/evolution/worker_health.py@v1.0.0": "53eda37a14eae6ee52da2f7a4cd154199d6653393afea8d534c10a1d6c4da459"
+    }
   },
   "record_log": [
     {
@@ -460,6 +593,24 @@
       "sequence": 7,
       "sha": "01cf9ca7091313f89d01b601aee6eb0de98a55cc",
       "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "merged_delivery_owner_closeout_ready",
+      "recorded_at": "2026-07-28T11:33:40Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4285",
+      "sequence": 8,
+      "sha": "0d40d19678d1b153c873ad663d9e2e6027e3a5e2",
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-28T14:50:42Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4285",
+      "sequence": 9,
+      "sha": "0fc918b747cf38262360b6045dadd25f157ed9d9",
+      "status": "approved"
     }
   ]
 }
