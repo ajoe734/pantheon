@@ -41,10 +41,22 @@
       "status": "auth_not_ready",
       "method": "claude_auth_status_refresh",
       "error": "Claude CLI authentication is missing or OAuth refresh failed.",
-      "checked_at": "2026-07-28T19:08:10Z",
+      "checked_at": "2026-07-28T19:15:29Z",
       "account_group": "claude_account_38214705729dc49b",
       "verdict": "fail_closed_not_dispatchable"
     },
+    "claude2": {
+      "provider": "claude2",
+      "kind": "claude",
+      "ready": true,
+      "status": "ready",
+      "method": "claude_auth_status_refresh",
+      "error": null,
+      "checked_at": "2026-07-28T19:15:30Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "ready_dispatchable"
+    },
+    "claude1_subslots_note": "Subslots claude1-1..1-4 do not exist as independent slots in config.json/provider_capabilities.json; claude is the primary slot for account group claude_account_38214705729dc49b.",
     "antigravity": {
       "provider": "antigravity",
       "kind": "antigravity",
@@ -52,7 +64,7 @@
       "status": "ready",
       "method": "agy_prompt_oauth",
       "error": null,
-      "checked_at": "2026-07-28T19:08:35Z",
+      "checked_at": "2026-07-28T19:15:35Z",
       "metadata": {
         "oauth_token": "/home/lupin/.gemini/antigravity-cli/antigravity-oauth-token",
         "probe_model": "gemini-3.6-flash-low",
@@ -79,14 +91,28 @@
       "queue_event_id": "evt-20260728T190707Z-b52139da",
       "started_at": "2026-07-28T19:07:29Z",
       "status": "running"
-    }
+    },
+    "claude2_worker_runs": [
+      {
+        "worker_run_id": "claude2-claude2-15e2ac",
+        "provider": "claude2",
+        "target_agent": "Claude2",
+        "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260723T090814354954Z-claude2-claude2-15e2ac.log"
+      },
+      {
+        "worker_run_id": "claude2-claude2-d1e3e0",
+        "provider": "claude2",
+        "target_agent": "Claude2",
+        "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260724T000541473436Z-claude2-claude2-d1e3e0.log"
+      }
+    ]
   },
   "fallback_truth": {
-    "claude_fail_closed": "Claude provider failed forced auth probe (auth_not_ready), correctly preventing new Claude worker dispatches.",
+    "claude_family_truth": "Claude primary slot is auth_not_ready (fail-closed), but claude2 slot is verified ready (ready=true) with real supervisor dispatch logs recorded.",
     "antigravity_success": "Antigravity provider passed forced probe (ready) via agy_prompt_oauth, successfully executing real supervisor worker runs (antigravity1-1-20260728T185208Z-a6cb5d2a and antigravity1-1-20260728T190729Z-8aeb78de)."
   },
   "verdict": {
-    "summary": "Supervisor Antigravity CLI provider is verified ready (ready=true) with real dispatch execution proven. Claude CLI provider is verified fail-closed (auth_not_ready). Configuration remained unedited.",
+    "summary": "Supervisor Antigravity CLI provider is verified ready (ready=true) with real dispatch execution proven. Claude family is partially ready: primary claude slot is fail-closed (auth_not_ready), while claude2 slot is verified ready (ready=true) with real supervisor dispatch proof. Configuration remained unedited.",
     "config_edited": false
   },
   "validation": {
