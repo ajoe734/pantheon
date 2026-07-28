@@ -42,6 +42,9 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "ready_dispatcher.max_active_workers_per_task",
     "ready_dispatcher.max_concurrent_per_account",
     "ready_dispatcher.max_concurrent_workers",
+    # Silently flipping this off strands queued work behind an idle lane and
+    # disables the paused-owner rescue path, with no activity-log record.
+    "ready_dispatcher.helper_claim.enabled",
     "coordination.enabled",
     "github_bus.enabled",
     "watchdog.enabled",
