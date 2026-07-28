@@ -1,0 +1,183 @@
+{
+  "schema_version": "pantheon.l12_fleet_status_sync_closeout_refresh.v1",
+  "task": {
+    "id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "owner_evidence_anchored_parent_closeout_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
+    "evidence_cut_at": "2026-07-28T18:52:58Z",
+    "overall_admission": "verification_pass_parent_review_freeze_merge_and_archive_pending"
+  },
+  "scope": {
+    "owned_layer": "Task-scoped receipt for refreshing and closing the already-merged fleet status synchronization delivery.",
+    "not_changing": [
+      "PR #4282 implementation or regression tests",
+      "Generated canonical status, current-work, dashboard, activity, or archive files",
+      "Supervisor routing, review-gate, root-freeze, or task-state transition code",
+      "Hosted deployment, runtime activation, or capital authority"
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/l12_fleet_status_sync_closeout_20260728.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.sha256"
+    ]
+  },
+  "implementation_delivery": {
+    "source_task_id": "L12-FLEET-STATUS-SYNC-001",
+    "pull_request": 4282,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4282",
+    "exact_head": "e806affaa279f8b9d4b41bae6117a9431c99b90e",
+    "merge_commit": "a0020c5ac50e510467a5e80c412c7703245cf4dd",
+    "merged_at": "2026-07-27T22:24:51Z",
+    "head_is_ancestor_of_origin_dev": true,
+    "merge_is_ancestor_of_origin_dev": true,
+    "implementation_restarted": false
+  },
+  "closeout_refresh": {
+    "pull_request": 4297,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4297",
+    "original_evidence_head": "b24b454108dc2137f2b24d226c57ec1192bcf026",
+    "refreshed_evidence_commit": "7766d38064a814090e0f1ff41775b4c362bf7bf9",
+    "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
+    "composed_dev": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "base_branch": "dev",
+    "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+    "state": "open",
+    "mergeable": true,
+    "merge_state": "blocked_pending_governed_review",
+    "auto_merge": false,
+    "branch_ci": {
+      "status": "pass",
+      "visible_runs": 8,
+      "contexts": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Python packaging provision",
+        "Smoke acceptance"
+      ]
+    },
+    "canonical_task": {
+      "status": "review",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json"
+    },
+    "changed_files": [
+      ".orchestrator/task-briefs/l12_fleet_status_sync_001.md",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md"
+    ]
+  },
+  "verification": {
+    "performed_at": "2026-07-28T18:52:58Z",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Checkout-scoped .venv-pantheon was provisioned and import paths were verified from a foreign working directory without PYTHONPATH."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
+        "result": "pass",
+        "conclusion": "168 passed, 31 subtests passed in 31.65 seconds."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py -k authoritative_bridge_dispatch_survives_next_projection_cycle",
+        "result": "pass",
+        "conclusion": "1 passed, 26 deselected in 1.06 seconds."
+      },
+      {
+        "command": "python3 -m json.tool <exact-head evidence.json>; git diff --check origin/dev...origin/pr-4297-current",
+        "result": "pass",
+        "conclusion": "The exact-head manifest is valid JSON and the evidence-only PR diff is clean."
+      },
+      {
+        "command": "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev; git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
+        "result": "pass",
+        "conclusion": "Both the implementation head and merge commit are ancestors of current origin/dev."
+      },
+      {
+        "command": "sha256sum status-root/{ai-status.json,current-work.md,dashboard-bundle.json} and docs-site mirrors",
+        "result": "pass",
+        "conclusion": "Each source/mirror pair is byte-identical at review time."
+      },
+      {
+        "command": "gh pr checks 4297 --repo ajoe734/pantheon",
+        "result": "pass",
+        "conclusion": "All eight visible Branch CI check runs passed on exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753."
+      }
+    ]
+  },
+  "governed_status_boundary": {
+    "worker_task_id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "attempted_target": "L12-FLEET-STATUS-SYNC-001",
+    "command": "approve",
+    "result": "expected_fail_closed",
+    "error": "status command task mismatch: argv task L12-FLEET-STATUS-SYNC-001 != ORCH_TASK_ID L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "required_path": "The dedicated Codex2 review_ready_dispatch for L12-FLEET-STATUS-SYNC-001 records canonical approval."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Refresh or supersede PR #4297 from current dev.",
+      "status": "pass",
+      "proof": "PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 composes current dev a6d56c366f7436574e6d2d241b47564558beac74 and has green Branch CI."
+    },
+    {
+      "id": "AC2",
+      "criterion": "Do not restart PR #4282 implementation.",
+      "status": "pass",
+      "proof": "PR #4297 changes exactly one task brief and two evidence files; PR #4282 head and merge remain unchanged and ancestral to origin/dev."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Obtain exact-head independent review.",
+      "status": "verification_pass_canonical_approval_pending",
+      "proof": "Codex2 completed exact-head inspection and reproduction, but the wrapper lease cannot mutate the parent task; the dedicated parent reviewer dispatch must record the governed approval."
+    },
+    {
+      "id": "AC4",
+      "criterion": "Obtain Human/Ops root freeze and merge the exact reviewed head.",
+      "status": "pending",
+      "proof": "No root-freeze or merge claim is made at this owner evidence cut."
+    },
+    {
+      "id": "AC5",
+      "criterion": "Reach canonical done/archive for the source task and this wrapper task.",
+      "status": "pending",
+      "proof": "Both rows remain nonterminal at this owner evidence cut."
+    }
+  ],
+  "review": {
+    "reviewer": "Codex",
+    "status": "pending",
+    "decision": "independent_review_required_after_parent_closeout_receipt",
+    "review_targets": [
+      "Confirm PR #4297 exact-head approval, root-freeze, and merge identities after the dedicated parent reviewer dispatch completes.",
+      "Confirm L12-FLEET-STATUS-SYNC-001 reaches canonical done/archive without implementation restart.",
+      "Verify this wrapper manifest and checksum before binding it as REVIEW_FILE."
+    ]
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "actor": "Codex2",
+      "kind": "owner_anchor_after_exact_head_reproduction",
+      "recorded_at": "2026-07-28T18:52:58Z",
+      "status": "parent_closeout_pending",
+      "sha": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
+      "reference": "PR #4297 is refreshed on current dev and independently reproduced; canonical parent approval correctly remains with the dedicated review dispatch."
+    }
+  ],
+  "known_limitations": [
+    "This task does not claim hosted deployment, runtime activation, program-level twelve-loop completion, or capital authority.",
+    "The legacy top-level source_pr/source_head fields are disclosed but are not migrated by this closeout.",
+    "Canonical parent approval, root-freeze, merge, and owner done/archive are pending at this evidence cut."
+  ]
+}
