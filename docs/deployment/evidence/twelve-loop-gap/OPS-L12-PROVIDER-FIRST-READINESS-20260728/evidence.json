@@ -3,9 +3,10 @@
   "task": {
     "id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
     "title": "Verify Claude/Antigravity provider-first readiness",
-    "owner": "Codex",
+    "owner": "Codex2",
+    "evidence_owner_at_reviewed_head": "Codex",
     "reviewer": "Claude",
-    "status": "owner_evidence_ready_pending_independent_review",
+    "status": "review_approved_owner_closeout",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
@@ -14,7 +15,7 @@
   },
   "scope": {
     "owned_layer": "Live supervisor provider readiness and dispatch evidence for the Claude and Antigravity families.",
-    "not_changing": "Provider configuration, provider credentials, scheduler policy, task ownership, product services, hosted FE/BFF deployment, and twelve-loop product maturity.",
+    "not_changing": "Provider configuration, provider credentials, scheduler policy, product services, hosted FE/BFF deployment, and twelve-loop product maturity.",
     "composes_with": [
       "L12-FLEET-001",
       "SUP-PROVIDER-POOL-PROBE-GATE-001",
@@ -204,10 +205,47 @@
   ],
   "review": {
     "reviewer": "Claude",
-    "status": "pending_independent_review",
-    "decision": null,
-    "reviewed_at": null,
-    "reviewed_head_sha": null
+    "status": "review_approved",
+    "decision": "approve",
+    "reviewed_at": "2026-07-28T13:45:39Z",
+    "reviewed_head_sha": "7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1",
+    "review_binding": {
+      "repository": "ajoe734/pantheon",
+      "pr": 4293,
+      "head_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "base": "dev"
+    },
+    "github_review_bridge": {
+      "mode": "required_commit_status",
+      "decision": "approve",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51219146653,
+      "status_state": "success",
+      "recorded_at": "2026-07-28T13:45:39Z",
+      "target_url": "https://github.com/ajoe734/pantheon/pull/4293"
+    },
+    "reviewer_message": "Independent review at PR #4293 head 7c2ad997c. Integrity: sha256sum -c evidence.sha256 OK for README.md+evidence.json; evidence.json parses; PR diff is exactly the 4 declared changed_files (297 insertions, 0 deletions) with no .orchestrator/config.json change in the task worktree or command root (HEAD 061408b09 == claimed command_runtime_sha). Re-ran the focused suites independently on this head: 6 passed for the provider permission probe/refresh/quota/credential-group tests and 7 passed for the supervisor Claude lane, Antigravity admission/fallback, and fresh-auth hold tests. Live claims were corroborated from read-only runtime state: supervisor health was healthy; Claude was ready; Antigravity was quota_reached; dispatch pauses were empty with the manifest's explicit no-standing-pause caveat; the claimed Claude and Codex-family worker records existed. AC1, AC2, and AC3 hold. PR CI was green and the branch was 0 behind origin/dev.",
+    "non_blocking_notes": [
+      "The verification.commands entries paraphrase some pytest selections instead of naming every exact node id; the reviewer reconstructed and reran the selections from the stated files and conclusions."
+    ]
+  },
+  "delivery": {
+    "primary_pr": "https://github.com/ajoe734/pantheon/pull/4293",
+    "reviewed_head_sha": "7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1",
+    "merge_commit": "748d5b34a8a5c23edf75a82e36d43f2ac867a459",
+    "merged_at": "2026-07-28T13:46:30Z",
+    "base_branch": "dev",
+    "required_checks": "success"
+  },
+  "owner_closeout": {
+    "owner": "Codex2",
+    "accepted_at": "2026-07-28T13:52:18Z",
+    "observation_recut": false,
+    "verification": [
+      "6 passed, 77 deselected in 0.76s for the focused provider permission probe/refresh/quota/credential-group selection.",
+      "7 passed, 437 deselected in 1.50s for the focused supervisor Claude lane, Antigravity admission/fallback, and fresh-auth hold selection.",
+      "No .orchestrator/config.json diff in the task worktree or validated command root."
+    ]
   },
   "record_log": [
     {
@@ -233,6 +271,32 @@
       "recorded_at": "2026-07-28T13:34:45Z",
       "status": "owner_asserted_pass_pending_independent_review",
       "reference": "Merged the existing remote task head and current origin/dev, then reran all 10 focused tests successfully on the final task head."
+    },
+    {
+      "sequence": 4,
+      "actor": "Claude",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-28T13:45:39Z",
+      "status": "review_approved",
+      "sha": "7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1",
+      "reference": "Governed canonical review_approved decision for PR #4293 exact head 7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1. Claude independently verified the checksum and four-file scope, reran 6 provider tests and 7 supervisor lane/hold tests, corroborated the live runtime/provider/worker records, confirmed no provider config diff, and accepted AC1/AC2/AC3 with the manifest's limitations intact."
+    },
+    {
+      "sequence": 5,
+      "actor": "GitHub",
+      "kind": "reviewed_head_merged_to_dev",
+      "recorded_at": "2026-07-28T13:46:30Z",
+      "status": "merged",
+      "sha": "748d5b34a8a5c23edf75a82e36d43f2ac867a459",
+      "reference": "PR #4293 merged the exact reviewed task head to dev after required checks and the Pantheon canonical review gate succeeded."
+    },
+    {
+      "sequence": 6,
+      "actor": "Codex2",
+      "kind": "owner_closeout_adoption",
+      "recorded_at": "2026-07-28T13:52:18Z",
+      "status": "review_approved_owner_closeout",
+      "reference": "After supervisor reassignment from Codex, Codex2 adopted the already approved result, reran the focused 6-test provider and 7-test supervisor selections, confirmed both provider-config trees remained unchanged, and transcribed the independent exact-head decision without recutting the live provider observation."
     }
   ]
 }
