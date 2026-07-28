@@ -6098,7 +6098,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
-            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "_run_scan_locked", return_value=False),
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
             mock.patch.object(supervisor, "prune_event_queue", return_value=False),
@@ -6148,7 +6148,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
-            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "_run_scan_locked", return_value=False),
             mock.patch.object(supervisor, "sync_coordination_files", return_value=False),
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
@@ -12708,6 +12708,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
         dispatch_reason: str,
         max_attempts: int,
         runner_succeeded: bool = False,
+        pending_outbox_event: dict | None = None,
     ) -> tuple[dict, dict, dict, mock.Mock]:
         config = self._config(root)
         config["worker_retry"] = {
@@ -12730,6 +12731,10 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             ],
             "blockers": [],
         }
+        if pending_outbox_event is not None:
+            status["status_activity_outbox"] = supervisor._status_activity_outbox(
+                [pending_outbox_event]
+            )
         (root / "ai-status.json").write_text(
             json.dumps(status),
             encoding="utf-8",
@@ -13100,6 +13105,67 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                     "worker_failed",
                     "worker_runtime_metrics",
                 ],
+            )
+
+    def test_reconcile_runtime_composes_pending_outbox_before_terminal_outcome(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pending_event = {
+                "event_id": "pending-before-boot-crash",
+                "ts": "2026-07-27T23:59:00Z",
+                "agent": "Codex2",
+                "type": "task_progress",
+                "task_id": "OTHER-TASK",
+                "message": "Pending audit event from the interrupted transaction.",
+            }
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-PENDING-OUTBOX",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=0,
+                pending_outbox_event=pending_event,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-lease-pending-outbox"]["status"],
+                "failed",
+            )
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["tasks"][0]["status"], "blocked")
+            self.assertEqual(len(status["blockers"]), 1)
+            blocker = status["blockers"][0]
+            self.assertEqual(blocker["task_id"], "OPS-LEASE-PENDING-OUTBOX")
+            self.assertEqual(
+                blocker["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(blocker["provider"], "codex")
+            self.assertIn("process missing", blocker["failure_reason"])
+
+            outbox = status["status_activity_outbox"]
+            self.assertEqual(
+                [event["event_id"] for event in outbox["events"][:1]],
+                [pending_event["event_id"]],
+            )
+            terminal_event = outbox["events"][1]
+            self.assertEqual(
+                terminal_event["task_id"], "OPS-LEASE-PENDING-OUTBOX"
+            )
+            self.assertEqual(
+                terminal_event["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(terminal_event["provider"], "codex")
+            self.assertIn("process missing", terminal_event["reason"])
+            self.assertEqual(
+                outbox,
+                supervisor._status_activity_outbox(outbox["events"]),
             )
 
     def test_reconcile_runtime_blocks_missing_reviewer_after_retry_budget(self) -> None:
@@ -14349,6 +14415,34 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         }
         self._refresh(probe, state)
         self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
+
+    def test_live_success_probe_persists_recovered_capability(self) -> None:
+        state: dict[str, object] = {}
+        report = {"providers": {"codex2": {"auth_ready": False}}}
+        probe = {
+            "provider": "codex2",
+            "ready": True,
+            "status": "ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=probe),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            health = supervisor.refresh_provider_auth_before_dispatch(
+                self.config,
+                report,
+                "codex2",
+                state,
+            )
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.HEALTHY)
+        self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
+        write_caps.assert_called_once_with(self.config, report=report)
 
     def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
         """The observed regression: an auth pause reopened the lane on a timer."""
