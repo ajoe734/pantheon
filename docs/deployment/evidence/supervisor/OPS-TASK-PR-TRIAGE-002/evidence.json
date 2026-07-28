@@ -1,0 +1,207 @@
+{
+  "schema_version": "pantheon.supervisor-task-evidence.v1",
+  "task": {
+    "id": "OPS-TASK-PR-TRIAGE-002",
+    "title": "Architecture-level fleet recovery for stale task PRs",
+    "phase": "Repository Hygiene / Fleet Throughput",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-TASK-PR-TRIAGE-002",
+    "depends_on": [
+      "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"
+    ],
+    "review_file": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/README.md",
+    "machine_report": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/triage-report.json",
+    "branch_dry_run": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/branch-deletion-dry-run.json"
+  },
+  "status": "in_progress",
+  "generated_at": "2026-07-28T13:40:12Z",
+  "scope": {
+    "owned": [
+      "fixed live inventory of task PRs older than 24 hours",
+      "evidence-based stale PR disposition and owner attribution",
+      "fail-closed PR closure allowlist",
+      "recoverable branch deletion dry-run only",
+      "task-scoped identity propagation in the accepted triage tool"
+    ],
+    "not_changing": [
+      "canonical status of any stale PR's task",
+      "contents or exact heads of retained stale PRs",
+      "remote task branch deletion",
+      "product, runtime, deployment, broker, or capital behavior"
+    ],
+    "composes_with": [
+      "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "assigned stale-PR owners and reviewers",
+      "future evidence-backed repair or retirement tasks"
+    ]
+  },
+  "prerequisite": {
+    "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+    "canonical_source": "ai-task-archive/tasks/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001.json",
+    "canonical_status": "done",
+    "implementation_pr": 4218,
+    "implementation_merge_commit": "9e4bb8e1fa9495d8802da58336b05ae68c7756ad",
+    "verified_before_inventory": true
+  },
+  "snapshot": {
+    "as_of": "2026-07-28T13:40:12Z",
+    "overdue_hours": 24,
+    "cutoff": "2026-07-27T13:40:12Z",
+    "base_ref": "origin/dev",
+    "base_sha": "65802d99bf5ddca1213f6742af74dc125216fa82",
+    "open_task_prs_repository_wide": 28,
+    "overdue_task_prs": 24,
+    "recent_task_prs_excluded": [
+      4262,
+      4285,
+      4291,
+      4293
+    ],
+    "remote_task_branches": 2214,
+    "no_open_pr_task_branches": 2186
+  },
+  "classification": {
+    "tool_dispositions": {
+      "active-repair": 12,
+      "conflict-needs-owner": 8,
+      "protected-retain": 4,
+      "merged-reachable": 0,
+      "superseded": 0,
+      "abandoned-unproven": 0
+    },
+    "acceptance_aliases": {
+      "mergeable": {
+        "count": 0,
+        "rule": "ready to merge without owner refresh, conflict repair, or draft release"
+      },
+      "blocked": {
+        "count": 8,
+        "tool_disposition": "conflict-needs-owner"
+      },
+      "duplicate": {
+        "count": 0,
+        "rule": "requires durable replacement identity; none was proven"
+      },
+      "superseded": {
+        "count": 0,
+        "rule": "requires terminal supersession or a different verified merged PR"
+      },
+      "abandoned": {
+        "count": 0,
+        "rule": "no open PR was inferred abandoned without durable retirement proof"
+      },
+      "active": {
+        "count": 16,
+        "composition": {
+          "active-repair": 12,
+          "protected-retain": 4
+        }
+      }
+    },
+    "unclassified_overdue_task_prs": 0,
+    "closure_candidates": 0,
+    "closure_action": "none",
+    "reason": "No open stale PR has durable supersession or a different verified merged Pantheon PR, so the fail-closed allowlist is empty."
+  },
+  "branch_retention": {
+    "mode": "dry-run-only",
+    "candidate_count": 1305,
+    "candidate_rule": "older than 30 days, no open PR, and exact head already reachable from immutable base_sha",
+    "branch_deletions": 0,
+    "tool_has_branch_delete_command": false
+  },
+  "implementation": {
+    "anchor_commit": "2be18f5c2510799558a4fb50a6291570181c6ef2",
+    "change": "make triage report identity configurable through --task-id while preserving OPS-TASK-PR-TRIAGE-001 as the default",
+    "classification_policy_changed": false,
+    "closure_policy_changed": false,
+    "branch_deletion_policy_changed": false
+  },
+  "artifacts": {
+    "triage_report": {
+      "path": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/triage-report.json",
+      "sha256": "29afaf9bd87705c6f253c59594358a8d8fad74a0423367640c255d2079b7190e"
+    },
+    "narrative": {
+      "path": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/README.md",
+      "sha256": "3f241b18f7e473e08bed1a42330570e68d512d22604527be2b5e183af58fdbc5"
+    },
+    "branch_deletion_dry_run": {
+      "path": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/branch-deletion-dry-run.json",
+      "sha256": "ec42b1881642e91d4b80288bb23ad56c59f6fe4978532a3cce00ecb6834fe83e"
+    }
+  },
+  "acceptance": {
+    "enumerate_task_prs_older_than_24h": {
+      "status": "pass",
+      "evidence": "24 unique cohort rows at fixed cutoff; repository-global count and four recent exclusions are recorded separately"
+    },
+    "classify_each_stale_pr": {
+      "status": "pass",
+      "evidence": "12 active-repair, 8 conflict-needs-owner, and 4 protected-retain; every row records exact head, owner, and reasons"
+    },
+    "no_unproved_close_or_merge": {
+      "status": "pass",
+      "evidence": "closure_candidates=0 and close-superseded dry run emitted actions=[]"
+    },
+    "no_unclassified_stale_task_pr": {
+      "status": "pass",
+      "evidence": "24 cohort rows, 24 unique PR numbers, 24 classified rows, and unclassified_overdue_task_prs=0"
+    },
+    "delivery_via_review_gate": {
+      "status": "pending",
+      "evidence": "task branch PR, exact-head Claude review, checks, merge, and owner closeout remain"
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m unittest scripts/git/test_task_pr_triage.py",
+      "result": "26 passed"
+    },
+    {
+      "command": "python3 -m py_compile scripts/git/task_pr_triage.py scripts/git/test_task_pr_triage.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/git/task_pr_triage.py validate --report /tmp/ops-task-pr-triage-002-report.json --deletion-manifest /tmp/ops-task-pr-triage-002-deletion-manifest.json --expected-cohort-count 24",
+      "result": "valid: 24 PRs, 2214 branches, 1305 deletion dry-run candidates"
+    },
+    {
+      "command": "python3 scripts/git/task_pr_triage.py close-superseded --report /tmp/ops-task-pr-triage-002-report.json",
+      "result": "dry-run actions=[]"
+    },
+    {
+      "command": "jq cohort uniqueness, closure allowlist, manifest mode/task identity, and candidate cardinality assertions",
+      "result": "passed"
+    },
+    {
+      "command": "gh pr list live exact-head readback for all 24 cohort PRs",
+      "result": "passed; every cohort PR remains open at its recorded exact head"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "reviewed_head": null,
+    "decision": null
+  },
+  "safety": {
+    "pr_closed": [],
+    "pr_merged": [],
+    "branch_deleted": [],
+    "force_push": false,
+    "direct_push_to_dev_or_master": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "hosted_deployment": false,
+    "real_capital_or_broker_action": false
+  }
+}
