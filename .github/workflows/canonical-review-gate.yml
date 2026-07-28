@@ -1,0 +1,165 @@
+name: Canonical Review Gate
+
+# This workflow always executes trusted code from the PR base branch.  It does
+# not run or checkout candidate code before resolving the base ref, so a task
+# PR cannot weaken the verifier it is being measured by.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - edited
+  issue_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Open PR whose exact head must be re-evaluated"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  checks: write
+
+concurrency:
+  group: >-
+    canonical-review-${{ github.repository }}-${{
+      github.event.pull_request.number ||
+      github.event.issue.number ||
+      inputs.pr_number ||
+      github.run_id
+    }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: Evaluate signed canonical review
+    if: >-
+      github.event_name != 'issue_comment' ||
+      github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_ACTIONS_APP_ID: "15368"
+      PANTHEON_CANONICAL_REVIEW_PUBLIC_KEYS_JSON: >-
+        ${{ vars.PANTHEON_CANONICAL_REVIEW_PUBLIC_KEYS_JSON }}
+      PR_NUMBER: >-
+        ${{ github.event.pull_request.number ||
+            github.event.issue.number ||
+            inputs.pr_number }}
+
+    steps:
+      - name: Capture exact PR head and review comments
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "PR number must be a positive integer" >&2
+            exit 1
+          fi
+          pr_json="$RUNNER_TEMP/canonical-review-pr.json"
+          comments_json="$RUNNER_TEMP/canonical-review-comments.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pr_json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            > "$comments_json"
+          base_ref="$(jq -r '.base.ref // empty' "$pr_json")"
+          head_sha="$(jq -r '.head.sha // empty' "$pr_json")"
+          if [[ -z "$base_ref" || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GitHub did not return an exact PR base/head identity" >&2
+            exit 1
+          fi
+          {
+            echo "base_ref=$base_ref"
+            echo "head_sha=$head_sha"
+            echo "pr_json=$pr_json"
+            echo "comments_json=$comments_json"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted base-branch verifier
+        uses: actions/checkout@v6
+        with:
+          ref: refs/heads/${{ steps.snapshot.outputs.base_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Evaluate exact-head signed attestation
+        id: evaluate
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/git/canonical_review_check.py check \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr-json "${{ steps.snapshot.outputs.pr_json }}" \
+            --comments-json "${{ steps.snapshot.outputs.comments_json }}" \
+            --result-file "$RUNNER_TEMP/canonical-review-result.json"
+          checker_rc=$?
+          set -e
+          if [[ "$checker_rc" -ne 0 && "$checker_rc" -ne 1 ]]; then
+            checker_rc=1
+          fi
+          echo "checker_rc=$checker_rc" >> "$GITHUB_OUTPUT"
+
+      - name: Publish app-owned exact-head check run
+        shell: bash
+        run: |
+          set -euo pipefail
+          result_json="$RUNNER_TEMP/canonical-review-result.json"
+          check_json="$RUNNER_TEMP/canonical-review-check-run.json"
+          response_json="$RUNNER_TEMP/canonical-review-check-response.json"
+          if [[ ! -s "$result_json" ]]; then
+            jq -n \
+              --arg check_name "Pantheon canonical reviewer attestation" \
+              '{
+                check_name: $check_name,
+                conclusion: "failure",
+                reason: "checker_result_missing",
+                title: "Canonical review checker failed closed",
+                summary: "The trusted verifier produced no result."
+              }' > "$result_json"
+          fi
+          conclusion="$(jq -r '.conclusion // "failure"' "$result_json")"
+          if [[ "$conclusion" != "success" && "$conclusion" != "failure" ]]; then
+            conclusion="failure"
+          fi
+          jq -n \
+            --arg name "Pantheon canonical reviewer attestation" \
+            --arg head_sha "${{ steps.snapshot.outputs.head_sha }}" \
+            --arg conclusion "$conclusion" \
+            --arg details_url \
+              "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg title "$(jq -r '.title // "Canonical review blocked"' "$result_json")" \
+            --arg summary "$(jq -r '.summary // "Verifier failed closed."' "$result_json")" \
+            '{
+              name: $name,
+              head_sha: $head_sha,
+              status: "completed",
+              conclusion: $conclusion,
+              details_url: $details_url,
+              output: {
+                title: $title,
+                summary: $summary
+              }
+            }' > "$check_json"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/check-runs" \
+            --input "$check_json" > "$response_json"
+          jq -e \
+            --arg name "Pantheon canonical reviewer attestation" \
+            --arg head_sha "${{ steps.snapshot.outputs.head_sha }}" \
+            --argjson app_id "$EXPECTED_ACTIONS_APP_ID" \
+            '.name == $name and .head_sha == $head_sha and .app.id == $app_id' \
+            "$response_json" > /dev/null
+          jq -r '"\(.conclusion): \(.output.title) — \(.output.summary)"' \
+            "$response_json" >> "$GITHUB_STEP_SUMMARY"
+          exit "${{ steps.evaluate.outputs.checker_rc }}"
