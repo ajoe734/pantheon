@@ -19,7 +19,7 @@
   },
   "scope": {
     "owned_layer": "Canonical review-before-merge gate for task/<TASK-ID> PRs: policy resolution from the canonical task row and case-preserving task archive, structural binding of an approval to the exact reviewed PR number, head sha and expected base, fail-closed merge authority/revocation readback, and immutable exact-head ancestry/smoke in task_finalize.sh, safe_pr.sh, and auto_integrator.py.",
-    "not_changing": "No .orchestrator/config.json edit, no change to the review_approved transition itself or its guards in ai_status.py (command_approve additionally records the reviewed PR identity and warns when it is absent; it still refuses nothing it previously allowed), no hand-edited task board, no branch protection change, and no change to the publish/promote or hotfix PR paths, which are not task PRs and do not call these helpers.",
+    "not_changing": "No .orchestrator/config.json edit, no task-owned change to the current-dev review_approved transition or GitHub review bridge, no hand-edited task board, no branch protection change, and no change to the publish/promote or hotfix PR paths, which are not task PRs and do not call these helpers. Current dev now refuses an unbound approval for a PR-backed task and projects an exact-head reviewer decision through github_review_bridge.py; this task preserved that stricter baseline while resolving the ai_status.py composition conflict.",
     "implementation_changed_files": [
       "scripts/git/task_review_merge_gate.py",
       "scripts/git/task_finalize.sh",
@@ -350,7 +350,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, revocation-readback, and immutable-head integration defects. After Codex repaired the earlier paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, and reran the full matrix. Later stale-base reviews were composed without rewriting reviewed history. The latest independent review rejected exact head 9d54d773c67588cb28ea63da838deee352ec744a because the gated integrator still rebased an already-current merge-rich graph and reproduced a false conflict. Codex anchored the finding, changed the gated path to ancestry-check and smoke the reviewer-bound oid directly, added a real-git merge-rich regression, composed dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09, and reran the required individual and combined validation on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461. After unrelated PR #4276 advanced dev without touching task files, Codex composed current dev 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 at 253d7b6978f42f60b0d03340de87cfeb9824eb0c and reran the 101-case gate/integrator core plus static checks before reviewer dispatch.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, revocation-readback, and immutable-head integration defects. After Codex repaired the earlier paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, and reran the full matrix. Later stale-base reviews were composed without rewriting reviewed history. The latest independent review rejected exact head 9d54d773c67588cb28ea63da838deee352ec744a because the gated integrator still rebased an already-current merge-rich graph and reproduced a false conflict. Codex anchored the finding, changed the gated path to ancestry-check and smoke the reviewer-bound oid directly, added a real-git merge-rich regression, composed dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09, and reran the required individual and combined validation on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461. After unrelated PR #4276 advanced dev without touching task files, Codex composed current dev 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 at 253d7b6978f42f60b0d03340de87cfeb9824eb0c and reran the 101-case gate/integrator core plus static checks before reviewer dispatch. On the 2026-07-28 resumed dispatch, PR #4218 head 47aabeb8555eacc88a52fa2297375b4f0156e40d conflicted with current dev 11858f4d445565064e630cce9b89ea8b475a6598. Codex anchored the dispatch, composed dev at b05189382fe70426b23a7180b51c891f8dce95b0, reconciled only ai_status.py and test_ai_status.py, preserved the newer GitHub review bridge, and passed the 360-case focused matrix plus 31 subtests.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -390,6 +390,18 @@
       "post_reopen_review_base_only_commit_count": 0,
       "post_reopen_review_head_only_commit_count": 67,
       "post_reopen_review_verification": "After Codex2 rejected head 5f904bc7cc2666525e7e5432ec599c341e57aaa7 because origin/dev advanced to 7f545a33bf41e5682dc67f50333c84b42f09d17e, Codex composed that base without conflicts. The implementation diff is unchanged by the compose; 101 gate/integrator tests, static gates, and the 346-case focused git/status suite passed before this evidence refresh.",
+      "resumed_dispatch_anchor_commit": "de306595d8a84ebce323e0aaaa0efdf8ed5f16b5",
+      "current_dev_base": "11858f4d445565064e630cce9b89ea8b475a6598",
+      "current_dev_compose_commit": "b05189382fe70426b23a7180b51c891f8dce95b0",
+      "current_dev_tree_object": "7c88a1b1ea0babfdb70cf1fb86d76642d4ec2703",
+      "current_dev_base_only_commit_count": 0,
+      "current_dev_head_only_commit_count": 70,
+      "current_dev_overlap": [
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py"
+      ],
+      "current_dev_resolution": "Preserved current dev's PR-backed unbound-approval refusal and GitHub review bridge while retaining the immutable review_binding documentation and tests. No task gate, helper, integrator, or policy code conflicted.",
+      "current_dev_verification": "92 gate, 9 integrator, 58 helper, 2 refspec, 24 triage, 17 index, 152 ai-status, and 6 GitHub review bridge tests passed individually; the combined matrix passed 360 cases plus 31 subtests.",
       "post_containment_dev_base": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
       "post_containment_compose_commit": "8a05394974f88b95a686aeb62add7b14f9fe6cc6",
       "post_containment_reason": "#4263/#4264 repeated the same unreviewed auto-merge race while old helpers were still installed; dev branch protection was temporarily held by the `Pantheon canonical review gate` status and this branch was revalidated on the new base.",
@@ -493,6 +505,16 @@
         "command": ".venv-pantheon/bin/python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
         "conclusion": "evidence manifest parses",
         "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py; test_auto_integrator.py; test_git_workflow_helpers.py; pytest test_task_git_helpers_refspec.py; test_task_pr_triage.py; test_index_safety.py; scripts/test_ai_status.py; test_github_review_bridge.py",
+        "conclusion": "On current-dev compose b05189382fe70426b23a7180b51c891f8dce95b0: 92 gate, 9 integrator, 58 helper, 2 refspec, 24 triage, 17 index, 152 ai-status, and 6 GitHub review bridge tests passed individually",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_git_helpers_refspec.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_github_review_bridge.py",
+        "conclusion": "360 passed, 31 subtests passed on compose commit b05189382fe70426b23a7180b51c891f8dce95b0 after composing current dev 11858f4d445565064e630cce9b89ea8b475a6598 and preserving its GitHub review bridge",
+        "result": "pass"
       }
     ],
     "cwd": "task worktree /tmp/pantheon-ops-pr-review-gate-rebuild"
@@ -501,9 +523,9 @@
     "command_runtime_bootstrap": {
       "severity": "medium",
       "blocking_for_this_task": false,
-      "description": "At the latest revalidation the governed supervisor command runtime was 6692d51c9bc5a48ffcbaac8cf817b635351a7c9a and did not yet contain REVIEW_PR / REVIEW_HEAD_SHA review_binding support. The repository change therefore proves the new gate but does not by itself prove that the installed command runtime has switched to it.",
-      "containment": "Keep PR #4218 auto-merge disabled, obtain Codex2 review against the exact pushed head, merge only that head, and treat installed-runtime activation as unproven until the normal command-runtime refresh reports a merged SHA containing this change. This bootstrap boundary cannot unlock an unreviewed merge; it only prevents a live-activation claim.",
-      "recheck_trigger": "PANTHEON_COMMAND_RUNTIME_SHA does not contain scripts/ai_status.py review_binding support after PR #4218 merges."
+      "description": "At the 2026-07-28 revalidation the governed command runtime was 11858f4d445565064e630cce9b89ea8b475a6598. It contains exact-head review_binding and the GitHub review bridge, but it cannot contain this task's unmerged task_review_merge_gate.py and helper/integrator changes.",
+      "containment": "Keep PR #4218 auto-merge disabled, let Codex2 approve the exact pushed head through the governed bridge, and merge only that head. Treat helper/integrator runtime activation as unproven until the normal command-runtime refresh reports a merged SHA containing PR #4218.",
+      "recheck_trigger": "PANTHEON_COMMAND_RUNTIME_SHA does not contain the merged PR #4218 head after normal command-runtime refresh."
     },
     "integrator_dependency": {
       "severity": "medium",
@@ -543,15 +565,15 @@
     "canonical_state_trust": {
       "severity": "low",
       "blocking_for_this_task": false,
-      "description": "The gate trusts the governed status wrapper and its audit rather than GitHub reviewDecision, because Pantheon reviewers approve through scripts/ai-status.sh and all task PRs share one GitHub author.",
-      "containment": "ai_status.py already binds the command root, runtime SHA, and remote before any canonical write.",
-      "recheck_trigger": "If task PRs ever gain per-agent GitHub identities, add GitHub review evidence as a second binding."
+      "description": "The merge-authority decision trusts the governed status wrapper and immutable audit, because all Pantheon task PRs share one GitHub author. Current dev additionally projects that governed exact-head decision into a real GitHub review or the branch-policy-recognized `Pantheon canonical review gate` status.",
+      "containment": "ai_status.py binds the command root, runtime SHA, repository, PR number, head branch, exact head sha, and base before changing canonical state; github_review_bridge.py fails before the canonical transition when GitHub cannot represent the verdict.",
+      "recheck_trigger": "A review_approved PR-backed task lacks matching github_review_bridge evidence or the required canonical status on its exact head."
     },
     "legacy_unbound_approvals": {
       "severity": "medium",
       "blocking_for_this_task": false,
       "description": "Approvals recorded before this change carry no review_binding, so a gated PR whose only approval predates the cutover blocks with approval_head_binding_missing.",
-      "containment": "Fails in the safe direction. Recovery is one re-approval naming the head; task_finalize.sh and safe_pr.sh print the complete command. command_approve warns at approval time rather than refusing, so a task with no PR is unaffected.",
+      "containment": "Fails in the safe direction. Recovery is one re-approval naming the head; task_finalize.sh and safe_pr.sh print the complete command. Current dev refuses an unbound approval for a known PR-backed task and still permits a non-PR task to approve without a binding.",
       "recheck_trigger": "A gated merge blocked with approval_head_binding_missing on a review_approved task."
     },
     "failed_revocation_stalls_a_green_pr": {

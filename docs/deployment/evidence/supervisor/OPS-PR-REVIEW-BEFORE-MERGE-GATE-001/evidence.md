@@ -89,10 +89,26 @@ diff was unchanged by the compose; the 101-case gate/integrator core, static
 gates, and the 346-case focused git/status suite passed before the evidence
 refresh.
 
+On the 2026-07-28 resumed owner dispatch, PR #4218 still had auto-merge off
+at head `47aabeb8555eacc88a52fa2297375b4f0156e40d`, but current `origin/dev`
+had advanced to `11858f4d445565064e630cce9b89ea8b475a6598` and GitHub reported
+the PR conflicting. Codex preserved that boundary at anchor
+`de306595d8a84ebce323e0aaaa0efdf8ed5f16b5`, then composed current dev at
+`b05189382fe70426b23a7180b51c891f8dce95b0` (tree object
+`7c88a1b1ea0babfdb70cf1fb86d76642d4ec2703`). Only `scripts/ai_status.py`
+and `scripts/test_ai_status.py` overlapped. The resolution keeps current
+dev's PR-backed unbound-approval refusal and GitHub review bridge while
+retaining this task's immutable `review_binding` contract. The current graph
+has zero base-only and 70 head-only commits; 92 gate, 9 integrator, 58 helper,
+2 refspec, 24 triage, 17 index, 152 ai-status, and 6 GitHub review bridge
+tests passed individually, and the combined matrix passed 360 cases plus
+31 subtests.
+
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
-hand-edited task board, no owner or reviewer action performed on behalf of
-anyone. Every decision is derived from canonical task state that already
-exists.
+hand-edited task board, no branch-protection edit, and no owner or reviewer
+action performed on behalf of anyone. Current dev's GitHub review bridge was
+preserved rather than replaced; every merge-authority decision remains derived
+from canonical task state and exact-head reviewer evidence.
 
 ## 1. What went wrong
 

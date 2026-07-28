@@ -1,3 +1,48 @@
+Resumed-dispatch revalidation by Codex on 2026-07-28. PR #4218 head
+47aabeb8555eacc88a52fa2297375b4f0156e40d was auto-merge-off but conflicted
+with current origin/dev 11858f4d445565064e630cce9b89ea8b475a6598. Codex
+anchored the dispatch at de306595d8a84ebce323e0aaaa0efdf8ed5f16b5 and
+composed that dev base at b05189382fe70426b23a7180b51c891f8dce95b0 (tree
+object 7c88a1b1ea0babfdb70cf1fb86d76642d4ec2703). Only scripts/ai_status.py
+and scripts/test_ai_status.py conflicted. The resolution preserved current
+dev's stricter PR-backed approval refusal and GitHub review bridge while
+retaining the immutable exact-head review-binding documentation. The graph
+had 0 base-only and 70 head-only commits.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 92 tests in 5.709s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.004s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.363s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.30s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 3.059s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 152 tests in 15.857s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_github_review_bridge.py
+Ran 6 tests in 0.001s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused gate/helper/status/bridge matrix
+360 passed, 31 subtests passed in 61.81s
+
 Review-dispatch refresh by Codex on 2026-07-27 after Codex2 rejected PR #4218
 head 5f904bc7cc2666525e7e5432ec599c341e57aaa7 because origin/dev advanced
 after dispatch. Codex composed origin/dev
