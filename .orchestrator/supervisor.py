@@ -6739,7 +6739,7 @@ def refresh_provider_auth_before_dispatch(
     try:
         probe = probe_provider_auth(config, provider_key, force=True)
     except Exception as exc:  # probe failure is explicit not-ready, never a launch bypass
-                probe = {
+        probe = {
             "provider": provider_key,
             "ready": False,
             "status": "probe_error",
