@@ -7141,6 +7141,57 @@ def _status_activity_outbox(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _validated_status_activity_outbox_events(
+    value: Any,
+) -> list[dict[str, Any]] | None:
+    """Return a safe copy of pending audit events, or fail closed."""
+
+    if value in (None, {}, []):
+        return []
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "transaction_id", "events"}
+        or value.get("schema_version") != 1
+        or not isinstance(value.get("events"), list)
+        or not value["events"]
+        or any(
+            not isinstance(event, dict)
+            or not isinstance(event.get("event_id"), str)
+            or not event["event_id"]
+            or event["event_id"] != event["event_id"].strip()
+            for event in value["events"]
+        )
+        or len({str(event["event_id"]) for event in value["events"]})
+        != len(value["events"])
+    ):
+        return None
+    expected = _status_activity_outbox(value["events"])
+    if value.get("transaction_id") != expected["transaction_id"]:
+        return None
+    return deepcopy(value["events"])
+
+
+def _compose_status_activity_outbox(
+    pending: Any,
+    event: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Append one event without discarding a pending status transaction."""
+
+    events = _validated_status_activity_outbox_events(pending)
+    if events is None:
+        return None
+    matches = [
+        existing
+        for existing in events
+        if str(existing.get("event_id") or "") == str(event.get("event_id") or "")
+    ]
+    if matches and any(existing != event for existing in matches):
+        return None
+    if not matches:
+        events.append(deepcopy(event))
+    return _status_activity_outbox(events)
+
+
 def sync_dispatched_task_status(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -11060,7 +11111,8 @@ def _prepare_missing_worker_terminal_outcome_locked(
         return None
 
     status = load_status(config)
-    if status.get("status_activity_outbox") not in (None, {}, []):
+    pending_outbox = status.get("status_activity_outbox")
+    if _validated_status_activity_outbox_events(pending_outbox) is None:
         return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
@@ -11107,6 +11159,26 @@ def _prepare_missing_worker_terminal_outcome_locked(
         f"{previous_status} to blocked. Confirm the failure, then reopen or "
         f"reassign through scripts/ai-status.sh."
     )
+    event = {
+        "event_id": "supervisor-missing-worker-terminal-"
+        + hashlib.sha256(
+            f"{task_id}\0{run_id}\0{provider}\0{reason}".encode("utf-8")
+        ).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_missing_worker_blocked",
+        "task_id": task_id,
+        "target_agent": waiting_for,
+        "provider": provider,
+        "worker_run_id": run_id,
+        "reason": reason,
+        "outcome": "terminal_failure",
+        "previous_status": previous_status,
+        "message": message,
+    }
+    composed_outbox = _compose_status_activity_outbox(pending_outbox, event)
+    if composed_outbox is None:
+        return None
     task["status"] = "blocked"
     task["waiting_for"] = waiting_for
     task["last_update"] = timestamp
@@ -11127,24 +11199,7 @@ def _prepare_missing_worker_terminal_outcome_locked(
             "dispatch_reason": dispatch_reason or None,
         }
     )
-    event = {
-        "event_id": "supervisor-missing-worker-terminal-"
-        + hashlib.sha256(
-            f"{task_id}\0{run_id}\0{provider}\0{reason}".encode("utf-8")
-        ).hexdigest(),
-        "ts": timestamp,
-        "agent": "Orchestrator",
-        "type": "task_missing_worker_blocked",
-        "task_id": task_id,
-        "target_agent": waiting_for,
-        "provider": provider,
-        "worker_run_id": run_id,
-        "reason": reason,
-        "outcome": "terminal_failure",
-        "previous_status": previous_status,
-        "message": message,
-    }
-    status["status_activity_outbox"] = _status_activity_outbox([event])
+    status["status_activity_outbox"] = composed_outbox
     write_status(config, status, source="supervisor-missing-worker-outcome")
     return event
 
