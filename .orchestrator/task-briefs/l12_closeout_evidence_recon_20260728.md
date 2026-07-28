@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair reconcile-safe closeout evidence for merged nonterminal L12 rows
-- Status: todo
+- Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Auto-reassigned L12-CLOSEOUT-EVIDENCE-RECON-20260728 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.
+- Next: Recovery briefs and task-scoped evidence are validated and ready for exact-head review; do not restart either merged implementation.
 
 ## Summary
 修復已 merged 但仍無法 reconcile_done 的 L12 closeout evidence；不得重新做已合併實作。

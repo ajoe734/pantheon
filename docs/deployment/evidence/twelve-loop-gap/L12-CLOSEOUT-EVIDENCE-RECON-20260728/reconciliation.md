@@ -3,7 +3,7 @@
 Task ID: `L12-CLOSEOUT-EVIDENCE-RECON-20260728`
 Owner: `Codex2`
 Reviewer: `Codex`
-Evidence state: `owner_evidence_draft`
+Evidence state: `owner_evidence_ready_for_review`
 Repository: `ajoe734/pantheon`
 Base: `dev`
 
@@ -31,11 +31,15 @@ requires the task-brief bytes to be byte-identical to an ancestor of
 ## Recovery inputs
 
 Human/Ops may reconcile each parent independently after this evidence PR
-merges. The common inputs are:
+merges. Commit `64a25069d6cc7548eb8f2bf86331a867d582e199` contains the exact
+repaired parent-brief bytes. Use it as `RECONCILE_EVIDENCE_COMMIT` only after
+it is an ancestor of `origin/dev`.
+
+The common inputs are:
 
 - `RECONCILE_DELIVERY_REPOSITORY=ajoe734/pantheon`
 - `RECONCILE_DELIVERY_ROOT=<absolute clean Pantheon git root>`
-- `RECONCILE_EVIDENCE_COMMIT=<this evidence PR head or merge commit on origin/dev>`
+- `RECONCILE_EVIDENCE_COMMIT=64a25069d6cc7548eb8f2bf86331a867d582e199`
 - `RECONCILE_EVIDENCE_TARGET_REF=origin/dev`
 - `RECONCILE_DELIVERY_TARGET_REF=origin/dev`
 
@@ -52,17 +56,36 @@ instead of impersonating Human/Ops.
 
 ## Verification
 
-Pending after the anchor commit:
+Completed on 2026-07-28:
 
-- parse the governed parent rows and validate each repaired evidence file
-  through `validate_merged_done_evidence` with the task commit as the evidence
-  target and `origin/dev` as the delivery target;
-- confirm both delivery commits and both merge commits are ancestors of
-  `origin/dev`;
-- confirm PR #4286 and PR #4301 exact head/merge identities from GitHub;
-- run focused reconciliation tests and `git diff --check`;
-- after merge, invoke the governed recovery command as `Codex2` and record its
-  exact fail-closed actor guard.
+- Governed `show` confirms both parent rows are `review_approved` with the
+  owner/reviewer pairs recorded above.
+- `validate_merged_done_evidence` accepted each repaired brief with evidence
+  commit `64a25069d6cc7548eb8f2bf86331a867d582e199` targeted at that task commit
+  for the pre-merge bytes check and with delivery target `origin/dev`. It
+  resolved repository id `pantheon`, slug `ajoe734/pantheon`, and the exact
+  parent delivery commit in each case.
+- `git merge-base --is-ancestor <commit> origin/dev` passed for
+  `e91382b508b42456d75747fdf3cef92c7850d2ad`,
+  `cf94be38a548a31df020456904ea10ff95ffb4dd`,
+  `25f238f94282f2cd8541ff488b003b5e983fd864`, and
+  `d97c25d3cc8860118dd4d0f3c9fafd38490d89c0`.
+- GitHub reports PR #4286 merged to `dev` with exact head
+  `e91382b508b42456d75747fdf3cef92c7850d2ad` and merge commit
+  `cf94be38a548a31df020456904ea10ff95ffb4dd`; PR #4301 merged to `dev`
+  with exact head `25f238f94282f2cd8541ff488b003b5e983fd864`
+  and merge commit `d97c25d3cc8860118dd4d0f3c9fafd38490d89c0`.
+- `<provisioned-python> -m pytest -q scripts/test_ai_status.py -k
+  'reconcile_merged_done or merged_done_evidence'` passed: 3 tests,
+  149 deselected.
+- `<provisioned-python> -m py_compile scripts/ai_status.py
+  scripts/test_ai_status.py`, `git diff --check`, and
+  `git diff --check origin/dev...HEAD` passed.
+
+Post-merge checkpoint still required: invoke the governed
+`reconcile_merged_done` command as `Codex2` and record its exact fail-closed
+actor guard. This proves the worker did not impersonate `Human/Ops`; a real
+reconciliation remains an operator-only action.
 
 ## Non-goals
 
