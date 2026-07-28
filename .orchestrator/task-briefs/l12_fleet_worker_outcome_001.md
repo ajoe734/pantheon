@@ -15,3 +15,23 @@ Make missing worker processes become bounded retry/reopen outcomes
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
+
+## Owner Response (2026-07-28)
+- Reproduced the review failure before the repair: with a valid pending
+  `status_activity_outbox` and `max_attempts=0`, the worker and queue became
+  `failed` while the task remained `in_progress`.
+- The missing-worker terminal path now validates the pending outbox's exact
+  schema, unique event ids, and content-addressed transaction id under the
+  canonical task-state lock. It composes the existing events with the terminal
+  event and atomically writes the blocked task, blocker, and combined outbox.
+- Invalid pending outboxes and event-id payload collisions still fail closed;
+  the repair does not discard or overwrite earlier audit evidence.
+- The regression asserts the preserved pending event and the new terminal
+  event's task id, worker run id, provider, and failure reason.
+
+## Owner Verification
+- `cd .orchestrator && <provisioned-python> -m unittest test_supervisor.RuntimeLeaseReconciliationTests`
+  — 15 tests passed.
+- `cd .orchestrator && <provisioned-python> -m py_compile supervisor.py test_supervisor.py`
+  — passed.
+- `git diff --check origin/dev...HEAD` — passed.
