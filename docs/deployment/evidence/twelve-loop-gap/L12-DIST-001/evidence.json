@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-DIST-001 product-level review-file admission gate.",
-    "note": "Owner repair cut for PR #4286 committed-replay lineage. The formal independent reviewer verdict is intentionally absent until Codex approves the new exact head.",
+    "note": "Owner repair cut for PR #4286 committed-replay lineage plus the owner-closeout transcription of Codex's governed independent approval of exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,10 +16,10 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-28T12:13:56Z",
-    "evidence_cut_semantics": "Owner evidence cut v6.0.0. At authoritative journal sequence 3186, Codex2 repaired PR #4286 so Registry delivery is a pure projection of the transactionally committed SourceRecord and exact request seed/evidence lineage, including deterministic created_at across replay. Delivery receipt 2ebabea2ad774dc59fe785f811025de1f6837956 binds the nine finalized artifacts at content-digest:sha256:8c1591d06178fa08acb59919d7fbefe982a7071c8bf05d10943d0d8332452d16. PR #4286 at head 2ebabea2ad774dc59fe785f811025de1f6837956 had all required push and pull-request receipt checks successful when observed at 2026-07-28T12:13:56Z. Independent reviewer approval is intentionally not asserted by this owner cut.",
+    "evidence_cut_at": "2026-07-28T12:35:45Z",
+    "evidence_cut_semantics": "Owner evidence cut v6.0.0. At authoritative journal sequence 3186, Codex2 repaired PR #4286 so Registry delivery is a pure projection of the transactionally committed SourceRecord and exact request seed/evidence lineage, including deterministic created_at across replay. Delivery receipt 2ebabea2ad774dc59fe785f811025de1f6837956 binds the nine finalized artifacts at content-digest:sha256:8c1591d06178fa08acb59919d7fbefe982a7071c8bf05d10943d0d8332452d16. PR #4286 at head 2ebabea2ad774dc59fe785f811025de1f6837956 had all required push and pull-request receipt checks successful when observed at 2026-07-28T12:13:56Z. Codex independently approved the evidence follow-up exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 at 2026-07-28T12:30:03Z after rerunning the complete acceptance set; this owner-closeout append transcribes that governed verdict without changing the digest-bound runtime artifacts.",
     "id": "L12-DIST-001",
-    "overall_admission": "pass",
+    "overall_admission": "review_approved",
     "owner": "Codex2",
     "phase": "Twelve Loop Remediation / Distillation",
     "product_level_required": true,
@@ -235,7 +235,7 @@
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+      "head_sha": "c1c3ee0d1fd122df409c53e0fc038fde1ef6a965",
       "number": 4286,
       "url": "https://github.com/ajoe734/pantheon/pull/4286"
     },
@@ -356,6 +356,21 @@
         ],
         "observed_at": "2026-07-28T12:13:56Z",
         "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4286 --repo ajoe734/pantheon --json headRefOid,state,mergeStateStatus,statusCheckRollup && gh run view 30358319073 --repo ajoe734/pantheon --json event,headSha,jobs,conclusion && gh run view 30358320994 --repo ajoe734/pantheon --json event,headSha,jobs,conclusion",
+        "conclusion": "PR #4286 exact reviewed head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 was OPEN and BEHIND only because newer dev work touched no L12-DIST-001 artifact; Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision were successful on both push run 30358319073 and pull-request run 30358320994 before Codex recorded the independent review_approved decision.",
+        "observations": [
+          {
+            "head_sha": "c1c3ee0d1fd122df409c53e0fc038fde1ef6a965",
+            "observed_at": "2026-07-28T12:30:03Z",
+            "pull_request": 4286,
+            "subject": "PR #4286 exact independently reviewed evidence-follow-up head and Branch CI Gate runs 30358319073/30358320994"
+          }
+        ],
+        "observed_at": "2026-07-28T12:30:03Z",
+        "result": "pass"
       }
     ],
     "validated_at": "2026-07-28T12:13:56Z",
@@ -470,7 +485,7 @@
       "status": "not_applicable"
     },
     "two_person_approval": {
-      "proof": "At authoritative journal sequence 3186, owner Codex2 and reviewer Codex are distinct. The green PR #4286 receipt head 2ebabea2ad774dc59fe785f811025de1f6837956 is publication evidence, not Codex's formal independent verdict; the governed approval must bind this manifest before done.",
+      "proof": "At authoritative journal sequence 3186, owner Codex2 and reviewer Codex are distinct. Codex independently approved PR #4286 exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 at 2026-07-28T12:30:03Z and bound this manifest as review_file through the governed review_approved transition.",
       "status": "pass"
     }
   },
@@ -564,31 +579,31 @@
       "severity": "informational"
     },
     "independent_review": {
-      "blocking_for_this_task": true,
-      "containment": "The owner cut does not assert a reviewer verdict; governed done remains unavailable until Codex approves and binds this committed manifest.",
-      "description": "At authoritative journal sequence 3186, Codex independent review of PR #4286 receipt head 2ebabea2ad774dc59fe785f811025de1f6837956 is still absent; review remains the only closeout-truth rejection after owner proof.",
-      "expiry": "When Codex records an exact-head review decision in this manifest and through the governed status command.",
+      "blocking_for_this_task": false,
+      "containment": "Codex independently reran the complete focused, source_ingestion, Registry plus StrategySpec, schema, checksum, ten-rule, trailer, diff, and exact-head CI verification before approval.",
+      "description": "At authoritative journal sequence 3186, Codex2 remained owner and Codex remained the distinct reviewer. Codex approved PR #4286 exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 at 2026-07-28T12:30:03Z after proving committed SourceRecord and exact request lineage authority across valid same-id note mutation and lost-ack replay.",
+      "expiry": "Satisfied by the governed Codex review_approved decision at 2026-07-28T12:30:03Z.",
       "owner": "Codex",
-      "recheck_trigger": "Before the PR #4286 evidence follow-up merges or any review_approved transition.",
-      "severity": "high"
+      "recheck_trigger": "Re-review is required if the digest-bound runtime or test artifacts change after c1c3ee0d1fd122df409c53e0fc038fde1ef6a965.",
+      "severity": "informational"
     },
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
-      "containment": "The owner narrative and manifest both declare the same fixed journal boundary.",
-      "description": "This owner cut is bounded at authoritative journal sequence 3186; later ownership, reviewer, or lifecycle events require a refreshed evidence cut before approval.",
-      "expiry": "At the independent review observation.",
+      "containment": "The digest-bound owner narrative remains fixed at its declared boundary, while record_log appends the later governed reviewer event without rewriting the reviewed runtime proof.",
+      "description": "This owner cut is bounded at authoritative journal sequence 3186; Codex's later exact-head approval is transcribed separately and changed neither owner/reviewer identity nor the digest-bound runtime artifacts.",
+      "expiry": "Satisfied for this closeout by the exact-head review observation.",
       "owner": "Codex2",
-      "recheck_trigger": "Immediately before reviewer approval.",
+      "recheck_trigger": "Any ownership, reviewer, runtime-artifact, or acceptance-claim change.",
       "severity": "informational"
     },
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
-      "containment": "Receipt 2ebabea2ad774dc59fe785f811025de1f6837956 carries the nine digest-bound artifacts with all required checks green; the task follow-up changes only evidence.json and evidence.sha256.",
-      "description": "PR #4286 receipt head 2ebabea2ad774dc59fe785f811025de1f6837956 has all required push and pull-request Branch CI checks green; the evidence-follow-up head still requires its own visible checks and Codex review.",
-      "expiry": "When the evidence follow-up head is merged after independent review.",
+      "containment": "Receipt 2ebabea2ad774dc59fe785f811025de1f6837956 carries the nine digest-bound artifacts with all required checks green; exact evidence-follow-up head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 also passed all push and pull-request checks before Codex approval.",
+      "description": "PR #4286 evidence-follow-up head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 has all exact-head Branch CI checks green and the governed Codex review_approved verdict; only owner closeout composition, merge, and done remain.",
+      "expiry": "When PR #4286 merges after owner closeout composition.",
       "owner": "Codex2",
-      "recheck_trigger": "Before independent review.",
-      "severity": "medium"
+      "recheck_trigger": "Any digest-bound runtime artifact change or failed closeout check.",
+      "severity": "low"
     }
   },
   "integrity": {
@@ -716,6 +731,25 @@
       "sequence": 10,
       "sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
       "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approved",
+      "note": "Approved PR #4286 exact head after proving committed SourceRecord and exact seed/evidence lineage remain authoritative after valid same-id note mutation; lost-ack replay is payload/checksum/seed/bundle/item-identical, returns already_terminal, performs one write, and creates no DLQ. Independently reran focused 115 passed, source_ingestion 760 passed with 2 skipped, Registry plus StrategySpec 231 passed, ProductEvidence schema/checksum/ten-rule validator/trailers/diff, and exact-head CI.",
+      "recorded_at": "2026-07-28T12:30:03Z",
+      "reference": "ai-status-event-e9150c23cd2a7349ea70132cead977a4e930442a6ae496f330fc8841db498567",
+      "sequence": 11,
+      "sha": "c1c3ee0d1fd122df409c53e0fc038fde1ef6a965",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_closeout_manifest_recut",
+      "note": "Transcribed Codex's governed exact-head approval into the already bound review_file, advanced overall_admission and the independent-review residual to review_approved, and left the digest-bound runtime/test artifacts unchanged. PR merge and governed done remain pending.",
+      "recorded_at": "2026-07-28T12:35:45Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+      "sequence": 12,
+      "status": "review_approved"
     }
   ]
 }
