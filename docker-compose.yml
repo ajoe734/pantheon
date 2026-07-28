@@ -1650,11 +1650,22 @@ services:
       context: .
       dockerfile: services/evolution/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
+      EVOLUTION_STORE_DSN: ${EVOLUTION_STORE_DSN:-}
+      # Evolution write/read authority is tenant-bound even in the default dev
+      # compose topology. Production deployments must override this local-only
+      # shared credential; missing or mismatched credentials fail closed.
+      EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-token}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_AUTH_ALLOWED_TENANTS: ${EVOLUTION_AUTH_ALLOWED_TENANTS:-pantheon-default}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
     volumes:
@@ -1680,13 +1691,23 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.dispatch_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_DATA_DIR: /data/evolution
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
+      EVOLUTION_STORE_DSN: ${EVOLUTION_STORE_DSN:-}
+      EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-token}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
       EVOLUTION_DISPATCH_ACTOR_ID: ${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}
       EVOLUTION_DISPATCH_INTERVAL_SECONDS: ${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}
       EVOLUTION_DISPATCH_MAX_TICKS: ${EVOLUTION_DISPATCH_MAX_TICKS:-0}
       EVOLUTION_DISPATCH_TIMEOUT_SECONDS: ${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}
       EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}
+    volumes:
+      - evolution-data:/data/evolution
     depends_on:
       evolution:
         condition: service_healthy
@@ -1703,14 +1724,25 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.scheduler_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-token}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_SCHEDULER_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}
       EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
       EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
+      EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/tmp/evolution-scheduler-health.json}
     depends_on:
       evolution:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.scheduler_worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   evolution-threshold-sweep-producer:
     build:
@@ -1718,6 +1750,7 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.threshold_sweep_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
       EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
@@ -1727,6 +1760,7 @@ services:
       EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
       EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
       EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS:-172800}
+      EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE: ${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/tmp/evolution-threshold-sweep-health.json}
     volumes:
       # Bind-mounted so operators can retune threshold values without an
       # image rebuild: edit the host file, then restart this one service.
@@ -1737,6 +1771,12 @@ services:
         condition: service_healthy
       incidents:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.threshold_sweep_worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   lineage-read:
     build:

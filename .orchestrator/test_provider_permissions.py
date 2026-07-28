@@ -1081,6 +1081,112 @@ EOF
         command = run_command.call_args.args[0]
         self.assertEqual(command[command.index("--model") + 1], "gemini-3.6-flash-low")
 
+    def _rotation_probe_config(self, tmpdir: str) -> dict:
+        return {
+            "paths": {"state_file": str(Path(tmpdir) / "state.json")},
+            "providers": {
+                "antigravity": {
+                    "account": "antigravity",
+                    "antigravity": {"cli": "agy", "model": "gemini-3.6-flash-low"},
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary": "",
+                        "fallback": "Claude Sonnet 4.6 (Thinking)",
+                        "cooldown_seconds": 900,
+                    },
+                }
+            },
+        }
+
+    def _probe_patches(self, run_command_mock):
+        token = Path(os.path.expanduser("~/x-token"))
+        return (
+            mock.patch.object(
+                provider_permissions, "_antigravity_auth_metadata",
+                return_value={"oauth_token_exists": True, "gemini_api_key_present": False, "oauth_token": str(token)},
+            ),
+            mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
+            mock.patch.object(provider_permissions, "run_command", run_command_mock),
+        )
+
+    def test_antigravity_auth_probe_quota_rotates_to_fallback_model(self) -> None:
+        # Regression for 2026-07-27: a Gemini-quota probe failure marked the whole
+        # account auth-down before dispatch (where rotation lives) could run, so
+        # the lane deadlocked until the weekly reset even though the fallback
+        # model still had quota.
+        import model_rotation
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            quota = subprocess.CompletedProcess(
+                args=["agy"], returncode=1, stdout="",
+                stderr="Error: Individual quota reached. Resets in 17h.",
+            )
+            ok = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
+            run_command = mock.Mock(side_effect=[quota, ok])
+            p1, p2, p3 = self._probe_patches(run_command)
+            with p1, p2, p3:
+                record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+            self.assertTrue(record["ready"])
+            self.assertEqual(run_command.call_count, 2)
+            first = run_command.call_args_list[0].args[0]
+            second = run_command.call_args_list[1].args[0]
+            self.assertEqual(first[first.index("--model") + 1], "gemini-3.6-flash-low")
+            self.assertEqual(second[second.index("--model") + 1], "Claude Sonnet 4.6 (Thinking)")
+            self.assertEqual(record["metadata"]["rotation_slot"], model_rotation.SLOT_FALLBACK)
+            # The probed-out model is cooled so the dispatch adapter rotates too.
+            self.assertTrue(
+                model_rotation.slot_cooling(config, "antigravity", model_rotation.SLOT_PRIMARY)
+            )
+
+    def test_antigravity_auth_probe_probes_active_rotation_model(self) -> None:
+        import model_rotation
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            model_rotation.cool_slot(config, "antigravity", model_rotation.SLOT_PRIMARY)
+            ok = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
+            run_command = mock.Mock(return_value=ok)
+            p1, p2, p3 = self._probe_patches(run_command)
+            with p1, p2, p3:
+                record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+            self.assertTrue(record["ready"])
+            self.assertEqual(run_command.call_count, 1)
+            command = run_command.call_args.args[0]
+            self.assertEqual(command[command.index("--model") + 1], "Claude Sonnet 4.6 (Thinking)")
+
+    def test_antigravity_auth_probe_quota_on_both_models_reports_down(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._rotation_probe_config(tmpdir)
+            quota = subprocess.CompletedProcess(
+                args=["agy"], returncode=1, stdout="",
+                stderr="Error: Individual quota reached.",
+            )
+            run_command = mock.Mock(return_value=quota)
+            p1, p2, p3 = self._probe_patches(run_command)
+            with p1, p2, p3:
+                record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+            self.assertFalse(record["ready"])
+            self.assertEqual(record["status"], "quota_reached")
+            self.assertEqual(run_command.call_count, 2)
+
+    def test_antigravity_auth_probe_quota_without_rotation_stays_down(self) -> None:
+        config = {
+            "providers": {"antigravity": {"antigravity": {"cli": "agy", "model": "gemini-3.6-flash-low"}}},
+        }
+        quota = subprocess.CompletedProcess(
+            args=["agy"], returncode=1, stdout="",
+            stderr="Error: Individual quota reached.",
+        )
+        run_command = mock.Mock(return_value=quota)
+        p1, p2, p3 = self._probe_patches(run_command)
+        with p1, p2, p3:
+            record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+        self.assertFalse(record["ready"])
+        self.assertEqual(run_command.call_count, 1)
+
 class ProviderProbeGateTest(unittest.TestCase):
     """SUP-PROVIDER-POOL-PROBE-GATE-001.
 

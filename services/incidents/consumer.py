@@ -68,6 +68,12 @@ class DriftReportIncidentResult:
     incident_cluster_id: str
 
 
+@dataclass(frozen=True)
+class InfrastructureHealthIncidentResult:
+    incident: IncidentCase
+    created: bool
+
+
 class ThresholdTelemetryIncidentConsumer:
     """Consume a threshold breach telemetry payload into IncidentStore."""
 
@@ -199,6 +205,40 @@ class DriftReportIncidentConsumer:
             ):
                 return existing
         return None
+
+
+class InfrastructureHealthIncidentConsumer:
+    """Consume non-trading infrastructure health events into IncidentStore.
+
+    This route-specific consumer is separate from generic incident creation.
+    Infrastructure health is not trading telemetry and must not be forced
+    through caller-supplied fake RuntimeBinding evidence.
+    """
+
+    def __init__(self, *, incident_store: IncidentStore) -> None:
+        self._store = incident_store
+
+    def consume(self, payload: Mapping[str, Any]) -> InfrastructureHealthIncidentResult:
+        try:
+            incident = build_incident_from_infrastructure_health_payload(payload)
+        except (IncidentError, ValueError, TypeError) as exc:
+            raise IncidentConsumerError(str(exc)) from exc
+
+        existing = self._store.get_incident(incident.incident_id)
+        if existing is not None:
+            _require_same_infrastructure_incident_identity(existing, incident)
+            return InfrastructureHealthIncidentResult(incident=existing, created=False)
+
+        try:
+            created = self._store.create_incident(incident)
+        except IncidentError as exc:
+            existing = self._store.get_incident(incident.incident_id)
+            if existing is not None:
+                _require_same_infrastructure_incident_identity(existing, incident)
+                return InfrastructureHealthIncidentResult(incident=existing, created=False)
+            raise IncidentConsumerError(str(exc)) from exc
+
+        return InfrastructureHealthIncidentResult(incident=created, created=True)
 
 
 def build_incident_from_threshold_payload(
@@ -345,6 +385,87 @@ def build_incident_from_threshold_payload(
     )
 
 
+def build_incident_from_infrastructure_health_payload(payload: Mapping[str, Any]) -> IncidentCase:
+    """Build an IncidentCase from the BFF infrastructure incident contract.
+
+    The current IncidentCase backbone is still runtime-oriented.  This adapter
+    keeps the public infrastructure route honest by deriving stable
+    ``infra-*`` subject evidence inside the incident authority instead of
+    accepting producer-supplied RuntimeBinding fields.
+    """
+    if not isinstance(payload, Mapping):
+        raise IncidentConsumerError("infrastructure incident payload must be an object")
+
+    schema_version = _required_str(
+        "schema_version",
+        _first_value(payload, keys=("schema_version",)),
+    )
+    if schema_version != "pantheon.infrastructure-incident/1":
+        raise IncidentConsumerError(
+            "schema_version must be pantheon.infrastructure-incident/1"
+        )
+
+    incident_id = _required_str("incident_id", _first_value(payload, keys=("incident_id",)))
+    source_event_id = _required_str(
+        "source_event_id",
+        _first_value(payload, keys=("source_event_id", "event_id", "telemetry_event_id")),
+    )
+    tenant_id = _required_str("tenant_id", _first_value(payload, keys=("tenant_id",)))
+    producer = _required_str("producer", _first_value(payload, keys=("producer",)))
+    component = _mapping(payload.get("component"))
+    if component is None:
+        raise IncidentConsumerError("component is required")
+    service_name = _required_str(
+        "component.service_name",
+        _first_value(component, keys=("service_name",)),
+    )
+    component_kind = _required_str(
+        "component.component_kind",
+        _first_value(component, keys=("component_kind",)),
+    )
+    endpoint = _required_str("component.endpoint", _first_value(component, keys=("endpoint",)))
+
+    status = str(payload.get("status") or "open").strip().lower()
+    if status not in {"open", "investigating"}:
+        raise IncidentConsumerError(
+            "infrastructure incident consumer only opens active incidents"
+        )
+
+    namespace = _safe_component(f"{tenant_id}:{producer}:{service_name}")
+    endpoint_digest = uuid.uuid5(uuid.NAMESPACE_URL, endpoint).hex[:12]
+    artifact_id = f"infra-component-{_safe_component(service_name)}"
+    artifact_version = f"endpoint-{endpoint_digest}"
+    evidence_summary = _infrastructure_evidence_summary(
+        payload=payload,
+        tenant_id=tenant_id,
+        producer=producer,
+        service_name=service_name,
+        component_kind=component_kind,
+        endpoint=endpoint,
+        source_event_id=source_event_id,
+    )
+    return IncidentCase(
+        incident_id=incident_id,
+        title=str(payload.get("title") or f"Infrastructure degradation: {service_name}").strip(),
+        status=status,
+        severity=_infrastructure_incident_severity(payload.get("severity")),
+        created_at=str(payload.get("created_at") or payload.get("observed_at") or _utc_now()),
+        binding_id=f"infra-subject-{namespace}",
+        deployment_stage="paper",
+        deployment_plan_id=f"infra-plan-{_safe_component(producer)}",
+        capital_pool_id=f"infra-tenant-{_safe_component(tenant_id)}",
+        persona_capital_binding_id=f"infra-authority-{_safe_component(producer)}",
+        artifact_id=artifact_id,
+        artifact_version=artifact_version,
+        runtime_id=f"infra-endpoint-{endpoint_digest}",
+        trace_id=source_event_id,
+        telemetry_event_ids=_infrastructure_telemetry_event_ids(payload, source_event_id),
+        incident_cluster_id=_infrastructure_cluster_id(tenant_id, producer, service_name),
+        evidence_summary=evidence_summary,
+        lineage_ref=f"{artifact_id}@{artifact_version}",
+    )
+
+
 def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase:
     """Build a canonical IncidentCase from a reconciliation DriftReport."""
     if not isinstance(payload, Mapping):
@@ -419,6 +540,89 @@ def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase
         evidence_summary=evidence_summary,
         lineage_ref=f"{artifact_id}@{artifact_version}",
     )
+
+
+def _infrastructure_telemetry_event_ids(
+    payload: Mapping[str, Any],
+    source_event_id: str,
+) -> list[str]:
+    seen: dict[str, None] = {}
+
+    def add(value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, str):
+            item = value.strip()
+            if item:
+                seen[item] = None
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            for part in value:
+                add(part)
+
+    add(source_event_id)
+    add(payload.get("telemetry_event_id"))
+    add(payload.get("telemetry_event_ids"))
+    return list(seen)
+
+
+def _infrastructure_cluster_id(tenant_id: str, producer: str, service_name: str) -> str:
+    return (
+        "infrastructure:"
+        f"{_safe_component(tenant_id)}:"
+        f"{_safe_component(producer)}:"
+        f"{_safe_component(service_name)}"
+    )
+
+
+def _infrastructure_evidence_summary(
+    *,
+    payload: Mapping[str, Any],
+    tenant_id: str,
+    producer: str,
+    service_name: str,
+    component_kind: str,
+    endpoint: str,
+    source_event_id: str,
+) -> str:
+    explicit = str(payload.get("evidence_summary") or "").strip()
+    prefix = (
+        "non_trading_infrastructure_incident=true; "
+        f"tenant_id={tenant_id}; producer={producer}; "
+        f"service_name={service_name}; component_kind={component_kind}; "
+        f"endpoint={endpoint}; source_event_id={source_event_id}"
+    )
+    return f"{prefix}; {explicit}" if explicit else prefix
+
+
+def _infrastructure_incident_severity(raw: Any) -> str:
+    normalized = str(raw or "").strip().lower().replace("_", "-")
+    mapping = {
+        "critical": "critical",
+        "high": "high",
+        "error": "high",
+        "medium": "medium",
+        "warning": "medium",
+        "warn": "medium",
+        "low": "low",
+        "degraded": "low",
+    }
+    return mapping.get(normalized, "high")
+
+
+def _require_same_infrastructure_incident_identity(
+    existing: IncidentCase,
+    incident: IncidentCase,
+) -> None:
+    same_binding = existing.binding_id == incident.binding_id
+    same_cluster = existing.incident_cluster_id == incident.incident_cluster_id
+    existing_primary = existing.telemetry_event_ids[0] if existing.telemetry_event_ids else None
+    incoming_primary = incident.telemetry_event_ids[0] if incident.telemetry_event_ids else None
+    if not (same_binding and same_cluster and existing_primary == incoming_primary):
+        raise IncidentConsumerError(
+            f"incident_id {incident.incident_id!r} conflicts with an existing "
+            "infrastructure incident for a different subject or source_event_id"
+        )
 
 
 def _drift_report_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:

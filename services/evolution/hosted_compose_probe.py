@@ -168,20 +168,25 @@ def _worker_log_events(logs: str) -> list[dict[str, Any]]:
 
 
 def _decision_event_count(
-    events: list[dict[str, Any]], *, collection: str, decision_id: str
+    events: list[dict[str, Any]],
+    *,
+    decision_id: str,
+    dispositions: set[str],
 ) -> int:
     count = 0
     for event in events:
         result = event.get("result")
         if not isinstance(result, dict):
             continue
-        items = result.get(collection)
+        items = result.get("items")
         if not isinstance(items, list):
             continue
         count += sum(
             1
             for item in items
-            if isinstance(item, dict) and item.get("decision_id") == decision_id
+            if isinstance(item, dict)
+            and item.get("decision_id") == decision_id
+            and item.get("disposition") in dispositions
         )
     return count
 
@@ -325,10 +330,14 @@ def run_compose_probe(
     research_id = initial["research"]["decision_id"]
     freeze_id = initial["freeze"]["decision_id"]
     initial_research_dispatch_count = _decision_event_count(
-        initial_events, collection="dispatch_items", decision_id=research_id
+        initial_events,
+        decision_id=research_id,
+        dispositions={"executed", "already_executed"},
     )
     initial_freeze_skip_count = _decision_event_count(
-        initial_events, collection="skip_items", decision_id=freeze_id
+        initial_events,
+        decision_id=freeze_id,
+        dispositions={"unsupported"},
     )
     if initial_research_dispatch_count != 1:
         raise ProbeError(
@@ -349,15 +358,19 @@ def run_compose_probe(
     restart_events, tick_values = _validated_restart_events(restart_logs)
     fresh_tick_count = 1
     restart_research_dispatch_count = _decision_event_count(
-        restart_events, collection="dispatch_items", decision_id=research_id
+        restart_events,
+        decision_id=research_id,
+        dispositions={"executed"},
     )
     restart_freeze_skip_count = _decision_event_count(
-        restart_events, collection="skip_items", decision_id=freeze_id
+        restart_events,
+        decision_id=freeze_id,
+        dispositions={"unsupported"},
     )
     if restart_research_dispatch_count != 0:
         raise ProbeError("research decision was dispatched again after restart")
-    if restart_freeze_skip_count < 1:
-        raise ProbeError("restarted worker did not report the unsupported freeze skip")
+    if restart_freeze_skip_count != 0:
+        raise ProbeError("dead-lettered freeze was dispatched again after restart")
 
     restart = run_verify_probe(
         api_url=api_url,

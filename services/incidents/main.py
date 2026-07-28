@@ -25,6 +25,11 @@ POST  /api/incidents/consume-drift-report
     IncidentCase. Returns 201 on first write, 200 when the payload updates an
     existing binding/runtime/cluster incident.
 
+POST  /api/incidents/consume-infrastructure-health
+    Consume a non-trading infrastructure-health incident payload and create a
+    stable IncidentCase without caller-supplied RuntimeBinding evidence.
+    Returns 201 on first write and 200 for exact idempotent replay.
+
 GET   /api/incidents
     List incidents.  Optional query params:
       binding_id      — filter by RuntimeBinding
@@ -129,6 +134,7 @@ try:
     )
     from .consumer import (
         DriftReportIncidentConsumer,
+        InfrastructureHealthIncidentConsumer,
         IncidentConsumerError,
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
@@ -142,6 +148,7 @@ except ImportError:
     )
     from consumer import (  # type: ignore
         DriftReportIncidentConsumer,
+        InfrastructureHealthIncidentConsumer,
         IncidentConsumerError,
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
@@ -366,6 +373,41 @@ def consume_drift_report_incident(
         result.incident.incident_id,
         result.created,
         result.incident_cluster_id,
+    )
+    return _to_response(result.incident)
+
+
+@app.post(
+    "/api/incidents/consume-infrastructure-health",
+    response_model=IncidentResponse,
+    status_code=201,
+    summary="Consume a non-trading infrastructure-health event into an IncidentCase",
+)
+def consume_infrastructure_health_incident(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+) -> IncidentResponse:
+    """Consume BFF/downstream infrastructure health through Incident authority.
+
+    This endpoint is deliberately separate from generic ``POST /api/incidents``:
+    producers must send the strict infrastructure incident contract and must not
+    provide fake RuntimeBinding fields to pass canonical runtime validation.
+    """
+    consumer = InfrastructureHealthIncidentConsumer(incident_store=store)
+    try:
+        result = consumer.consume(body)
+    except IncidentConsumerError as exc:
+        detail = str(exc)
+        status_code = 409 if "conflicts with an existing infrastructure incident" in detail else 422
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    if not result.created:
+        response.status_code = 200
+
+    log.info(
+        "Consumed infrastructure health into IncidentCase %s created=%s",
+        result.incident.incident_id,
+        result.created,
     )
     return _to_response(result.incident)
 
