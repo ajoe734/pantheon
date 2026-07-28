@@ -15,7 +15,10 @@ This evidence manifest captures refreshed provider-first readiness probes and re
 - **Claude Family Per-Slot Breakdown**:
   - `claude`: `ready=false`, status=`auth_not_ready`, method=`claude_auth_status_refresh` (`Claude CLI authentication is missing or OAuth refresh failed`). Fail-closed.
   - `claude2`: `ready=true`, status=`ready`, method=`claude_auth_status_refresh` (`OAuth credentials verified`). Dispatchable.
-  - `claude1-1`..`claude1-4`: Not configured as separate slots in `config.json` or `provider_capabilities.json`; `claude` is the primary slot.
+  - `claude1-1`: `ready=false`, status=`auth_not_ready` (`Slot claude1-1 not present in live provider_capabilities.json providers map`). Fail-closed.
+  - `claude1-2`: `ready=false`, status=`auth_not_ready` (`Slot claude1-2 not present in live provider_capabilities.json providers map`). Fail-closed.
+  - `claude1-3`: `ready=false`, status=`auth_not_ready` (`Slot claude1-3 not present in live provider_capabilities.json providers map`). Fail-closed.
+  - `claude1-4`: `ready=false`, status=`auth_not_ready` (`Slot claude1-4 not present in live provider_capabilities.json providers map`). Fail-closed.
 
 ## Real Fleet Dispatch Raw References
 
@@ -28,16 +31,19 @@ This evidence manifest captures refreshed provider-first readiness probes and re
 - **Current Active Antigravity Run**: `antigravity1-1-20260728T190729Z-8aeb78de`
   - Event ID: `evt-20260728T190707Z-b52139da`
   - Started At: `2026-07-28T19:07:29Z`
-- **Claude2 Real Worker Runs**:
-  - Log 1: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260723T090814354954Z-claude2-claude2-15e2ac.log`
-  - Log 2: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260724T000541473436Z-claude2-claude2-d1e3e0.log`
+- **Today Real Claude2 Supervisor Worker Runs (2026-07-28)**:
+  - Run 1: `claude2-20260728T193745Z-8bf75509` (Exit code 143: supervisor reconciliation/termination truth)
+    - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T193745782933Z-claude2-claude2-21d117.log`
+  - Run 2: `claude2-20260728T195332Z-9d18c7ed` (Exit code 143: supervisor reconciliation/termination truth)
+    - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T195332131589Z-claude2-claude2-8ca33a.log`
 
 ## Fallback Truth
 
-- **Claude Family Partial Readiness**: The primary `claude` slot failed forced auth probe (`auth_not_ready`) and fails closed for new dispatches to that slot. However, the `claude2` slot is verified `ready=true` with active dispatch history. The Claude family as a whole is NOT completely fail-closed.
+- **Claude Family Partial Readiness**: Primary `claude` slot and `claude1-1`..`claude1-4` subslots are `auth_not_ready` (fail-closed). However, the `claude2` slot is verified `ready=true` with active supervisor dispatch history today (runs `claude2-20260728T193745Z-8bf75509` and `claude2-20260728T195332Z-9d18c7ed`). The Claude family as a whole has partial readiness, not total fail-closed.
 - **Antigravity Success**: Antigravity provider passed forced probe (`ready`) via `agy_prompt_oauth`, successfully executing real supervisor worker runs.
 
 ## Verification
 
 - `PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)" && "$PANTHEON_PY" -m pytest services/openclaw-gateway-adapter/tests/`: 117 passed.
 - `bash scripts/openclaw-smoke-test.sh`: 6 passed.
+
