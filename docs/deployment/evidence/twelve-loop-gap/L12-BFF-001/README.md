@@ -115,3 +115,4 @@ sources through an anchor receipt, records the immutable PR #4274 head and
 merge, carries Antigravity's exact-head decision on
 `d76e27f0894bd41e7e656cb80ff8608448ebaf82` inside the task manifest, and leaves
 no blocking residual risk for owner closeout.
+
