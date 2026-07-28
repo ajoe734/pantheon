@@ -14416,6 +14416,34 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self._refresh(probe, state)
         self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
 
+    def test_live_success_probe_persists_recovered_capability(self) -> None:
+        state: dict[str, object] = {}
+        report = {"providers": {"codex2": {"auth_ready": False}}}
+        probe = {
+            "provider": "codex2",
+            "ready": True,
+            "status": "ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=probe),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            health = supervisor.refresh_provider_auth_before_dispatch(
+                self.config,
+                report,
+                "codex2",
+                state,
+            )
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.HEALTHY)
+        self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
+        write_caps.assert_called_once_with(self.config, report=report)
+
     def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
         """The observed regression: an auth pause reopened the lane on a timer."""
         state = {
