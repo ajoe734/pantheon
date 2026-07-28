@@ -180,20 +180,20 @@
       {
         "command": "PYTHONPATH=\"$PWD/.orchestrator\" \"$TASK_PY\" -m pytest -q <six targeted Claude/Antigravity probe-gate tests in .orchestrator/test_provider_permissions.py>",
         "result": "pass",
-        "conclusion": "6 passed in 0.82s: forced launch probes bypass cache, Claude refresh is preserved, Antigravity dual-model quota fails closed, and credential/quota aliases share capacity."
+        "conclusion": "6 passed in 0.90s on the final task head: forced launch probes bypass cache, Claude refresh is preserved, Antigravity dual-model quota fails closed, and credential/quota aliases share capacity."
       },
       {
         "command": "PYTHONPATH=\"$PWD/.orchestrator\" \"$TASK_PY\" -m pytest -q <three Claude/Antigravity lane and fallback-routing tests in .orchestrator/test_supervisor.py>",
         "result": "pass",
-        "conclusion": "3 passed in 0.65s: Claude lane/account limits, primary Antigravity admission, and healthy fallback routing remain enforced."
+        "conclusion": "3 passed in 1.19s on the final task head: Claude lane/account limits, primary Antigravity admission, and healthy fallback routing remain enforced."
       },
       {
         "command": "PYTHONPATH=\"$PWD/.orchestrator\" \"$TASK_PY\" -m pytest -q .orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests::test_live_not_ready_probe_holds_lane_until_a_live_success",
         "result": "pass",
-        "conclusion": "1 passed in 0.49s: a fresh not-ready launch probe creates a sticky lane hold that only a later fresh live success can clear."
+        "conclusion": "1 passed in 0.91s on the final task head: a fresh not-ready launch probe creates a sticky lane hold that only a later fresh live success can clear."
       }
     ],
-    "validated_at": "2026-07-28T13:31:16Z",
+    "validated_at": "2026-07-28T13:34:45Z",
     "validated_runtime_sha": "061408b09aa06943813c97334054bfa29b79e236"
   },
   "known_limitations": [
@@ -225,6 +225,14 @@
       "recorded_at": "2026-07-28T13:31:16Z",
       "status": "owner_asserted_pass_pending_independent_review",
       "reference": "Refreshed task identity and runtime binding; repeated forced live probes; captured a current Claude dispatch and truthful absence of a standing Antigravity pause; verified the sticky pre-dispatch hold with the corrected pytest node id."
+    },
+    {
+      "sequence": 3,
+      "actor": "Codex",
+      "kind": "post_dev_sync_verification",
+      "recorded_at": "2026-07-28T13:34:45Z",
+      "status": "owner_asserted_pass_pending_independent_review",
+      "reference": "Merged the existing remote task head and current origin/dev, then reran all 10 focused tests successfully on the final task head."
     }
   ]
 }
