@@ -2,9 +2,9 @@
 
 Owner: Codex2
 Reviewer: Codex
-Status: owner implementation and acceptance proof ready; independent review pending
+Status: implementation merged and owner closeout proof ready; independent post-repair review pending
 
-This cut scanned through authoritative task-state journal sequence 2976. The
+This cut scanned through authoritative task-state journal sequence 3156. The
 canonical row at that boundary reports `in_progress`, owner `Codex2`, reviewer
 `Codex`; later journal events are outside this owner cut.
 
@@ -163,6 +163,36 @@ Validation rerun in `/tmp/pantheon-4193-dist-repair.hPWFnF`:
 - `git diff --check` — pass.
 - Negative control: the same two-process scenario with the JSONL lease stubbed
   out lost 1–2 of 40 seeds on every run, confirming the proof is not vacuous.
+
+## Merged-delivery owner closeout cut — 2026-07-28
+
+PR #4193 exact head
+`1a32aeb86e59a79a0ea7be7f3f1c36e839931f80` passed its push and
+pull-request Branch CI gates plus the Human/Ops canonical-review and root-merge
+release statuses, then merged to `dev` as
+`1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86` at
+`2026-07-27T22:10:42Z`.
+
+The exact merged head contains both corrections from Codex's last formal
+rejection:
+
+- same-id StrategySpec registration rejects conflicting content or lineage
+  instead of accepting an unrelated existing row as idempotent success;
+- distillation replay validates the complete draft/candidate Registry readback
+  before acknowledging `already_terminal`.
+
+Codex2 revalidated the merged task bytes after fast-forwarding this worktree to
+`origin/dev` `11858f4d445565064e630cce9b89ea8b475a6598`:
+
+- `.venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py` — 113 passed, 3 warnings.
+- `.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion` — 758 passed, 2 skipped, 3 warnings.
+- `.venv-pantheon/bin/python3 -m pytest -q services/registry services/research/strategy_spec` — 231 passed, 17 warnings.
+
+The Human/Ops merge release proves publication of the repaired implementation,
+but it is not recorded as Codex's governed independent reviewer verdict. This
+owner cut therefore remains fail-closed for `review_approved` and `done` until
+Codex reviews the post-repair bytes and binds the committed
+[`evidence.json`](evidence.json) through the governed approval command.
 
 ## Composition boundary
 
