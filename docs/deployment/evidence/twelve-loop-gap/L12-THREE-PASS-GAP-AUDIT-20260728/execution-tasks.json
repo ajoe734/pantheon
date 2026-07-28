@@ -1,136 +1,186 @@
 {
-  "schema_version": "pantheon.l12.three_pass_gap_execution_graph.v2",
+  "schema_version": "pantheon.l12.three_pass_gap_execution_graph.v3",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
-  "observation_time": "2026-07-28T16:12:44Z",
+  "observation_time": "2026-07-28T16:24:00Z",
   "base_commit": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
   "status_root": "/home/lupin/pantheon",
   "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "dependency_semantics": "depends_on is the dispatch DAG for remaining or completed support nodes in this packet. Already archived domain prerequisites are listed separately and are not redispatched.",
+  "satisfied_external_prerequisites": [
+    "L12-SRC-001",
+    "L12-ALPHA-001",
+    "L12-TEACH-001",
+    "L12-AGORA-001",
+    "L12-IMIT-001",
+    "L12-CONS-001",
+    "L12-DEP-001",
+    "L12-CAP-001",
+    "L12-TEL-001",
+    "L12-REC-001",
+    "L12-EVO-001"
+  ],
+  "snapshot": {
+    "post_4300_merge": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
+    "status_command_health": "healthy_after_transient_fail_closed_recovery",
+    "status_recovery_observation": "A governed show briefly returned status_recovery_pending for status_activity_outbox at 16:24Z; a later governed show succeeded without direct state-file edits.",
+    "open_closeout_pr": {
+      "number": 4297,
+      "head_sha": "b24b454108dc2137f2b24d226c57ec1192bcf026",
+      "state": "OPEN",
+      "merge_state": "BEHIND"
+    },
+    "hosted_deployment": {
+      "manifest_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+      "frontend_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+      "bff_commit": "be956c07aca889043ef301389412b6744452f20b",
+      "deployment_state": "accepted",
+      "verdict": "healthy historical pair but stale for the post-4300 L12 program"
+    }
+  },
   "dispatch_policy": {
     "real_supervisor_workers_only": true,
     "codex_conversation_subagents_count": false,
     "do_not_edit_live_config_for_priority": true,
-    "preferred_provider_order": [
-      "Antigravity",
-      "Claude",
-      "Codex",
-      "Codex2"
-    ],
-    "fallback_rule": "If Claude or Antigravity is unavailable by live supervisor guardrails, record the provider fact and keep healthy real supervisor workers draining the DAG."
+    "owner_and_reviewer_source": "canonical task row at observation time",
+    "provider_readiness_rule": "OPS-L12-PROVIDER-FIRST-READINESS-20260728 is completed time-bounded evidence, not a permanent health claim. Re-probe current provider readiness at dispatch time.",
+    "reassignment_rule": "Only a supervisor-written canonical reassignment changes owner or reviewer. This graph does not invent fallback ownership.",
+    "status_write_rule": "Before every post-merge mutation, run the governed status command. If status recovery is pending, record the exact blocker and do not edit generated state files."
+  },
+  "dispatch_gate": {
+    "audit_pull_request": 4304,
+    "audit_must_merge_before_new_dispatch": true,
+    "exact_head_review_required": true,
+    "governed_status_recheck_required": true,
+    "on_status_recovery_pending": "Fail closed and leave a truthful blocker; do not create, assign, or start canonical tasks until governed reads recover."
   },
   "current_blockers": [
     {
       "id": "L12-DIST-001",
       "status": "review_approved",
-      "reason": "PRs #4193 and #4286 are merged, but merged closeout evidence is not shaped so reconcile_merged_done can validate the repository slug plus full delivery commit."
+      "reason": "PRs #4193 and #4286 are merged, but the canonical row is still nonterminal and requires owner finalization or reconcile-safe evidence."
     },
     {
       "id": "L12-FLEET-WORKER-OUTCOME-001",
       "status": "review_approved",
-      "reason": "PR #4301 is merged, but the merged task brief still records Status: in_progress, so guarded reconcile cannot archive it."
+      "reason": "PR #4301 is merged, but the canonical row is still nonterminal and lacks a bound review_file for normal closeout."
     },
     {
       "id": "L12-BFF-001",
       "status": "todo",
-      "reason": "PR #4274 is merged, but prior review identified unresolved acceptance defects and missing proof drills."
+      "reason": "PR #4274 implementation and the retained-history repair are merged. The evidence must be recut for the final merged head and current Claude/Codex owner-reviewer pair, independently reviewed, merged, and archived. Do not restart implementation absent a new concrete review finding."
     },
     {
       "id": "L12-FLEET-STATUS-SYNC-001",
       "status": "todo",
-      "reason": "Implementation PR #4282 is merged, but closeout PR #4297 is open and BEHIND current dev."
+      "reason": "Implementation PR #4282 is merged, but closeout PR #4297 is open and behind current dev."
     }
   ],
   "tasks": [
     {
-      "id": "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
-      "title": "Repair reconcile-safe closeout evidence for merged nonterminal L12 rows",
-      "type": "new_parallel_execution_task",
+      "id": "L12-GAP-MERGE-QUEUE-20260728",
+      "title": "Drain reviewed L12 closeout PRs through the exact-head merge gate",
+      "type": "existing_dispatch_control_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex2",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex",
-      "parallel_group": "wave0_closeout",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "parallel_group": "wave0_merge_reconcile",
+      "dispatch_action": "continue_existing_task",
       "depends_on": [],
+      "acceptance": [
+        "Record the exact reviewed head and merge identity for each scoped L12 closeout PR.",
+        "Do not merge stale, unreviewed, or auto-merge-armed heads.",
+        "Do not restart implementation while draining the closeout queue."
+      ]
+    },
+    {
+      "id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+      "title": "Reconcile merged nonterminal L12 rows to canonical done and archive",
+      "type": "existing_dispatch_control_task",
+      "repository": "ajoe734/pantheon",
+      "status": "in_progress",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "parallel_group": "wave0_merge_reconcile",
+      "dispatch_action": "continue_existing_task",
+      "depends_on": [
+        "L12-GAP-MERGE-QUEUE-20260728"
+      ],
       "related_existing_tasks": [
         "L12-DIST-001",
-        "L12-FLEET-WORKER-OUTCOME-001",
-        "L12-GAP-CLOSEOUT-RECONCILE-20260728"
+        "L12-FLEET-WORKER-OUTCOME-001"
       ],
       "acceptance": [
-        "Create a task-scoped closeout evidence PR that does not restart implementation.",
-        "For L12-DIST-001, evidence must let reconcile_merged_done validate RECONCILE_EVIDENCE_FILE, RECONCILE_EVIDENCE_COMMIT, RECONCILE_DELIVERY_REPOSITORY, RECONCILE_DELIVERY_ROOT, and RECONCILE_DELIVERY_COMMIT.",
-        "For L12-FLEET-WORKER-OUTCOME-001, merged evidence must no longer claim in_progress and must bind PR #4301 head 25f238f94282f2cd8541ff488b003b5e983fd864 and merge d97c25d3cc8860118dd4d0f3c9fafd38490d89c0.",
-        "After review and merge, run governed reconcile_merged_done or leave a truthful blocker with the exact failed guard output."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/L12-CLOSEOUT-EVIDENCE-RECON-20260728"
+        "Use existing canonical reconciliation rather than creating a duplicate wrapper task.",
+        "Bind the exact merged evidence and delivery identities required by reconcile_merged_done.",
+        "If a guard rejects either row, preserve the exact failed invariant as a canonical blocker."
       ]
     },
     {
-      "id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
-      "title": "Finish L12-BFF-001 acceptance defects and proof drills",
-      "type": "new_parallel_execution_task",
+      "id": "L12-BFF-001",
+      "title": "Close out merged durable BFF health telemetry and incident recovery",
+      "type": "existing_loop_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Claude",
-      "fallback_owner": "Codex",
-      "reviewer": "Antigravity",
-      "fallback_reviewer": "Codex2",
-      "parallel_group": "wave0_bff",
+      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "parallel_group": "wave0_bff_closeout",
+      "dispatch_action": "resume_existing_task_after_audit_merge",
       "depends_on": [],
-      "related_existing_tasks": [
-        "L12-BFF-001"
-      ],
       "acceptance": [
-        "Repair telemetry admission so BFF health events use a real authorized non-trading infrastructure path and cannot bypass RuntimeBinding authority accidentally.",
-        "Repair incident resolution to use actual incident status routes and cover it with real app tests, not only mocked _post_json tests.",
-        "Add durable restart/two-replica dedup state, registry target coverage, error-rate spike trigger, retry/DLQ/replay, and evidence drills required by L12-BFF-001.",
-        "Open/reuse the canonical L12-BFF-001 PR path, obtain exact-head review/root-freeze/merge, and close the canonical task without overstating hosted acceptance."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001"
+        "Do not restart implementation absent a new concrete independent-review finding.",
+        "Recut evidence against PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075, merge 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1, current owner/reviewer, retained-history recovery, and the 168-test cut.",
+        "Validate the evidence and checksum, obtain exact-head review, merge the closeout-only update, and archive the canonical task.",
+        "Leave hosted JWT, retained-volume, and real target stop/recovery proof to L12-VERIFY-OBS-001."
       ]
     },
     {
-      "id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
-      "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence",
-      "type": "new_parallel_execution_task",
+      "id": "L12-FLEET-STATUS-SYNC-001",
+      "title": "Refresh and close merged fleet status synchronization delivery",
+      "type": "existing_fleet_control_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex2",
-      "parallel_group": "wave0_closeout",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "parallel_group": "wave0_status_closeout",
+      "dispatch_action": "resume_existing_task_after_audit_merge",
       "depends_on": [],
-      "related_existing_tasks": [
-        "L12-FLEET-STATUS-SYNC-001"
-      ],
       "acceptance": [
-        "Compose current origin/dev into PR #4297 or supersede it with a clean task-scoped closeout PR.",
-        "Do not restart the already merged implementation from PR #4282.",
-        "Obtain fresh exact-head review, root-freeze status, merge, and canonical done/archive."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-001"
+        "Compose current dev into PR #4297 or replace it with one clean closeout-only PR.",
+        "Do not restart implementation already merged through PR #4282.",
+        "Obtain fresh exact-head review, merge, and canonical done/archive."
       ]
     },
     {
       "id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
-      "title": "Prove or truthfully fail-close Claude and Antigravity priority fleet readiness",
-      "type": "existing_support_task",
+      "title": "Record time-bounded provider-first readiness",
+      "type": "completed_support_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex2",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex",
-      "parallel_group": "wave0_provider",
+      "status": "done",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "parallel_group": "completed_support",
+      "dispatch_action": "none_completed",
       "depends_on": [],
       "acceptance": [
-        "Run current Claude and Antigravity readiness probes without editing .orchestrator/config.json.",
-        "If healthy, prove at least one real supervisor worker starts on a Claude or Antigravity lane.",
-        "If not healthy, archive provider fail-closed facts and explicitly permit healthy real worker lanes to continue draining L12 tasks."
-      ],
-      "artifacts": [
-        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728"
+        "Retain the archived readiness evidence as a point-in-time observation only.",
+        "Re-probe provider readiness at each real dispatch without editing live config."
+      ]
+    },
+    {
+      "id": "L12-SIGNOFF-001",
+      "title": "Provide protected Human-Ops closeout verdict enforcement",
+      "type": "completed_support_task",
+      "repository": "ajoe734/pantheon",
+      "status": "done",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "parallel_group": "completed_support",
+      "dispatch_action": "none_completed",
+      "depends_on": [],
+      "acceptance": [
+        "Retain the merged protected-verdict enforcement as a prerequisite.",
+        "Do not infer that a final program verdict has already been issued."
       ]
     },
     {
@@ -138,15 +188,15 @@
       "title": "Activate all required loop workers under one safe runtime manifest",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex2",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "wave1_manifest",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-CLOSEOUT-EVIDENCE-RECON-20260728",
-        "L12-BFF-REPAIR-ACCEPTANCE-20260728",
-        "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728"
+        "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+        "L12-BFF-001",
+        "L12-FLEET-STATUS-SYNC-001"
       ],
       "acceptance": [
         "All twelve required loop workers are represented in one safe runtime manifest.",
@@ -159,11 +209,11 @@
       "title": "Integrate twelve-loop controller records and operator truth",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Claude",
-      "fallback_owner": "Codex",
-      "reviewer": "Antigravity",
-      "fallback_reviewer": "Codex2",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
       "parallel_group": "wave2_truth",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-MANIFEST-001"
       ],
@@ -178,18 +228,18 @@
       "title": "Render twelve-loop authoritative truth in the hosted frontend",
       "type": "existing_cross_repo_task",
       "repository": "ajoe734/execute-plans",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex2",
+      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
       "parallel_group": "wave2_truth",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-TRUTH-001"
       ],
       "acceptance": [
-        "Frontend on execute-plans dev renders the twelve-loop truth contract without using front-ai-trading-system.",
+        "Frontend on execute-plans dev renders the twelve-loop truth contract.",
         "Desktop and mobile browser evidence proves truthful nonterminal states.",
-        "Safe live BFF settings are preserved."
+        "Safe live BFF settings and strict fallback are preserved."
       ]
     },
     {
@@ -197,14 +247,14 @@
       "title": "Prove Source, Distillation, and Alpha product flows",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Claude",
-      "fallback_owner": "Codex2",
-      "reviewer": "Antigravity",
-      "fallback_reviewer": "Codex",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-TRUTH-001",
-        "L12-FE-TRUTH-001"
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
       ],
       "acceptance": [
         "Real Source, Distillation, and Alpha transitions pass with durable evidence.",
@@ -216,14 +266,14 @@
       "title": "Prove Teaching, Agora, Imitation, and Consultation product flows",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex2",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-TRUTH-001",
-        "L12-FE-TRUTH-001"
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
       ],
       "acceptance": [
         "Real Teaching, Agora, Imitation, and Consultation flows pass.",
@@ -235,11 +285,11 @@
       "title": "Prove Deployment and governed-paper Capital recovery",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Claude",
-      "fallback_owner": "Codex2",
-      "reviewer": "Antigravity",
-      "fallback_reviewer": "Codex",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-MANIFEST-001",
         "L12-TRUTH-001"
@@ -254,18 +304,18 @@
       "title": "Prove Telemetry, Reconciliation, Evolution, and BFF Health chains",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex2",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "wave3_verifier",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
-        "L12-TRUTH-001",
-        "L12-FE-TRUTH-001"
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
       ],
       "acceptance": [
         "Telemetry, Reconciliation, Evolution, and BFF health chains pass.",
-        "Incident, postmortem, and approved-action dispatch are durable and truthfully degraded on failure."
+        "Hosted BFF JWT, retained volume, target stop/recovery, retry, DLQ, and replay behavior are proved."
       ]
     },
     {
@@ -273,19 +323,20 @@
       "title": "Deploy and restart-drill the complete twelve-loop candidate",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Antigravity",
-      "fallback_owner": "Codex2",
-      "reviewer": "Claude",
-      "fallback_reviewer": "Codex",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "wave4_hosted",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
+        "L12-FE-TRUTH-001",
         "L12-VERIFY-KNOW-001",
         "L12-VERIFY-LEARN-001",
         "L12-VERIFY-RUNTIME-001",
         "L12-VERIFY-OBS-001"
       ],
       "acceptance": [
-        "Hosted manifest binds exact current FE and BFF commits/images.",
+        "Hosted manifest binds exact current FE and BFF commits and images.",
         "Full-stack restart preserves or recovers in-flight work with no duplicate effects.",
         "Desktop, mobile, auth, tenant, safety, and no-live-capital evidence pass."
       ]
@@ -295,18 +346,20 @@
       "title": "Admit evidence and close the twelve-loop program",
       "type": "existing_program_task",
       "repository": "ajoe734/pantheon",
-      "preferred_owner": "Claude",
-      "fallback_owner": "Codex2",
-      "reviewer": "Human/Ops",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Claude",
       "parallel_group": "wave5_closeout",
+      "dispatch_action": "dispatch_when_dependencies_terminal",
       "depends_on": [
         "L12-HOSTED-001",
         "L12-TRUTH-001",
         "L12-SIGNOFF-001"
       ],
       "acceptance": [
-        "Protected Human/Ops closeout verdict is consumed once.",
-        "Final closeout is bound to exact catalog, manifest, deployment identities, and verifier evidence."
+        "A protected Human/Ops closeout verdict is consumed once.",
+        "Final closeout is bound to the exact catalog, manifest, deployment identities, and verifier evidence.",
+        "Canonical reviewer remains distinct from the protected Human/Ops verdict authority."
       ]
     }
   ]

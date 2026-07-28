@@ -1,6 +1,6 @@
 # L12-THREE-PASS-GAP-AUDIT-20260728
 
-Observation time: `2026-07-28T16:12:44Z`
+Observation time: `2026-07-28T16:24:00Z`
 
 Base: `origin/dev = e6f77614d2e68252980e12f6ee4789e4bc8297d1`
 
@@ -12,7 +12,7 @@ still cannot be claimed operational.
 Primary narratives:
 
 - `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-28T1208Z.md`
-- `docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/THREE_PASS_GAP_AUDIT_2026-07-28T1612Z.md`
+- `docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/THREE_PASS_GAP_AUDIT_2026-07-28T1624Z.md`
 
 Machine-readable execution graph:
 
@@ -27,12 +27,20 @@ Core verdict:
   `done`.
 - `L12-DIST-001` and `L12-FLEET-WORKER-OUTCOME-001` have merged PR evidence but
   still lack reconcile-safe canonical closeout evidence.
-- `L12-BFF-001` still requires actual acceptance repair, not closeout-only
-  paperwork.
+- Existing `L12-GAP-MERGE-QUEUE-20260728` and
+  `L12-GAP-CLOSEOUT-RECONCILE-20260728` own that reconciliation; no duplicate
+  wrapper task should be created.
+- `L12-BFF-001` has merged implementation and 168-test local acceptance
+  evidence. It requires a current evidence recut, independent review, merge,
+  and archive, not an implementation restart.
+- `L12-FLEET-STATUS-SYNC-001` still has open PR #4297 behind current `dev`.
 - Manifest activation, truth integration, verifier drills, hosted deployment,
   and final protected closeout are not complete.
 - The hosted dev manifest still serves BFF commit
   `be956c07aca889043ef301389412b6744452f20b`, so hosted proof is stale relative
   to the later L12 merges.
+- Governed status reads briefly failed closed on a pending activity outbox at
+  `16:24Z` and then recovered without direct state edits. Post-merge dispatch
+  must recheck the governed status command before any mutation.
 
 This packet makes no all-loop completion claim.
