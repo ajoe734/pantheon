@@ -4,7 +4,7 @@ Owner: Codex2
 Reviewer: Codex
 Status: committed-replay lineage repair and owner proof ready; independent review pending
 
-This cut scanned through authoritative task-state journal sequence 3156. The
+This cut scanned through authoritative task-state journal sequence 3186. The
 canonical row at that boundary reports `in_progress`, owner `Codex2`, reviewer
 `Codex`; later journal events are outside this owner cut.
 
