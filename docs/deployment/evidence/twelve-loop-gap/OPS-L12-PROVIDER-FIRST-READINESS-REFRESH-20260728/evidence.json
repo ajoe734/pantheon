@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.ops.provider_first_readiness_evidence.v2",
+  "task": {
+    "id": "OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+    "title": "Refresh provider-first readiness and real fleet dispatch evidence",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728/evidence.json",
+    "observation_cut": "2026-07-28T19:08:35Z"
+  },
+  "scope": {
+    "owned_layer": "Live supervisor provider-first readiness evidence and fleet dispatch proof for Antigravity and Claude families.",
+    "not_changing": "Provider configuration (.orchestrator/config.json), provider credentials, dispatch policy, product services, hosted FE/BFF deployment.",
+    "composes_with": [
+      "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "L12-FLEET-001"
+    ]
+  },
+  "provider_architecture_distinction": {
+    "supervisor_antigravity_cli": {
+      "provider_id": "antigravity",
+      "delivery_mode": "antigravity",
+      "cli": ".orchestrator/bin/agy",
+      "description": "Supervisor's live auto worker provider for Antigravity worker runs."
+    },
+    "openclaw_assistant_provider": {
+      "provider_id": "openclaw",
+      "delivery_mode": "openclaw_adapter",
+      "description": "Upstream OpenClaw assistant gateway for Management AI/OpenClaw dev bridge integration."
+    }
+  },
+  "forced_probes": {
+    "claude": {
+      "provider": "claude",
+      "kind": "claude",
+      "ready": false,
+      "status": "auth_not_ready",
+      "method": "claude_auth_status_refresh",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:08:10Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "fail_closed_not_dispatchable"
+    },
+    "antigravity": {
+      "provider": "antigravity",
+      "kind": "antigravity",
+      "ready": true,
+      "status": "ready",
+      "method": "agy_prompt_oauth",
+      "error": null,
+      "checked_at": "2026-07-28T19:08:35Z",
+      "metadata": {
+        "oauth_token": "/home/lupin/.gemini/antigravity-cli/antigravity-oauth-token",
+        "probe_model": "gemini-3.6-flash-low",
+        "rotation_slot": "primary"
+      },
+      "verdict": "ready_dispatchable"
+    }
+  },
+  "dispatch_proof": {
+    "antigravity_worker_run": {
+      "worker_run_id": "antigravity1-1-20260728T185208Z-a6cb5d2a",
+      "provider": "antigravity1-1",
+      "target_agent": "Antigravity",
+      "queue_event_id": "evt-20260728T185119Z-ff2129b2",
+      "started_at": "2026-07-28T18:52:08Z",
+      "completed_at": "2026-07-28T18:54:45Z",
+      "completion_message": "Worker exited successfully during supervisor boot reconciliation.",
+      "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T185208347695Z-antigravity1-1-antigravity1_1-0bd76c.log"
+    },
+    "current_antigravity_worker_run": {
+      "worker_run_id": "antigravity1-1-20260728T190729Z-8aeb78de",
+      "provider": "antigravity1-1",
+      "target_agent": "Antigravity",
+      "queue_event_id": "evt-20260728T190707Z-b52139da",
+      "started_at": "2026-07-28T19:07:29Z",
+      "status": "running"
+    }
+  },
+  "fallback_truth": {
+    "claude_fail_closed": "Claude provider failed forced auth probe (auth_not_ready), correctly preventing new Claude worker dispatches.",
+    "antigravity_success": "Antigravity provider passed forced probe (ready) via agy_prompt_oauth, successfully executing real supervisor worker runs (antigravity1-1-20260728T185208Z-a6cb5d2a and antigravity1-1-20260728T190729Z-8aeb78de)."
+  },
+  "verdict": {
+    "summary": "Supervisor Antigravity CLI provider is verified ready (ready=true) with real dispatch execution proven. Claude CLI provider is verified fail-closed (auth_not_ready). Configuration remained unedited.",
+    "config_edited": false
+  },
+  "validation": {
+    "pytest_suite": "services/openclaw-gateway-adapter/tests/",
+    "pytest_passed": 117,
+    "openclaw_smoke_passed": 6
+  }
+}
