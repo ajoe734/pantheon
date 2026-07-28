@@ -3,8 +3,8 @@
   "task_id": "L12-GAP-MERGE-QUEUE-20260728",
   "owner": "Codex",
   "reviewer": "Codex2",
-  "status": "in_progress",
-  "observed_at": "2026-07-28T15:34:14Z",
+  "status": "ready_for_independent_review",
+  "observed_at": "2026-07-28T18:49:05Z",
   "scope": {
     "owned_layer": "Exact-head composition, gate verification, root-freeze release, merge, and post-merge receipt for the protected L12 closeout queue.",
     "not_changing": [
@@ -30,13 +30,11 @@
     "merge_rule": "Release the root-freeze context for one current exact head only after assigned-reviewer approval and all mechanical checks are green."
   },
   "queue_state": {
-    "current_dev": "9f7f95e1a10a46248a81b26159e373f75525222f",
-    "remaining_prs": [
-      4300
-    ],
-    "blocked": true,
-    "blocked_reason": "PR #4300 is behind current dev. Its approval binds the old head 607df32e1dc658080a282858aa1441967c3df700, so the root-freeze release remains withheld until a current-dev head passes fresh checks and receives a new exact-head Codex2 approval.",
-    "next_owner_action": "The OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728 owner must compose current dev, push the new exact head, and hand that head to Codex2 for independent re-review."
+    "current_dev": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "remaining_prs": [],
+    "blocked": false,
+    "blocked_reason": null,
+    "next_owner_action": "Publish this receipt, obtain Codex2 exact-head review, merge the receipt PR into dev, and complete owner closeout without reopening any queue implementation."
   },
   "queue": [
     {
@@ -59,7 +57,8 @@
       "state": "merged",
       "reviewed_head": "e91382b508b42456d75747fdf3cef92c7850d2ad",
       "merge_commit": "cf94be38a548a31df020456904ea10ff95ffb4dd",
-      "checks": "Branch CI, canonical review gate, and root merge freeze all succeeded."
+      "checks": "Branch CI, canonical review gate, and root merge freeze all succeeded.",
+      "canonical_task_state": "done"
     },
     {
       "pr": 4290,
@@ -104,28 +103,57 @@
     {
       "pr": 4301,
       "task_id": "L12-FLEET-WORKER-OUTCOME-001",
-      "state": "merged_waiting_owner_closeout",
+      "state": "merged_and_closed",
       "reviewed_head": "25f238f94282f2cd8541ff488b003b5e983fd864",
       "merge_commit": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
       "checks": "Branch CI, Codex2 canonical review, and root merge freeze all succeeded.",
-      "canonical_task_state": "review_approved"
+      "canonical_task_state": "done"
     },
     {
       "pr": 4300,
       "task_id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
-      "state": "behind_waiting_exact_head_reapproval",
-      "reviewed_head": "607df32e1dc658080a282858aa1441967c3df700",
-      "current_dev": "9f7f95e1a10a46248a81b26159e373f75525222f",
-      "merge_state_status": "BEHIND",
-      "checks": "Historical Branch CI and canonical review passed at 607df32e1dc658080a282858aa1441967c3df700; root merge freeze is absent.",
-      "pending": [
-        "compose current dev without changing the reviewed task artifact",
-        "fresh Branch CI on the new exact head",
-        "Codex2 exact-head reapproval",
-        "single-head root-freeze release",
-        "exact-head merge",
-        "owner done/archive closeout"
-      ]
+      "state": "merged_and_closed",
+      "reviewed_head": "c95b614b6f4dfb251b0ad6858b596c21d6f62d41",
+      "composed_dev": "9f7f95e1a10a46248a81b26159e373f75525222f",
+      "merge_commit": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
+      "canonical_review_status_id": 51228991081,
+      "root_freeze_status_id": 51229316818,
+      "checks": "All eight exact-head Branch CI checks, Codex2 canonical review, and the Human/Ops root-freeze release succeeded on c95b614b6f4dfb251b0ad6858b596c21d6f62d41 before exact-head merge.",
+      "canonical_task_state": "done"
     }
-  ]
+  ],
+  "final_receipt": {
+    "queue_drained": true,
+    "verified_dev": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "merged_prs": [
+      4218,
+      4285,
+      4286,
+      4287,
+      4290,
+      4293,
+      4299,
+      4300,
+      4301,
+      4302
+    ],
+    "canonical_tasks_done": [
+      "L12-DIST-001",
+      "L12-EVO-001",
+      "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "L12-FLEET-WORKER-OUTCOME-001",
+      "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728"
+    ],
+    "verification": [
+      "GitHub PR metadata confirms #4285, #4286, #4290, #4300, #4301, and #4302 are merged at the exact heads and merge commits recorded above.",
+      "GitHub commit status API confirms canonical review status 51228991081 and root-freeze status 51229316818 both succeeded on PR #4300 head c95b614b6f4dfb251b0ad6858b596c21d6f62d41.",
+      "Governed ai-status show through PANTHEON_COMMAND_ROOT confirms all five canonical tasks listed above are archived as done.",
+      "git merge-base --is-ancestor confirms all six recorded merge commits are ancestors of origin/dev a6d56c366f7436574e6d2d241b47564558beac74."
+    ],
+    "independent_review": {
+      "reviewer": "Codex2",
+      "decision": "pending",
+      "required_scope": "Confirm the exact-head and merge identities, the two #4300 required commit statuses, canonical done/archive state, and that this receipt makes no implementation or hosted-deployment claim."
+    }
+  }
 }
