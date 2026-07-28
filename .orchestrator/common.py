@@ -58,6 +58,7 @@ CLAUDE_OAUTH_REFRESH_HEADERS = {
     "Referer": "https://claude.ai/",
     "User-Agent": "claude-code/2.1.117",
 }
+PANTHEON_CLAUDE_CREDENTIALS_FILE_ENV = "PANTHEON_CLAUDE_CREDENTIALS_FILE"
 
 
 RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION = 1
@@ -842,7 +843,12 @@ def run_command(
 
 
 def claude_credentials_path(env: dict[str, str] | None = None) -> Path:
-    source = env or os.environ
+    source = env if env is not None else os.environ
+    credentials_file = str(
+        source.get(PANTHEON_CLAUDE_CREDENTIALS_FILE_ENV) or ""
+    ).strip()
+    if credentials_file:
+        return Path(os.path.expanduser(credentials_file))
     configured = str(source.get("CLAUDE_CONFIG_DIR") or "").strip()
     if configured:
         config_dir = Path(os.path.expanduser(configured))
@@ -881,6 +887,21 @@ def claude_oauth_token_from_env(env: dict[str, str] | None = None) -> str | None
 
 
 def apply_claude_oauth_token_file(env: dict[str, str], runtime: dict[str, Any]) -> dict[str, str]:
+    credentials_file = str(runtime.get("oauth_credentials_file") or "").strip()
+    if credentials_file:
+        credentials_path = Path(os.path.expanduser(credentials_file))
+        env[PANTHEON_CLAUDE_CREDENTIALS_FILE_ENV] = str(credentials_path)
+        try:
+            payload = json.loads(credentials_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        oauth = payload.get("claudeAiOauth") if isinstance(payload, dict) else {}
+        if not isinstance(oauth, dict):
+            oauth = {}
+        token = str(oauth.get("accessToken") or "").strip()
+        if token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+        return env
     if claude_oauth_token_from_env(env):
         return env
     token_file = str(runtime.get("oauth_token_file") or runtime.get("oauth_token_path") or "").strip()

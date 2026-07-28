@@ -519,7 +519,8 @@
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
           "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
-        }
+        },
+        "oauth_credentials_file": "/home/lupin/.claude/.credentials.json"
       },
       "broker": {
         "approval_wait_seconds": 3600,
@@ -557,7 +558,8 @@
         "auto_permission_mode": "auto",
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "home": "/home/lupin/.claude2"
+        "home": "/home/lupin/.claude2",
+        "oauth_credentials_file": "/home/lupin/.claude/.credentials.json"
       },
       "broker": {
         "approval_wait_seconds": 3600,

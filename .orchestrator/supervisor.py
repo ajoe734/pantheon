@@ -6175,6 +6175,46 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     return bool(expired)
 
 
+def prune_unconfigured_provider_dispatch_pauses(
+    config: dict[str, Any], state: dict[str, Any]
+) -> bool:
+    """Drop sticky pause records that no configured provider can consume."""
+
+    configured_ids: set[str] = set()
+    for provider in (config.get("providers") or {}):
+        provider_id = normalize_agent_id(str(provider))
+        if provider_id:
+            configured_ids.add(provider_id)
+        configured_ids.update(provider_dispatch_identity_ids(config, str(provider)))
+
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[tuple[str, dict[str, Any]]] = []
+    for pause_id, entry in list(bucket.items()):
+        if normalize_agent_id(str(pause_id)) in configured_ids:
+            continue
+        bucket.pop(pause_id, None)
+        if isinstance(entry, dict):
+            removed.append((str(pause_id), dict(entry)))
+
+    for pause_id, entry in removed:
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_pause_pruned",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": (
+                    f"Removed stale dispatch pause for unconfigured provider "
+                    f"{pause_id}; no configured worker can consume it."
+                ),
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return bool(removed)
+
+
 def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
     """Collapse dispatch slots into their logical agent for churn detection."""
     request_metadata = (
@@ -6670,42 +6710,51 @@ def agent_provider_auth_blocked(
     return capability.get("auth_ready") is False
 
 
-def mark_provider_auth_probe_not_ready(
+def mark_provider_probe_not_ready(
     config: dict[str, Any],
     state: dict[str, Any],
     provider_key: str,
     probe: dict[str, Any],
+    health: rewrite_provider_health.AccountHealth,
 ) -> bool:
-    """Hold a lane whose own live auth probe just came back not ready.
+    """Hold a lane whose own live provider probe just came back not ready.
 
     The pre-dispatch probe used to update only the in-cycle capability report.
     The next tick rebuilt that report from the persisted one, which still said
     ``auth_ready: true``, so the cached probe was reused and the lane was
-    dispatchable again without any account actually recovering. Recording the
-    outcome as a live-probe-gated auth pause keeps the lane unavailable until a
-    later fresh successful probe clears it through
-    ``reconcile_provider_auth_recovery`` -- with no config edit anywhere.
+    dispatchable again without any account actually recovering. Revoked
+    credentials need a sticky live-probe gate; quota/capacity failures need a
+    normal expiring pause so they can recover without human intervention.
     """
     reason = str(
         probe.get("error")
         or probe.get("status")
         or "provider auth probe reported not ready"
     )
+    probe_status = str(probe.get("status") or "").strip().lower()
+    if health is rewrite_provider_health.AccountHealth.REVOKED:
+        failure_kind = "auth"
+    elif "quota" in probe_status:
+        failure_kind = "quota_terminal"
+    else:
+        failure_kind = "capacity_retryable"
     changed = mark_provider_dispatch_paused(
         config,
         state,
         provider_key,
         reason,
-        failure_kind="auth",
-        pause_kind="auth",
+        failure_kind=failure_kind,
+        pause_kind=failure_kind,
     )
     entry = current_provider_dispatch_pause(state, provider_key, config)
     if not isinstance(entry, dict):
         return changed
-    already_gated = entry.get("requires_live_auth_probe") is True
-    entry["requires_live_auth_probe"] = True
     entry["auth_probe_status"] = probe.get("status")
     entry["auth_probe_checked_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    if health is not rewrite_provider_health.AccountHealth.REVOKED:
+        return changed
+    already_gated = entry.get("requires_live_auth_probe") is True
+    entry["requires_live_auth_probe"] = True
     if not is_sticky_auth_dispatch_pause(entry):
         entry["blocked_until"] = STICKY_AUTH_BLOCKED_UNTIL
     return changed or not already_gated
@@ -6777,7 +6826,13 @@ def refresh_provider_auth_before_dispatch(
         except Exception:  # a report write must never block or bypass dispatch gating
             pass
     if state is not None and capability["auth_ready"] is False and str(probe.get("source") or "").strip().lower() == "live":
-        mark_provider_auth_probe_not_ready(config, state, provider_key, probe)
+        mark_provider_probe_not_ready(
+            config,
+            state,
+            provider_key,
+            probe,
+            health,
+        )
     return health
 
 
@@ -13795,6 +13850,13 @@ def _run_once_locked(
         if changed:
             save_runtime_state(config, state)
         _safe_phase("continue_or_skip_empty", continue_or_skip_empty, THIS_DIR.parent, quiet=quiet)
+        changed = _safe_phase(
+            "prune_unconfigured_provider_dispatch_pauses",
+            prune_unconfigured_provider_dispatch_pauses,
+            config,
+            state,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("expire_provider_dispatch_pauses", expire_provider_dispatch_pauses, config, state, quiet=quiet) or changed
         pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:
@@ -13968,6 +14030,7 @@ def _claim_next_task_for_agent_locked(
         task_id=release_task_id,
     )
     provider_report = load_provider_report(config, refresh=False)
+    changed = prune_unconfigured_provider_dispatch_pauses(config, state) or changed
     changed = expire_provider_dispatch_pauses(config, state) or changed
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed

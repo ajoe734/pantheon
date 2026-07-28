@@ -51,6 +51,9 @@ REPO_OWNED_READY_DISPATCHER_POLICY = (
 REPO_OWNED_COORDINATION_POLICY = (
     "enabled",
 )
+REPO_OWNED_PROVIDER_RUNTIME_POLICY = (
+    "oauth_credentials_file",
+)
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
@@ -192,6 +195,58 @@ def apply_provider_account_schema(
         )
 
 
+def apply_provider_runtime_policy(
+    repo_config: dict[str, Any], rendered: dict[str, Any]
+) -> None:
+    """Propagate reviewed credential sources to every slot on one account."""
+
+    repo_providers = repo_config.get("providers") or {}
+    rendered_providers = rendered.get("providers") or {}
+    if not isinstance(repo_providers, dict) or not isinstance(rendered_providers, dict):
+        raise ValueError("providers config must be a JSON object")
+
+    account_members: dict[str, list[dict[str, Any]]] = {}
+    for provider_cfg in repo_providers.values():
+        if not isinstance(provider_cfg, dict):
+            continue
+        account = str(provider_cfg.get("account") or "").strip()
+        if account:
+            account_members.setdefault(account, []).append(provider_cfg)
+
+    account_policy: dict[str, dict[str, Any]] = {}
+    for account, members in account_members.items():
+        values: dict[str, Any] = {}
+        for key in REPO_OWNED_PROVIDER_RUNTIME_POLICY:
+            configured = [
+                (member.get("runtime") or {}).get(key)
+                for member in members
+                if isinstance(member.get("runtime") or {}, dict)
+                and (member.get("runtime") or {}).get(key) not in (None, "")
+            ]
+            if len(configured) == len(members) and len(set(map(str, configured))) == 1:
+                values[key] = copy.deepcopy(configured[0])
+        if values:
+            account_policy[account] = values
+
+    for provider, provider_cfg in rendered_providers.items():
+        if not isinstance(provider_cfg, dict):
+            raise ValueError(f"providers.{provider} must be a JSON object")
+        runtime = provider_cfg.setdefault("runtime", {})
+        if not isinstance(runtime, dict):
+            raise ValueError(f"providers.{provider}.runtime must be a JSON object")
+        repo_provider_cfg = repo_providers.get(provider)
+        if isinstance(repo_provider_cfg, dict):
+            repo_runtime = repo_provider_cfg.get("runtime") or {}
+            if not isinstance(repo_runtime, dict):
+                raise ValueError(f"providers.{provider}.runtime must be a JSON object")
+            for key in REPO_OWNED_PROVIDER_RUNTIME_POLICY:
+                if key in repo_runtime:
+                    runtime[key] = copy.deepcopy(repo_runtime[key])
+        account = str(provider_cfg.get("account") or "").strip()
+        for key, value in account_policy.get(account, {}).items():
+            runtime[key] = copy.deepcopy(value)
+
+
 def apply_ready_dispatcher_policy(
     repo_config: dict[str, Any], rendered: dict[str, Any]
 ) -> None:
@@ -311,6 +366,7 @@ def build_live_config(
 ) -> dict[str, Any]:
     rendered = deep_merge(repo_config, existing_live_config or {})
     apply_provider_account_schema(repo_config, rendered)
+    apply_provider_runtime_policy(repo_config, rendered)
     apply_ready_dispatcher_policy(repo_config, rendered)
     apply_supervisor_lease_policy(repo_config, rendered)
     apply_coordination_policy(repo_config, rendered)
@@ -327,6 +383,7 @@ def build_live_config(
     if not isinstance(watchdog, dict):
         raise ValueError("watchdog config must be a JSON object")
     watchdog.update(canonical_watchdog_runtime_paths(watchdog, status_root))
+    watchdog["supervisor_root"] = str(command_root)
     watchdog["supervisor_command"] = [
         str(python_executable),
         "-u",

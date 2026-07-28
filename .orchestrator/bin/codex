@@ -1,7 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-codex_bin="$HOME/.npm-global/bin/codex"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+codex_bin=""
+
+# The VS Code extension owns the default ~/.codex model cache. Use its bundled
+# CLI for that home so the cache schema and worker binary stay in lockstep.
+if [[ "${codex_home}" == "$HOME/.codex" ]]; then
+  shopt -s nullglob
+  extension_bins=("$HOME"/.vscode-server/extensions/openai.chatgpt-*/bin/linux-x86_64/codex)
+  shopt -u nullglob
+  for candidate in "${extension_bins[@]}"; do
+    if [[ ! -x "${candidate}" ]]; then
+      continue
+    fi
+    if [[ -z "${codex_bin}" || "${candidate}" -nt "${codex_bin}" ]]; then
+      codex_bin="${candidate}"
+    fi
+  done
+fi
+
+if [[ -z "${codex_bin}" ]]; then
+  codex_bin="$HOME/.npm-global/bin/codex"
+fi
 if [[ ! -x "${codex_bin}" ]]; then
   # Fallback: search PATH in case codex is installed elsewhere.
   alt="$(command -v codex 2>/dev/null || true)"

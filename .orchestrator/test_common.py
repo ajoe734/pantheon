@@ -238,6 +238,49 @@ class GithubCliEnvTests(unittest.TestCase):
 
 
 class ClaudeAuthTests(unittest.TestCase):
+    def test_apply_claude_oauth_credentials_file_uses_shared_json_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            credentials_path = Path(tmpdir) / "shared-credentials.json"
+            credentials_path.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "accessToken": "sk-ant-oat01-shared-token",
+                            "refreshToken": "shared-refresh",
+                            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = {"CLAUDE_CONFIG_DIR": str(Path(tmpdir) / "isolated-config")}
+
+            common.apply_claude_oauth_token_file(
+                env,
+                {"oauth_credentials_file": str(credentials_path)},
+            )
+
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-shared-token")
+        self.assertEqual(
+            env[common.PANTHEON_CLAUDE_CREDENTIALS_FILE_ENV],
+            str(credentials_path),
+        )
+        self.assertEqual(common.claude_credentials_path(env), credentials_path)
+
+    def test_apply_claude_oauth_credentials_file_keeps_source_for_refresh_when_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            credentials_path = Path(tmpdir) / "invalid-credentials.json"
+            credentials_path.write_text("{", encoding="utf-8")
+            env: dict[str, str] = {}
+
+            common.apply_claude_oauth_token_file(
+                env,
+                {"oauth_credentials_file": str(credentials_path)},
+            )
+
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
+        self.assertEqual(common.claude_credentials_path(env), credentials_path)
+
     def test_claude_auth_ready_accepts_long_lived_oauth_token_env(self) -> None:
         env = {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-test-token"}
 

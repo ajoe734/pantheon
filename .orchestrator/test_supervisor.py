@@ -1205,6 +1205,83 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIs(active, state["provider_guardrails"]["dispatch_pauses"]["codex2"])
         write_activity_log.assert_not_called()
 
+    def test_prune_unconfigured_provider_dispatch_pauses_removes_stale_gemini_pause(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {
+                "claude": {
+                    "delivery_mode": "claude_cli",
+                    "account": "claude_shared",
+                }
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "gemini": {
+                        "provider": "gemini",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "auth",
+                    },
+                    "claude_shared": {
+                        "provider": "claude",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                        "pause_kind": "auth",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.prune_unconfigured_provider_dispatch_pauses(
+                config,
+                state,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            set(state["provider_guardrails"]["dispatch_pauses"]),
+            {"claude_shared"},
+        )
+        write_activity_log.assert_called_once()
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "provider_dispatch_pause_pruned")
+        self.assertEqual(event["provider"], "gemini")
+
+    def test_prune_unconfigured_provider_dispatch_pauses_preserves_configured_provider_id(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {
+                "antigravity": {
+                    "delivery_mode": "antigravity",
+                    "account": "antigravity",
+                }
+            },
+        }
+        pause = {
+            "provider": "antigravity",
+            "blocked_until": "9999-12-31T23:59:59Z",
+            "pause_kind": "quota_terminal",
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {"antigravity": pause}
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.prune_unconfigured_provider_dispatch_pauses(
+                config,
+                state,
+            )
+
+        self.assertFalse(changed)
+        self.assertIs(
+            state["provider_guardrails"]["dispatch_pauses"]["antigravity"],
+            pause,
+        )
+        write_activity_log.assert_not_called()
+
     def test_clear_provider_dispatch_pause_removes_group_pause(self) -> None:
         config = {
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -14336,6 +14413,30 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertTrue(recovered)
         self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
         self.assertEqual(json.dumps(self.config, sort_keys=True), self.config_snapshot)
+
+    def test_live_quota_probe_uses_expiring_degraded_pause(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "quota_reached",
+            "method": "codex_exec_oauth",
+            "error": "account quota reached",
+            "checked_at": "2026-07-26T19:00:00Z",
+            "last_auth_probe_at": "2026-07-26T19:00:00Z",
+            "source": "live",
+        }
+
+        report = self._refresh(probe, state)
+
+        self.assertEqual(report["providers"]["codex2"]["account_health"], "degraded")
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(pause["pause_kind"], "quota_terminal")
+        self.assertNotEqual(
+            pause["blocked_until"],
+            supervisor.STICKY_AUTH_BLOCKED_UNTIL,
+        )
+        self.assertIsNot(pause.get("requires_live_auth_probe"), True)
 
     def test_cached_not_ready_probe_does_not_raise_a_lane_hold(self) -> None:
         state: dict[str, object] = {}

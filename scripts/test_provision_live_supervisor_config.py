@@ -10,6 +10,7 @@ import pytest
 from provision_live_supervisor_config import (
     apply_coordination_policy,
     apply_provider_account_schema,
+    apply_provider_runtime_policy,
     apply_ready_dispatcher_policy,
     apply_supervisor_lease_policy,
     apply_task_state_store,
@@ -66,6 +67,67 @@ def test_apply_provider_account_schema_rejects_unknown_provider_without_account(
 
     with pytest.raises(ValueError, match="unexpected"):
         apply_provider_account_schema(repo, rendered)
+
+
+def test_apply_provider_runtime_policy_propagates_shared_credentials_to_live_slots() -> None:
+    credentials_file = "/home/lupin/.claude/.credentials.json"
+    repo = {
+        "providers": {
+            "claude": {
+                "account": "shared",
+                "runtime": {"oauth_credentials_file": credentials_file},
+            },
+            "claude2": {
+                "account": "shared",
+                "runtime": {"oauth_credentials_file": credentials_file},
+            },
+        }
+    }
+    rendered = {
+        "providers": {
+            "claude": {
+                "account": "shared",
+                "runtime": {"oauth_credentials_file": "/stale/credentials.json"},
+            },
+            "claude2": {"account": "shared", "runtime": {}},
+            "claude1-1": {
+                "account": "shared",
+                "runtime": {"env": {"CLAUDE_CONFIG_DIR": "/isolated"}},
+            },
+        }
+    }
+
+    apply_provider_runtime_policy(repo, rendered)
+
+    for provider in rendered["providers"].values():
+        assert provider["runtime"]["oauth_credentials_file"] == credentials_file
+    assert rendered["providers"]["claude1-1"]["runtime"]["env"] == {
+        "CLAUDE_CONFIG_DIR": "/isolated"
+    }
+
+
+def test_apply_provider_runtime_policy_does_not_propagate_ambiguous_account_source() -> None:
+    repo = {
+        "providers": {
+            "claude": {
+                "account": "shared",
+                "runtime": {"oauth_credentials_file": "/one.json"},
+            },
+            "claude2": {
+                "account": "shared",
+                "runtime": {"oauth_credentials_file": "/two.json"},
+            },
+        }
+    }
+    rendered = {
+        "providers": {
+            "claude1-1": {"account": "shared", "runtime": {}},
+        }
+    }
+
+    apply_provider_runtime_policy(repo, rendered)
+
+    assert "oauth_credentials_file" not in rendered["providers"]["claude1-1"]["runtime"]
 
 
 def test_apply_ready_dispatcher_policy_replaces_stale_disabled_capacity_overlay() -> None:
@@ -228,6 +290,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         str(live_config),
         "--verbose",
     ]
+    assert rendered["watchdog"]["supervisor_root"] == str(command_root)
     assert rendered["watchdog"]["state_file"] == str(
         status_root / ".orchestrator" / "watchdog-state.json"
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -304,6 +305,76 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertTrue(result.ok)
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-test-token")
+
+    def test_claude_runtime_loads_shared_oauth_credentials_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            credentials_file = root / "shared-credentials.json"
+            credentials_file.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "accessToken": "sk-ant-oat01-shared-token",
+                            "refreshToken": "shared-refresh",
+                            "expiresAt": 4_102_444_800_000,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            isolated_config = root / "claude-worker"
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "providers": {
+                    "claude": {
+                        "allow_inbox_fallback": False,
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "oauth_credentials_file": str(credentials_file),
+                            "env": {"CLAUDE_CONFIG_DIR": str(isolated_config)},
+                            "output_format": "stream-json",
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude_cli",
+                message="wake",
+            )
+            adapter = ClaudeCLIAdapter(
+                config=config,
+                provider_capabilities={
+                    "providers": {"claude": {"supports_auto_approve": True}}
+                },
+            )
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch(
+                    "adapters.claude_cli._configured_claude_cli",
+                    return_value=".orchestrator/bin/claude",
+                ),
+                mock.patch(
+                    "adapters.claude_cli._claude_auth_ready",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "adapters.claude_cli.spawn_background_process",
+                    return_value=(fake_process, root / "claude.log"),
+                ) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-shared-token")
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(isolated_config))
+        self.assertEqual(
+            env["PANTHEON_CLAUDE_CREDENTIALS_FILE"],
+            str(credentials_file),
+        )
 
     def test_gemini_can_disable_inbox_fallback(self) -> None:
         config = {
