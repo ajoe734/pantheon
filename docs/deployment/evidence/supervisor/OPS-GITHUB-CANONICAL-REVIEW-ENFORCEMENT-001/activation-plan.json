@@ -1,0 +1,66 @@
+{
+  "schema": "pantheon.github-canonical-review-activation/v1",
+  "repository": "ajoe734/pantheon",
+  "status": "not_applied_requires_human_ops",
+  "required_check": {
+    "context": "Pantheon canonical reviewer attestation",
+    "expected_app_id": 15368,
+    "source": "GitHub Actions custom check run on the exact PR head"
+  },
+  "preconditions": [
+    "Human/Ops gives explicit authorization for the named branch and exact captured baseline.",
+    "canonical-review-gate.yml is already merged into the target branch; dev and master are activated separately after the workflow exists on each branch.",
+    ".github/canonical-review-keys.json has been populated by a separately reviewed bootstrap PR; the shipped empty registry intentionally fails closed.",
+    "Each reviewer signer key is absolute, mode 0600, outside the repository and status root, and exposed only to the protected governed command runtime.",
+    "A canary PR has produced the exact check name from GitHub Actions app id 15368 within the last seven days.",
+    "The scheduled re-evaluation has been observed updating an open canary so attestation expiry and key revocation cannot leave a stale success.",
+    "A fresh full protection response, scoped required-review response, enforce-admin response, repository response, and ruleset response have been captured after any external freeze/release operation.",
+    "The freshly generated plan preserves every unrelated status check and writes rollback payloads before activation."
+  ],
+  "activation_order": [
+    {
+      "step": 1,
+      "operation": "PATCH repos/ajoe734/pantheon",
+      "body": {
+        "allow_auto_merge": false
+      },
+      "reason": "Block UI and GraphQL auto-merge creation; approved gated tasks merge only through exact-head integrator."
+    },
+    {
+      "step": 2,
+      "operation": "POST repos/ajoe734/pantheon/branches/{branch}/protection/enforce_admins",
+      "body": {},
+      "reason": "Make branch requirements apply to the shared admin credential."
+    },
+    {
+      "step": 3,
+      "operation": "PATCH repos/ajoe734/pantheon/branches/{branch}/protection/required_status_checks",
+      "body_contract": {
+        "strict": "preserve fresh baseline",
+        "checks": "preserve every fresh baseline check and append exactly one {context: Pantheon canonical reviewer attestation, app_id: 15368}"
+      },
+      "reason": "Only the Actions-app check produced by the trusted-base verifier can satisfy the new merge requirement."
+    }
+  ],
+  "readback": {
+    "command": "python3 scripts/git/canonical_review_check.py verify-protection --protection-json <fresh-protection.json> --repository-json <fresh-repository.json>",
+    "must_prove": [
+      "exact context occurs once with app_id 15368",
+      "enforce_admins is true",
+      "allow_auto_merge is false",
+      "all pre-existing required checks are unchanged",
+      "missing, rejected, stale-head, forged, expired, and self-owned attestations produce a failing exact-head check"
+    ]
+  },
+  "rollback": {
+    "trigger": "Any missing/unreadable key registry, wrong app id, lost pre-existing check, canary false pass, merge bypass, or workflow outage.",
+    "order": [
+      "PATCH the branch required_status_checks endpoint with the exact fresh pre-activation strict/checks payload.",
+      "Restore enforce_admins with POST or DELETE exactly as recorded in the fresh baseline.",
+      "PATCH repository allow_auto_merge to the exact fresh baseline value.",
+      "Read back full protection, scoped required reviews, enforce_admins, repository settings, and rulesets; compare with the baseline digest."
+    ],
+    "warning": "The 2026-07-28 dev baseline changed during capture. Never execute rollback from this committed example; regenerate it immediately before an authorized activation."
+  },
+  "live_mutations_performed_by_task": []
+}

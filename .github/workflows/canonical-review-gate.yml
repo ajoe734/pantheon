@@ -17,6 +17,8 @@ on:
       - created
       - edited
       - deleted
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -30,32 +32,65 @@ permissions:
   issues: read
   checks: write
 
-concurrency:
-  group: >-
-    canonical-review-${{ github.repository }}-${{
-      github.event.pull_request.number ||
-      github.event.issue.number ||
-      inputs.pr_number ||
-      github.run_id
-    }}
-  cancel-in-progress: true
-
 jobs:
-  evaluate:
-    name: Evaluate signed canonical review
+  discover:
+    name: Discover PR heads to evaluate
     if: >-
       github.event_name != 'issue_comment' ||
       github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      EXPECTED_ACTIONS_APP_ID: "15368"
-      PANTHEON_CANONICAL_REVIEW_PUBLIC_KEYS_JSON: >-
-        ${{ vars.PANTHEON_CANONICAL_REVIEW_PUBLIC_KEYS_JSON }}
-      PR_NUMBER: >-
+      EVENT_PR_NUMBER: >-
         ${{ github.event.pull_request.number ||
             github.event.issue.number ||
             inputs.pr_number }}
+    outputs:
+      pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
+
+    steps:
+      - name: Resolve event PR or scheduled open PRs
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+          numbers_file="$RUNNER_TEMP/canonical-review-pr-numbers.txt"
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.base.ref == "dev" or .base.ref == "master") | .number' \
+              > "$numbers_file"
+          else
+            if [[ ! "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+              echo "PR number must be a positive integer" >&2
+              exit 1
+            fi
+            printf '%s\n' "$EVENT_PR_NUMBER" > "$numbers_file"
+          fi
+          pr_numbers="$(
+            jq -Rsc \
+              'split("\n") | map(select(length > 0) | tonumber) | unique' \
+              "$numbers_file"
+          )"
+          echo "pr_numbers=$pr_numbers" >> "$GITHUB_OUTPUT"
+
+  evaluate:
+    name: Evaluate signed canonical review
+    needs:
+      - discover
+    if: needs.discover.outputs.pr_numbers != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        pr_number: ${{ fromJSON(needs.discover.outputs.pr_numbers) }}
+    concurrency:
+      group: canonical-review-${{ github.repository }}-${{ matrix.pr_number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_ACTIONS_APP_ID: "15368"
+      PR_NUMBER: ${{ matrix.pr_number }}
 
     steps:
       - name: Capture exact PR head and review comments
@@ -70,8 +105,9 @@ jobs:
           pr_json="$RUNNER_TEMP/canonical-review-pr.json"
           comments_json="$RUNNER_TEMP/canonical-review-comments.json"
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pr_json"
-          gh api --paginate --slurp \
+          gh api --paginate \
             "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '.[]' \
             > "$comments_json"
           base_ref="$(jq -r '.base.ref // empty' "$pr_json")"
           head_sha="$(jq -r '.head.sha // empty' "$pr_json")"
@@ -102,6 +138,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --pr-json "${{ steps.snapshot.outputs.pr_json }}" \
             --comments-json "${{ steps.snapshot.outputs.comments_json }}" \
+            --trusted-keys-file .github/canonical-review-keys.json \
             --result-file "$RUNNER_TEMP/canonical-review-result.json"
           checker_rc=$?
           set -e
@@ -116,6 +153,7 @@ jobs:
           set -euo pipefail
           result_json="$RUNNER_TEMP/canonical-review-result.json"
           check_json="$RUNNER_TEMP/canonical-review-check-run.json"
+          update_json="$RUNNER_TEMP/canonical-review-check-update.json"
           response_json="$RUNNER_TEMP/canonical-review-check-response.json"
           if [[ ! -s "$result_json" ]]; then
             jq -n \
@@ -151,9 +189,33 @@ jobs:
                 summary: $summary
               }
             }' > "$check_json"
-          gh api --method POST \
-            "repos/$GITHUB_REPOSITORY/check-runs" \
-            --input "$check_json" > "$response_json"
+          existing_id="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/commits/${{ steps.snapshot.outputs.head_sha }}/check-runs?filter=latest&per_page=100" \
+              --jq \
+              ".check_runs
+               | map(select(
+                   .name == \"Pantheon canonical reviewer attestation\" and
+                   .app.id == ($EXPECTED_ACTIONS_APP_ID | tonumber)
+                 ))
+               | sort_by(.id)
+               | last
+               | .id // empty"
+          )"
+          if [[ "$existing_id" =~ ^[1-9][0-9]*$ ]]; then
+            jq 'del(.head_sha)' "$check_json" > "$update_json"
+            if ! gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/check-runs/$existing_id" \
+              --input "$update_json" > "$response_json"; then
+              gh api --method POST \
+                "repos/$GITHUB_REPOSITORY/check-runs" \
+                --input "$check_json" > "$response_json"
+            fi
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/check-runs" \
+              --input "$check_json" > "$response_json"
+          fi
           jq -e \
             --arg name "Pantheon canonical reviewer attestation" \
             --arg head_sha "${{ steps.snapshot.outputs.head_sha }}" \

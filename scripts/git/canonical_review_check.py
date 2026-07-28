@@ -190,6 +190,34 @@ def _load_json_file(path: Path) -> Any:
         ) from exc
 
 
+def _load_comments_file(path: Path) -> list[dict[str, Any]]:
+    """Read a JSON array or gh's paginated one-JSON-object-per-line output."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CanonicalReviewError(
+            "comments_unavailable",
+            f"cannot read {path}: {exc}",
+        ) from exc
+    try:
+        return _flatten_comments(json.loads(text))
+    except json.JSONDecodeError:
+        values: list[Any] = []
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                values.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise CanonicalReviewError(
+                    "comments_unavailable",
+                    f"{path} line {line_number} is not valid JSON",
+                ) from exc
+        return _flatten_comments(values)
+
+
 def _flatten_comments(value: Any) -> list[dict[str, Any]]:
     """Accept REST arrays and ``gh api --paginate --slurp`` arrays-of-arrays."""
 
@@ -1103,19 +1131,29 @@ def summarize_protection(
     *,
     repository: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    reviews = protection.get("required_pull_request_reviews")
-    reviews = reviews if isinstance(reviews, Mapping) else {}
+    raw_reviews = protection.get("required_pull_request_reviews")
+    reviews_present = isinstance(raw_reviews, Mapping)
+    reviews = raw_reviews if reviews_present else {}
     admins = protection.get("enforce_admins")
     admins = admins if isinstance(admins, Mapping) else {}
     required = protection.get("required_status_checks")
     required = required if isinstance(required, Mapping) else {}
     summary = {
-        "required_approving_review_count": int(
-            reviews.get("required_approving_review_count") or 0
+        "required_pull_request_reviews_present": reviews_present,
+        "required_approving_review_count": (
+            int(reviews.get("required_approving_review_count") or 0)
+            if reviews_present
+            else None
         ),
-        "dismiss_stale_reviews": bool(reviews.get("dismiss_stale_reviews")),
-        "require_last_push_approval": bool(
-            reviews.get("require_last_push_approval")
+        "dismiss_stale_reviews": (
+            bool(reviews.get("dismiss_stale_reviews"))
+            if reviews_present
+            else None
+        ),
+        "require_last_push_approval": (
+            bool(reviews.get("require_last_push_approval"))
+            if reviews_present
+            else None
         ),
         "enforce_admins": bool(admins.get("enabled")),
         "strict_required_status_checks": bool(required.get("strict")),
@@ -1237,12 +1275,54 @@ def verify_active_protection(
         failures.append("branch protection does not enforce administrators")
     if summary.get("allow_auto_merge") is not False:
         failures.append("repository auto-merge is still enabled")
+    active = not failures
+    entrypoints = [
+        {
+            "entrypoint": "web_ui_direct_merge",
+            "control": "actions_app_pinned_required_check",
+            "blocked_without_exact_approval": active,
+        },
+        {
+            "entrypoint": "gh_pr_merge",
+            "control": "actions_app_pinned_required_check",
+            "blocked_without_exact_approval": active,
+        },
+        {
+            "entrypoint": "rest_pull_merge",
+            "control": "actions_app_pinned_required_check",
+            "blocked_without_exact_approval": active,
+        },
+        {
+            "entrypoint": "graphql_merge_pull_request",
+            "control": "actions_app_pinned_required_check",
+            "blocked_without_exact_approval": active,
+        },
+        {
+            "entrypoint": "web_or_graphql_auto_merge_creation",
+            "control": "repository_allow_auto_merge_false",
+            "blocked_without_exact_approval": active,
+        },
+        {
+            "entrypoint": "auto_merge_finalization",
+            "control": "actions_app_pinned_required_check",
+            "blocked_without_exact_approval": active,
+        },
+        {
+            "entrypoint": "administrator_bypass",
+            "control": "branch_protection_enforce_admins",
+            "blocked_without_exact_approval": active,
+        },
+    ]
     return {
-        "ok": not failures,
+        "ok": active,
         "context": context,
         "app_id": app_id,
         "summary": summary,
         "failures": failures,
+        "entrypoints": entrypoints,
+        "all_entrypoints_blocked_without_exact_approval": all(
+            row["blocked_without_exact_approval"] for row in entrypoints
+        ),
     }
 
 
@@ -1330,7 +1410,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raw_pr,
                 repository=args.repository,
             )
-            comments = _flatten_comments(_load_json_file(args.comments_json))
+            comments = _load_comments_file(args.comments_json)
             reference = (
                 _parse_time(args.now, field_name="now")
                 if args.now

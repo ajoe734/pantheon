@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "schema_status": "repository_delivery_ready_live_activation_withheld",
+  "task": {
+    "id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json"
+  },
+  "implementation": {
+    "anchor_commit": "100e0ef40",
+    "workflow": ".github/workflows/canonical-review-gate.yml",
+    "trusted_public_keys": ".github/canonical-review-keys.json",
+    "checker": "scripts/git/canonical_review_check.py",
+    "tests": "scripts/git/test_canonical_review_check.py",
+    "trust_boundary": "Protected base-branch public-key registry plus reviewer Ed25519 private key outside candidate/status roots -> signed exact PR/head/base/owner/reviewer envelope -> trusted base-branch verifier -> exact-head GitHub Actions app check -> app-pinned required branch check.",
+    "legacy_status_is_not_authority": "The existing Pantheon canonical review gate commit status is user-owned and remains additive compatibility evidence only; it cannot satisfy the new app-pinned check."
+  },
+  "artifacts": [
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/baseline.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/activation-plan.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/merge-entrypoint-matrix.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.md",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt"
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "claim": "Capture exact dev/master protection baseline.",
+      "status": "pass_with_live_drift_recorded",
+      "evidence": "baseline.json records the historical zero-approval/admin-unenforced hole, exact current master zero/admin-unenforced state, and the externally changed dev count=1/admin-enforced state observed while this worker made no mutations."
+    },
+    {
+      "id": "AC2",
+      "claim": "Exact-head canonical reviewer attestation cannot be forged or replayed by the PR author/shared GitHub credential.",
+      "status": "pass_repository",
+      "evidence": "Ed25519 signer key must be mode 0600 outside candidate/status roots; the public key is read from the protected PR base branch, not a candidate branch or mutable runtime variable. Signed fields bind repository, task, PR, head sha, head branch, base, owner, reviewer, decision, canonical record digest, issuance, expiry, and nonce. Tests reject forged, cross-head, cross-PR, cross-repository, key/reviewer mismatch, and self-owned envelopes."
+    },
+    {
+      "id": "AC3",
+      "claim": "Fail-closed required check rejects missing, rejected, stale-head, or self-owned attestations.",
+      "status": "pass_repository",
+      "evidence": "Trusted-base workflow reads all PR comments and publishes a custom exact-head check only after the verifier decision. Missing/malformed keys or output also create failure. PR/comment events update immediately and a 15-minute schedule re-evaluates every open dev/master PR so expiry or key revocation cannot leave a stale success indefinitely. Branch activation pins the context to Actions app id 15368."
+    },
+    {
+      "id": "AC4",
+      "claim": "Web UI, gh, REST, GraphQL, auto-merge creation/finalization, and admin bypass remain blocked before exact approval.",
+      "status": "pass_configuration_contract_live_probe_withheld",
+      "evidence": "merge-entrypoint-matrix.json plus verify-protection require the app-pinned check, enforce_admins=true, and allow_auto_merge=false simultaneously. Live mutations/probes were not authorized."
+    },
+    {
+      "id": "AC5",
+      "claim": "Rollback-safe branch-protection activation and readback verification.",
+      "status": "pass_repository",
+      "evidence": "protection-plan preserves exact pre-existing checks, changes scoped protection endpoints, emits rollback operations, and refuses active readback unless the app id/admin/auto-merge invariants all hold. activation-plan.json requires a fresh baseline because dev drifted during capture."
+    },
+    {
+      "id": "AC6",
+      "claim": "Do not mutate live GitHub protection without Human/Ops authorization.",
+      "status": "pass",
+      "evidence": "Only GET/read operations were performed. No protection, repository setting, variable, key, PR merge, or auto-merge mutation was made."
+    },
+    {
+      "id": "AC7",
+      "claim": "Branch, commit, push, PR checks, exact-head independent review, merge, and archive evidence.",
+      "status": "pending_delivery_flow",
+      "evidence": "Anchor commit exists; final validation, PR, Claude exact-head review, merge, and governed done closeout remain."
+    }
+  ],
+  "non_interference": {
+    "live_branch_protection_changed": false,
+    "repository_auto_merge_changed": false,
+    "repository_variables_changed": false,
+    "reviewer_keys_created_or_rotated": false,
+    "merge_or_auto_merge_calls_issued": false,
+    "canonical_status_files_edited_directly": false
+  },
+  "validation": {
+    "status": "pass",
+    "record": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt",
+    "aggregate_python_tests": 129,
+    "suites": {
+      "canonical_review_check": 31,
+      "task_review_merge_gate": 92,
+      "github_review_bridge": 6
+    },
+    "static_checks": [
+      "py_compile",
+      "evidence JSON parse",
+      "workflow YAML parse",
+      "workflow static contract",
+      "actionlint v1.7.12",
+      "git diff --check"
+    ],
+    "not_run": [
+      "live protection activation/probes require Human/Ops authorization"
+    ]
+  },
+  "residual_risks": [
+    {
+      "id": "LIVE-ACTIVATION-REQUIRES-HUMAN-OPS",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "The workflow/checker cannot govern GitHub merge endpoints until Human/Ops lands the protected public-key registry, provisions repo-external reviewer keys, and activates the app-pinned required check with admin enforcement and repository auto-merge disabled."
+    },
+    {
+      "id": "DEV-PROTECTION-DRIFT",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "Dev protection changed during readback and its full/scoped endpoints disagreed. Any activation or rollback based on the committed snapshot is forbidden; regenerate immediately before authorization."
+    },
+    {
+      "id": "MASTER-ROLLOUT-ORDER",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "Master activation must wait until this trusted workflow exists on master and has emitted a canary Actions-app check there."
+    }
+  ]
+}

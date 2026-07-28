@@ -1,0 +1,67 @@
+{
+  "schema": "pantheon.github-canonical-review-entrypoints/v1",
+  "activation_required": true,
+  "proof_basis": [
+    "GitHub required status checks must pass before a protected-branch PR can merge.",
+    "GitHub branch protection can pin a required status check to a specific GitHub App; statuses from another user or integration do not satisfy it.",
+    "GitHub branch protection must be configured to apply to administrators to remove the shared owner/admin bypass.",
+    "Repository auto-merge must be disabled to block UI/GraphQL auto-merge creation rather than merely waiting to block finalization.",
+    "scripts/git/canonical_review_check.py verify-protection returns success only when all three controls are simultaneously present."
+  ],
+  "official_sources": [
+    "https://docs.github.com/en/pull-requests/reference/status-checks",
+    "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches",
+    "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request",
+    "https://docs.github.com/en/rest/branches/branch-protection"
+  ],
+  "entrypoints": [
+    {
+      "entrypoint": "GitHub web UI direct merge",
+      "preapproval_result_after_activation": "blocked",
+      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+    },
+    {
+      "entrypoint": "gh pr merge",
+      "preapproval_result_after_activation": "blocked",
+      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+    },
+    {
+      "entrypoint": "REST PUT /pulls/{pull_number}/merge",
+      "preapproval_result_after_activation": "blocked",
+      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+    },
+    {
+      "entrypoint": "GraphQL mergePullRequest",
+      "preapproval_result_after_activation": "blocked",
+      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+    },
+    {
+      "entrypoint": "web UI / GraphQL enablePullRequestAutoMerge",
+      "preapproval_result_after_activation": "blocked",
+      "control": "repository allow_auto_merge=false"
+    },
+    {
+      "entrypoint": "auto-merge finalization",
+      "preapproval_result_after_activation": "blocked",
+      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+    },
+    {
+      "entrypoint": "administrator bypass",
+      "preapproval_result_after_activation": "blocked",
+      "control": "enforce_admins=true"
+    }
+  ],
+  "negative_fixtures": [
+    "missing_attestation",
+    "attestation_rejected",
+    "stale_head_attestation",
+    "signature_invalid",
+    "untrusted_reviewer_key",
+    "reviewer_key_mismatch",
+    "self_owned_attestation",
+    "attestation_expired",
+    "attestation_time_invalid",
+    "ambiguous_attestation"
+  ],
+  "live_result": "not_run_without_human_ops_authorization"
+}

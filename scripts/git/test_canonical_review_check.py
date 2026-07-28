@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import sys
 import tempfile
 import unittest
@@ -254,6 +253,19 @@ class ExactHeadAttestationTests(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertEqual(result.reason, "untrusted_reviewer_key")
 
+    def test_empty_bootstrap_registry_fails_closed(self) -> None:
+        registry_path = (
+            Path(__file__).resolve().parents[2]
+            / ".github"
+            / "canonical-review-keys.json"
+        )
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(
+            check.CanonicalReviewError,
+            "no enabled keys",
+        ):
+            check.load_trusted_keys(registry)
+
     def test_expired_approval_fails_closed(self) -> None:
         result = self.evaluate(
             [
@@ -317,6 +329,23 @@ class ExactHeadAttestationTests(unittest.TestCase):
         comments = check._flatten_comments(
             [[signed_comment(payload())], [{"id": 99, "body": "noise"}]]
         )
+        self.assertEqual(len(comments), 2)
+        self.assertTrue(self.evaluate(comments).passed)
+
+    def test_paginated_gh_json_lines_are_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "comments.jsonl"
+            path.write_text(
+                "\n".join(
+                    json.dumps(item)
+                    for item in [
+                        signed_comment(payload()),
+                        {"id": 99, "body": "noise"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            comments = check._load_comments_file(path)
         self.assertEqual(len(comments), 2)
         self.assertTrue(self.evaluate(comments).passed)
 
@@ -588,6 +617,17 @@ class ProtectionPlanTests(unittest.TestCase):
         )
         self.assertEqual(plan["rollback"][1]["method"], "POST")
 
+    def test_missing_review_block_is_unknown_not_zero(self) -> None:
+        protection, repository = self.baseline(admins=True)
+        protection.pop("required_pull_request_reviews")
+        summary = check.summarize_protection(
+            protection,
+            repository=repository,
+        )
+        self.assertFalse(summary["required_pull_request_reviews_present"])
+        self.assertIsNone(summary["required_approving_review_count"])
+        self.assertIsNone(summary["dismiss_stale_reviews"])
+
     def test_active_readback_requires_actions_app_admins_and_no_auto_merge(self) -> None:
         protection, repository = self.baseline(admins=True)
         protection["required_status_checks"]["checks"].append(
@@ -600,6 +640,10 @@ class ProtectionPlanTests(unittest.TestCase):
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["failures"], [])
+        self.assertTrue(
+            result["all_entrypoints_blocked_without_exact_approval"]
+        )
+        self.assertEqual(len(result["entrypoints"]), 7)
 
     def test_user_owned_or_unpinned_status_is_not_accepted(self) -> None:
         protection, repository = self.baseline(admins=True)
@@ -632,6 +676,54 @@ class ProtectionPlanTests(unittest.TestCase):
             "repository auto-merge is still enabled",
             result["failures"],
         )
+        self.assertFalse(
+            result["all_entrypoints_blocked_without_exact_approval"]
+        )
+
+
+class WorkflowContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.workflow = (
+            Path(__file__).resolve().parents[2]
+            / ".github"
+            / "workflows"
+            / "canonical-review-gate.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_workflow_runs_trusted_base_for_pr_and_comment_changes(self) -> None:
+        self.assertIn("pull_request_target:", self.workflow)
+        self.assertIn("issue_comment:", self.workflow)
+        self.assertIn('cron: "*/15 * * * *"', self.workflow)
+        self.assertIn(
+            "ref: refs/heads/${{ steps.snapshot.outputs.base_ref }}",
+            self.workflow,
+        )
+        self.assertIn("persist-credentials: false", self.workflow)
+        self.assertIn(
+            'select(.base.ref == "dev" or .base.ref == "master")',
+            self.workflow,
+        )
+
+    def test_workflow_has_only_read_permissions_plus_app_check_write(self) -> None:
+        self.assertIn("contents: read", self.workflow)
+        self.assertIn("pull-requests: read", self.workflow)
+        self.assertIn("issues: read", self.workflow)
+        self.assertIn("checks: write", self.workflow)
+        self.assertNotIn("contents: write", self.workflow)
+        self.assertNotIn("vars.PANTHEON_CANONICAL_REVIEW", self.workflow)
+        self.assertIn(
+            "--trusted-keys-file .github/canonical-review-keys.json",
+            self.workflow,
+        )
+
+    def test_workflow_publishes_and_reads_back_actions_app_owned_check(self) -> None:
+        self.assertIn('"repos/$GITHUB_REPOSITORY/check-runs"', self.workflow)
+        self.assertIn("check-runs/$existing_id", self.workflow)
+        self.assertIn("--method PATCH", self.workflow)
+        self.assertIn('EXPECTED_ACTIONS_APP_ID: "15368"', self.workflow)
+        self.assertIn(".app.id == $app_id", self.workflow)
+        self.assertIn(check.CHECK_NAME, self.workflow)
 
 
 if __name__ == "__main__":
