@@ -1,0 +1,201 @@
+{
+  "schema_version": "pantheon.l12_bff_repair_acceptance_evidence.v1",
+  "task": {
+    "id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+    "title": "Finish L12-BFF-001 acceptance defects and proof drills",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "review_pending_independent_exact_head_decision",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-BFF-REPAIR-ACCEPTANCE-20260728",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json",
+    "evidence_cut_at": "2026-07-28T16:33:17Z"
+  },
+  "scope": {
+    "owned_layer": "Task-scoped acceptance reconfirmation and reproducible proof evidence for the merged L12-BFF-001 implementation.",
+    "not_changing": "Merged BFF, telemetry, or incidents product code; hosted deployment; service credentials; runtime manifests; active workers; trading RuntimeBinding semantics; or program-level twelve-loop completion.",
+    "changed_files": [
+      ".orchestrator/task-briefs/l12_bff_repair_acceptance_20260728.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.sha256"
+    ]
+  },
+  "implementation_delivery": {
+    "source_task_id": "L12-BFF-001",
+    "pull_request": 4274,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4274",
+    "pull_request_head": "414546226003bce04a60f2d5941d999e96afd075",
+    "merge_commit": "7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1",
+    "merged_at": "2026-07-27T22:14:45Z",
+    "merge_is_ancestor_of_evidence_base": true,
+    "evidence_base": "e6f77614d2e68252980e12f6ee4789e4bc8297d1",
+    "github_gates": {
+      "branch_ci": "success",
+      "canonical_review_gate": "success",
+      "root_merge_freeze": "success"
+    },
+    "source_evidence": {
+      "manifest": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
+      "companion_checksum": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.sha256",
+      "ten_rule_validator": "pass",
+      "checksum": "pass"
+    },
+    "follow_up_delivery": {
+      "pull_request": 4305,
+      "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4305",
+      "owner_evidence_commit": "0701c124f167c97f1b52177f97611e916fab17a3",
+      "state_at_handoff": "open",
+      "auto_merge": "disabled_pending_exact_head_review",
+      "reviewer": "Codex2"
+    }
+  },
+  "proof_drills": [
+    {
+      "id": "PD1",
+      "test": "test_l12_bff_strict_infrastructure_event_has_no_fake_runtime_binding",
+      "status": "pass",
+      "proves": "The monitor emits pantheon.infrastructure-health/1 without invented trading RuntimeBinding fields."
+    },
+    {
+      "id": "PD2",
+      "test": "test_l12_bff_monitor_event_is_admitted_by_real_strict_telemetry_route",
+      "status": "pass",
+      "proves": "A service-JWT and tenant/producer-bound monitor event is admitted by the real strict telemetry application route and durable ledger."
+    },
+    {
+      "id": "PD3",
+      "test": "test_l12_bff_stable_event_id_dedupes_restart_and_two_replicas",
+      "status": "pass",
+      "proves": "Two replicas sharing the durable store post one stable event and a restarted monitor reads the persisted degraded target state."
+    },
+    {
+      "id": "PD4",
+      "test": "test_l12_bff_delivery_409_enters_dlq_and_replays_same_event",
+      "status": "pass",
+      "proves": "HTTP 409 is fail-closed into DLQ and governed replay reuses the exact event identity."
+    },
+    {
+      "id": "PD5",
+      "test": "test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor",
+      "status": "pass",
+      "proves": "The BFF replay route requires approval data under MFA-bound operator auth and persists the replay actor/result."
+    },
+    {
+      "id": "PD6",
+      "test": "test_l12_bff_complete_registry_and_error_rate_spike",
+      "status": "pass",
+      "proves": "All configured default and newly discovered owner targets enter the registry, and a 2-of-3 failure window emits one error-rate event."
+    },
+    {
+      "id": "PD7",
+      "test": "test_l12_bff_real_target_stop_and_recovery_resolves_durable_mapping",
+      "status": "pass",
+      "proves": "A real loopback HTTP target stops and recovers while the controller emits three telemetry deliveries, opens one incident, resolves it, and retains the mapping."
+    },
+    {
+      "id": "PD8",
+      "test": "test_l12_bff_incident_mapping_survives_failure_restart_and_recovery",
+      "status": "pass",
+      "proves": "A failed incident-open stays durable across restart; recovery remains dependency-blocked until the exact dead letter is replayed, then resolves."
+    },
+    {
+      "id": "PD9",
+      "test": "test_l12_bff_recovery_survives_delivered_history_retention",
+      "status": "pass",
+      "proves": "Retention preserves the active incident-open dependency and a restarted controller resolves recovery with zero backlog."
+    }
+  ],
+  "incident_application_route_proof": {
+    "status": "pass",
+    "tests": [
+      "test_consume_infrastructure_health_creates_non_runtime_incident",
+      "test_consume_infrastructure_health_idempotent_replay_returns_existing",
+      "test_consume_infrastructure_health_conflicting_replay_rejected",
+      "test_consume_infrastructure_health_ignores_runtime_binding_payload_shape",
+      "test_infrastructure_health_incident_resolves_through_status_route"
+    ],
+    "proves": "The actual incidents application routes create the non-trading IncidentCase, dedupe exact replay, reject conflicting reuse, ignore caller-supplied fake runtime binding shape, and resolve through the canonical status route."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Repair telemetry admission authority; repair incident resolution via actual app routes; add durable restart/two-replica dedupe.",
+      "status": "pass",
+      "proof": "PD1 through PD3 and the five incidents application-route tests pass on current dev."
+    },
+    {
+      "id": "AC2",
+      "criterion": "Cover the complete configured downstream registry.",
+      "status": "pass",
+      "proof": "PD6 enumerates all default target specifications plus a newly configured owner endpoint with unique resolved URLs."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Trigger infrastructure telemetry from an error-rate spike.",
+      "status": "pass",
+      "proof": "PD6 emits exactly one error-rate event at the configured 2-of-3 threshold."
+    },
+    {
+      "id": "AC4",
+      "criterion": "Prove retry, DLQ, replay, restart, recovery, and retention behavior.",
+      "status": "pass",
+      "proof": "PD4, PD5, PD7, PD8, and PD9 pass with stable event and incident identities."
+    },
+    {
+      "id": "AC5",
+      "criterion": "Open a task PR for exact-head independent review, root-freeze, and merge.",
+      "status": "pending",
+      "proof": "PR #4305 is open with auto-merge disabled; Codex2 exact-head review, root-freeze, merge, and owner closeout remain pending."
+    }
+  ],
+  "verification": {
+    "validated_at": "2026-07-28T16:33:17Z",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py && .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/telemetry/test_infrastructure_health_ingest.py services/incidents/test_main_routes.py",
+        "result": "pass",
+        "conclusion": "168 passed in 71.16 seconds; warnings are existing FastAPI/Starlette/jsonschema deprecations."
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q -vv services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py -k l12_bff",
+        "result": "pass",
+        "conclusion": "9 passed and 29 deselected in 8.77 seconds; all nine task-specific proof drills are named in proof_drills."
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q -vv services/incidents/test_main_routes.py -k 'consume_infrastructure_health or infrastructure_health_incident_resolves'",
+        "result": "pass",
+        "conclusion": "5 passed and 45 deselected in 2.06 seconds through the incidents application routes."
+      },
+      {
+        "command": ".venv-pantheon/bin/python scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json --json",
+        "result": "pass",
+        "conclusion": "The existing source-task manifest passes all ten evidence-consistency rules with no rejection."
+      },
+      {
+        "command": "(cd docs/deployment/evidence/twelve-loop-gap/L12-BFF-001 && sha256sum -c evidence.sha256)",
+        "result": "pass",
+        "conclusion": "README.md and evidence.json both match the source-task companion checksum."
+      },
+      {
+        "command": "git merge-base --is-ancestor 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1 HEAD && git merge-base --is-ancestor 414546226003bce04a60f2d5941d999e96afd075 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1",
+        "result": "pass",
+        "conclusion": "The implementation PR head is contained by its merge commit, and that merge is contained by the evidence base."
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "independent_decision": "pending",
+    "exact_task_pr_head": "pending",
+    "canonical_review_event_id": "pending",
+    "note": "The historical PR #4274 review proves the source implementation merge only. Codex2 must independently review PR #4305 exact head and bind this manifest before governed integration and owner closeout."
+  },
+  "known_limitations": [
+    "The real-target drill is local and loopback-bound; it is not hosted dev deployment evidence.",
+    "This task does not prove the currently served hosted BFF commit, protected service-JWT provisioning, retained hosted volume, or a hosted restart.",
+    "Hosted and program-level closure remain delegated to the designated L12 manifest, verifier, deployment, hosted, and final-closeout tasks.",
+    "Existing FastAPI/Starlette/jsonschema deprecation warnings do not fail the focused suite but remain visible in the command output."
+  ]
+}
