@@ -1,0 +1,209 @@
+{
+  "schema_version": "pantheon.ops.provider_first_readiness_evidence.v1",
+  "task": {
+    "id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+    "title": "Verify Claude/Antigravity provider-first readiness",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "owner_evidence_ready_pending_independent_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.json",
+    "evidence_cut_at": "2026-07-28T12:54:20Z"
+  },
+  "scope": {
+    "owned_layer": "Live supervisor provider readiness and dispatch evidence for the Claude and Antigravity families.",
+    "not_changing": "Provider configuration, provider credentials, scheduler policy, task ownership, product services, hosted FE/BFF deployment, and twelve-loop product maturity.",
+    "composes_with": [
+      "L12-FLEET-001",
+      "SUP-PROVIDER-POOL-PROBE-GATE-001",
+      "L12-THREE-PASS-GAP-AUDIT-20260728"
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/ops_l12_provider_first_readiness_20260728.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-20260728/evidence.sha256"
+    ]
+  },
+  "runtime_binding": {
+    "status_root": "/home/lupin/pantheon",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "11858f4d445565064e630cce9b89ea8b475a6598",
+    "command_root_head": "11858f4d445565064e630cce9b89ea8b475a6598",
+    "supervisor": {
+      "pid": 1041099,
+      "lifecycle": "running",
+      "mode_status": "active",
+      "last_heartbeat_at": "2026-07-28T12:54:12Z",
+      "last_successful_loop_at": "2026-07-28T12:54:12Z",
+      "last_loop_error": null,
+      "execution_occupancy": 4
+    },
+    "runtime_health": {
+      "generated_at": "2026-07-28T12:54:20.467465Z",
+      "healthy": true,
+      "supervisor_heartbeat_age_seconds": 8.467465,
+      "watchdog_probe_age_seconds": 45.467465,
+      "task_state_shadow_caught_up": true,
+      "task_state_shadow_nonterminal_task_count": 22
+    }
+  },
+  "provider_probes": {
+    "probe_semantics": "Targeted probe_provider_auth(config, provider_id, force=True) calls from the validated live command root. Cached provider capability rows are not used as the readiness verdict.",
+    "claude": {
+      "provider": "claude",
+      "kind": "claude",
+      "ready": true,
+      "status": "ready",
+      "method": "claude_auth_status_refresh",
+      "error": null,
+      "checked_at": "2026-07-28T12:54:11Z",
+      "source": "live",
+      "verdict": "dispatchable"
+    },
+    "antigravity": {
+      "provider": "antigravity",
+      "kind": "antigravity",
+      "ready": false,
+      "status": "quota_reached",
+      "method": "agy_prompt_oauth",
+      "error": "Antigravity account quota is exhausted; enable overages or wait for reset.",
+      "checked_at": "2026-07-28T12:54:20Z",
+      "source": "live",
+      "verdict": "fail_closed_not_dispatchable"
+    }
+  },
+  "dispatch_proof": {
+    "captured_at": "2026-07-28T12:54:20Z",
+    "claude_worker": {
+      "run_id": "claude1-1-20260728T125241Z-bef6efcc",
+      "provider": "claude1-1",
+      "logical_agent_id": "claude",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "queue_event_id": "evt-20260728T125237Z-205eb164",
+      "status": "running",
+      "last_heartbeat_at": "2026-07-28T12:54:11Z",
+      "proves": "A real supervisor worker started on a Claude lane after provider readiness recovery."
+    },
+    "healthy_l12_workers_continuing": [
+      {
+        "run_id": "codex-20260728T124129Z-cdea0656",
+        "provider": "codex1-1",
+        "logical_agent_id": "codex",
+        "task_id": "L12-GAP-CLOSEOUT-RECONCILE-20260728",
+        "status": "running",
+        "last_heartbeat_at": "2026-07-28T12:54:01Z"
+      },
+      {
+        "run_id": "codex-20260728T125137Z-31705445",
+        "provider": "codex2-4",
+        "logical_agent_id": "codex2",
+        "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+        "status": "running",
+        "last_heartbeat_at": "2026-07-28T12:54:07Z"
+      },
+      {
+        "run_id": "codex-20260728T125137Z-79dd9644",
+        "provider": "codex2-1",
+        "logical_agent_id": "codex2",
+        "task_id": "L12-DIST-001",
+        "status": "running",
+        "last_heartbeat_at": "2026-07-28T12:54:07Z"
+      }
+    ],
+    "fleet_verdict": "Claude provider-first dispatch is proven. Antigravity remains unavailable without blocking healthy supervisor-admitted lanes."
+  },
+  "fail_closed_provider_facts": {
+    "antigravity_dispatch_pause": {
+      "provider": "antigravity",
+      "trigger_provider": "antigravity",
+      "paused_at": "2026-07-28T12:45:51Z",
+      "blocked_until": "2026-07-28T13:00:51Z",
+      "failure_kind": "quota_terminal",
+      "pause_kind": "quota_terminal",
+      "reason": "Antigravity primary and fallback model quotas are exhausted."
+    },
+    "manual_override_used": false,
+    "config_edited": false
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Run current Claude and Antigravity readiness probes without editing .orchestrator/config.json.",
+      "status": "pass",
+      "proof": "provider_probes records forced live probes for both primary providers; task and command roots report no .orchestrator/config.json diff."
+    },
+    {
+      "id": "AC2",
+      "criterion": "If healthy, prove at least one real supervisor worker starts on a Claude or Antigravity lane.",
+      "status": "pass",
+      "proof": "dispatch_proof.claude_worker binds a live supervisor queue event, run id, provider slot, L12 task, and heartbeat."
+    },
+    {
+      "id": "AC3",
+      "criterion": "If not healthy, record fail-closed provider facts and keep healthy supervisor workers draining L12 tasks.",
+      "status": "pass",
+      "proof": "Antigravity quota failure and provider-scoped pause are recorded while three additional Codex-family L12 workers remain live."
+    }
+  ],
+  "verification": {
+    "commands": [
+      {
+        "command": "python3 -c '<load live config; probe_provider_auth for claude and antigravity with force=True; emit sanitized fields>'",
+        "result": "pass",
+        "conclusion": "Claude live probe ready; Antigravity live probe quota_reached and fail-closed."
+      },
+      {
+        "command": "python3 scripts/supervisor_runtime_health.py --repo \"$PANTHEON_STATUS_ROOT\" --config-path \"$PANTHEON_COMMAND_ROOT/.orchestrator/config.json\" --require-watchdog --json",
+        "result": "pass",
+        "conclusion": "healthy=true; supervisor heartbeat, lifecycle, watchdog, and authoritative task-state shadow checks passed."
+      },
+      {
+        "command": "jq '<filtered running-worker and provider-pause projection>' \"$PANTHEON_STATUS_ROOT/.orchestrator/state.json\"",
+        "result": "pass",
+        "conclusion": "One live Claude L12 worker plus three live Codex-family L12 workers; Antigravity retained a quota-terminal provider pause."
+      },
+      {
+        "command": "git -C \"$PANTHEON_COMMAND_ROOT\" diff --quiet -- .orchestrator/config.json && git diff --quiet -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "No provider config edit in either the validated command root or task worktree."
+      },
+      {
+        "command": "PYTHONPATH=\"$PWD/.orchestrator\" \"$TASK_PY\" -m pytest -q <six targeted Claude/Antigravity probe-gate tests in .orchestrator/test_provider_permissions.py>",
+        "result": "pass",
+        "conclusion": "6 passed in 0.62s: forced launch probes bypass cache, Claude refresh is preserved, Antigravity dual-model quota fails closed, and credential/quota aliases share capacity."
+      },
+      {
+        "command": "PYTHONPATH=\"$PWD/.orchestrator\" \"$TASK_PY\" -m pytest -q <three Claude/Antigravity lane and fallback-routing tests in .orchestrator/test_supervisor.py>",
+        "result": "pass",
+        "conclusion": "3 passed in 0.55s: Claude lane/account limits, primary Antigravity admission, and healthy fallback routing remain enforced."
+      }
+    ],
+    "validated_at": "2026-07-28T12:58:08Z",
+    "validated_runtime_sha": "11858f4d445565064e630cce9b89ea8b475a6598"
+  },
+  "known_limitations": [
+    "Antigravity remains unavailable until quota becomes available and a later fresh targeted probe succeeds.",
+    "This evidence proves a Claude worker start and live heartbeat, not the terminal correctness of the separate task that worker is reviewing.",
+    "Provider readiness and fleet dispatch do not by themselves prove twelve-loop product completion."
+  ],
+  "review": {
+    "reviewer": "Codex",
+    "status": "pending_independent_review",
+    "decision": null,
+    "reviewed_at": null,
+    "reviewed_head_sha": null
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "actor": "Codex2",
+      "kind": "owner_live_evidence_cut",
+      "recorded_at": "2026-07-28T12:54:20Z",
+      "status": "owner_asserted_pass_pending_independent_review",
+      "reference": "Fresh targeted provider probes, supervisor runtime health, live Claude worker dispatch, Antigravity fail-closed pause, and continuing L12 worker snapshot."
+    }
+  ]
+}
