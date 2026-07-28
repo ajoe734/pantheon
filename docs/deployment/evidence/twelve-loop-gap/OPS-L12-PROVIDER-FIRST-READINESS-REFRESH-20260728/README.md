@@ -28,7 +28,7 @@ This evidence manifest captures refreshed provider-first readiness probes and re
   - Started At: `2026-07-28T18:52:08Z`
   - Completed At: `2026-07-28T18:54:45Z` (`Worker exited successfully during supervisor boot reconciliation`)
   - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T185208347695Z-antigravity1-1-antigravity1_1-0bd76c.log`
-- **Antigravity Worker Run (19:07Z)**: `antigravity1-1-20260728T190729Z-840628`
+- **Antigravity Worker Run (19:07Z)**: `antigravity1-1-20260728T190729Z-8aeb78de`
   - Event ID: `evt-20260728T190707Z-b52139da`
   - Started At: `2026-07-28T19:07:29Z`
   - Completed At: `2026-07-28T19:09:57Z` (`Exit code 0: completed successfully`)
@@ -48,5 +48,4 @@ This evidence manifest captures refreshed provider-first readiness probes and re
 
 - `PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)" && "$PANTHEON_PY" -m pytest services/openclaw-gateway-adapter/tests/`: 117 passed.
 - `bash scripts/openclaw-smoke-test.sh`: 6 passed.
-
 
