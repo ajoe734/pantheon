@@ -125,7 +125,12 @@ def _append_runtime_event_locked(config: dict[str, Any], event: dict[str, Any]) 
         os.close(directory_descriptor)
 
 
-def build_snapshot(config: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
+def build_snapshot(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    recent_terminal_tasks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     schema = config["schema"]
     tasks_path = schema["tasks_path"]
     handoffs_path = schema["handoffs_path"]
@@ -139,10 +144,12 @@ def build_snapshot(config: dict[str, Any], status: dict[str, Any]) -> dict[str, 
         for handoff in status.get(handoffs_path, [])
         if str(handoff.get("status") or "").lower() in {s.lower() for s in config.get("events", {}).get("pending_handoff_statuses", ["pending"])}
     ]
-    recent_limit = int(config.get("watcher", {}).get("recent_terminal_limit", DEFAULT_RECENT_LIMIT))
+    if recent_terminal_tasks is None:
+        recent_limit = int(config.get("watcher", {}).get("recent_terminal_limit", DEFAULT_RECENT_LIMIT))
+        recent_terminal_tasks = recent_terminal_summaries(limit=recent_limit)
     return {
         "tasks": tasks,
-        "recent_terminal_tasks": recent_terminal_summaries(limit=recent_limit),
+        "recent_terminal_tasks": recent_terminal_tasks,
         "pending_handoff_keys": [handoff_key(item) for item in pending_handoffs],
         "pending_handoffs": pending_handoffs,
         "status_updated_at": status.get("updated_at"),
@@ -443,13 +450,15 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
 
 
 def _run_scan_locked(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+    recent_limit = int(config.get("watcher", {}).get("recent_terminal_limit", DEFAULT_RECENT_LIMIT))
+    recent_terminal_tasks = recent_terminal_summaries(limit=recent_limit)
     with canonical_task_state_lock_file(
         config_path(config, "status_file", "ai-status.json"),
         shared=True,
         nonblocking=False,
     ):
         status = load_status(config)
-        snapshot = build_snapshot(config, status)
+        snapshot = build_snapshot(config, status, recent_terminal_tasks=recent_terminal_tasks)
     is_first_run = not state.get("initialized_at")
     if is_first_run and not replay and not config.get("watcher", {}).get("replay_on_start", False):
         state["initialized_at"] = utc_now()
@@ -500,7 +509,7 @@ def main() -> int:
     poll_interval = args.poll_interval or float(config.get("watcher", {}).get("poll_interval_seconds", 2.0))
     with runtime_state_lock(config, shared=False, nonblocking=False):
         state = load_runtime_state(config)
-        run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
+        _run_scan_locked(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
     if args.once:
         return 0
 
@@ -508,7 +517,7 @@ def main() -> int:
         time.sleep(poll_interval)
         with runtime_state_lock(config, shared=False, nonblocking=False):
             state = load_runtime_state(config)
-            run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
+            _run_scan_locked(config, state, replay=False, provider_capabilities=provider_capabilities)
 
 
 if __name__ == "__main__":

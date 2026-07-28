@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Claude-priority closeout: orphaned worktree condition was resolved by supervisor cleanup; do not restart implementation. Close out merged PR #4279 exact head 3c5f1a2774263f920f02032358b07b84717c7ce5 / merge 6c57f19932d84903ec6bea700205f4a87229f59c, then handoff to Codex.
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Review failed on a boot-crash edge: with an existing status_activity_outbox and retry budget exhausted, _prepare_missing_worker_terminal_outcome_locked returns None; the worker/queue become failed but the task remains in_progress with zero blocker, so it still pretends to progress. Reproduced independently: worker_status=failed, task_status=in_progress, blocker_count=0, outbox_still_pending=true. Recover or safely compose the pending outbox before atomically persisting the missing-worker terminal outcome, and add a regression test for this case; retain task/run/provider/reason evidence. PR #4279 head 3c5f1a2774263f920f02032358b07b84717c7ce5 and merge 6c57f19932d84903ec6bea700205f4a87229f59c were otherwise verified; 14 RuntimeLeaseReconciliationTests, py_compile, diff --check, Branch CI Gate and Orchestrator Sync passed.
+- Next: Codex2 independently approved PR #4301 exact head 25f238f94282f2cd8541ff488b003b5e983fd864 after verifying the pending-outbox composition repair and focused supervisor tests. The merged evidence below is ready for Human/Ops reconciliation; do not restart implementation.
 
 ## Summary
 Make missing worker processes become bounded retry/reopen outcomes
@@ -35,3 +35,28 @@ Make missing worker processes become bounded retry/reopen outcomes
 - `cd .orchestrator && <provisioned-python> -m py_compile supervisor.py test_supervisor.py`
   — passed.
 - `git diff --check origin/dev...HEAD` — passed.
+
+## Merged Review Evidence
+
+- Delivery repository: `ajoe734/pantheon`.
+- Delivery root contract: an absolute Pantheon git repository root whose
+  `origin` normalizes to `ajoe734/pantheon`.
+- Reviewed closeout PR: `#4301`.
+- Reviewed delivery commit:
+  `25f238f94282f2cd8541ff488b003b5e983fd864`.
+- Closeout merge commit:
+  `d97c25d3cc8860118dd4d0f3c9fafd38490d89c0`.
+- Predecessor implementation PR: `#4279`.
+- Predecessor implementation head:
+  `3c5f1a2774263f920f02032358b07b84717c7ce5`.
+- Predecessor implementation merge commit:
+  `6c57f19932d84903ec6bea700205f4a87229f59c`.
+- The reviewed delivery and both merge commits are ancestors of
+  `origin/dev`. This evidence update changes no supervisor implementation,
+  worker runtime behavior, or regression test.
+
+For `reconcile_merged_done`, use the reviewed delivery commit
+`25f238f94282f2cd8541ff488b003b5e983fd864` with delivery repository
+`ajoe734/pantheon` and an absolute clean Pantheon repository root. The evidence
+commit must be the Pantheon commit containing these exact task-brief bytes
+after that commit is merged to `origin/dev`.
