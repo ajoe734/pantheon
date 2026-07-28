@@ -12785,6 +12785,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
         dispatch_reason: str,
         max_attempts: int,
         runner_succeeded: bool = False,
+        pending_outbox_event: dict | None = None,
     ) -> tuple[dict, dict, dict, mock.Mock]:
         config = self._config(root)
         config["worker_retry"] = {
@@ -12807,6 +12808,10 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             ],
             "blockers": [],
         }
+        if pending_outbox_event is not None:
+            status["status_activity_outbox"] = supervisor._status_activity_outbox(
+                [pending_outbox_event]
+            )
         (root / "ai-status.json").write_text(
             json.dumps(status),
             encoding="utf-8",
@@ -13177,6 +13182,67 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                     "worker_failed",
                     "worker_runtime_metrics",
                 ],
+            )
+
+    def test_reconcile_runtime_composes_pending_outbox_before_terminal_outcome(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pending_event = {
+                "event_id": "pending-before-boot-crash",
+                "ts": "2026-07-27T23:59:00Z",
+                "agent": "Codex2",
+                "type": "task_progress",
+                "task_id": "OTHER-TASK",
+                "message": "Pending audit event from the interrupted transaction.",
+            }
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-PENDING-OUTBOX",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=0,
+                pending_outbox_event=pending_event,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-lease-pending-outbox"]["status"],
+                "failed",
+            )
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["tasks"][0]["status"], "blocked")
+            self.assertEqual(len(status["blockers"]), 1)
+            blocker = status["blockers"][0]
+            self.assertEqual(blocker["task_id"], "OPS-LEASE-PENDING-OUTBOX")
+            self.assertEqual(
+                blocker["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(blocker["provider"], "codex")
+            self.assertIn("process missing", blocker["failure_reason"])
+
+            outbox = status["status_activity_outbox"]
+            self.assertEqual(
+                [event["event_id"] for event in outbox["events"][:1]],
+                [pending_event["event_id"]],
+            )
+            terminal_event = outbox["events"][1]
+            self.assertEqual(
+                terminal_event["task_id"], "OPS-LEASE-PENDING-OUTBOX"
+            )
+            self.assertEqual(
+                terminal_event["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(terminal_event["provider"], "codex")
+            self.assertIn("process missing", terminal_event["reason"])
+            self.assertEqual(
+                outbox,
+                supervisor._status_activity_outbox(outbox["events"]),
             )
 
     def test_reconcile_runtime_blocks_missing_reviewer_after_retry_budget(self) -> None:
