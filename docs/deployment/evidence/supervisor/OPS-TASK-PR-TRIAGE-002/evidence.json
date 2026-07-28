@@ -17,8 +17,8 @@
     "machine_report": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/triage-report.json",
     "branch_dry_run": "docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/branch-deletion-dry-run.json"
   },
-  "status": "review_approved",
-  "generated_at": "2026-07-28T13:40:12Z",
+  "status": "in_progress",
+  "generated_at": "2026-07-28T19:54:30Z",
   "scope": {
     "owned": [
       "fixed live inventory of task PRs older than 24 hours",
@@ -153,8 +153,8 @@
       "evidence": "24 cohort rows, 24 unique PR numbers, 24 classified rows, and unclassified_overdue_task_prs=0"
     },
     "delivery_via_review_gate": {
-      "status": "review_approved",
-      "evidence": "Claude approved PR #4296 exact head d3ece4f503dc557ef7d7bb40fc5dbdc9e8b22396 with the required Pantheon canonical review gate status and all 9 visible checks passing. The PR was still BEHIND dev, so owner base composition and a fresh exact-head review remain required before merge and done."
+      "status": "pending_re_review",
+      "evidence": "PR #4296 head updated to 380a8f480acd837dd7f73066a6a2a5f1b6acca59 after composing tip of origin/dev (including merge commit 748d5b34a). Ready for reviewer Codex re-approval."
     }
   },
   "validation": [
@@ -188,15 +188,13 @@
     }
   ],
   "review": {
-    "status": "approved",
-    "reviewer": "Claude",
-    "reviewed_head": "d3ece4f503dc557ef7d7bb40fc5dbdc9e8b22396",
-    "decision": "approve",
+    "status": "pending",
+    "reviewer": "Codex",
+    "reviewed_head": "380a8f480acd837dd7f73066a6a2a5f1b6acca59",
+    "decision": "pending",
     "pr": 4296,
-    "recorded_at": "2026-07-28T13:52:17Z",
-    "status_context": "Pantheon canonical review gate",
-    "status_state": "success",
-    "note": "The approval is exact-head evidence for the reviewed inventory. Closeout-only evidence refresh and dev composition must receive a new exact-head approval before merge."
+    "recorded_at": "2026-07-28T19:54:30Z",
+    "note": "Re-review requested for exact head 380a8f480 after composing origin/dev tip into task branch."
   },
   "safety": {
     "pr_closed": [],
