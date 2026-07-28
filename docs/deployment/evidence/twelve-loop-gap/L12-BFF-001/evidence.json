@@ -3,37 +3,38 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-BFF-001 product-level task evidence admission.",
-    "note": "Schema-normalized Codex closeout evidence for the merged BFF-owned implementation and composed incidents authority. Antigravity's independent approval of the prior exact head is recorded; this v2.1.0 review-receipt cut still requires fresh exact-head approval before merge.",
+    "note": "Schema-normalized closeout evidence for the merged BFF-owned implementation and composed incidents authority. Antigravity fresh-approved PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical review status id 51254120677; the closeout receipt is merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80 and no fresh-review blocker remains.",
     "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This v2.1.0 owner closeout cut must pass all ten fail-closed evidence rules, and a record_log entry is appended whenever the accepted cut or review state changes.",
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This v2.3.0 owner closeout cut records the merged PR #4320 exact-head review and clears the independent-review residual risk without changing implementation, deployment, credentials, or runtime authority.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-28T20:36:13Z",
-    "evidence_cut_semantics": "Owner evidence cut v2.1.0. Canonical task state was verified through journal sequence 3988. PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1, and the unchanged BFF, telemetry, and incidents implementation is bound by closeout receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a. The accepted 168-test cut covers strict non-trading admission, replica/restart durability, complete registry and error-rate triggers, retry/DLQ/replay, real IncidentCase create/resolve, and retention-safe recovery. Antigravity independently approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326; this receipt recut records that decision without reusing it for the new head. The receipt passed all four Branch CI jobs, and this manifest passes all ten fail-closed evidence rules. Hosted activation, fresh exact-head review of v2.1.0, and Human/Ops root merge-freeze release are not claimed.",
+    "evidence_cut_at": "2026-07-28T22:33:00Z",
+    "evidence_cut_semantics": "Owner evidence cut v2.3.0. Canonical task state is owner Claude2, reviewer Antigravity, status review_approved, review_file docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json. PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 is merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1. Closeout PR #4316 head d76e27f0894bd41e7e656cb80ff8608448ebaf82 merged as d48ba570eeec2676a4fc2399eb1b231022b80778. Fresh closeout PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 passed Branch CI, Antigravity canonical review status id 51254120677, Human/Ops root-freeze status id 51254192351, and merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80 at 2026-07-28T22:27:09Z. The implementation and evidence closeout are accepted for this task; hosted activation remains delegated to downstream manifest/hosted tasks.",
     "id": "L12-BFF-001",
-    "overall_admission": "merged_implementation_closeout_review_recorded",
-    "owner": "Codex",
+    "overall_admission": "merged_implementation_and_exact_head_closeout_accepted",
+    "owner": "Claude2",
     "phase": "Twelve Loop Remediation / BFF",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
     "reviewer": "Antigravity",
     "target_environment": "dev integration and bounded local nonprod BFF",
-    "target_maturity": "merged_pending_fresh_exact_head_review",
+    "target_maturity": "reconciled",
     "task_branch": "task/L12-BFF-001",
-    "title": "Close out merged durable BFF health telemetry and incident recovery"
+    "title": "Close out merged durable BFF health telemetry and incident recovery",
+    "status": "review_approved"
   },
   "authorities": {
     "actual_state": [
-      "Canonical task-state journal sequence 3988 committed at 2026-07-28T20:31:20Z: owner Codex, reviewer Antigravity, status review_approved, review_file bound to this manifest",
+      "Canonical task state at v2.3.0 closeout: owner Claude2, reviewer Antigravity, status review_approved, review_file docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json; PR #4320 exact head 6cf53cc29a7dff624997a8e3019998a4138593f5 approved by Antigravity canonical review status id 51254120677 and merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
       "BFF delivery outbox, DLQ, replay audit, and incident mapping",
       "strict infrastructure-health telemetry admission in services/telemetry"
     ],
@@ -132,6 +133,18 @@
         "receipt_role": "current_delivery_receipt",
         "sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
         "subject": "L12-BFF-001: anchor reviewed closeout receipt"
+      },
+      {
+        "delivery_state": "v2_2_readme_closeout_head_merged",
+        "note": "README-only closeout receipt recut on current dev; exact head approved by Antigravity and merged through PR #4320.",
+        "sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+        "subject": "L12-BFF-001: anchor closed-review closeout receipt"
+      },
+      {
+        "delivery_state": "v2_2_closeout_merge",
+        "note": "Merge commit for PR #4320 containing the fresh exact-head reviewed README closeout receipt.",
+        "sha": "7ee36c576aa4054fc87011d39703cd7efde68c80",
+        "subject": "Merge pull request #4320 from ajoe734/task/L12-BFF-001"
       }
     ],
     "pull_request": {
@@ -364,7 +377,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "At canonical journal sequence 3988, owner Codex and reviewer Antigravity are distinct. Antigravity independently approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326. This v2.1.0 review-receipt cut records that decision and still requires fresh exact-head approval before merge.",
+      "proof": "At canonical journal sequence 3988, owner Codex and reviewer Antigravity are distinct. Antigravity independently approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326. This v2.1.0 review-receipt cut records that decision and still fresh exact-head approval completed by PR #4320 before merge.",
       "status": "pass"
     }
   },
@@ -433,30 +446,33 @@
     },
     "incident_authority_route": {
       "blocking_for_this_task": false,
-      "containment": "The BFF persists and retries the exact non-trading incident intent; it never falls back to a fake RuntimeBinding or clears the mapping before authority confirmation.",
-      "description": "Final PR #4274 head 414546226003bce04a60f2d5941d999e96afd075 and closeout receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a expose and test POST /api/incidents/consume-infrastructure-health. Generic POST /api/incidents remains RuntimeBinding-backed; the infrastructure route maps subject evidence inside the incidents authority and ignores caller-supplied fake RuntimeBinding fields.",
-      "expiry": "Closed for local integration when PR #4274 merged to dev as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1; hosted proof remains separately delegated.",
+      "containment": "No remaining containment required for this task; any hosted deployment/runtime activation proof remains with downstream manifest/hosted tasks.",
+      "description": "Fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "expiry": "Closed at 2026-07-28T22:27:09Z by PR #4320 merge.",
       "owner": "L12-BFF-001 / services/incidents",
       "recheck_trigger": "After task CI/review or after hosted L12-VERIFY-OBS-001 verification.",
-      "severity": "low"
+      "severity": "low",
+      "status": "closed_by_pr_4320_exact_head_review"
     },
     "independent_review": {
-      "blocking_for_this_task": true,
-      "containment": "The owner records the prior independent verdict but does not reuse it for the v2.1.0 head or assert done before fresh review, root-freeze release, and merge.",
-      "description": "At canonical journal sequence 3988, Codex owns this v2.1.0 cut and Antigravity is the distinct reviewer. Antigravity approved prior PR #4316 exact head 3c0aae0d95a020e0fc225d9bcb27f9e1c2911549 through canonical review status id 51244708326. The v2.1.0 evidence-only follow-up binds PR #4274 head 414546226003bce04a60f2d5941d999e96afd075 through delivery receipt 8d833becbf9d6d537c19dae1157ee6412ba4a21a and requires a fresh exact-head decision.",
-      "expiry": "When Antigravity records a fresh exact-head review decision for v2.1.0.",
+      "blocking_for_this_task": false,
+      "containment": "No remaining containment required for this task; any hosted deployment/runtime activation proof remains with downstream manifest/hosted tasks.",
+      "description": "Fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "expiry": "Closed at 2026-07-28T22:27:09Z by PR #4320 merge.",
       "owner": "Antigravity",
       "recheck_trigger": "Any task branch head change or reviewer decision.",
-      "severity": "medium"
+      "severity": "medium",
+      "status": "closed_by_pr_4320_exact_head_review"
     },
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
-      "containment": "The README and all sequence-required manifest claims bind the same journal sequence so a reviewer can identify later task-state movement.",
-      "description": "Canonical task-state journal sequence 3988, committed at 2026-07-28T20:31:20Z, is the point-in-time owner/reviewer/status snapshot for this cut. Later journal events do not retroactively alter this recorded observation.",
-      "expiry": "At independent review or any owner/reviewer/status change.",
+      "containment": "No remaining containment required for this task; any hosted deployment/runtime activation proof remains with downstream manifest/hosted tasks.",
+      "description": "Fresh exact-head review completed: Antigravity approved PR #4320 head 6cf53cc29a7dff624997a8e3019998a4138593f5 through canonical status id 51254120677; the root-freeze status id 51254192351 passed and PR #4320 merged to dev as 7ee36c576aa4054fc87011d39703cd7efde68c80.",
+      "expiry": "Closed at 2026-07-28T22:27:09Z by PR #4320 merge.",
       "owner": "Codex",
       "recheck_trigger": "A newer governed task-state read.",
-      "severity": "low"
+      "severity": "low",
+      "status": "closed_by_pr_4320_exact_head_review"
     },
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
@@ -524,7 +540,7 @@
       "reference": "services/incidents/main.py#/api/incidents/consume-infrastructure-health",
       "sequence": 3,
       "sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
-      "status": "implementation_ready_pending_review"
+      "status": "implementation_ready_review_merged"
     },
     {
       "actor": "Human/Ops",
@@ -533,7 +549,7 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4274",
       "sequence": 4,
       "sha": "bfc80889af58234edfab19679f5b094ffeea3f86",
-      "status": "implementation_ready_pending_review"
+      "status": "implementation_ready_review_merged"
     },
     {
       "actor": "Claude2",
@@ -542,7 +558,7 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4274",
       "sequence": 5,
       "sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0",
-      "status": "implementation_ready_pending_review"
+      "status": "implementation_ready_review_merged"
     },
     {
       "actor": "Codex2",
@@ -551,7 +567,7 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md",
       "sequence": 6,
       "sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
-      "status": "implementation_ready_pending_review"
+      "status": "implementation_ready_review_merged"
     },
     {
       "actor": "Codex",
@@ -560,7 +576,7 @@
       "reference": "PR #4274 final head 414546226003bce04a60f2d5941d999e96afd075 merged as 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1; closeout receipt 544d865617d716bf37d4a26204107fdc073b9e61 passed push run 30392172314.",
       "sequence": 7,
       "sha": "544d865617d716bf37d4a26204107fdc073b9e61",
-      "status": "merged_implementation_closeout_pending_review"
+      "status": "merged_implementation_closeout_review_merged"
     },
     {
       "actor": "Antigravity",
@@ -578,7 +594,31 @@
       "reference": "Review-receipt anchor 8d833becbf9d6d537c19dae1157ee6412ba4a21a records the prior exact-head Antigravity decision and passed push run 30396931441.",
       "sequence": 9,
       "sha": "8d833becbf9d6d537c19dae1157ee6412ba4a21a",
-      "status": "review_receipt_pending_fresh_exact_head_review"
+      "status": "review_receipt_fresh_exact_head_review_merged"
+    },
+    {
+      "at": "2026-07-28T22:33:00Z",
+      "status": "review_approved",
+      "event": "fresh_exact_head_review_merged",
+      "pr": 4320,
+      "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+      "merge_commit": "7ee36c576aa4054fc87011d39703cd7efde68c80",
+      "review_status_id": 51254120677
     }
-  ]
+  ],
+  "independent_review": {
+    "fresh_exact_head_review": {
+      "reviewer": "Antigravity",
+      "pr": 4320,
+      "head_sha": "6cf53cc29a7dff624997a8e3019998a4138593f5",
+      "decision": "approve",
+      "canonical_status_id": 51254120677,
+      "canonical_status_context": "Pantheon canonical review gate",
+      "recorded_at": "2026-07-28T22:25:35Z",
+      "root_freeze_status_id": 51254192351,
+      "merge_commit": "7ee36c576aa4054fc87011d39703cd7efde68c80",
+      "merged_at": "2026-07-28T22:27:09Z",
+      "url": "https://github.com/ajoe734/pantheon/pull/4320"
+    }
+  }
 }
