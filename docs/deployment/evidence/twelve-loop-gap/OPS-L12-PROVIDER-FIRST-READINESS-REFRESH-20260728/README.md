@@ -4,6 +4,15 @@ Observation cut: `2026-07-28T19:30:00Z`
 
 This evidence manifest captures refreshed provider-first readiness probes and real fleet dispatch proof without configuration edits.
 
+## Task Coordination Snapshot
+
+- Canonical owner: `Codex`
+- Canonical reviewer: `Codex2`
+- Canonical status at owner evidence finalization: `in_progress`
+- Snapshot source: governed `ai-status.sh show` at task row `last_update=2026-07-28T21:50:43Z`.
+
+The status above is the pre-handoff owner snapshot. A later governed handoff or review decision is expected to advance the lifecycle without invalidating this observation-cut evidence.
+
 ## Architecture Distinction
 
 - **Supervisor Antigravity CLI Provider** (`antigravity` / `antigravity1-1`): Delivery mode `antigravity` via `.orchestrator/bin/agy`. Active auto worker provider in live supervisor config.
@@ -26,17 +35,25 @@ This evidence manifest captures refreshed provider-first readiness probes and re
   - Event ID: `evt-20260728T185119Z-ff2129b2`
   - Provider: `antigravity1-1`
   - Started At: `2026-07-28T18:52:08Z`
-  - Completed At: `2026-07-28T18:54:45Z` (`Worker exited successfully during supervisor boot reconciliation`)
+  - Finished At: `2026-07-28T18:54:29Z` (`status=completed`, `exit_code=0`)
+  - Runtime Status: `/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260728T185208Z-a6cb5d2a.json`
   - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T185208347695Z-antigravity1-1-antigravity1_1-0bd76c.log`
 - **Antigravity Worker Run (19:07Z)**: `antigravity1-1-20260728T190729Z-8aeb78de`
   - Event ID: `evt-20260728T190707Z-b52139da`
   - Started At: `2026-07-28T19:07:29Z`
-  - Completed At: `2026-07-28T19:09:57Z` (`Exit code 0: completed successfully`)
+  - Finished At: `2026-07-28T19:09:57Z` (`status=completed`, `exit_code=0`)
+  - Runtime Status: `/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260728T190729Z-8aeb78de.json`
   - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T190729417957Z-antigravity1-1-antigravity1_1-840628.log`
 - **Today Real Claude2 Supervisor Worker Runs (2026-07-28)**:
-  - Run 1: `claude2-20260728T193745Z-8bf75509` (Exit code 143: supervisor reconciliation/termination truth)
+  - Run 1: `claude2-20260728T193745Z-8bf75509` (`status=failed`, `exit_code=143`; supervisor reconciliation/termination truth, not a successful completion)
+    - Started At: `2026-07-28T19:37:46Z`
+    - Finished At: `2026-07-28T19:43:49Z`
+    - Runtime Status: `/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260728T193745Z-8bf75509.json`
     - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T193745782933Z-claude2-claude2-21d117.log`
-  - Run 2: `claude2-20260728T195332Z-9d18c7ed` (Exit code 143: supervisor reconciliation/termination truth)
+  - Run 2: `claude2-20260728T195332Z-9d18c7ed` (`status=failed`, `exit_code=143`; supervisor reconciliation/termination truth, not a successful completion)
+    - Started At: `2026-07-28T19:53:32Z`
+    - Finished At: `2026-07-28T19:56:32Z`
+    - Runtime Status: `/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260728T195332Z-9d18c7ed.json`
     - Log: `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T195332131589Z-claude2-claude2-8ca33a.log`
 
 ## Fallback Truth
@@ -48,4 +65,3 @@ This evidence manifest captures refreshed provider-first readiness probes and re
 
 - `PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)" && "$PANTHEON_PY" -m pytest services/openclaw-gateway-adapter/tests/`: 117 passed.
 - `bash scripts/openclaw-smoke-test.sh`: 6 passed.
-

@@ -2,10 +2,12 @@
   "schema_version": "pantheon.ops.provider_first_readiness_evidence.v2",
   "task": {
     "id": "OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
-    "title": "Refresh provider-first readiness and real fleet dispatch evidence",
-    "owner": "Antigravity",
+    "title": "Provider-first readiness refresh exact-head gate and merge",
+    "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "review",
+    "status": "in_progress",
+    "status_snapshot_at": "2026-07-28T21:50:43Z",
+    "status_snapshot_note": "Pre-handoff owner snapshot from governed ai-status.sh show; later lifecycle transitions do not invalidate the observation-cut evidence.",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
@@ -123,8 +125,10 @@
       "target_agent": "Antigravity",
       "queue_event_id": "evt-20260728T185119Z-ff2129b2",
       "started_at": "2026-07-28T18:52:08Z",
-      "completed_at": "2026-07-28T18:54:45Z",
-      "completion_message": "Worker exited successfully during supervisor boot reconciliation.",
+      "finished_at": "2026-07-28T18:54:29Z",
+      "exit_code": 0,
+      "status": "completed",
+      "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260728T185208Z-a6cb5d2a.json",
       "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T185208347695Z-antigravity1-1-antigravity1_1-0bd76c.log"
     },
     "current_antigravity_worker_run": {
@@ -133,9 +137,10 @@
       "target_agent": "Antigravity",
       "queue_event_id": "evt-20260728T190707Z-b52139da",
       "started_at": "2026-07-28T19:07:29Z",
-      "completed_at": "2026-07-28T19:09:57Z",
+      "finished_at": "2026-07-28T19:09:57Z",
       "exit_code": 0,
       "status": "completed",
+      "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260728T190729Z-8aeb78de.json",
       "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T190729417957Z-antigravity1-1-antigravity1_1-840628.log"
     },
     "claude2_worker_runs": [
@@ -143,16 +148,24 @@
         "worker_run_id": "claude2-20260728T193745Z-8bf75509",
         "provider": "claude2",
         "target_agent": "Claude2",
+        "started_at": "2026-07-28T19:37:46Z",
+        "finished_at": "2026-07-28T19:43:49Z",
+        "status": "failed",
         "exit_code": 143,
-        "note": "Exit code 143 represents supervisor reconciliation/termination truth, proving a real worker process was dispatched and managed by the supervisor.",
+        "note": "Exit code 143 is supervisor reconciliation/termination truth, not a successful completion; it proves a real worker process was dispatched and managed by the supervisor.",
+        "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260728T193745Z-8bf75509.json",
         "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T193745782933Z-claude2-claude2-21d117.log"
       },
       {
         "worker_run_id": "claude2-20260728T195332Z-9d18c7ed",
         "provider": "claude2",
         "target_agent": "Claude2",
+        "started_at": "2026-07-28T19:53:32Z",
+        "finished_at": "2026-07-28T19:56:32Z",
+        "status": "failed",
         "exit_code": 143,
-        "note": "Exit code 143 represents supervisor reconciliation/termination truth, proving a real worker process was dispatched and managed by the supervisor.",
+        "note": "Exit code 143 is supervisor reconciliation/termination truth, not a successful completion; it proves a real worker process was dispatched and managed by the supervisor.",
+        "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260728T195332Z-9d18c7ed.json",
         "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T195332131589Z-claude2-claude2-8ca33a.log"
       }
     ]
