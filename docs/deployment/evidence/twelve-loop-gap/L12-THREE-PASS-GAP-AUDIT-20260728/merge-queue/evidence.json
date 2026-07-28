@@ -4,7 +4,7 @@
   "owner": "Codex",
   "reviewer": "Codex2",
   "status": "in_progress",
-  "observed_at": "2026-07-28T13:32:45Z",
+  "observed_at": "2026-07-28T14:25:07Z",
   "scope": {
     "owned_layer": "Exact-head composition, gate verification, root-freeze release, merge, and post-merge receipt for the protected L12 closeout queue.",
     "not_changing": [
@@ -29,18 +29,29 @@
     "auto_merge_must_remain_disabled": true,
     "merge_rule": "Release the root-freeze context for one current exact head only after assigned-reviewer approval and all mechanical checks are green."
   },
+  "queue_state": {
+    "current_dev": "ba727a676856e77c7b723f33f5b9e7ceb5ce1392",
+    "remaining_prs": [
+      4285
+    ],
+    "blocked": true,
+    "blocked_reason": "PR #4285 is behind dev and has neither an exact-head canonical review status nor a root-freeze release.",
+    "next_owner_action": "L12-EVO-001 owner composes current origin/dev, pushes the new head, waits for fresh Branch CI, and hands the exact head to Codex2."
+  },
   "queue": [
     {
       "pr": 4218,
       "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
       "state": "merged",
+      "reviewed_head": "c9dea98fc03a24c67e52edc78f9802854e23a33c",
       "merge_commit": "9e4bb8e1fa9495d8802da58336b05ae68c7756ad"
     },
     {
       "pr": 4287,
       "task_id": "L12-GITHUB-REVIEW-BRIDGE-001",
       "state": "merged",
-      "merge_commit": "091ac6978"
+      "reviewed_head": "c4c8ca256b3139ec1e32032e523b328f727eb10b",
+      "merge_commit": "091ac6978d03e5fc31d7d6bf4967fe842101cf1c"
     },
     {
       "pr": 4286,
@@ -53,40 +64,45 @@
     {
       "pr": 4290,
       "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
-      "state": "review_pending",
-      "head": "f77358301fdecd93de26c4ca96bc688e5ab2b969",
+      "state": "merged",
+      "reviewed_head": "f77358301fdecd93de26c4ca96bc688e5ab2b969",
       "composed_dev": "061408b09aa06943813c97334054bfa29b79e236",
-      "checks": "Two Branch CI runs passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance.",
-      "pending": [
-        "Claude exact-head approval",
-        "canonical review context success",
-        "single-head root-freeze release",
-        "exact-head merge"
-      ]
+      "merge_commit": "65802d99bf5ddca1213f6742af74dc125216fa82",
+      "checks": "Branch CI, Claude canonical review, and root merge freeze all succeeded.",
+      "canonical_task_state": "done"
     },
     {
       "pr": 4293,
       "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
-      "state": "owner_active",
-      "head": "f3203ecb9fc8daa10450e20f5e9cd5c53a64ce2e",
-      "pending": [
-        "compose preceding queue merge",
-        "fresh Branch CI",
-        "Claude exact-head approval",
-        "single-head root-freeze release",
-        "exact-head merge"
-      ]
+      "state": "merged",
+      "reviewed_head": "7c2ad997c3e42b08ee4b2a77df6ca9105992a1e1",
+      "merge_commit": "748d5b34a8a5c23edf75a82e36d43f2ac867a459",
+      "checks": "Branch CI, Claude canonical review, and root merge freeze all succeeded."
+    },
+    {
+      "pr": 4299,
+      "task_id": "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "kind": "owner_closeout",
+      "state": "merged",
+      "reviewed_head": "0abd9c33a5872e9655bb981f7b3177eb6beb6b5d",
+      "merge_commit": "ba727a676856e77c7b723f33f5b9e7ceb5ce1392",
+      "checks": "Branch CI, Codex canonical review, and root merge freeze all succeeded.",
+      "canonical_task_state": "done"
     },
     {
       "pr": 4285,
       "task_id": "L12-EVO-001",
-      "state": "review_pending_behind",
-      "head": "3c3a9baf28a7a465d3d853270be9d5481fd561c3",
-      "checks": "Current-head Branch CI is green; canonical and root gates are absent.",
+      "state": "waiting_owner_compose",
+      "head": "6c631ae074a3c1be185f1cf99091012823e02a8e",
+      "current_dev": "ba727a676856e77c7b723f33f5b9e7ceb5ce1392",
+      "merge_state_status": "BEHIND",
+      "base_commits_behind": 3,
+      "task_commits_ahead": 4,
+      "checks": "Old-head Branch CI is green; canonical review and root-freeze contexts are absent and cannot be reused after composition.",
       "pending": [
-        "compose all preceding queue merges",
+        "L12-EVO owner composes current origin/dev and pushes a new exact head",
         "fresh Branch CI",
-        "Claude exact-head approval",
+        "Codex2 exact-head approval",
         "single-head root-freeze release",
         "exact-head merge",
         "owner done/archive closeout"
