@@ -1196,8 +1196,8 @@ def build_protection_plan(
     activation = [
         {
             "method": "PATCH",
-            "endpoint": f"{branch_api}/required_status_checks",
-            "body": {"strict": strict, "checks": activated_checks},
+            "endpoint": f"repos/{repository_slug}",
+            "body": {"allow_auto_merge": False},
         },
         {
             "method": "POST",
@@ -1206,8 +1206,8 @@ def build_protection_plan(
         },
         {
             "method": "PATCH",
-            "endpoint": f"repos/{repository_slug}",
-            "body": {"allow_auto_merge": False},
+            "endpoint": f"{branch_api}/required_status_checks",
+            "body": {"strict": strict, "checks": activated_checks},
         },
     ]
     rollback_admin_method = (
@@ -1243,19 +1243,184 @@ def build_protection_plan(
             "app_id": app_id,
             "enforce_admins": True,
             "allow_auto_merge": False,
+            "strict_required_status_checks": strict,
+            "required_status_checks": activated_checks,
         },
         "rollback": rollback,
     }
+
+
+def _plan_check_pairs(
+    raw_checks: Any,
+    *,
+    field_name: str,
+) -> list[tuple[str, int | None]]:
+    if not isinstance(raw_checks, list):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            f"{field_name} must be a list",
+        )
+    pairs: list[tuple[str, int | None]] = []
+    for index, raw in enumerate(raw_checks):
+        if not isinstance(raw, Mapping):
+            raise CanonicalReviewError(
+                "protection_plan_invalid",
+                f"{field_name}[{index}] must be an object",
+            )
+        context = str(raw.get("context") or "").strip()
+        if not context:
+            raise CanonicalReviewError(
+                "protection_plan_invalid",
+                f"{field_name}[{index}].context is required",
+            )
+        raw_app_id = raw.get("app_id")
+        if raw_app_id is not None and (
+            not isinstance(raw_app_id, int) or isinstance(raw_app_id, bool)
+        ):
+            raise CanonicalReviewError(
+                "protection_plan_invalid",
+                f"{field_name}[{index}].app_id must be an integer or null",
+            )
+        pairs.append((context, raw_app_id))
+    return sorted(
+        pairs,
+        key=lambda item: (
+            item[0],
+            -1 if item[1] is None else item[1],
+        ),
+    )
+
+
+def _expected_readback_from_plan(
+    plan: Mapping[str, Any],
+    *,
+    context: str,
+    app_id: int,
+) -> tuple[bool, list[tuple[str, int | None]]]:
+    if plan.get("schema") != "pantheon.canonical-review-protection-plan/v1":
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "readback plan has an unsupported schema",
+        )
+    baseline = plan.get("baseline")
+    expected_active = plan.get("expected_active")
+    activation = plan.get("activation")
+    if not isinstance(baseline, Mapping) or not isinstance(
+        expected_active, Mapping
+    ):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "readback plan requires baseline and expected_active objects",
+        )
+    if not isinstance(activation, list) or len(activation) != 3:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "readback plan requires the three ordered activation operations",
+        )
+    strict = baseline.get("strict_required_status_checks")
+    if not isinstance(strict, bool):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "baseline strict_required_status_checks must be boolean",
+        )
+    baseline_pairs = _plan_check_pairs(
+        baseline.get("required_status_checks"),
+        field_name="baseline.required_status_checks",
+    )
+    derived_pairs = [
+        item for item in baseline_pairs if item[0] != context
+    ]
+    derived_pairs.append((context, app_id))
+    derived_pairs.sort(
+        key=lambda item: (
+            item[0],
+            -1 if item[1] is None else item[1],
+        )
+    )
+    expected_pairs = _plan_check_pairs(
+        expected_active.get("required_status_checks"),
+        field_name="expected_active.required_status_checks",
+    )
+    if expected_pairs != derived_pairs:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "expected active checks do not preserve the full baseline "
+            "context/app_id set plus the app-pinned canonical check",
+        )
+    if expected_active.get("strict_required_status_checks") is not strict:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "expected active strict setting does not preserve the baseline",
+        )
+    if (
+        expected_active.get("context") != context
+        or expected_active.get("app_id") != app_id
+        or expected_active.get("enforce_admins") is not True
+        or expected_active.get("allow_auto_merge") is not False
+    ):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "expected active controls do not match the requested gate",
+        )
+    expected_operations = (
+        ("PATCH", None, {"allow_auto_merge": False}),
+        ("POST", "/enforce_admins", {}),
+        (
+            "PATCH",
+            "/required_status_checks",
+            {
+                "strict": strict,
+                "checks": expected_active.get("required_status_checks"),
+            },
+        ),
+    )
+    for index, (method, endpoint_suffix, body) in enumerate(
+        expected_operations
+    ):
+        operation = activation[index]
+        if not isinstance(operation, Mapping):
+            raise CanonicalReviewError(
+                "protection_plan_invalid",
+                f"activation[{index}] must be an object",
+            )
+        endpoint = str(operation.get("endpoint") or "")
+        if operation.get("method") != method or operation.get("body") != body:
+            raise CanonicalReviewError(
+                "protection_plan_invalid",
+                f"activation[{index}] does not match the safe runbook",
+            )
+        if endpoint_suffix is None:
+            if "/branches/" in endpoint or not endpoint.startswith("repos/"):
+                raise CanonicalReviewError(
+                    "protection_plan_invalid",
+                    "activation[0] must disable repository auto-merge first",
+                )
+        elif not endpoint.endswith(endpoint_suffix):
+            raise CanonicalReviewError(
+                "protection_plan_invalid",
+                f"activation[{index}] endpoint must end with {endpoint_suffix}",
+            )
+    return strict, expected_pairs
 
 
 def verify_active_protection(
     *,
     protection: Mapping[str, Any],
     repository: Mapping[str, Any],
+    plan: Mapping[str, Any],
     context: str = CHECK_NAME,
     app_id: int = DEFAULT_ACTIONS_APP_ID,
 ) -> dict[str, Any]:
+    expected_strict, expected_pairs = _expected_readback_from_plan(
+        plan,
+        context=context,
+        app_id=app_id,
+    )
     summary = summarize_protection(protection, repository=repository)
+    actual_pairs = _plan_check_pairs(
+        summary["required_status_checks"],
+        field_name="readback.required_status_checks",
+    )
     matching = [
         item
         for item in summary["required_status_checks"]
@@ -1270,6 +1435,18 @@ def verify_active_protection(
         failures.append(
             f"required check {context!r} app_id is "
             f"{matching[0].get('app_id')!r}, expected {app_id}"
+        )
+    if summary["strict_required_status_checks"] is not expected_strict:
+        failures.append(
+            "required status checks strict setting changed from the "
+            f"activation baseline: got "
+            f"{summary['strict_required_status_checks']!r}, "
+            f"expected {expected_strict!r}"
+        )
+    if actual_pairs != expected_pairs:
+        failures.append(
+            "required status checks do not match the activation plan's "
+            "full context/app_id set"
         )
     if not summary["enforce_admins"]:
         failures.append("branch protection does not enforce administrators")
@@ -1317,6 +1494,16 @@ def verify_active_protection(
         "ok": active,
         "context": context,
         "app_id": app_id,
+        "plan": {
+            "schema": plan["schema"],
+            "repository": plan.get("repository"),
+            "branch": plan.get("branch"),
+            "strict_required_status_checks": expected_strict,
+            "required_status_checks": [
+                {"context": item_context, "app_id": item_app_id}
+                for item_context, item_app_id in expected_pairs
+            ],
+        },
         "summary": summary,
         "failures": failures,
         "entrypoints": entrypoints,
@@ -1390,6 +1577,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify-protection")
     verify.add_argument("--protection-json", type=Path, required=True)
     verify.add_argument("--repository-json", type=Path, required=True)
+    verify.add_argument("--plan-json", type=Path, required=True)
     verify.add_argument("--context", default=CHECK_NAME)
     verify.add_argument("--app-id", type=int, default=DEFAULT_ACTIONS_APP_ID)
     verify.add_argument("--output", type=Path)
@@ -1505,16 +1693,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "verify-protection":
             protection = _load_json_file(args.protection_json)
             repository = _load_json_file(args.repository_json)
-            if not isinstance(protection, Mapping) or not isinstance(
-                repository, Mapping
+            plan = _load_json_file(args.plan_json)
+            if (
+                not isinstance(protection, Mapping)
+                or not isinstance(repository, Mapping)
+                or not isinstance(plan, Mapping)
             ):
                 raise CanonicalReviewError(
                     "input_malformed",
-                    "protection and repository JSON must be objects",
+                    "protection, repository, and plan JSON must be objects",
                 )
             result = verify_active_protection(
                 protection=protection,
                 repository=repository,
+                plan=plan,
                 context=args.context,
                 app_id=args.app_id,
             )

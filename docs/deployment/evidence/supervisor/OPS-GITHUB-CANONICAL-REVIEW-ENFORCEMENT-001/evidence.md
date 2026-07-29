@@ -67,10 +67,13 @@ The authorized target configuration therefore requires all three:
 - `enforce_admins=true`;
 - repository `allow_auto_merge=false`.
 
-`verify-protection` fails unless all three are read back. This closes web UI,
-`gh pr merge`, REST merge, GraphQL merge, auto-merge finalization, auto-merge
-creation, and administrator bypass as listed in
-`merge-entrypoint-matrix.json`.
+`verify-protection` also requires the machine plan generated from the fresh
+pre-activation baseline. It fails unless all three boundary controls are read
+back, `strict` is unchanged, and the full pre-existing `context/app_id`
+multiset remains present alongside the app-pinned canonical check. This closes
+web UI, `gh pr merge`, REST merge, GraphQL merge, auto-merge finalization,
+auto-merge creation, and administrator bypass without silently weakening
+unrelated CI requirements, as listed in `merge-entrypoint-matrix.json`.
 
 Official references:
 
@@ -89,7 +92,8 @@ Human/Ops must:
    provision repo-external reviewer signer keys;
 3. create and validate a signed canary check from Actions app id `15368`;
 4. capture fresh full and scoped GitHub protection/repository/ruleset state;
-5. generate exact activation plus rollback payloads;
+5. generate and retain the exact machine plan containing baseline, ordered
+   activation, expected readback, and rollback payloads;
 6. authorize and apply the scoped operations;
 7. run `verify-protection` and negative canary merge probes;
 8. roll back immediately on any wrong app id, lost check, false pass, bypass,
@@ -109,5 +113,6 @@ Reviewer should independently verify:
 - exact repository/PR/head/branch/base comparisons precede success;
 - the latest valid signed rejection overrides an older approval;
 - expired/future/ambiguous/forged/stale envelopes fail;
-- required-check readback requires app id `15368`;
+- required-check readback requires app id `15368`, baseline `strict`, and the
+  complete pre-existing `context/app_id` multiset;
 - no command in this task mutated GitHub protection or auto-merge.

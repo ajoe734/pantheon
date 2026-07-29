@@ -587,15 +587,19 @@ class ProtectionPlanTests(unittest.TestCase):
             protection=protection,
             repository=repository,
         )
-        activation_checks = plan["activation"][0]["body"]["checks"]
+        self.assertEqual(
+            plan["activation"][0]["body"],
+            {"allow_auto_merge": False},
+        )
+        self.assertEqual(plan["activation"][1]["method"], "POST")
+        activation_checks = plan["activation"][2]["body"]["checks"]
         self.assertIn(
             {"context": check.CHECK_NAME, "app_id": 15368},
             activation_checks,
         )
-        self.assertEqual(plan["activation"][1]["method"], "POST")
         self.assertEqual(
-            plan["activation"][2]["body"],
-            {"allow_auto_merge": False},
+            plan["expected_active"]["required_status_checks"],
+            activation_checks,
         )
         self.assertEqual(
             plan["rollback"][0]["body"]["checks"],
@@ -630,6 +634,12 @@ class ProtectionPlanTests(unittest.TestCase):
 
     def test_active_readback_requires_actions_app_admins_and_no_auto_merge(self) -> None:
         protection, repository = self.baseline(admins=True)
+        plan = check.build_protection_plan(
+            repository_slug="ajoe734/pantheon",
+            branch="dev",
+            protection=protection,
+            repository=repository,
+        )
         protection["required_status_checks"]["checks"].append(
             {"context": check.CHECK_NAME, "app_id": 15368}
         )
@@ -637,6 +647,7 @@ class ProtectionPlanTests(unittest.TestCase):
         result = check.verify_active_protection(
             protection=protection,
             repository=repository,
+            plan=plan,
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["failures"], [])
@@ -647,6 +658,12 @@ class ProtectionPlanTests(unittest.TestCase):
 
     def test_user_owned_or_unpinned_status_is_not_accepted(self) -> None:
         protection, repository = self.baseline(admins=True)
+        plan = check.build_protection_plan(
+            repository_slug="ajoe734/pantheon",
+            branch="dev",
+            protection=protection,
+            repository=repository,
+        )
         protection["required_status_checks"]["checks"].append(
             {"context": check.CHECK_NAME, "app_id": None}
         )
@@ -654,18 +671,26 @@ class ProtectionPlanTests(unittest.TestCase):
         result = check.verify_active_protection(
             protection=protection,
             repository=repository,
+            plan=plan,
         )
         self.assertFalse(result["ok"])
         self.assertIn("expected 15368", result["failures"][0])
 
     def test_auto_merge_or_admin_bypass_fails_readback(self) -> None:
         protection, repository = self.baseline(admins=False)
+        plan = check.build_protection_plan(
+            repository_slug="ajoe734/pantheon",
+            branch="dev",
+            protection=protection,
+            repository=repository,
+        )
         protection["required_status_checks"]["checks"].append(
             {"context": check.CHECK_NAME, "app_id": 15368}
         )
         result = check.verify_active_protection(
             protection=protection,
             repository=repository,
+            plan=plan,
         )
         self.assertFalse(result["ok"])
         self.assertIn(
@@ -678,6 +703,57 @@ class ProtectionPlanTests(unittest.TestCase):
         )
         self.assertFalse(
             result["all_entrypoints_blocked_without_exact_approval"]
+        )
+
+    def test_loss_of_preexisting_required_check_fails_readback(self) -> None:
+        protection, repository = self.baseline(admins=True)
+        plan = check.build_protection_plan(
+            repository_slug="ajoe734/pantheon",
+            branch="dev",
+            protection=protection,
+            repository=repository,
+        )
+        protection["required_status_checks"]["checks"] = [
+            {"context": "Commit trailers", "app_id": 15368},
+            {"context": check.CHECK_NAME, "app_id": 15368},
+        ]
+        repository["allow_auto_merge"] = False
+        result = check.verify_active_protection(
+            protection=protection,
+            repository=repository,
+            plan=plan,
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "required status checks do not match the activation plan's "
+            "full context/app_id set",
+            result["failures"],
+        )
+
+    def test_strict_drift_fails_readback(self) -> None:
+        protection, repository = self.baseline(admins=True)
+        plan = check.build_protection_plan(
+            repository_slug="ajoe734/pantheon",
+            branch="dev",
+            protection=protection,
+            repository=repository,
+        )
+        protection["required_status_checks"]["strict"] = False
+        protection["required_status_checks"]["checks"].append(
+            {"context": check.CHECK_NAME, "app_id": 15368}
+        )
+        repository["allow_auto_merge"] = False
+        result = check.verify_active_protection(
+            protection=protection,
+            repository=repository,
+            plan=plan,
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "strict setting changed from the activation baseline" in failure
+                for failure in result["failures"]
+            )
         )
 
 

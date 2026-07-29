@@ -6,7 +6,7 @@
     "GitHub branch protection can pin a required status check to a specific GitHub App; statuses from another user or integration do not satisfy it.",
     "GitHub branch protection must be configured to apply to administrators to remove the shared owner/admin bypass.",
     "Repository auto-merge must be disabled to block UI/GraphQL auto-merge creation rather than merely waiting to block finalization.",
-    "scripts/git/canonical_review_check.py verify-protection returns success only when all three controls are simultaneously present."
+    "scripts/git/canonical_review_check.py verify-protection requires the fresh machine plan and returns success only when all three boundary controls are present, strict is unchanged, and the full pre-existing context/app_id multiset is preserved."
   ],
   "official_sources": [
     "https://docs.github.com/en/pull-requests/reference/status-checks",

@@ -15,7 +15,7 @@
     "A canary PR has produced the exact check name from GitHub Actions app id 15368 within the last seven days.",
     "The scheduled re-evaluation has been observed updating an open canary so attestation expiry and key revocation cannot leave a stale success.",
     "A fresh full protection response, scoped required-review response, enforce-admin response, repository response, and ruleset response have been captured after any external freeze/release operation.",
-    "The freshly generated plan preserves every unrelated status check and writes rollback payloads before activation."
+    "The freshly generated machine plan preserves strict plus every unrelated context/app_id pair and writes rollback payloads before activation."
   ],
   "activation_order": [
     {
@@ -43,12 +43,14 @@
     }
   ],
   "readback": {
-    "command": "python3 scripts/git/canonical_review_check.py verify-protection --protection-json <fresh-protection.json> --repository-json <fresh-repository.json>",
+    "plan_command": "python3 scripts/git/canonical_review_check.py protection-plan --repository ajoe734/pantheon --branch <branch> --protection-json <fresh-pre-activation-protection.json> --repository-json <fresh-pre-activation-repository.json> --output <fresh-plan.json>",
+    "command": "python3 scripts/git/canonical_review_check.py verify-protection --protection-json <fresh-post-activation-protection.json> --repository-json <fresh-post-activation-repository.json> --plan-json <fresh-plan.json>",
     "must_prove": [
       "exact context occurs once with app_id 15368",
       "enforce_admins is true",
       "allow_auto_merge is false",
-      "all pre-existing required checks are unchanged",
+      "strict is identical to the fresh pre-activation baseline",
+      "the full pre-existing required-check context/app_id multiset is unchanged except replacement of any same-name canonical context by the one app-pinned check",
       "missing, rejected, stale-head, forged, expired, and self-owned attestations produce a failing exact-head check"
     ]
   },
