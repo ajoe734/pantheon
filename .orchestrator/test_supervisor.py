@@ -2665,6 +2665,69 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "INCIDENT-P0",
         )
 
+    def test_dispatcher_prioritizes_l12_review_over_unrelated_review_for_claude2(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T08:42:03Z",
+                },
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T08:42:52Z",
+                },
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 1
+        config["agents"]["claude2"] = {
+            "id": "claude2",
+            "name": "Claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude",
+        }
+        config["agents"]["antigravity"] = {
+            "id": "antigravity",
+            "name": "Antigravity",
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        config["providers"]["claude2"] = {"delivery_mode": "claude"}
+        config["providers"]["antigravity"] = {"delivery_mode": "antigravity"}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude2"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "L12-VERIFY-OBS-001")
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
     def test_task_declared_priority_rank_is_fail_safe(self) -> None:
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "P0"}), 0)
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "p12"}), 12)
@@ -7248,6 +7311,62 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 state,
             )
         )
+
+    def test_l12_review_preempts_unrelated_same_tier_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-non-l12-review",
+            "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "review_ready_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "OPS-PROMOTE-PR-CI-TRIGGER-001": {
+                "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+            "L12-VERIFY-OBS-001": {
+                "id": "L12-VERIFY-OBS-001",
+                "status": "review",
+                "owner": "Antigravity",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
 
     def test_startup_recovery_does_not_preempt_still_live_worker(self) -> None:
         config = json.loads(json.dumps(self.config))

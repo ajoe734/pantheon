@@ -12376,6 +12376,31 @@ def task_declared_priority_rank(task: dict[str, Any]) -> int:
     return int(match.group(1))
 
 
+def task_l12_recovery_priority_rank(task: dict[str, Any]) -> int:
+    """Keep L12 recovery work ahead of unrelated work sharing a dispatch tier."""
+
+    task_id = str(task.get("id") or "").strip().upper()
+    if task_id.startswith("L12-") or task_id.startswith("SUP-L12-"):
+        return 0
+    return 1_000_000
+
+
+def task_dispatch_order_key(
+    task: dict[str, Any] | None,
+    base_priority: int,
+    board_index: int = 0,
+) -> tuple[int, int, int, int]:
+    """Return the stable dispatcher ordering key for an eligible task."""
+
+    candidate = task or {}
+    return (
+        base_priority,
+        task_l12_recovery_priority_rank(candidate),
+        task_declared_priority_rank(candidate),
+        board_index,
+    )
+
+
 def dispatch_event_is_in_unchanged_cooldown(
     seen_event_keys: dict[str, Any],
     event_key: str,
@@ -12649,6 +12674,7 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    current_order_key = task_dispatch_order_key(current_task, current_priority)
     task_resolver = task_resolver_for_config(config, task_map)
     higher_priority_task_ids: set[str] = set()
     slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
@@ -12687,7 +12713,10 @@ def higher_priority_ready_task_exists(
         ):
             candidate_priority = 3
 
-        if candidate_priority is not None and candidate_priority < current_priority:
+        if (
+            candidate_priority is not None
+            and task_dispatch_order_key(task, candidate_priority) < current_order_key
+        ):
             if (
                 slot_count
                 and urgent_priority_cutoff is not None
@@ -12720,7 +12749,13 @@ def higher_priority_ready_task_exists(
             active_event_ids.add(event_id)
         other_priority = dispatch_reason_priority(other.get("request_snapshot", {}).get("reason"))
         other_task_id = str(other.get("task_id") or "")
-        if str(run_id) != current_run_id and other_priority is not None and other_priority < current_priority and other_task_id:
+        other_task = task_map.get(other_task_id)
+        if (
+            str(run_id) != current_run_id
+            and other_priority is not None
+            and task_dispatch_order_key(other_task, other_priority) < current_order_key
+            and other_task_id
+        ):
             served_higher_priority_task_ids.add(other_task_id)
 
     queue_records = (effective_state.get("queue", {}) or {}).get("events", {}) or {}
@@ -12741,7 +12776,12 @@ def higher_priority_ready_task_exists(
         occupied_count += 1
         event_priority = dispatch_reason_priority(str(event.get("reason") or ""))
         event_task_id = str(event.get("task_id") or "")
-        if event_priority is not None and event_priority < current_priority and event_task_id:
+        event_task = task_map.get(event_task_id)
+        if (
+            event_priority is not None
+            and task_dispatch_order_key(event_task, event_priority) < current_order_key
+            and event_task_id
+        ):
             served_higher_priority_task_ids.add(event_task_id)
 
     agent_capacity = agent_dispatch_capacity(config, logical_agent_id, settings)
@@ -13033,6 +13073,7 @@ def dispatch_ready_tasks(
                 int,
                 int,
                 int,
+                int,
                 dict[str, Any],
                 str,
                 tuple[dict[str, Any], dict[str, Any]] | None,
@@ -13177,6 +13218,7 @@ def dispatch_ready_tasks(
             candidates.append(
                 (
                     priority,
+                    task_l12_recovery_priority_rank(task),
                     task_declared_priority_rank(task),
                     index,
                     task,
@@ -13185,10 +13227,10 @@ def dispatch_ready_tasks(
                 )
             )
 
-        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, _, task, reason, review_redispatch in candidates[:per_occurrence_limit]:
+        for _, _, _, _, task, reason, review_redispatch in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if review_redispatch is not None:
                 terminal_worker, handoff = review_redispatch
