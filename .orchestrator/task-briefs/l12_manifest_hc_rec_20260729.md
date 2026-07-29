@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: L12 manifest reconciliation health heartbeat workstream
-- Status: todo
+- Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Workstream under L12-MANIFEST-001. Do not edit .orchestrator/config.json. Repair or propose integrable patch for reconciliation-drift-consumer, reconciliation-drift-scheduler, and reconciliation-drift-incident-listener health/heartbeat.
+- Next: Exact-head review of PR #4332 at a73d583502b382c4d64f7d0d09e258c3b5ddedfe requires one evidence correction: evidence.json records validation.validated_base_sha=6fe626252f19adf9223c5f35268ef43dc74ec445, which is not a repository object and contradicts the actual implementation anchor 982f224a2953d948fcc46d0342c611f3d0b22389 parent/PR merge-base 6fe626252d10af27eed0aba79530506d192857ca. The manifest says contradicted proof fails closed. Correct the base SHA, reseal evidence.sha256, append a correction record, resync/push the PR, and request fresh exact-head review. Independent reruns otherwise passed: ProductEvidenceManifest schema and both checksums; 107 reconciliation/foundation tests; 10 adjacent worker/Compose tests; py_compile; docker compose config; all three resolved healthcheck commands and separate-process heartbeat probes. Preserve the explicit no-hosted-proof boundary.
 
 ## Summary
 補三個 reconciliation drift worker 的 health/heartbeat 證據或 waiver，輸出給 L12-MANIFEST-001 owner 整合。
