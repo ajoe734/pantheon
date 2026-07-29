@@ -1,0 +1,214 @@
+{
+  "schema_version": "pantheon.ops.fleet_dispatch_health_evidence.v1",
+  "task": {
+    "id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+    "title": "Verify live supervisor and provider-first dispatch health",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "status_snapshot_at": "2026-07-29T01:13:53Z",
+    "observation_cut": "2026-07-29T01:14:08Z",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-HEALTH-20260729/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Read-only live supervisor, assistant packet lifecycle, provider worker-runtime, and exact task activity evidence.",
+    "not_changing": "Provider configuration, .orchestrator/config.json, provider credentials, dispatch policy, supervisor implementation, product services, and hosted deployment.",
+    "composes_with": [
+      "OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+      "pkt-l12-current-gap-drain-20260729T0107Z"
+    ]
+  },
+  "supervisor_command_runtime": {
+    "pid": 2082839,
+    "started_at": "2026-07-28T13:21:25Z",
+    "process_command": "/usr/bin/python3.12 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+    "process_cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "process_pwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "command_root_git_head": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "origin_dev_observed": "2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff",
+    "command_runtime_sha_on_origin_dev": true,
+    "command_root_clean": false,
+    "status_root": "/home/lupin/pantheon",
+    "task_state_store_mode": "authoritative",
+    "task_state_event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+    "last_state_heartbeat_at": "2026-07-29T01:13:37Z",
+    "last_successful_loop_at": "2026-07-29T01:13:37Z",
+    "last_loop_error": null,
+    "verdict": "live_supervisor_command_root_proven"
+  },
+  "assistant_dev_packet": {
+    "packet_id": "pkt-l12-current-gap-drain-20260729T0107Z",
+    "packet_digest": "fa8e92a1c424e58e5206ba4c32ef44a60e6c71c22c8a057b548aec490bd652ea",
+    "drained_at": "2026-07-29T01:06:06Z",
+    "receipt_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/pkt-l12-current-gap-drain-20260729T0107Z.json",
+    "archive_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/failed/pkt-l12-current-gap-drain-20260729T0107Z.json",
+    "archive_class": "failed",
+    "status": "failed",
+    "admission_status": "not_attempted",
+    "replay_rejected": false,
+    "retryable": false,
+    "dispatched_task_ids": [
+      "SUP-L12-ROOT-GATE-4326-20260729",
+      "SUP-L12-FLEET-DISPATCH-HEALTH-20260729"
+    ],
+    "artifact_conflict_errors": [
+      "SUP-L12-MANIFEST-REVIEW-BIND-20260729: artifact conflict guard rejected overlap: SUP-L12-MANIFEST-REVIEW-BIND-20260729 <-> L12-MANIFEST-001",
+      "SUP-L12-STALE-CLOSEOUT-PR-DRAIN-20260729: artifact conflict guard rejected overlap: SUP-L12-STALE-CLOSEOUT-PR-DRAIN-20260729 <-> L12-MANIFEST-001"
+    ],
+    "source_document": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0100Z.md",
+    "source_document_present_in_task_branch": false,
+    "source_document_present_in_status_root": false,
+    "verdict": "durable_receipt_and_failed_archive_proven_with_partial_materialization"
+  },
+  "provider_runtime": {
+    "capability_report": {
+      "path": "/home/lupin/pantheon/.orchestrator/provider_capabilities.json",
+      "generated_at": "2026-07-28T19:29:22Z"
+    },
+    "antigravity": {
+      "provider_id": "antigravity",
+      "worker_slot": "antigravity1-1",
+      "auth_ready": true,
+      "auth_method": "agy_prompt_oauth",
+      "auth_error": null,
+      "last_auth_probe_at": "2026-07-28T19:29:39Z",
+      "selected_model": "gemini-3.6-flash-low",
+      "account_group": "antigravity_antigravity",
+      "task_runs": [
+        {
+          "worker_run_id": "antigravity1-1-20260729T010630Z-3ff0066c",
+          "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260729T010630Z-3ff0066c.json",
+          "started_at": "2026-07-29T01:06:30Z",
+          "last_heartbeat_at": "2026-07-29T01:06:33Z",
+          "finished_at": "2026-07-29T01:06:33Z",
+          "status": "failed",
+          "exit_code": 143,
+          "signal": 15
+        },
+        {
+          "worker_run_id": "antigravity1-1-20260729T010745Z-1a61ab8e",
+          "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260729T010745Z-1a61ab8e.json",
+          "started_at": "2026-07-29T01:07:45Z",
+          "last_heartbeat_at": "2026-07-29T01:07:48Z",
+          "finished_at": "2026-07-29T01:07:48Z",
+          "status": "failed",
+          "exit_code": 143,
+          "signal": 15
+        }
+      ],
+      "verdict": "probe_ready_but_repeated_task_execution_failure"
+    },
+    "claude2": {
+      "provider_id": "claude2",
+      "auth_ready": true,
+      "auth_method": "claude_auth_status_refresh",
+      "auth_error": null,
+      "last_auth_probe_at": "2026-07-28T19:29:29Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "live_worker": {
+        "worker_run_id": "claude2-20260729T010922Z-561642e1",
+        "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260729T010922Z-561642e1.json",
+        "task_id": "L12-MANIFEST-001",
+        "started_at": "2026-07-29T01:09:22Z",
+        "last_heartbeat_at": "2026-07-29T01:12:53Z",
+        "status": "running",
+        "exit_code": null
+      },
+      "verdict": "ready_and_actively_dispatched_capacity_not_claimed"
+    }
+  },
+  "failure_loop_and_failover": {
+    "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+    "events": [
+      {
+        "at": "2026-07-29T01:06:30Z",
+        "type": "worker_started",
+        "provider": "antigravity1-1",
+        "worker_run_id": "antigravity1-1-20260729T010630Z-3ff0066c"
+      },
+      {
+        "at": "2026-07-29T01:07:21Z",
+        "type": "worker_retry_scheduled",
+        "provider": "antigravity1-1",
+        "reason": "Error: context canceled"
+      },
+      {
+        "at": "2026-07-29T01:07:21Z",
+        "type": "task_preempted_synced",
+        "reason": "free Antigravity for higher-priority review/finalize work"
+      },
+      {
+        "at": "2026-07-29T01:07:45Z",
+        "type": "worker_started",
+        "provider": "antigravity1-1",
+        "worker_run_id": "antigravity1-1-20260729T010745Z-1a61ab8e"
+      },
+      {
+        "at": "2026-07-29T01:08:32Z",
+        "type": "task_reassigned",
+        "reason": "repeated Antigravity terminal: Error: context canceled",
+        "new_owner": "Codex2"
+      },
+      {
+        "at": "2026-07-29T01:08:46Z",
+        "type": "task_helper_claimed",
+        "new_owner": "Codex",
+        "new_reviewer": "Codex2"
+      },
+      {
+        "at": "2026-07-29T01:09:20Z",
+        "type": "worker_started",
+        "provider": "codex1-1",
+        "worker_run_id": "codex-20260729T010920Z-ae3c0786"
+      },
+      {
+        "at": "2026-07-29T01:09:27Z",
+        "type": "start",
+        "agent": "Codex"
+      }
+    ],
+    "config_path": ".orchestrator/config.json",
+    "config_edited": false,
+    "verdict": "repeated_failure_recorded_and_fallback_dispatch_continued"
+  },
+  "acceptance": {
+    "live_supervisor_uses_governed_command_root": true,
+    "packet_receipt_or_archive_proven": true,
+    "antigravity_readiness_read_from_live_facts": true,
+    "claude2_readiness_read_from_live_facts": true,
+    "repeated_failure_loop_recorded": true,
+    "orchestrator_config_edited": false
+  },
+  "verdict": {
+    "acceptance_satisfied": true,
+    "fleet_health": "degraded_but_failover_working",
+    "summary": "The live supervisor and command runtime are proven. The packet produced durable receipt/archive records and partially materialized tasks. Antigravity was probe-ready but failed this task twice with context-canceled/SIGTERM before automatic reassignment; Claude2 was ready and actively dispatched; Codex fallback continued the task. No provider config mutation was made."
+  },
+  "independent_review": {
+    "required": true,
+    "reviewer": "Codex2",
+    "status": "pending",
+    "reviewed_head": null,
+    "decided_at": null,
+    "notes": []
+  },
+  "validation": {
+    "verified_at": "2026-07-29T01:14:08Z",
+    "commands": [
+      "AI_NAME=Codex \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "ps -eo pid,ppid,lstart,args --sort=pid",
+      "readlink -f /proc/2082839/cwd",
+      "selected /proc/2082839/environ inspection",
+      "jq exact receipt, provider capability, worker-runtime, state, and activity records",
+      "git diff -- .orchestrator/config.json",
+      "python3 -m json.tool evidence.json",
+      "sha256sum -c evidence.sha256",
+      "git diff --check"
+    ]
+  }
+}
