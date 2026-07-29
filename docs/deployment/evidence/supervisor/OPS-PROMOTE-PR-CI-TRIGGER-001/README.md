@@ -407,6 +407,36 @@ observe the independently controlled root-freeze context before merging.
 No release ref, promote PR, stale PR, branch protection, external status, or
 merge authority was mutated during this refresh.
 
+## Post-Merge Fresh Candidate Finding
+
+PR `#4262` merged exact reviewed head
+`c6999529e7299c3730d3dad7de16b7c2935c3c4c` into `dev` as
+`3a7560f48096352146852a59552f2d01e76d0b6a` after both Branch CI runs,
+canonical review status `51287738733`, and the independently controlled root
+merge-freeze status succeeded.
+
+Codex2 then forced only already-cut immutable release `v2026.07.29.7` through
+the governed `Publish Promote` workflow. Run `30450668323` opened PR `#4375`
+at exact head `596d190930d27d41e35191e37b9dc9471ad8bb43`, dispatched Branch CI, and
+verified the protected auto-merge request through REST.
+
+The exact-head dispatch guard passed, proving the recursive trigger repair,
+but run `30450718720` exposed one final acceptance gap. Its `Commit trailers`
+job scanned `master..promote-head`, revalidating release-history commits that
+had already passed the dev snapshot gate. Five squash commits carried literal
+escaped newline text instead of parseable trailers and two older subjects
+exceeded the current length limit, so `Commit trailers` failed and
+`Smoke acceptance` was correctly skipped. `Runtime mirror guard` and Python
+packaging passed.
+
+The narrow repair at `3e75f7a413d3e951a310a51131ecc5ef23c84b74`
+skips only that historical trailer re-scan after the existing exact-head
+`workflow_dispatch` guard succeeds on a `promote/*` ref. Task and hotfix
+trailer enforcement, runtime mirror validation, smoke acceptance, master
+protection, release immutability, and deployment admission remain unchanged.
+PR `#4375` stays fail-closed pending a newer immutable release containing this
+repair.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is

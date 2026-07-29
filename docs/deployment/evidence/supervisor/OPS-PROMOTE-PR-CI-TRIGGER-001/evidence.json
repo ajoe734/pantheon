@@ -570,12 +570,12 @@
     "rest_followup_pr": 4262,
     "rest_followup_code_commit": "c0254c6faa70b9bd18b6132567cb8cf87b46c136",
     "rest_followup_pre_evidence_head": "25d8f0764352369dbb6394694627e05d29087448",
-    "rest_followup_head": "645609c0133f1e5a7badbf4a3e960810a8c2f3b3",
-    "rest_followup_merge_commit": null,
+    "rest_followup_head": "c6999529e7299c3730d3dad7de16b7c2935c3c4c",
+    "rest_followup_merge_commit": "3a7560f48096352146852a59552f2d01e76d0b6a",
     "rest_followup_checks": {
-      "observed_head": "645609c0133f1e5a7badbf4a3e960810a8c2f3b3",
-      "push_run": 30448185392,
-      "pull_request_run": 30448188497,
+      "observed_head": "c6999529e7299c3730d3dad7de16b7c2935c3c4c",
+      "push_run": 30449913458,
+      "pull_request_run": 30449918268,
       "required_contexts": {
         "Commit trailers": "success",
         "Runtime mirror guard": "success",
@@ -586,29 +586,26 @@
       }
     },
     "merge_gate": {
-      "observed_at": "2026-07-29T12:00:13Z",
-      "observed_head": "2da04f364aa55d567c4e6aca49f3270716aa7e59",
-      "pr_state": "open",
-      "mergeable_state": "local_base_current_pending_evidence_commit_and_push",
+      "observed_at": "2026-07-29T12:08:46Z",
+      "observed_head": "c6999529e7299c3730d3dad7de16b7c2935c3c4c",
+      "pr_state": "merged",
+      "mergeable_state": "merged_exact_reviewed_head",
       "auto_merge_enabled": false,
       "merge_policy": "review_before_merge",
       "external_required_contexts": [
         "Pantheon canonical review gate",
         "Pantheon root merge freeze 2026-07-27"
       ],
-      "head_check_runs": 0,
-      "head_commit_statuses": 0,
-      "owner_rescue_requires_fresh_head_gates": true,
-      "waiting_for": [
-        "Codex2 final evidence commit, push, and fresh Branch CI",
-        "Antigravity independent exact-head review",
-        "Pantheon canonical review gate",
-        "Human Ops root merge freeze release"
-      ]
+      "head_check_runs": 8,
+      "head_commit_statuses": 2,
+      "canonical_review_status_id": 51287738733,
+      "root_merge_freeze_status": "success",
+      "owner_rescue_requires_fresh_head_gates": false,
+      "waiting_for": []
     }
   },
   "live_proof": {
-    "status": "blocked_on_rest_followup_merge",
+    "status": "blocked_on_dispatch_trailer_history_scan",
     "preliminary_publish_cut_run": 30284714199,
     "preliminary_release_tag": "release/v2026.07.27.2",
     "preliminary_release_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
@@ -629,6 +626,46 @@
         "detail": "GraphQL lookup returned HTTP 502 after bulk rollup removal"
       }
     ],
+    "first_post_merge_candidate": {
+      "publish_promote_run": 30450668323,
+      "release_tag": "release/v2026.07.29.7",
+      "release_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+      "promote_branch": "promote/v2026.07.29.7",
+      "promote_pr": 4375,
+      "promote_head": "596d190930d27d41e35191e37b9dc9471ad8bb43",
+      "branch_ci_run": 30450718720,
+      "auto_merge_enabled": true,
+      "exact_head_dispatch_guard": "passed",
+      "required_check_conclusions": {
+        "Commit trailers": "failure",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "skipped"
+      },
+      "disposition": "fail_closed",
+      "detail": "workflow_dispatch rescanned already-validated release history and rejected five malformed historical squash messages plus two overlong historical subjects"
+    },
+    "dispatch_trailer_history_repair": {
+      "anchor_commit": "3e75f7a413d3e951a310a51131ecc5ef23c84b74",
+      "scope": [
+        ".github/workflows/branch-ci.yml",
+        "scripts/git/test_git_workflow_helpers.py"
+      ],
+      "behavior": "after the existing exact-head promote workflow_dispatch guard passes, skip only the already-validated publish-history trailer re-scan",
+      "not_changing": [
+        "task and hotfix trailer enforcement",
+        "Runtime mirror guard",
+        "Smoke acceptance",
+        "master branch protection",
+        "release tree immutability",
+        "deployment admission"
+      ],
+      "validation": {
+        "unittest": "25 PublishPromoteTests passed",
+        "compile": "test_git_workflow_helpers.py passed py_compile",
+        "workflow_parse": "branch-ci.yml parsed",
+        "diff_check": "git diff --check passed"
+      }
+    },
     "release_tag": null,
     "release_commit": null,
     "promote_branch": null,
