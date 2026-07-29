@@ -1,15 +1,16 @@
 # OPS-TASK-PR-TRIAGE-002 evidence report
 
-Generated from live GitHub and git evidence at `2026-07-28T13:40:12Z`.
-Base proof: `origin/dev` = `65802d99bf5ddca1213f6742af74dc125216fa82`.
+Generated from live GitHub and git evidence at `2026-07-29T03:47:00Z`.
+Base proof: `origin/dev` = `31d7eaebcb012a9beb5f5f0057db401d378b5beb`.
 
 ## Cohort result
 
-The fixed audit cohort contains **24** task PRs: 24 remain open and 0 are now closed or merged.
-Repository-wide, **28** task PRs are open at this snapshot; that global count includes recent PRs outside the fixed overdue cohort.
+The fixed audit cohort contains **25** task PRs: 25 remain open and 0 are now closed or merged.
+Repository-wide, **36** task PRs are open at this snapshot; that global count includes recent PRs outside the fixed overdue cohort.
 
 | PR | State | Merge | Draft | Disposition | Owner | Evidence |
 |---:|---|---|:---:|---|---|---|
+| [#4262](https://github.com/ajoe734/pantheon/pull/4262) | OPEN | BEHIND | no | active-repair | Antigravity | open task PR needs owner refresh/rebase or an explicit retirement decision |
 | [#4073](https://github.com/ajoe734/pantheon/pull/4073) | OPEN | BEHIND | no | active-repair | Orchestrator | open task PR needs owner refresh/rebase or an explicit retirement decision |
 | [#3949](https://github.com/ajoe734/pantheon/pull/3949) | OPEN | BEHIND | no | active-repair | Claude | open task PR needs owner refresh/rebase or an explicit retirement decision |
 | [#3820](https://github.com/ajoe734/pantheon/pull/3820) | OPEN | BEHIND | yes | protected-retain | Codex | draft PR is protected from automatic retirement |
@@ -45,30 +46,34 @@ Only the following still-open PRs passed the fail-closed closure rule.
 
 ## Branch inventory and deletion dry run
 
-- Remote task branches: 2214
-- No-open-PR task branches: 2186
-- Dry-run deletion candidates: 1305
+- Remote task branches: 2233
+- No-open-PR task branches: 2197
+- Dry-run deletion candidates: 1334
 - No branch deletion command exists in this task or tool.
 
 Disposition counts:
 
 - `abandoned-unproven`: 83
-- `active-repair`: 18
+- `active-repair`: 24
 - `conflict-needs-owner`: 8
-- `merged-reachable`: 2053
-- `protected-retain`: 48
+- `merged-reachable`: 2064
+- `protected-retain`: 50
 - `superseded`: 4
 
 The machine-readable report contains every branch, joined PR history, active/archive state, reachability, age, and exclusion reasons. The separate dry-run manifest includes only heads older than the retention window that have no open PR and are already ancestors of current `dev`.
 
-## Review and closeout
+## Review handoff
 
-Claude independently approved PR #4296 at exact head
-`d3ece4f503dc557ef7d7bb40fc5dbdc9e8b22396` on 2026-07-28. The required
-`Pantheon canonical review gate` status and all 9 visible checks succeeded.
+The task branch composed `origin/dev` at
+`31d7eaebcb012a9beb5f5f0057db401d378b5beb` through merge commit
+`93ba38a7d9a153990930fea859718d22ac1787ce`. The generated evidence is
+therefore based on the same immutable `dev` head present in the task branch.
 
-That reviewed head was still `BEHIND` `dev`. The owner must compose the current
-base and publish this closeout-only evidence refresh; because either action
-changes the PR head, the resulting exact head requires a fresh Claude review
-before merge. No PR closure, PR merge, or branch deletion is authorized by
-this evidence refresh.
+The assigned reviewer is **Codex**. Review must bind PR #4296 and the exact
+head published after this evidence refresh; this report deliberately does not
+pre-claim that future approval. Until the governed reviewer command records
+that exact head, the `Pantheon canonical review gate` failure is expected and
+merge remains unauthorized.
+
+This refresh did not close or merge a PR, delete a branch, enable auto-merge,
+or push directly to a protected branch.
