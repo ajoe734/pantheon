@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 import tempfile
 import time
 import urllib.error
@@ -15,9 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from services.background_worker_health import (
+    healthcheck as check_worker_health,
+    write_health,
+)
 
 SleepFn = Callable[[float], None]
 DEFAULT_STATE_PATH = "/data/reconciliation-drift/incident-listener-state.json"
+_WORKER_NAME = "reconciliation-drift-incident-listener"
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -609,7 +615,59 @@ def _configuration_error(exc: Exception) -> dict[str, Any]:
     }
 
 
+def healthcheck() -> int:
+    try:
+        interval_seconds = _env_float(
+            "RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS",
+            15.0,
+            minimum=0.001,
+        )
+        max_age_seconds = _env_float(
+            "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS",
+            300.0,
+            minimum=0.001,
+        )
+    except (TypeError, ValueError):
+        return 1
+    return check_worker_health(
+        health_file=os.getenv(
+            "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE",
+            "",
+        ),
+        interval_seconds=interval_seconds,
+        max_age_seconds=max_age_seconds,
+        worker_name=_WORKER_NAME,
+    )
+
+
+def _health_failure_reason(result: dict[str, Any]) -> str | None:
+    errors = result.get("errors")
+    if isinstance(errors, list) and errors:
+        first = errors[0]
+        if isinstance(first, dict):
+            return str(first.get("detail") or first)
+        return str(first)
+    return None
+
+
 def main() -> int:
+    health_file = os.getenv(
+        "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE",
+        "",
+    )
+    health: dict[str, Any] = {
+        "worker_name": _WORKER_NAME,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "controller_status": "starting",
+        "pid": os.getpid(),
+    }
+    write_health(health_file, health)
+
     try:
         incidents_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "http://incidents:8090").strip()
         reconciliation_url = os.getenv(
@@ -669,6 +727,22 @@ def main() -> int:
             }
         controller_status = str(result.get("controller_status") or "unhealthy")
         result.setdefault("controller_status", controller_status)
+        tick_at = _utc_now()
+        health.update(
+            {
+                "status": "ok",
+                "ticks": tick,
+                "last_tick_at": tick_at,
+                "controller_status": controller_status,
+            }
+        )
+        if controller_status == "healthy":
+            health["last_success_at"] = tick_at
+            health["last_failure_reason"] = None
+        else:
+            health["last_failure_at"] = tick_at
+            health["last_failure_reason"] = _health_failure_reason(result)
+        write_health(health_file, health)
         print(
             json.dumps(
                 {"tick": tick, "controller_status": controller_status, "result": result},
@@ -682,4 +756,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
+    if sys.argv[1:]:
+        print(
+            "usage: python services/reconciliation-drift/incident_listener.py "
+            "[healthcheck]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     raise SystemExit(main())
