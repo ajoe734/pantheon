@@ -8714,7 +8714,10 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
 
     if task_status in review_statuses and reviewer == failing_agent:
-        candidates = normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent)
+        candidates = l12_provider_first_candidates(
+            task,
+            normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent),
+        )
         new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
         if not new_reviewer:
             return None
@@ -8750,13 +8753,17 @@ def maybe_reassign_task_after_worker_failure(
         return new_reviewer
 
     if task_status in owned_statuses | finalize_statuses and owner == failing_agent:
-        candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent)
+        candidates = l12_provider_first_candidates(
+            task,
+            normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent),
+        )
         new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
         if not new_owner:
             return None
         reviewer_candidates = [reviewer]
         reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent))
         reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent))
+        reviewer_candidates = l12_provider_first_candidates(task, reviewer_candidates)
         new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
         if not new_reviewer:
             return None
@@ -12386,6 +12393,32 @@ def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> i
     if task_id.startswith("L12-") or task_id.startswith("SUP-L12-"):
         return 0
     return 1_000_000
+
+
+L12_PROVIDER_FIRST_AGENT_NAMES = frozenset(
+    {"Antigravity", "Antigravity2", "Claude", "Claude2"}
+)
+
+
+def task_is_l12_recovery_work(task: dict[str, Any] | None) -> bool:
+    candidate = task or {}
+    task_id = str(candidate.get("id") or "").strip().upper()
+    return task_id.startswith("L12-") or task_id.startswith("SUP-L12-")
+
+
+def l12_provider_first_candidates(
+    task: dict[str, Any],
+    candidates: list[str],
+) -> list[str]:
+    """For L12 recovery tasks, keep automatic failure fallback provider-first."""
+
+    if not task_is_l12_recovery_work(task):
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if str(candidate or "").strip() in L12_PROVIDER_FIRST_AGENT_NAMES
+    ]
 
 
 def task_dispatch_order_key(
