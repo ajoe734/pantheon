@@ -1,0 +1,253 @@
+{
+  "schema_version": "supervisor_running_owner_reconciliation.v1",
+  "task": {
+    "id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+    "title": "Reconcile running workers with authoritative row owners",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "phase": "L12 runtime/fleet guardrails",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/evidence.json",
+    "status": "review_pending"
+  },
+  "scope": {
+    "owned_layer": "Supervisor task-row/worker-run assignment evidence, active assignment-drift reconciliation, duplicate active-run suppression, and optimistic stale-failure reassignment guards.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      "provider-first lane ordering",
+      "ownerless merged-delivery evidence",
+      "product services",
+      "canonical task-state files"
+    ],
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "task_artifacts": [
+      ".orchestrator/task-briefs/sup_l12_running_owner_reconcile_20260729.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/validation.txt"
+    ],
+    "config_diff": []
+  },
+  "implementation": {
+    "anchor_commit": "c076fcd81f73ce7f58f54065dbe80014e3d4c5fb",
+    "assignment_capture": "start_worker_for_request records task_assignment_at_dispatch beside the supervisor-issued status_command_runtime source SHA.",
+    "reconciliation_phase": "reconcile_worker_task_assignments runs before the first worker poll and after the post-dispatch worker poll. The canonical task row remains authoritative.",
+    "active_drift_action": "A live or active worker whose dispatch identity no longer matches the authoritative owner/reviewer/status is terminated when necessary, marked superseded, and its queue lease is finalized exactly once.",
+    "duplicate_action": "For multiple authoritative active runs on one task, the oldest matching incumbent remains and later matching runs are superseded. Delegated fallback parent/child records are not misclassified as accidental duplicates.",
+    "terminal_visibility": "Recently terminal runs remain unchanged but appear in the runtime evidence join with row owner, reviewer, status, run id, queue event, PID, exit code, source SHA, and assignment-match result.",
+    "stale_failure_guard": "Failure-driven reassignment supplies expected_owner and expected_reviewer to the locked canonical write. If either changed after failure observation, the write fails and stale_worker_failure_reassignment_skipped records the exact before/after rows and run evidence.",
+    "health_reporting": "Runtime summaries report assignment_truth=unknown until a reconciliation report exists; verbose output prints the exact joined fields before reporting healthy or drift."
+  },
+  "live_observation": {
+    "observed_at": "2026-07-29T15:22:01Z",
+    "source": "Governed ai-status show plus the matching central .orchestrator/state.json worker record selected by ORCH_RUN_ID.",
+    "task_row": {
+      "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "in_progress",
+      "last_update": "2026-07-29T15:06:26Z"
+    },
+    "worker_run": {
+      "run_id": "codex-20260729T150602Z-743e6017",
+      "queue_event_id": "evt-20260729T150450Z-97c245cd",
+      "worker_status": "running",
+      "runner_status": "running",
+      "provider": "codex1-3",
+      "agent_id": "codex1_3",
+      "logical_agent_id": "codex",
+      "pid": 1671740,
+      "exit_code": null,
+      "source_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+      "dispatch_reason": "owned_ready_dispatch"
+    },
+    "task_brief_at_dispatch": {
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "interpretation": "The generated task brief predates the successful governed start transition. The canonical row advanced to in_progress without changing owner or reviewer."
+    }
+  },
+  "reproduction_table": [
+    {
+      "case": "active owner drift",
+      "task_row": {
+        "owner": "Claude2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "dispatch_row": {
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "run_id": "codex2-stale-live",
+      "queue_event_id": "evt-codex2-stale-live",
+      "pid": 4242,
+      "exit_code": null,
+      "source_sha": "5555555555555555555555555555555555555555",
+      "result": "superseded once; canonical row unchanged; report healthy after reconciliation"
+    },
+    {
+      "case": "recent terminal fallback failure after owner move",
+      "task_row": {
+        "owner": "Claude2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "dispatch_row": {
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "run_id": "codex2-terminal",
+      "queue_event_id": "evt-codex2-terminal",
+      "pid": 5151,
+      "exit_code": 1,
+      "source_sha": "5555555555555555555555555555555555555555",
+      "result": "terminal record retained and reported; no task-row rewrite"
+    },
+    {
+      "case": "duplicate active workers for one authoritative owner",
+      "task_row": {
+        "owner": "Claude2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "runs": [
+        {
+          "run_id": "claude2-incumbent",
+          "lease_acquired_at": "2026-07-29T11:00:00Z",
+          "result": "retained"
+        },
+        {
+          "run_id": "claude2-duplicate",
+          "lease_acquired_at": "2026-07-29T11:30:00Z",
+          "result": "superseded once"
+        }
+      ]
+    },
+    {
+      "case": "stale failure reassignment race",
+      "observed_row": {
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "locked_row": {
+        "owner": "Claude2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "run_id": "codex2-terminal-fallback",
+      "pid": 4242,
+      "exit_code": 1,
+      "source_sha": "5555555555555555555555555555555555555555",
+      "result": "write rejected; authoritative_assignment_changed reason recorded"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Reproduce row owner/reviewer changes while live or recently terminal worker records exist.",
+      "status": "pass",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_worker_launch_captures_dispatch_assignment_and_source_sha",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_live_worker_for_previous_owner_is_superseded_with_exact_evidence",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_recent_terminal_failure_is_reported_without_rewriting_task_truth"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Report exact row owner, reviewer, status, run id, PID, exit code, and source SHA before claiming fleet health.",
+      "status": "pass",
+      "evidence": [
+        ".orchestrator/supervisor.py::worker_assignment_truth_evidence",
+        ".orchestrator/supervisor.py::reconcile_worker_task_assignments",
+        ".orchestrator/supervisor.py::log_runtime_summary",
+        "live_observation",
+        "reproduction_table"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Prevent stale fallback failures from overwriting provider-first owner truth without a recorded reason.",
+      "status": "pass",
+      "evidence": [
+        ".orchestrator/supervisor.py::_persist_task_reassignment_locked",
+        ".orchestrator/supervisor.py::record_stale_worker_failure_reassignment_skip",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_locked_reassignment_rejects_changed_authoritative_owner",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_stale_failure_reassignment_records_reason_instead_of_overwrite"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "No duplicate active worker remains per task after reconciliation.",
+      "status": "pass",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_duplicate_matching_run_keeps_oldest_incumbent_exactly_once"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "No .orchestrator/config.json edit.",
+      "status": "pass",
+      "evidence": [
+        "git diff --name-only HEAD -- .orchestrator/config.json returned no paths at 2026-07-29T15:22:01Z"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "Archive a task-scoped evidence table for active rows and terminal runs.",
+      "status": "pass",
+      "evidence": [
+        "live_observation",
+        "reproduction_table",
+        "README.md"
+      ]
+    }
+  ],
+  "validation": {
+    "status": "pass",
+    "commands": [
+      {
+        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "result": "pass"
+      },
+      {
+        "command": "cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests",
+        "result": "7 passed"
+      },
+      {
+        "command": "cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
+        "result": "113 passed, 2 subtests passed"
+      },
+      {
+        "command": "cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py",
+        "result": "464 passed, 4 subtests passed"
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass"
+      }
+    ],
+    "raw_log": "validation.txt"
+  },
+  "review": {
+    "decision": "pending",
+    "reviewer": "Antigravity",
+    "reviewed_commit": null,
+    "reviewed_at": null,
+    "notes": []
+  },
+  "delivery": {
+    "pull_request": null,
+    "task_head_commit": "c076fcd81f73ce7f58f54065dbe80014e3d4c5fb",
+    "merge_commit": null
+  }
+}
