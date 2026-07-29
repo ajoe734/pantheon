@@ -16308,5 +16308,431 @@ class WorkerDeliveryIdentityTests(unittest.TestCase):
         self.assertIsNone(supervisor.worker_dispatch_started_at({}))
 
 
+# SUP-L12-RUNNING-OWNER-RECONCILE-20260729 -------------------------------
+
+
+class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
+    SOURCE_SHA = "5" * 40
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {
+                "status_file": "ai-status.json",
+                "activity_log": "/tmp/test-activity-log.jsonl",
+            },
+            "agents": {
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                },
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "manual_pending",
+                    "retry_backoff",
+                    "stalled",
+                    "fallback",
+                ],
+                "owned_statuses": ["todo", "in_progress"],
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "dependency_done_statuses": ["done"],
+            },
+        }
+
+    @staticmethod
+    def _task(**overrides: object) -> dict[str, object]:
+        task = {
+            "id": "SUP-L12-OWNER-DRIFT",
+            "owner": "Claude2",
+            "reviewer": "Antigravity",
+            "status": "in_progress",
+            "last_update": "2026-07-29T12:00:00Z",
+        }
+        task.update(overrides)
+        return task
+
+    def _worker(self, run_id: str, **overrides: object) -> dict[str, object]:
+        worker = {
+            "run_id": run_id,
+            "task_id": "SUP-L12-OWNER-DRIFT",
+            "agent_id": "codex2",
+            "logical_agent_id": "codex2",
+            "provider": "codex2",
+            "status": "running",
+            "queue_event_id": f"evt-{run_id}",
+            "pid": 4242,
+            "exit_code": None,
+            "lease_acquired_at": "2026-07-29T11:30:00Z",
+            "request_snapshot": {
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "metadata": {
+                    "status_command_runtime": {
+                        "source_sha": self.SOURCE_SHA,
+                    }
+                },
+            },
+            "task_assignment_at_dispatch": {
+                "task_id": "SUP-L12-OWNER-DRIFT",
+                "owner": "Codex2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T11:20:00Z",
+            },
+        }
+        worker.update(overrides)
+        return worker
+
+    def test_live_worker_for_previous_owner_is_superseded_with_exact_evidence(
+        self,
+    ) -> None:
+        task = self._task()
+        worker = self._worker("codex2-stale-live")
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {
+                "events": {
+                    worker["queue_event_id"]: {
+                        "task_id": task["id"],
+                        "status": "started",
+                    }
+                }
+            },
+        }
+        status = {"tasks": [task]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_pid",
+                return_value=True,
+            ) as terminate_worker_pid,
+            mock.patch.object(
+                supervisor,
+                "finalize_queue_event_record",
+            ) as finalize_queue_event_record,
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ) as write_activity_log,
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-29T12:05:00Z",
+            ),
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+            changed_again = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertTrue(changed)
+        self.assertFalse(changed_again)
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(4242)
+        finalize_queue_event_record.assert_called_once()
+        write_activity_log.assert_called_once()
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "worker_assignment_reconciled")
+        evidence = event["evidence"]
+        self.assertEqual(
+            evidence["reason"],
+            "authoritative_task_assignment_changed",
+        )
+        before = evidence["before"]
+        self.assertEqual(before["task_row"]["owner"], "Claude2")
+        self.assertEqual(before["task_row"]["reviewer"], "Antigravity")
+        self.assertEqual(before["task_row"]["status"], "in_progress")
+        self.assertEqual(before["dispatch_task_row"]["owner"], "Codex2")
+        self.assertEqual(before["run_id"], "codex2-stale-live")
+        self.assertEqual(before["queue_event_id"], "evt-codex2-stale-live")
+        self.assertEqual(before["pid"], 4242)
+        self.assertIsNone(before["exit_code"])
+        self.assertEqual(before["source_sha"], self.SOURCE_SHA)
+        report = state["worker_assignment_reconciliation"]
+        self.assertEqual(report["status"], "healthy")
+        self.assertEqual(report["active_drift_count"], 0)
+
+    def test_duplicate_matching_run_keeps_oldest_incumbent_exactly_once(
+        self,
+    ) -> None:
+        task = self._task()
+        incumbent = self._worker(
+            "claude2-incumbent",
+            agent_id="claude2",
+            logical_agent_id="claude2",
+            provider="claude2",
+            pid=None,
+            lease_acquired_at="2026-07-29T11:00:00Z",
+            task_assignment_at_dispatch={
+                "task_id": task["id"],
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T10:59:00Z",
+            },
+        )
+        duplicate = self._worker(
+            "claude2-duplicate",
+            agent_id="claude2",
+            logical_agent_id="claude2",
+            provider="claude2",
+            pid=None,
+            lease_acquired_at="2026-07-29T11:30:00Z",
+            task_assignment_at_dispatch={
+                "task_id": task["id"],
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T11:29:00Z",
+            },
+        )
+        state = {
+            "workers": {
+                incumbent["run_id"]: incumbent,
+                duplicate["run_id"]: duplicate,
+            },
+            "queue": {"events": {}},
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ) as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-29T12:05:00Z",
+            ),
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+            changed_again = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertTrue(changed)
+        self.assertFalse(changed_again)
+        self.assertEqual(incumbent["status"], "running")
+        self.assertEqual(duplicate["status"], "superseded")
+        evidence = duplicate["assignment_reconciliation"]
+        self.assertEqual(evidence["reason"], "duplicate_active_worker")
+        self.assertEqual(
+            evidence["incumbent_run_id"],
+            "claude2-incumbent",
+        )
+        write_activity_log.assert_called_once()
+        report = state["worker_assignment_reconciliation"]
+        self.assertEqual(report["status"], "healthy")
+        self.assertEqual(report["active_row_count"], 1)
+
+    def test_recent_terminal_failure_is_reported_without_rewriting_task_truth(
+        self,
+    ) -> None:
+        task = self._task()
+        worker = self._worker(
+            "codex2-terminal",
+            status="failed",
+            pid=5151,
+            exit_code=1,
+        )
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive") as pid_is_alive,
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ) as write_activity_log,
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-29T12:05:00Z",
+            ),
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        pid_is_alive.assert_not_called()
+        write_activity_log.assert_not_called()
+        report = state["worker_assignment_reconciliation"]
+        self.assertEqual(report["status"], "healthy")
+        self.assertEqual(report["terminal_row_count"], 1)
+        row = report["rows"][0]
+        self.assertEqual(row["task_row"]["owner"], "Claude2")
+        self.assertEqual(row["task_row"]["reviewer"], "Antigravity")
+        self.assertEqual(row["task_row"]["status"], "in_progress")
+        self.assertEqual(row["run_id"], "codex2-terminal")
+        self.assertEqual(row["pid"], 5151)
+        self.assertEqual(row["exit_code"], 1)
+        self.assertEqual(row["source_sha"], self.SOURCE_SHA)
+        self.assertFalse(row["assignment_matches"])
+
+    def test_locked_reassignment_rejects_changed_authoritative_owner(
+        self,
+    ) -> None:
+        task = self._task()
+        status = {"tasks": [task]}
+        rejection: dict[str, object] = {}
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value=status,
+            ),
+            mock.patch.object(supervisor, "write_status") as write_status,
+        ):
+            applied = supervisor._persist_task_reassignment_locked(
+                self.config,
+                task_id=str(task["id"]),
+                new_owner="Antigravity",
+                new_reviewer="Codex2",
+                message="stale fallback overwrite",
+                expected_owner="Codex2",
+                expected_reviewer="Antigravity",
+                rejection_out=rejection,
+            )
+
+        self.assertFalse(applied)
+        self.assertEqual(task["owner"], "Claude2")
+        self.assertEqual(task["reviewer"], "Antigravity")
+        self.assertEqual(
+            rejection["reason"],
+            "authoritative_assignment_changed",
+        )
+        self.assertEqual(
+            rejection["current_task_assignment"]["owner"],
+            "Claude2",
+        )
+        write_status.assert_not_called()
+
+    def test_stale_failure_reassignment_records_reason_instead_of_overwrite(
+        self,
+    ) -> None:
+        observed_task = self._task(
+            owner="Codex2",
+            reviewer="Antigravity",
+        )
+        worker = self._worker(
+            "codex2-terminal-fallback",
+            status="failed",
+            exit_code=1,
+            retry_count=1,
+        )
+
+        def reject_stale_write(*_args: object, **kwargs: object) -> bool:
+            rejection = kwargs["rejection_out"]
+            rejection.update(
+                {
+                    "reason": "authoritative_assignment_changed",
+                    "current_task_assignment": self._task(),
+                }
+            )
+            return False
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [observed_task]},
+            ),
+            mock.patch.object(
+                supervisor,
+                "first_viable_agent",
+                return_value="Claude2",
+            ),
+            mock.patch.object(
+                supervisor,
+                "persist_task_reassignment",
+                side_effect=reject_stale_write,
+            ) as persist_task_reassignment,
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ) as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                {},
+                worker,
+                "status: 429",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        kwargs = persist_task_reassignment.call_args.kwargs
+        self.assertEqual(kwargs["expected_owner"], "Codex2")
+        self.assertEqual(kwargs["expected_reviewer"], "Antigravity")
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(
+            event["type"],
+            "stale_worker_failure_reassignment_skipped",
+        )
+        self.assertEqual(
+            event["reason"],
+            "authoritative_assignment_changed",
+        )
+        self.assertEqual(event["task_row_before"]["owner"], "Codex2")
+        self.assertEqual(event["task_row_after"]["owner"], "Claude2")
+        self.assertEqual(event["run_id"] if "run_id" in event else event["worker_run_id"], "codex2-terminal-fallback")
+        self.assertEqual(event["pid"], 4242)
+        self.assertEqual(event["exit_code"], 1)
+        self.assertEqual(event["source_sha"], self.SOURCE_SHA)
+
+    def test_runtime_summary_refuses_implicit_health_before_reconciliation(
+        self,
+    ) -> None:
+        unknown = supervisor.summarize_runtime({}, {"pending": []})
+        self.assertEqual(unknown["assignment_truth_status"], "unknown")
+        healthy = supervisor.summarize_runtime(
+            {
+                "worker_assignment_reconciliation": {
+                    "status": "healthy",
+                    "rows": [],
+                }
+            },
+            {"pending": []},
+        )
+        self.assertEqual(healthy["assignment_truth_status"], "healthy")
+
+
 if __name__ == "__main__":
     unittest.main()

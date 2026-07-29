@@ -534,6 +534,12 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
     workers = state.get("workers", {}) or {}
     queue_events = state.get("queue", {}).get("events", {}) or {}
     pending_approvals = approval_state.get("pending", []) or []
+    assignment_report = state.get("worker_assignment_reconciliation")
+    assignment_truth_status = (
+        str(assignment_report.get("status") or "unknown")
+        if isinstance(assignment_report, dict)
+        else "unknown"
+    )
     active_statuses = {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled", "fallback"}
     active_workers = [
         {
@@ -562,6 +568,12 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
         "pending_approval_count": len(pending_approvals),
         "active_workers": active_workers,
         "queue_items": queue_items,
+        "assignment_truth_status": assignment_truth_status,
+        "assignment_truth_rows": (
+            list(assignment_report.get("rows") or [])
+            if isinstance(assignment_report, dict)
+            else []
+        ),
     }
 
 
@@ -893,7 +905,8 @@ def log_runtime_summary(
             f"mode={mode_status} "
             f"queue={summary['queue_count']} "
             f"approvals={summary['pending_approval_count']} "
-            f"active_workers={summary['active_worker_count']}"
+            f"active_workers={summary['active_worker_count']} "
+            f"assignment_truth={summary['assignment_truth_status']}"
         ),
         quiet=quiet,
     )
@@ -913,6 +926,30 @@ def log_runtime_summary(
         console_log(f"active workers: {details}", quiet=quiet)
     else:
         console_log("active workers: none", quiet=quiet)
+    if summary["assignment_truth_rows"]:
+        for row in summary["assignment_truth_rows"][:20]:
+            task_row = row.get("task_row") or {}
+            console_log(
+                (
+                    "assignment truth: "
+                    f"task={row.get('task_id') or '-'} "
+                    f"owner={task_row.get('owner') or '-'} "
+                    f"reviewer={task_row.get('reviewer') or '-'} "
+                    f"task_status={task_row.get('status') or '-'} "
+                    f"run={row.get('run_id') or '-'} "
+                    f"worker_status={row.get('worker_status') or '-'} "
+                    f"pid={row.get('pid') or '-'} "
+                    f"exit={row.get('exit_code') if row.get('exit_code') is not None else '-'} "
+                    f"source_sha={row.get('source_sha') or '-'} "
+                    f"matches={'yes' if row.get('assignment_matches') else 'no'}"
+                ),
+                quiet=quiet,
+            )
+    else:
+        console_log(
+            "assignment truth: no task-scoped worker rows",
+            quiet=quiet,
+        )
     if summary["queue_items"]:
         details = ", ".join(
             f"{item['event_id']}({item['status']})"
@@ -2680,6 +2717,12 @@ def start_worker_for_request(
     issued_command_env = status_command_runtime_env(config)
     issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
     request.metadata["status_command_runtime"] = issued_command_runtime
+    task_assignment_at_dispatch = current_task_assignment_snapshot(
+        config,
+        request.task_id,
+    )
+    if task_assignment_at_dispatch is not None:
+        request.metadata["task_assignment_at_dispatch"] = task_assignment_at_dispatch
     result = adapter.deliver(request)
     if not result.ok:
         failure_worker = {
@@ -2753,6 +2796,7 @@ def start_worker_for_request(
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
         "status_command_runtime": issued_command_runtime,
+        "task_assignment_at_dispatch": task_assignment_at_dispatch,
         "pid": result.pid,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
@@ -2807,6 +2851,7 @@ def start_worker_for_request(
             "workspace_path": request.metadata.get("workspace_path"),
             "workspace_branch": request.metadata.get("workspace_branch"),
             "status_root": request.metadata.get("status_root"),
+            "task_assignment_at_dispatch": task_assignment_at_dispatch,
         },
     )
     return True, worker_run_id, result.as_dict()
@@ -8549,6 +8594,9 @@ def _persist_task_reassignment_locked(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    rejection_out: dict[str, Any] | None = None,
 ) -> bool:
     status_path = config_path(config, "status_file")
     status = load_status(config)
@@ -8562,6 +8610,23 @@ def _persist_task_reassignment_locked(
 
     old_owner = str(task.get("owner") or "")
     old_reviewer = str(task.get("reviewer") or "")
+    if (
+        (expected_owner is not None and old_owner != expected_owner)
+        or (
+            expected_reviewer is not None
+            and old_reviewer != expected_reviewer
+        )
+    ):
+        if rejection_out is not None:
+            rejection_out.update(
+                {
+                    "reason": "authoritative_assignment_changed",
+                    "expected_owner": expected_owner,
+                    "expected_reviewer": expected_reviewer,
+                    "current_task_assignment": task_assignment_snapshot(config, task),
+                }
+            )
+        return False
     if (
         task_assignment_is_catalog_locked(task)
         and (new_owner != old_owner or new_reviewer != old_reviewer)
@@ -8638,6 +8703,9 @@ def persist_task_reassignment(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    rejection_out: dict[str, Any] | None = None,
 ) -> bool:
     status_path = config_path(config, "status_file")
     with canonical_task_state_lock_file(
@@ -8655,10 +8723,50 @@ def persist_task_reassignment(
             handoff_to=handoff_to,
             handoff_from=handoff_from,
             resolve_open_blockers=resolve_open_blockers,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            rejection_out=rejection_out,
         )
     if not applied:
         return False
     return sync_status_pipeline(config)
+
+
+def record_stale_worker_failure_reassignment_skip(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    task_id: str,
+    observed_assignment: dict[str, Any] | None,
+    rejection: dict[str, Any],
+) -> None:
+    """Audit a failed optimistic write without mutating authoritative truth."""
+
+    if rejection.get("reason") != "authoritative_assignment_changed":
+        return
+    current_assignment = rejection.get("current_task_assignment")
+    message = (
+        f"Skipped stale worker failure reassignment for {task_id}: authoritative "
+        "owner/reviewer changed after the failure was observed, so the old "
+        "fallback run cannot overwrite the current task row."
+    )
+    write_activity_log(
+        config,
+        {
+            "type": "stale_worker_failure_reassignment_skipped",
+            "task_id": task_id,
+            "provider": worker.get("provider"),
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+            "pid": worker.get("pid"),
+            "exit_code": worker.get("exit_code"),
+            "source_sha": worker_status_command_source_sha(worker),
+            "message": message,
+            "reason": rejection.get("reason"),
+            "task_row_before": observed_assignment,
+            "task_row_after": current_assignment,
+        },
+    )
 
 
 def maybe_reassign_task_after_worker_failure(
@@ -8712,6 +8820,7 @@ def maybe_reassign_task_after_worker_failure(
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
+    observed_assignment = task_assignment_snapshot(config, task)
 
     if task_status in review_statuses and reviewer == failing_agent:
         candidates = l12_provider_first_candidates(
@@ -8724,6 +8833,7 @@ def maybe_reassign_task_after_worker_failure(
         message = (
             f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {failure_summary}"
         )
+        rejection: dict[str, Any] = {}
         if not persist_task_reassignment(
             config,
             task_id=task_id,
@@ -8732,7 +8842,17 @@ def maybe_reassign_task_after_worker_failure(
             message=message,
             handoff_to=new_reviewer,
             handoff_from=reviewer,
+            expected_owner=owner,
+            expected_reviewer=reviewer,
+            rejection_out=rejection,
         ):
+            record_stale_worker_failure_reassignment_skip(
+                config,
+                worker,
+                task_id=task_id,
+                observed_assignment=observed_assignment,
+                rejection=rejection,
+            )
             return None
         write_activity_log(
             config,
@@ -8773,6 +8893,7 @@ def maybe_reassign_task_after_worker_failure(
         )
         if requeue_for_fresh_dispatch:
             message = f"{message}. Task returned to todo until {new_owner} starts a fresh run."
+        rejection = {}
         if not persist_task_reassignment(
             config,
             task_id=task_id,
@@ -8781,7 +8902,17 @@ def maybe_reassign_task_after_worker_failure(
             message=message,
             new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_from=owner,
+            expected_owner=owner,
+            expected_reviewer=reviewer,
+            rejection_out=rejection,
         ):
+            record_stale_worker_failure_reassignment_skip(
+                config,
+                worker,
+                task_id=task_id,
+                observed_assignment=observed_assignment,
+                rejection=rejection,
+            )
             return None
         write_activity_log(
             config,
@@ -12259,6 +12390,44 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
     }
 
 
+def task_assignment_snapshot(
+    config: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the canonical assignment fields used to authorize a worker."""
+
+    if not isinstance(task, dict):
+        return None
+    schema = config.get("schema", {})
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    return {
+        "task_id": task.get(task_id_field),
+        "owner": task.get(owner_field),
+        "reviewer": task.get(reviewer_field),
+        "status": task.get("status"),
+        "last_update": task.get("last_update"),
+    }
+
+
+def current_task_assignment_snapshot(
+    config: dict[str, Any],
+    task_id: str | None,
+) -> dict[str, Any] | None:
+    """Read one assignment snapshot from the governed task-row projection."""
+
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id or not config.get("paths", {}).get("status_file"):
+        return None
+    try:
+        status = load_status(config)
+    except (KeyError, RuntimeError, OSError):
+        return None
+    task = task_index_from_status(config, status).get(normalized_task_id)
+    return task_assignment_snapshot(config, task)
+
+
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
@@ -12966,6 +13135,477 @@ def worker_matches_current_assignment(
     if task_status in owned_statuses:
         return task.get(owner_field) == agent_name
     return False
+
+
+def worker_status_command_source_sha(worker: dict[str, Any]) -> str | None:
+    """Resolve the supervisor-issued command source SHA for one worker run."""
+
+    request_snapshot_value = worker.get("request_snapshot")
+    request_snapshot = (
+        request_snapshot_value
+        if isinstance(request_snapshot_value, dict)
+        else {}
+    )
+    request_metadata_value = request_snapshot.get("metadata")
+    request_metadata = (
+        request_metadata_value
+        if isinstance(request_metadata_value, dict)
+        else {}
+    )
+    worker_metadata_value = worker.get("metadata")
+    worker_metadata = (
+        worker_metadata_value
+        if isinstance(worker_metadata_value, dict)
+        else {}
+    )
+    candidates = (
+        worker.get("status_command_runtime"),
+        worker_metadata.get("status_command_runtime"),
+        request_metadata.get("status_command_runtime"),
+    )
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        source_sha = str(
+            candidate.get("source_sha")
+            or candidate.get("runtime_sha")
+            or ""
+        ).strip()
+        if source_sha:
+            return source_sha
+    return None
+
+
+def worker_dispatch_assignment_snapshot(
+    worker: dict[str, Any],
+) -> dict[str, Any] | None:
+    direct = worker.get("task_assignment_at_dispatch")
+    if isinstance(direct, dict):
+        return deepcopy(direct)
+    request_snapshot_value = worker.get("request_snapshot")
+    request_snapshot = (
+        request_snapshot_value
+        if isinstance(request_snapshot_value, dict)
+        else {}
+    )
+    request_metadata = request_snapshot.get("metadata")
+    if isinstance(request_metadata, dict):
+        nested = request_metadata.get("task_assignment_at_dispatch")
+        if isinstance(nested, dict):
+            return deepcopy(nested)
+    return None
+
+
+def worker_assignment_expected_agent(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    if not isinstance(task, dict):
+        return None, None
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    request_snapshot_value = worker.get("request_snapshot")
+    request_snapshot = (
+        request_snapshot_value
+        if isinstance(request_snapshot_value, dict)
+        else {}
+    )
+    reason = str(request_snapshot.get("reason") or "")
+    if reason == REASON_REVIEW_READY:
+        return "reviewer", str(task.get(reviewer_field) or "")
+    if reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_FINALIZE,
+    }:
+        return "owner", str(task.get(owner_field) or "")
+    return None, None
+
+
+def worker_assignment_truth_evidence(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+    *,
+    active: bool,
+    process_alive: bool,
+    delegated_parent: bool = False,
+    duplicate_active: bool = False,
+) -> dict[str, Any]:
+    """Join one task row to one worker record without mutating either truth."""
+
+    task_id = str(worker.get("task_id") or "")
+    role, expected_agent = worker_assignment_expected_agent(
+        config,
+        worker,
+        task,
+    )
+    target_agent = worker_target_agent_display_name(config, worker)
+    task_map = {task_id: task} if task_id and isinstance(task, dict) else {}
+    return {
+        "task_id": task_id or None,
+        "task_row": task_assignment_snapshot(config, task),
+        "dispatch_task_row": worker_dispatch_assignment_snapshot(worker),
+        "expected_role": role,
+        "expected_agent": expected_agent,
+        "worker_target_agent": target_agent or None,
+        "worker_status": worker.get("status"),
+        "run_id": worker.get("run_id"),
+        "queue_event_id": worker.get("queue_event_id"),
+        "pid": worker.get("pid"),
+        "process_alive": process_alive,
+        "exit_code": worker.get("exit_code"),
+        "source_sha": worker_status_command_source_sha(worker),
+        "dispatch_reason": (
+            (worker.get("request_snapshot") or {}).get("reason")
+            if isinstance(worker.get("request_snapshot"), dict)
+            else None
+        ),
+        "active": active,
+        "delegated_parent": delegated_parent,
+        "duplicate_active": duplicate_active,
+        "assignment_matches": worker_matches_current_assignment(
+            config,
+            worker,
+            task_map,
+        ),
+    }
+
+
+def _worker_is_delegated_runtime_parent(
+    state: dict[str, Any],
+    worker: dict[str, Any],
+) -> bool:
+    workers = state.get("workers", {}) or {}
+    child_ids = (
+        worker.get("fallback_run_id"),
+        worker.get("superseded_by_run_id"),
+    )
+    return any(
+        str(child_id or "").strip() in workers
+        for child_id in child_ids
+        if str(child_id or "").strip()
+    )
+
+
+def _worker_assignment_start_key(worker: dict[str, Any]) -> tuple[datetime, str]:
+    started_at = worker_dispatch_started_at(worker)
+    if started_at is None:
+        started_at = datetime.max.replace(tzinfo=timezone.utc)
+    return started_at, str(worker.get("run_id") or "")
+
+
+def _worker_assignment_report_rows(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    active_statuses = {
+        str(value)
+        for value in ready_dispatch_settings(config).get(
+            "active_worker_statuses",
+            [],
+        )
+    }
+    active_statuses.update(
+        {
+            "running",
+            "started",
+            "waiting_approval",
+            "suspended_approval",
+            "manual_pending",
+            "retry_backoff",
+            "stalled",
+            "fallback",
+        }
+    )
+    rows: list[dict[str, Any]] = []
+    active_authority_by_task: dict[str, list[str]] = {}
+    provisional: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        if not isinstance(worker, dict):
+            continue
+        if (
+            worker_is_discussion_planning(worker)
+            or worker_is_coordination_dispatch(worker)
+            or worker_is_chair_review(worker)
+        ):
+            continue
+        task_id = str(worker.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        active = str(worker.get("status") or "") in active_statuses
+        process_alive = bool(
+            active
+            and worker.get("pid")
+            and pid_is_alive(worker.get("pid"))
+        )
+        delegated_parent = active and _worker_is_delegated_runtime_parent(
+            state,
+            worker,
+        )
+        evidence = worker_assignment_truth_evidence(
+            config,
+            worker,
+            task_map.get(task_id),
+            active=active,
+            process_alive=process_alive,
+            delegated_parent=delegated_parent,
+        )
+        provisional.append((worker, evidence))
+        if active and not delegated_parent:
+            active_authority_by_task.setdefault(task_id, []).append(
+                str(worker.get("run_id") or "")
+            )
+
+    duplicate_run_ids = {
+        run_id
+        for run_ids in active_authority_by_task.values()
+        if len(run_ids) > 1
+        for run_id in run_ids
+    }
+    for _worker, evidence in provisional:
+        evidence["duplicate_active"] = (
+            str(evidence.get("run_id") or "") in duplicate_run_ids
+        )
+        rows.append(evidence)
+    rows.sort(
+        key=lambda row: (
+            str(row.get("task_id") or ""),
+            0 if row.get("active") else 1,
+            str(row.get("run_id") or ""),
+        )
+    )
+    return rows
+
+
+def reconcile_worker_task_assignments(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Reconcile task-row authority with active and terminal worker records.
+
+    The task row remains authoritative. Active workers dispatched for an old
+    owner/reviewer are superseded, and accidental duplicate active runs retain
+    only the oldest matching incumbent. The runtime report retains active and
+    terminal joins with the exact run, queue, PID, exit code and command source
+    SHA so a fleet-health summary cannot hide assignment drift.
+    """
+
+    if not config.get("paths", {}).get("status_file"):
+        return False
+    try:
+        task_map = task_index_from_status(config, load_status(config))
+    except (KeyError, RuntimeError, OSError):
+        return False
+
+    active_statuses = {
+        str(value)
+        for value in ready_dispatch_settings(config).get(
+            "active_worker_statuses",
+            [],
+        )
+    }
+    active_statuses.update(
+        {
+            "running",
+            "started",
+            "waiting_approval",
+            "suspended_approval",
+            "manual_pending",
+            "retry_backoff",
+            "stalled",
+            "fallback",
+        }
+    )
+    active_by_task: dict[str, list[dict[str, Any]]] = {}
+    alive_by_run: dict[str, bool] = {}
+    for worker in (state.get("workers", {}) or {}).values():
+        if not isinstance(worker, dict):
+            continue
+        if (
+            worker_is_discussion_planning(worker)
+            or worker_is_coordination_dispatch(worker)
+            or worker_is_chair_review(worker)
+        ):
+            continue
+        task_id = str(worker.get("task_id") or "").strip()
+        if (
+            not task_id
+            or str(worker.get("status") or "") not in active_statuses
+        ):
+            continue
+        run_id = str(worker.get("run_id") or "")
+        alive_by_run[run_id] = bool(
+            worker.get("pid")
+            and pid_is_alive(worker.get("pid"))
+        )
+        active_by_task.setdefault(task_id, []).append(worker)
+
+    losers: dict[str, tuple[dict[str, Any], str, str | None]] = {}
+    for task_id, workers in active_by_task.items():
+        task = task_map.get(task_id)
+        authoritative_workers = [
+            worker
+            for worker in workers
+            if not _worker_is_delegated_runtime_parent(state, worker)
+        ]
+        matching = [
+            worker
+            for worker in authoritative_workers
+            if worker_matches_current_assignment(
+                config,
+                worker,
+                {task_id: task} if isinstance(task, dict) else {},
+            )
+        ]
+        incumbent = (
+            min(matching, key=_worker_assignment_start_key)
+            if matching
+            else None
+        )
+        for worker in workers:
+            run_id = str(worker.get("run_id") or "")
+            assignment_matches = worker_matches_current_assignment(
+                config,
+                worker,
+                {task_id: task} if isinstance(task, dict) else {},
+            )
+            if not assignment_matches:
+                losers[run_id] = (
+                    worker,
+                    "authoritative_task_assignment_changed",
+                    str(incumbent.get("run_id") or "") if incumbent else None,
+                )
+                continue
+            if (
+                worker in authoritative_workers
+                and incumbent is not None
+                and worker is not incumbent
+            ):
+                losers[run_id] = (
+                    worker,
+                    "duplicate_active_worker",
+                    str(incumbent.get("run_id") or ""),
+                )
+
+    changed = False
+    for run_id, (worker, reason, incumbent_run_id) in losers.items():
+        if str(worker.get("status") or "") == "superseded":
+            continue
+        task_id = str(worker.get("task_id") or "")
+        task = task_map.get(task_id)
+        before = worker_assignment_truth_evidence(
+            config,
+            worker,
+            task,
+            active=True,
+            process_alive=alive_by_run.get(run_id, False),
+            delegated_parent=_worker_is_delegated_runtime_parent(
+                state,
+                worker,
+            ),
+            duplicate_active=reason == "duplicate_active_worker",
+        )
+        if alive_by_run.get(run_id, False) and not terminate_worker_pid(
+            worker.get("pid")
+        ):
+            continue
+        timestamp = utc_now()
+        if reason == "duplicate_active_worker":
+            message = (
+                f"Worker {run_id} superseded as a duplicate active run for "
+                f"{task_id}; incumbent run {incumbent_run_id} retains the "
+                "canonical task lease."
+            )
+        else:
+            message = (
+                f"Worker {run_id} superseded because the authoritative "
+                f"owner/reviewer/status row for {task_id} no longer authorizes "
+                "its dispatch identity."
+            )
+        worker["status"] = "superseded"
+        worker["last_event_at"] = timestamp
+        worker["last_error"] = message
+        after = worker_assignment_truth_evidence(
+            config,
+            worker,
+            task,
+            active=False,
+            process_alive=False,
+            delegated_parent=False,
+            duplicate_active=False,
+        )
+        evidence = {
+            "reason": reason,
+            "action": "superseded",
+            "reconciled_at": timestamp,
+            "incumbent_run_id": incumbent_run_id,
+            "before": before,
+            "after": after,
+        }
+        worker["assignment_reconciliation"] = evidence
+        finalize_queue_event_record(
+            config,
+            state,
+            worker,
+            "completed",
+            message,
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "worker_assignment_reconciled",
+                "task_id": task_id,
+                "provider": worker.get("provider"),
+                "worker_run_id": run_id,
+                "queue_event_id": worker.get("queue_event_id"),
+                "message": message,
+                "evidence": evidence,
+            },
+        )
+        changed = True
+
+    rows = _worker_assignment_report_rows(config, state, task_map)
+    unresolved = [
+        row
+        for row in rows
+        if row.get("active")
+        and (
+            not row.get("assignment_matches")
+            or row.get("duplicate_active")
+        )
+    ]
+    report = {
+        "status": "healthy" if not unresolved else "drift",
+        "active_drift_count": len(unresolved),
+        "active_row_count": sum(
+            1 for row in rows if row.get("active")
+        ),
+        "terminal_row_count": sum(
+            1 for row in rows if not row.get("active")
+        ),
+        "rows": rows,
+    }
+    previous = state.get("worker_assignment_reconciliation")
+    previous_semantics = (
+        {
+            key: value
+            for key, value in previous.items()
+            if key != "observed_at"
+        }
+        if isinstance(previous, dict)
+        else None
+    )
+    if previous_semantics != report:
+        state["worker_assignment_reconciliation"] = {
+            **report,
+            "observed_at": utc_now(),
+        }
+        changed = True
+    return changed
 
 
 def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
@@ -14059,6 +14699,13 @@ def _run_once_locked(
                 loop_started_at=loop_started_at,
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
+        changed = _safe_phase(
+            "reconcile_worker_task_assignments",
+            reconcile_worker_task_assignments,
+            config,
+            state,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
         changed = _safe_phase("maybe_reassign_tasks_from_failure_streaks", maybe_reassign_tasks_from_failure_streaks, config, state, quiet=quiet) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
@@ -14093,6 +14740,13 @@ def _run_once_locked(
         if not dispatch_suppressed_by_watchdog:
             changed = _safe_phase("process_queue", process_queue, config, state, provider_report, quiet=quiet) or changed
         changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase(
+            "reconcile_worker_task_assignments",
+            reconcile_worker_task_assignments,
+            config,
+            state,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
         _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
