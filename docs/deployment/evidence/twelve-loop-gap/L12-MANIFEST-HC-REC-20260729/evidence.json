@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-MANIFEST-HC-REC-20260729 reconciliation worker heartbeat workstream owner evidence cut.",
-    "note": "The owner implementation and bounded local validation are complete. Independent Codex review, PR checks, merge, and hosted manifest integration are intentionally not asserted by this cut.",
+    "note": "The owner implementation and bounded local validation are complete. Codex independently approved PR #4332 exact head b41df54daaf9476046dd2a89d4f5e52b2f028309 at 2026-07-29T03:16:33Z, and the PR merged to dev as 31d7eaebcb012a9beb5f5f0057db401d378b5beb. Hosted manifest integration remains intentionally unasserted.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -17,9 +17,9 @@
   "task": {
     "base_branch": "dev",
     "evidence_cut_at": "2026-07-29T02:49:19Z",
-    "evidence_cut_semantics": "Owner evidence at anchor 982f224a2953d948fcc46d0342c611f3d0b22389. Three reconciliation workers publish atomic fresh heartbeats and root Compose probes consume them. This cut does not claim PR merge, hosted deployment, or independent review.",
+    "evidence_cut_semantics": "Owner evidence at anchor 982f224a2953d948fcc46d0342c611f3d0b22389. Three reconciliation workers publish atomic fresh heartbeats and root Compose probes consume them. Later independent review and merge records are appended without claiming hosted deployment.",
     "id": "L12-MANIFEST-HC-REC-20260729",
-    "overall_admission": "pass_owner_evidence_ready",
+    "overall_admission": "review_approved",
     "owner": "Codex2",
     "phase": "Twelve Loop Remediation / Manifest Workstream",
     "product_level_required": false,
@@ -27,7 +27,7 @@
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json",
     "reviewer": "Codex",
     "target_environment": "dev manifest candidate and bounded local worker probes",
-    "target_maturity": "integrable manifest health workstream",
+    "target_maturity": "review-approved merged manifest health workstream",
     "task_branch": "task/L12-MANIFEST-HC-REC-20260729",
     "title": "L12 manifest reconciliation health heartbeat workstream"
   },
@@ -76,9 +76,34 @@
         "note": "Worker source, root Compose wiring, task brief, and focused tests.",
         "sha": "982f224a2953d948fcc46d0342c611f3d0b22389",
         "subject": "L12-MANIFEST-HC-REC-20260729: anchor worker heartbeats"
+      },
+      {
+        "delivery_state": "independent_review_approved",
+        "note": "Corrected the evidence base SHA and resealed the exact manifest that Codex independently approved.",
+        "sha": "b41df54daaf9476046dd2a89d4f5e52b2f028309",
+        "subject": "L12-MANIFEST-HC-REC-20260729: correct evidence base SHA"
       }
     ],
-    "required_checks": []
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "604ded86efcaee003fc0f2c9ff485fd9da0fa5ba",
+      "merge_sha": "31d7eaebcb012a9beb5f5f0057db401d378b5beb",
+      "merged_at": "2026-07-29T03:40:51Z",
+      "number": 4332,
+      "url": "https://github.com/ajoe734/pantheon/pull/4332"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "governed independent review",
+        "head_sha": "b41df54daaf9476046dd2a89d4f5e52b2f028309",
+        "jobs": {
+          "reviewer": "Codex",
+          "summary": "All four task acceptance items, 107 reconciliation/foundation tests, 10 adjacent regressions, schema/checksums, Compose resolution, separate-process probes, ancestry, and nine PR checks passed."
+        },
+        "workflow": "Pantheon canonical review gate"
+      }
+    ]
   },
   "validation": {
     "commands": [
@@ -207,8 +232,8 @@
       "status": "not_applicable_no_business_state_change"
     },
     "two_person_approval": {
-      "proof": "Canonical owner Codex2 and reviewer Codex are distinct. Independent reviewer approval is still pending and must be appended before done.",
-      "status": "pending_independent_review"
+      "proof": "Canonical owner Codex2 and reviewer Codex are distinct. Codex independently approved PR #4332 exact head b41df54daaf9476046dd2a89d4f5e52b2f028309 in authoritative task-state event task-state-072cd08f918f29e8398210c10e873ea595a7d6b8ee254bb13610766b0ae12d53.",
+      "status": "pass_independent_review_approved"
     }
   },
   "acceptance": [
@@ -221,7 +246,7 @@
       ],
       "id": "AC1",
       "statement": "reconciliation-drift-consumer health heartbeat gap is closed or waived.",
-      "status": "pass_owner_evidence_ready"
+      "status": "pass_review_approved"
     },
     {
       "evidence_refs": [
@@ -232,7 +257,7 @@
       ],
       "id": "AC2",
       "statement": "reconciliation-drift-scheduler health heartbeat gap is closed or waived.",
-      "status": "pass_owner_evidence_ready"
+      "status": "pass_review_approved"
     },
     {
       "evidence_refs": [
@@ -243,7 +268,7 @@
       ],
       "id": "AC3",
       "statement": "reconciliation-drift-incident-listener health heartbeat gap is closed or waived.",
-      "status": "pass_owner_evidence_ready"
+      "status": "pass_review_approved"
     },
     {
       "evidence_refs": [
@@ -253,7 +278,7 @@
       ],
       "id": "AC4",
       "statement": "Workstream output is integrable by the L12-MANIFEST-001 owner without editing .orchestrator/config.json.",
-      "status": "pass_owner_evidence_ready"
+      "status": "pass_review_approved"
     },
     {
       "evidence_refs": [
@@ -262,9 +287,8 @@
         "record_log"
       ],
       "id": "AC5",
-      "statement": "PR checks, independent review, merge to dev, and governed closeout are complete.",
-      "status": "pending",
-      "blocking_until": "Task PR checks pass, Codex appends an approved review record, the PR merges to dev, and Codex2 runs governed closeout."
+      "statement": "PR checks, independent review, and merge to dev are complete.",
+      "status": "pass"
     }
   ],
   "residual_risks": {
@@ -310,6 +334,25 @@
       "sequence": 2,
       "sha": "a73d583502b382c4d64f7d0d09e258c3b5ddedfe",
       "status": "corrected_invalid_validated_base_sha_for_fresh_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approved",
+      "note": "Approved PR #4332 exact head after independently verifying the 11-file scope, all four acceptance items, 107 reconciliation/foundation tests, 10 adjacent regressions, schema/checksums, py_compile, Compose resolution, separate-process negative-downstream probes, anchor ancestry, git diff --check, and nine PR checks. Hosted deployment and restart proof remain outside this task.",
+      "recorded_at": "2026-07-29T03:16:33Z",
+      "reference": "task-state-072cd08f918f29e8398210c10e873ea595a7d6b8ee254bb13610766b0ae12d53",
+      "sequence": 3,
+      "sha": "b41df54daaf9476046dd2a89d4f5e52b2f028309",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_closeout_manifest_recut",
+      "note": "Transcribed Codex's governed exact-head approval, recorded PR #4332 merge identity, advanced the four task acceptance items to review-approved, and preserved the no-hosted-proof boundary.",
+      "recorded_at": "2026-07-29T03:49:01Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json",
+      "sequence": 4,
+      "status": "review_approved"
     }
   ]
 }

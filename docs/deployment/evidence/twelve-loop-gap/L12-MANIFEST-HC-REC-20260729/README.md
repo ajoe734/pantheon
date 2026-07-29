@@ -1,6 +1,6 @@
 # L12 reconciliation worker heartbeat evidence
 
-Status: owner evidence ready for independent `Codex` review.
+Status: independent `Codex` review approved; PR #4332 merged to `dev`.
 
 This workstream closes the manifest health/heartbeat gap for:
 
@@ -28,7 +28,8 @@ three root Compose healthchecks, and focused tests. It does not edit
 `.orchestrator/config.json`, change reconciliation authority, alter the
 nonprod worker inventory, or claim a hosted deployment.
 
-`L12-MANIFEST-001` should integrate this task PR, then replace its current
+`L12-MANIFEST-001` should integrate merge
+`31d7eaebcb012a9beb5f5f0057db401d378b5beb`, then replace its current
 six-worker no-healthcheck waiver for these three reconciliation workers with
 the accepted commands and environment fields recorded in
 [`evidence.json`](evidence.json). Hosted container health and restart proof
@@ -47,6 +48,19 @@ remain with `L12-MANIFEST-001` / `L12-HOSTED-001`.
   process. All three healthchecks exited 0, while the heartbeat documents
   retained their exact downstream failure and worker identity.
 
-This is owner evidence only. Independent reviewer approval is not asserted
-until `Codex` appends an approved review record and the governed task state
-binds this exact manifest.
+## Independent review and merge
+
+`Codex` approved PR #4332 exact head
+`b41df54daaf9476046dd2a89d4f5e52b2f028309` at
+`2026-07-29T03:16:33Z`. The independent review re-ran the 107-test
+reconciliation/foundation suite and the 10-test adjacent regression suite,
+validated the schema and both checksums, compiled the worker modules, resolved
+the three Compose healthcheck commands, repeated the separate-process
+negative-downstream probes, verified the corrected base ancestry, and
+confirmed nine PR checks green.
+
+The PR final head `604ded86efcaee003fc0f2c9ff485fd9da0fa5ba` merged to
+`dev` at `2026-07-29T03:40:51Z` as
+`31d7eaebcb012a9beb5f5f0057db401d378b5beb`. This closeout records source
+delivery and review only; it still does not claim a hosted deployment,
+container restart, or hosted health readback.
