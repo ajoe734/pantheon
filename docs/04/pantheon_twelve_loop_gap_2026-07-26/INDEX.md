@@ -2,11 +2,11 @@
 
 Program ID: `pantheon-twelve-loop-gap-2026-07-26`
 
-Status: three-pass audit refreshed at 2026-07-29T10:25Z; supervisor
-priority-gate repair (#4365/#4366) is merged, archived, and promoted live;
-guarded execution catalog remains active because twelve-loop product evidence,
-hosted proof, stale-PR retirement, and merged-row closeout reconciliation are
-still pending
+Status: three-pass audit refreshed at 2026-07-29T11:40Z; supervisor
+priority-gate repair is merged through #4371 and promoted live, but guarded
+execution remains active because twelve-loop product evidence, hosted proof,
+stale-PR retirement, merged-row closeout reconciliation, and four newly
+observed runtime/fleet guard gaps are still pending
 
 Merge target: `dev`
 
@@ -46,17 +46,19 @@ The reconciled source of truth is:
 - [Three-pass fleet gap audit refresh, 2026-07-28T19:00Z](archive/THREE_PASS_GAP_AUDIT_2026-07-28T1900Z.md)
 - [Three-pass gap audit refresh, 2026-07-29T07:10Z](archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md)
 - [Three-pass gap audit refresh, 2026-07-29T10:25Z](archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md)
+- [Three-pass runtime/fleet gap audit refresh, 2026-07-29T11:40Z](archive/THREE_PASS_GAP_AUDIT_2026-07-29T1140Z.md)
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`
 - `docs/bff/execution-tasks/2026-07-28-twelve-loop-current-gap-drain/tasks.json`
 - `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.md`
 - `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.json`
 
-The 2026-07-29T10:25Z audit is the current dispatch authority. It incorporates
-the later #4365/#4366 supervisor priority-gate merge/archive/promotion, the
-live supervisor health check from root
-`8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`, the stale #4367 duplicate receipt
-PR, the behind state of #4361/#4364/#4313/#4297, and the still-open product
-evidence gaps for KNOW, LEARN, RUNTIME, OBS, FE, HOSTED, and CLOSE.
+The 2026-07-29T11:40Z audit is the current dispatch authority. It incorporates
+the later #4368/#4369/#4370/#4371 supervisor merges, live promotion to
+`c1e396495d37a1c9dfeea5704e7eb73db6acde0e`, the temporary live repair that
+cleared stale `missing_process` failure streaks for Claude2 L12 rows, the first
+post-repair real Claude2/Antigravity workers, the still-invalid Codex2 helper
+fallbacks, and the still-open product evidence gaps for KNOW, LEARN, RUNTIME,
+OBS, FE, HOSTED, and CLOSE.
 
 ## Baseline verdict
 
@@ -137,6 +139,34 @@ Completed control-plane item:
 - `SUP-L12-REVIEW-PRIORITY-GATE-20260729` is archived after #4365 merged to
   `dev` as `18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d` and closeout evidence
   #4366 merged as `8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`.
+
+## Current fleet checkpoint, 2026-07-29T11:40Z
+
+#4371 is merged and live-promoted as
+`c1e396495d37a1c9dfeea5704e7eb73db6acde0e`; the deployed root has no config
+diff from `/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json`.
+
+Observed real fleet progress:
+
+- `Antigravity` completed a real supervisor worker for
+  `OPS-PROMOTE-PR-CI-TRIGGER-001` as
+  `antigravity1-1-20260729T112638Z-2b127a26`.
+- `Claude2` launched a real supervisor worker for `L12-VERIFY-OBS-001` as
+  `claude2-20260729T113336Z-08eddb2f`.
+
+Observed remaining runtime gaps:
+
+- Claude2 dispatch required a temporary live repair clearing stale L12
+  `missing_process` failure streaks; this needs a durable reaper/regression.
+- Helper-claim routing still allowed Codex2 fallback for SUP-L12 rows while
+  Claude2 was busy; this is not valid provider-first fleet proof.
+- Codex2 fallback failures moved SUP-L12 rows back to Antigravity/Claude2, but
+  row ownership and running-worker truth still need reconciliation tests.
+- Long-running finalize/OPS workers can still consume capacity and mask L12
+  readiness.
+
+Therefore the real supervisor/auto-worker path is active, but the twelve loops
+are still not accepted as operable.
 
 Still not complete:
 
