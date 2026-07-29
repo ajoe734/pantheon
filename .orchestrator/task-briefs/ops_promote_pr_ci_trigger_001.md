@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair promote PR CI trigger and auto-merge path
-- Status: review
-- Owner: Codex
+- Status: review_approved
+- Owner: Codex2
 - Reviewer: Antigravity
-- Next: Antigravity 核准的 exact head 6d6586da85ce3e2bb48870052d6e8c0bece0f195 在整合前因 strict dev 前進而失效。Codex 已 anchor dispatch brief、無衝突 compose origin/dev c1e396495，並在 composed tree 重跑 25 unittest、73 pytest 與 compile/YAML/JSON/diff checks 全綠。提交與推送 refreshed evidence head 後，需重新取得 Branch CI、Antigravity exact-head 核准及 Human/Ops root-freeze context，再由 governed integrator 合併 PR #4262。
+- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
