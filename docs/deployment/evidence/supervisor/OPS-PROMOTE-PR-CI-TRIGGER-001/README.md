@@ -373,6 +373,40 @@ independently bind the root-freeze context before the governed integrator can
 merge. Auto-merge remains off, and no release ref, promote PR, stale PR,
 branch protection, or external status was mutated during this refresh.
 
+## Codex2 Owned Finalize Dispatch
+
+Antigravity approved exact head
+`645609c0133f1e5a7badbf4a3e960810a8c2f3b3` at
+2026-07-29T11:41:25Z after push run `30448185392` and pull-request run
+`30448188497` supplied eight successful Branch CI checks and canonical review
+status `51286379446` succeeded. The supervisor then reassigned the approved
+owner closeout from Codex to Codex2 without changing the reviewer or repair
+scope.
+
+Codex2 preserved that supervisor-generated dispatch metadata in anchor
+`dced1f81956d963583598392ab3fb4c9e51e9980`, then composed current
+`origin/dev` `575040212a14d1ededc5d8ed54b8c187a4ebe2b2` through conflict-free
+merge `2da04f364aa55d567c4e6aca49f3270716aa7e59`. The incoming commit updates
+only the L12 gap audit and its recovery task packet; it does not overlap the
+promote workflow, helper, tests, or this task evidence.
+
+At the composed tree, all 25 `PublishPromoteTests` passed in 0.608 seconds and
+the 73-test focused pytest slice passed in 15.49 seconds. `py_compile`, both
+workflow YAML parses, evidence JSON parsing, and both diff checks passed. A
+live read-only probe still found 26 open promote PRs, including legacy PR
+`#4138` at `cb90dc479214c6ff0779aff70f915593ec9196c4` with zero checks, and
+confirmed `release/v2026.07.29.7` at
+`c1e396495d37a1c9dfeea5704e7eb73db6acde0e` contains the guarded dispatch
+contract.
+
+This final evidence commit changes the exact PR head. Antigravity's approval
+of `645609c0133f1e5a7badbf4a3e960810a8c2f3b3` is therefore preserved as
+superseded and is not reused. PR `#4262` must reacquire Branch CI and
+Antigravity approval on the resulting head, then the governed integrator must
+observe the independently controlled root-freeze context before merging.
+No release ref, promote PR, stale PR, branch protection, external status, or
+merge authority was mutated during this refresh.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
