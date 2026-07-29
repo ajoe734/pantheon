@@ -259,6 +259,34 @@ reviewer must bind Antigravity approval to the new head after Branch CI passes.
 Human/Ops must separately supply `Pantheon root merge freeze 2026-07-27` on
 the same exact head. The owner does not impersonate either authority.
 
+## Strict-Base Refresh After Approval
+
+Antigravity then approved exact head
+`f81a9b1e96de5d5bbfd1530daabd6f3441c13893` at
+2026-07-29T10:20:30Z after all Branch CI checks passed and the canonical
+review gate was attached. Before the governed integrator could land that head,
+`dev` advanced to `8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`, and strict
+branch protection correctly refused to merge the now-behind approved head.
+
+Codex preserved the supervisor-generated approval dispatch metadata as
+`2f895c5f5e95b5256025528e31809f37407fcdc7`, then composed the new `dev`
+tip through conflict-free merge
+`b88cf3d849fb948879ecb45a0dd15b85cacbf7b6`. The incoming commit added only
+the independent `SUP-L12-REVIEW-PRIORITY-GATE-20260729` closeout brief and did
+not overlap promote behavior or this task evidence.
+
+At the composed tree, all 25 `PublishPromoteTests` passed in 0.246 seconds and
+the 73-test focused pytest slice passed in 7.98 seconds. `py_compile`, both
+workflow YAML parses, evidence JSON parsing, and both diff checks passed. A
+live read-only REST probe again listed 26 open promote PRs, found legacy PR
+`#4138` with zero checks and no dispatch contract, and confirmed that
+`release/v2026.07.29.5` contains the guarded dispatch contract.
+
+This refresh necessarily changes the PR head. PR `#4262` must reacquire Branch
+CI and Antigravity approval bound to the new exact head before the governed
+integrator can merge it. The owner does not reuse the superseded approval or
+weaken strict branch protection.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
