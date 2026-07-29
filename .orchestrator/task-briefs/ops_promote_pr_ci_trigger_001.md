@@ -6,8 +6,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Title: Repair promote PR CI trigger and auto-merge path
 - Status: review_approved
 - Owner: Codex
-- Reviewer: Claude2
-- Next: Reviewer-approved exact head 77dc9e49 remains the prior gate. Owner closeout anchors ab31d3ceb/253858835 now handle both reviewer findings: legacy promote refs without workflow_dispatch return legacy_ci_contract instead of a hard recurring error, and auto-merge requests fail closed then verify auto_merge or merged_at through REST. Live read-only proof on PR 4138 head cb90dc479 observed supports_dispatch=false and a non-mutating legacy disposition; release/v2026.07.29.5 head 57abe669f observed supports_dispatch=true and is the current eligible fresh candidate. Push the final evidence head, reacquire Branch CI and Claude2 exact-head review, then wait for the Human/Ops root merge freeze before merging PR 4262. Only after merge may the owner dispatch the fresh candidate, record its checks/auto-merge/master ancestry, retire ancestry-proven stale PRs, and run done.
+- Reviewer: Antigravity
+- Next: Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Worker exited before the task reached a terminal status.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
