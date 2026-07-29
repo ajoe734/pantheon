@@ -5,9 +5,13 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Repair promote PR CI trigger and auto-merge path
 - Status: review_approved
-- Owner: Codex2
+- Owner: Codex
 - Reviewer: Antigravity
-- Next: PR #4262 已合併；fresh promote PR #4375 證明 exact-head dispatch 與 auto-merge，但 run 30450718720 暴露 workflow_dispatch 仍重掃已驗證 release history。需先合併 narrow trailer-range repair，再以新 immutable release 完成 required checks、master ancestry 與 stale PR retirement 證據。
+- Next: 獨立審查通過 Task OPS-PROMOTE-PR-CI-TRIGGER-001 exact head a72f80ddad120452b0d0c8cd4549a55fe771a942：
+1. Branch CI exact-head dispatch 契約修復與 auto-merge 路徑完全落實於 publish_promote.py / branch-ci.yml / publish-promote.yml。
+2. 實證 proof 完成：Fresh promote PR #4378 (release/v2026.07.29.8) 觸發 Branch CI 驗收通過並成功自動合併至 master (2c9388e07b9a99ac2938d58a0edf6e4d34002dd5)。
+3. 27 個歷史舊 promote PRs (含 PR #4138 等) 依據 release 提交祖先關係與 master 可達性證明，完成合規退役關閉。
+4. 本地 27 項 PublishPromoteTests unittest、75 項 pytest 測試全數 100% 綠過，證據文件 docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json 與 README.md 均完整且一致。
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
