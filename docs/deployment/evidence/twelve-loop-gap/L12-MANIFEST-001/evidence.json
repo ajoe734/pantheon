@@ -1,0 +1,346 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-MANIFEST-001 final guard-compatible evidence cut.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This v1.1.0 owner closeout cut records the final manifest integration and keeps the canonical snapshot dated at journal sequence 4575.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-29T04:02:00Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.1.0. Canonical task state is owner Human/Ops, reviewer Codex, status ready_for_exact_head_review, review_file docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json. This cut integrates the merged health, auth-volume, and restart-proof workstreams, repairs the auth matrix gaps in docker-compose.yml, and binds final readback receipt 7ed5776fe7f6a5137db456cc06ffec1935cc39b4.",
+    "id": "L12-MANIFEST-001",
+    "overall_admission": "ready_for_exact_head_review_and_merge",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Runtime Integration",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev root runtime manifest candidate",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-MANIFEST-FINAL-CLOSEOUT-20260729",
+    "title": "Activate all required loop workers under one safe runtime manifest"
+  },
+  "authorities": {
+    "actual_state": [
+      "At canonical journal sequence 4575, L12-MANIFEST-001 is still not done until this final replacement PR receives exact-head review and merges; current dev plus receipt 7ed5776fe7f6a5137db456cc06ffec1935cc39b4 renders 27 required loop workers with healthchecks, restart, graceful stop, auth admission, durable-volume admission, and isolated restart proof."
+    ],
+    "desired_state": [
+      "All required scheduled or async loop workers are default-on under one manifest",
+      "Health, restart, graceful-stop, auth, durable-volume, and safety defaults are evidenced and fail-closed",
+      "No live-capital or unsafe source egress default is enabled"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-MANIFEST-001.md"
+  },
+  "scope": {
+    "owned_layer": "docker-compose.yml runtime manifest admission and final L12-MANIFEST-001 evidence/readback.",
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "services/control-plane/bff/test_bff_oidc_staging_env_contract.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/manifest-readback.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/evidence.json"
+    ],
+    "not_changing": [
+      ".orchestrator/config.json",
+      "live trading enablement",
+      "source refresh always-on profile",
+      "legacy front-ai-trading-system"
+    ],
+    "composes_with": [
+      "PR #4332 reconciliation health workstream",
+      "PR #4334/#4338 isolated restart proof workstream",
+      "PR #4335 imitation/capital health workstream",
+      "PR #4336 auth/volume matrix workstream",
+      "PR #4337 alpha/source/search health workstream",
+      "PR #4333 fleet runtime reliability report"
+    ]
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "7ed5776fe7f6a5137db456cc06ffec1935cc39b4",
+        "subject": "L12-MANIFEST-001: recut final readback",
+        "delivery_state": "current_branch",
+        "receipt_role": "current_delivery_receipt",
+        "bound_content_digest": "content-digest:sha256:43bc17e578c0eaaf33fb42eebe240839863ef7aacd8ac6e6c774bb4ef388c691",
+        "note": "Contains the final manifest-readback.md bytes bound by this evidence cut."
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Commit trailers",
+        "head_sha": "7ed5776fe7f6a5137db456cc06ffec1935cc39b4",
+        "conclusion": "success",
+        "completed_at": "2026-07-29T04:02:00Z",
+        "url": "local://pre-pr-validation",
+        "event": "local"
+      },
+      {
+        "workflow": "Runtime mirror guard",
+        "head_sha": "7ed5776fe7f6a5137db456cc06ffec1935cc39b4",
+        "conclusion": "success",
+        "completed_at": "2026-07-29T04:02:00Z",
+        "url": "local://pre-pr-validation",
+        "event": "local"
+      },
+      {
+        "workflow": "Python packaging provision",
+        "head_sha": "7ed5776fe7f6a5137db456cc06ffec1935cc39b4",
+        "conclusion": "success",
+        "completed_at": "2026-07-29T04:02:00Z",
+        "url": "local://pre-pr-validation",
+        "event": "local"
+      },
+      {
+        "workflow": "Smoke acceptance",
+        "head_sha": "7ed5776fe7f6a5137db456cc06ffec1935cc39b4",
+        "conclusion": "success",
+        "completed_at": "2026-07-29T04:02:00Z",
+        "url": "local://pre-pr-validation",
+        "event": "local"
+      }
+    ]
+  },
+  "validation": {
+    "validated_at": "2026-07-29T04:02:00Z",
+    "validated_base_sha": "5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a",
+    "validated_head_sha": "content-digest:sha256:43bc17e578c0eaaf33fb42eebe240839863ef7aacd8ac6e6c774bb4ef388c691",
+    "commands": [
+      {
+        "claim_scope": "current",
+        "command": "docker compose -f docker-compose.yml --env-file /dev/null config --quiet",
+        "result": "pass",
+        "conclusion": "Rendered default Compose without error."
+      },
+      {
+        "claim_scope": "current",
+        "command": "python3 scripts/validate_loop_worker_manifest_matrix.py --matrix docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json --compose-file docker-compose.yml --format json",
+        "result": "pass",
+        "conclusion": "27 auth pass, 0 auth gaps, 27 durable-volume pass, 0 durable-volume gaps, admission_ready true."
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_validate_loop_worker_manifest_matrix.py services/control-plane/bff/test_bff_oidc_staging_env_contract.py services/runtime-manager/test_stage_promotion_compose.py services/deployment/test_outbox_consumer_worker.py services/training-session/tests/test_preview_eval_worker.py services/reconciliation-drift/tests/test_l12_rec_001_hardening.py services/capital/test_service.py services/consultation/test_workflow_executor.py",
+        "result": "pass",
+        "conclusion": "155 passed, 1 warning."
+      },
+      {
+        "claim_scope": "current",
+        "command": "git diff --check",
+        "result": "pass",
+        "conclusion": "No whitespace errors."
+      }
+    ]
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "dev manifest candidate",
+    "identity_admission": {
+      "status": "pass",
+      "proof": "At canonical journal sequence 4575, the default manifest matrix renders 27/27 auth applicability pass and 0 declared auth gaps; hosted deployment remains a downstream verification step."
+    },
+    "canonical_root_deploy": {
+      "status": "not_claimed",
+      "reason": "This PR admits the manifest candidate and evidence; switching hosted dev runtime is outside this cut unless a later deployment PR executes it."
+    },
+    "publish_cut": {
+      "status": "not_applicable_in_this_cut",
+      "reason": "No frontend or hosted publish is performed."
+    },
+    "public_bff_base_url": "not_applicable_no_hosted_switch"
+  },
+  "hosted_readback": {
+    "claimed": false,
+    "reason": "No hosted dev stack switch is claimed by this evidence-only final manifest cut."
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "Required worker inventory is read from one shell array and the deploy gate refuses missing workers or duplicate static paper runtime."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Worker healthchecks fail closed on missing/stale heartbeat surfaces and the isolated restart proof shows Docker policy restart after an unsolicited PID crash."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "Auth matrix renders non-empty service tokens, tenants, or verifier inputs for every worker contract that requires them."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "All 27 required loop workers render restart unless-stopped and stop_grace_period 30s; isolated restart proof records same container and RestartCount delta 1."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "Reverting this manifest cut removes only dev-safe placeholder auth defaults, matrix/readback updates, and the final evidence cut; no data migration is introduced."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Only dev manifest configuration and local validation are changed; no production or live-capital system is mutated."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No execute-plans frontend or hosted bundle is changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No operator MFA policy surface is changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Rendered defaults keep live broker and canary execution disabled and do not enable live-capital writes."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Auth matrix admission requires non-empty token, tenant, strict mode, or verifier inputs where source contracts require them."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Worker contracts that require tenant identity now render tenant inputs or tenant-bound service credentials."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "At canonical journal sequence 4575, final merge still requires exact-head review by Codex distinct from the Human/Ops integration owner before root merge."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Every required scheduled or async worker is represented and started by the intended default.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "scripts/deploy_nonprod_vm.sh#REQUIRED_LOOP_WORKERS"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Workers have restart, health, heartbeat, durable volume, auth, and graceful-stop configuration.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Source egress remains bounded and deny-by-default.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "scripts/deploy_nonprod_vm.sh#validate_source_refresh_profile"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Paper execution remains isolated and live writes remain disabled.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "docker-compose.yml"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Compose config and local stack health proof pass with no duplicate legacy workers.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/proof-run.json"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "independent_review": {
+      "status": "pending_exact_head_review",
+      "blocking_for_this_task": true,
+      "severity": "medium",
+      "owner": "Codex",
+      "description": "At canonical journal sequence 4575, the final replacement PR still needs exact-head review and merge before L12-MANIFEST-001 can be marked done.",
+      "containment": "Do not claim all 12 loops are accepted until the final PR is reviewed and merged.",
+      "expiry": "When exact-head canonical review and root-freeze merge complete.",
+      "recheck_trigger": "Any final PR head change."
+    },
+    "canonical_snapshot_age": {
+      "status": "current_for_cut",
+      "blocking_for_this_task": false,
+      "severity": "low",
+      "owner": "Human/Ops",
+      "description": "At canonical journal sequence 4575, this cut verified the active board and observed L12-MANIFEST-001 as not yet done pending the final PR.",
+      "containment": "Final review must re-read task state if the branch head changes.",
+      "expiry": "When the final PR merges and task state is reconciled.",
+      "recheck_trigger": "Any task-state event after the cut."
+    },
+    "delivery_receipt_intermediate_state": {
+      "status": "expected_acyclic_receipt",
+      "blocking_for_this_task": false,
+      "severity": "low",
+      "owner": "Human/Ops",
+      "description": "The current delivery receipt binds the final markdown readback while the manifest and companion checksum are sealed in the follow-up evidence commit to avoid recursive self-hashing.",
+      "containment": "Any digest-bound readback edit requires a new receipt and checksum.",
+      "expiry": "When this evidence cut lands on the final PR branch.",
+      "recheck_trigger": "Any change to the digest-bound markdown."
+    },
+    "hosted_deployment_not_switched": {
+      "status": "explicitly_not_claimed",
+      "blocking_for_this_task": false,
+      "severity": "medium",
+      "owner": "L12-HOSTED / verification lane",
+      "description": "Hosted dev deployment switch and browser/runtime smoke are not claimed by this manifest evidence cut.",
+      "containment": "Use downstream hosted verification before claiming hosted acceptance.",
+      "expiry": "When hosted verification lands.",
+      "recheck_trigger": "Any dev deployment switch."
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+    "self_hash_omitted": true,
+    "self_hash_reason": "The v1.1.0 companion checksum seals this manifest, while delivery receipt 7ed5776fe7f6a5137db456cc06ffec1935cc39b4 binds the finalized readback bytes without recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md@v1.1.0": "9274eb440510bdb992151c4240b990fb9161150044422a611c825d1f1666a5a0"
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "actor": "Human/Ops",
+      "kind": "parent_integration",
+      "recorded_at": "2026-07-29T04:02:00Z",
+      "status": "ready_for_review",
+      "reference": "Auth matrix repaired to 27/27 pass, healthcheck inventory renders 27/27, and restart proof is integrated."
+    }
+  ]
+}

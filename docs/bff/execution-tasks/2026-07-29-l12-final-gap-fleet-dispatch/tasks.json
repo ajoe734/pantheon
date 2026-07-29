@@ -1,0 +1,375 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-29-l12-final-gap-fleet-dispatch",
+  "generated_at": "2026-07-29T04:20:00Z",
+  "source_audit": "docs/deployment/evidence/twelve-loop-gap/L12-FINAL-GAP-TRIPLE-AUDIT-FLEET-DISPATCH-20260729/FINAL_THREE_PASS_GAP_AUDIT_2026-07-29T0420Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "hosted/product completion claims from manifest validators alone",
+    "legacy front-ai-trading-system",
+    "same-author GitHub independent approval"
+  ],
+  "authoritative_current_state": {
+    "manifest_task": {
+      "id": "L12-MANIFEST-001",
+      "status": "done",
+      "source": "archive",
+      "archived_at": "2026-07-29T04:10:34Z",
+      "delivery_pr": 4342,
+      "delivery_merge_commit": "f9063be7da0106c43039042ea6edfdbd33a0bb51",
+      "reconcile_pr": 4343,
+      "reconcile_merge_commit": "3e0ea2136c1ebe0214e07cfbf6411bb20bb5809a"
+    },
+    "manifest_validators": {
+      "evidence_validator": {
+        "result": "pass",
+        "rejections": []
+      },
+      "worker_matrix": {
+        "status": "pass",
+        "worker_count": 27,
+        "matrix_entry_count": 27,
+        "declared_gap_count": 0,
+        "auth": {
+          "pass": 27,
+          "gap": 0
+        },
+        "durable_volume": {
+          "pass": 27,
+          "gap": 0
+        },
+        "admission_ready": true,
+        "matrix_consistent": true
+      }
+    },
+    "supervisor_runtime": {
+      "healthy": true,
+      "lifecycle": "running",
+      "task_state_shadow_caught_up": true,
+      "observed_real_provider_dispatch": [
+        "antigravity1-1 reviewed SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+        "antigravity1-1 reviewed L12-MANIFEST-HC-IMIT-CAP-20260729",
+        "claude2 reviewed L12-MANIFEST-RESTART-PROOF-20260729"
+      ]
+    }
+  },
+  "waves": [
+    {
+      "wave": 0,
+      "parallel": true,
+      "purpose": "Drain stale task-state, stale PRs, and fleet-readiness ambiguity before product-level proof.",
+      "tasks": [
+        {
+          "id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Human/Ops"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [],
+          "target_prs": [
+            4297,
+            4311,
+            4313,
+            4323,
+            4328,
+            4340,
+            4341
+          ],
+          "scope": [
+            "GitHub PR state",
+            "docs/deployment/evidence/twelve-loop-gap",
+            ".orchestrator/task-briefs",
+            "ai-status task state"
+          ],
+          "acceptance": [
+            "Every listed PR is merged, closed as superseded, or explicitly left open with exact blocker and owner",
+            "No stale PR is counted as twelve-loop acceptance proof",
+            "No .orchestrator/config.json change is made",
+            "Result is recorded in a task brief or evidence note"
+          ]
+        },
+        {
+          "id": "L12-MANIFEST-RESTART-PROOF-UNSTRAND-20260729",
+          "canonical_task": "L12-MANIFEST-RESTART-PROOF-20260729",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Human/Ops"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [],
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.json",
+            "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.sha256",
+            "ai-status row L12-MANIFEST-RESTART-PROOF-20260729"
+          ],
+          "acceptance": [
+            "Human/Ops or an authorized owner reopens the stranded review row without config edits",
+            "A new open PR or valid reconciliation path exists before reviewer approval",
+            "Residual evidence owner/head nits are repaired or explicitly judged non-blocking",
+            "Task reaches archive done or is superseded by a recorded parent closeout"
+          ]
+        },
+        {
+          "id": "L12-MANIFEST-HC-IMIT-CAP-FINALIZE-20260729",
+          "canonical_task": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Human/Ops"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [],
+          "target_prs": [
+            4340
+          ],
+          "acceptance": [
+            "Review-approved row is moved to done through governed owner finalization or reconcile_merged_done",
+            "If #4340 is superseded by #4342, the supersession is explicit and the PR is closed or retargeted",
+            "No duplicate manifest proof remains counted"
+          ]
+        },
+        {
+          "id": "L12-MANIFEST-HC-REC-FINALIZE-20260729",
+          "canonical_task": "L12-MANIFEST-HC-REC-20260729",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Human/Ops"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [],
+          "target_prs": [
+            4341
+          ],
+          "acceptance": [
+            "Review row is approved and finalized, or explicitly superseded by #4342",
+            "Any open PR is merged only with exact-head review and green checks, otherwise closed with a supersession comment",
+            "Task-state row no longer loops in review dispatch"
+          ]
+        },
+        {
+          "id": "SUP-L12-FLEET-DISPATCH-HEALTH-FINALIZE-20260729",
+          "canonical_task": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Human/Ops"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [],
+          "target_prs": [
+            4328
+          ],
+          "acceptance": [
+            "Fleet health evidence is archived or #4328 is closed as superseded by newer health readback",
+            "Supervisor runtime health is re-read from dev-root command runtime",
+            "Antigravity and Claude2 dispatch/readiness is recorded from real worker-runtime facts"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 1,
+      "parallel": true,
+      "purpose": "Build and expose truthful backend/frontend loop state after manifest admission.",
+      "tasks": [
+        {
+          "id": "L12-TRUTH-001",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [
+            "L12-MANIFEST-001",
+            "SUP-L12-OPEN-PR-DRAIN-20260729"
+          ],
+          "acceptance": [
+            "Backend/controller/operator truth exposes desired state, actual state, degraded state, failure state, provenance, and deployment identity",
+            "Truth routes do not overstate hosted or verifier maturity",
+            "Route/controller tests and readback evidence pass"
+          ]
+        },
+        {
+          "id": "L12-FE-TRUTH-001",
+          "target_repo": "ajoe734/execute-plans",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [
+            "L12-MANIFEST-001",
+            "L12-TRUTH-001"
+          ],
+          "acceptance": [
+            "Execute-plans frontend renders truth status without using legacy front-ai-trading-system",
+            "Browser proof shows manifest accepted while verifier/hosted/final lanes remain honest until completed",
+            "Frontend PR targets execute-plans dev and uses live BFF mode"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "parallel": true,
+      "purpose": "Run independent cross-loop verifier drills.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-KNOW-001",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "acceptance": [
+            "Source, distillation, and alpha loop evidence is exercised end-to-end",
+            "Freshness/provenance/failure paths are recorded"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-LEARN-001",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "acceptance": [
+            "Teaching, agora, imitation, and consultation evidence is exercised end-to-end",
+            "Reviewer can reject fixture-only proof"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-RUNTIME-001",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "acceptance": [
+            "Deployment and governed paper-capital proof are exercised without enabling live capital",
+            "Restart/failure/recovery paths are visible through truth surfaces"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-OBS-001",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "acceptance": [
+            "Telemetry, reconciliation, evolution, and BFF monitoring proof is exercised end-to-end",
+            "Observed/degraded/failure state is reconciled into the truth surface"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "parallel": false,
+      "purpose": "Hosted exact-identity proof and final signoff.",
+      "tasks": [
+        {
+          "id": "L12-HOSTED-001",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [
+            "L12-FE-TRUTH-001",
+            "L12-VERIFY-KNOW-001",
+            "L12-VERIFY-LEARN-001",
+            "L12-VERIFY-RUNTIME-001",
+            "L12-VERIFY-OBS-001"
+          ],
+          "acceptance": [
+            "Hosted frontend exact commit and BFF exact commit are served by Pantheon-owned dev hosting",
+            "Browser smoke proves truth surfaces against live BFF mode",
+            "Safe write defaults remain disabled"
+          ]
+        },
+        {
+          "id": "L12-CLOSE-001",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2"
+          ],
+          "depends_on": [
+            "L12-HOSTED-001"
+          ],
+          "acceptance": [
+            "All L12 canonical tasks and required verifier/hosted tasks are archived done",
+            "No stale L12 PR or review_approved/review row remains counted as accepted proof",
+            "Final closeout explicitly states exact commits, PRs, validations, and hosted identities"
+          ]
+        }
+      ]
+    }
+  ]
+}
+

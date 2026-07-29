@@ -23,10 +23,15 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
+
+from services.worker_health import healthcheck as check_worker_health
+from services.worker_health import write_health
 
 
 DEFAULT_LEASE_SECONDS = 60
@@ -35,6 +40,7 @@ DEFAULT_BATCH_SIZE = 25
 SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
 API_TOKEN_ENV = "POLICY_LEARNING_API_TOKEN"
 TENANT_ENV = "POLICY_LEARNING_AGORA_TENANT_ID"
+_WORKER_NAME = "policy-learning-shadow-eval-scheduler"
 
 
 class SchedulerConfigurationError(RuntimeError):
@@ -50,6 +56,10 @@ def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
 
 def _env_text(name: str, default: str = "") -> str:
     return (os.getenv(name) or default).strip()
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def worker_id() -> str:
@@ -241,6 +251,21 @@ def run_recovery(
     )
 
 
+def healthcheck() -> int:
+    """Validate a recent successful shadow-evaluation tick."""
+
+    return check_worker_health(
+        health_file=os.getenv("SHADOW_EVAL_SCHEDULER_HEALTH_FILE", ""),
+        interval_seconds=_env_int(
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS",
+            3600,
+            minimum=1,
+        ),
+        worker_name=_WORKER_NAME,
+        expected={"production_training": "fail_closed"},
+    )
+
+
 def main() -> int:
     api_url = os.getenv("POLICY_LEARNING_API_URL", "http://policy-learning-svc:8100")
     interval_seconds = _env_int("SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS", 3600, minimum=1)
@@ -260,6 +285,19 @@ def main() -> int:
     batch_size = _env_int("SHADOW_EVAL_WORKER_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=1)
     lease_seconds = _env_int("SHADOW_EVAL_WORKER_LEASE_SECONDS", DEFAULT_LEASE_SECONDS, minimum=1)
     worker = worker_id()
+    health_file = _env_text("SHADOW_EVAL_SCHEDULER_HEALTH_FILE")
+    health: dict[str, Any] = {
+        "worker_name": _WORKER_NAME,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "tenant_id": tenant_id,
+        "production_training": "fail_closed",
+    }
+    write_health(health_file, health)
 
     recovery = run_recovery(api_url=api_url, worker=worker, tenant_id=tenant_id)
     print(json.dumps({"startup_recovery": recovery, "worker_id": worker}, sort_keys=True), flush=True)
@@ -300,6 +338,26 @@ def main() -> int:
             result = last_failure
             cycle = {"status": "skipped", "reason": "tick_exception"}
 
+        tick_failed = result.get("status") == "error"
+        cycle_failed = cycle.get("status") in {"error", "skipped", "degraded"}
+        health["ticks"] = tick
+        health["last_tick_at"] = _utc_now()
+        if tick_failed or cycle_failed:
+            health["status"] = "degraded"
+            health["last_failure_at"] = health["last_tick_at"]
+            health["last_failure_reason"] = (
+                result.get("reason")
+                or result.get("detail")
+                or cycle.get("reason")
+                or cycle.get("detail")
+                or "shadow evaluation cycle failed"
+            )
+        else:
+            health["status"] = "ok"
+            health["last_success_at"] = health["last_tick_at"]
+            health["last_failure_reason"] = None
+        write_health(health_file, health)
+
         metrics = {
             "tick": tick,
             "worker_id": worker,
@@ -308,6 +366,7 @@ def main() -> int:
             "last_success_candidate_count": (last_success or {}).get("candidate_count"),
             "last_failure_detail": (last_failure or {}).get("detail"),
             "last_failure_reason": (last_failure or {}).get("reason"),
+            "health": health,
         }
         print(json.dumps(metrics, sort_keys=True, default=str), flush=True)
 
@@ -317,4 +376,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
+    if sys.argv[1:]:
+        print(
+            "usage: python services/policy-learning/scheduler_worker.py "
+            "[healthcheck]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     raise SystemExit(main())
