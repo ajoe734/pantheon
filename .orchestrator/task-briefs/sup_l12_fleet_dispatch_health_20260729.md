@@ -4,22 +4,23 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Verify live supervisor and provider-first dispatch health
-- Status: review (owner base refresh complete; pending exact-head re-approval)
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Antigravity
 - Task branch: `task/SUP-L12-FLEET-DISPATCH-HEALTH-20260729`
 - Pull request: `#4328`
-- Previous approved head: Antigravity independently approved
-  `d171d3e21d741f176f4fee3da4f43bbd6c26a6c0`.
-- Base refresh: `dev` advanced to
-  `3e0ea2136c1ebe0214e07cfbf6411bb20bb5809a` before the approved head
-  could merge. The owner merged that base as
-  `a99145a2370331766dfd0161024a3b0ba54ea07c` after the safe integrator
-  rejected the stale head.
-- Next: Antigravity independently reviews the refreshed exact head and
-  re-approves PR #4328. Human/Ops then supplies the required root-freeze
-  context on that same head. The owner reruns the exact-head integrator and
-  governed `done`; ownership and reviewer assignment remain unchanged.
+- Approved head: Antigravity independently approved
+  `54593d18d37a91b6d75bdd41f6426cc02e13c613`.
+- Base drift: after that approval, `dev` advanced from
+  `3e0ea2136c1ebe0214e07cfbf6411bb20bb5809a` to
+  `e51c1220ab3582c9f45f2689dd546ee4a660b4e1`. The exact-head integrator
+  therefore returned `waiting`; the approval is preserved as evidence but
+  cannot authorize a replacement head.
+- Next: the owner merges the latest `origin/dev`, reruns the focused checks,
+  and returns PR #4328 to Antigravity for exact-head re-review. Human/Ops then
+  supplies the required root-freeze context on that same head before the
+  owner reruns the integrator and governed `done`. Ownership and reviewer
+  assignment remain unchanged.
 
 ## Summary
 Fleet health task to ensure this packet is actually handled by supervisor/auto workers.
@@ -38,23 +39,19 @@ Fleet health task to ensure this packet is actually handled by supervisor/auto w
   `docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-HEALTH-20260729/README.md`
 - Fleet verdict: acceptance satisfied; live health observed as
   `degraded_but_failover_working`.
-- The latest Antigravity approval bound PR #4328 and exact head
-  `d171d3e21d741f176f4fee3da4f43bbd6c26a6c0`; it is not reused for the
+- Antigravity approval bound PR #4328 and exact head
+  `54593d18d37a91b6d75bdd41f6426cc02e13c613`; it is not reused for the next
   refreshed head.
 
 ## Owner Closeout Verification
 - `python3 -m json.tool evidence.json` passed.
 - `sha256sum -c evidence.sha256` passed from the evidence directory.
 - `.orchestrator/config.json` remains absent from the task diff.
-- The live supervisor still resolves to
-  `/home/lupin/pantheon-ci-deploy/dev-root`, and the packet receipt/archive
-  remain present.
+- The canonical review gate succeeded for
+  `54593d18d37a91b6d75bdd41f6426cc02e13c613`.
 - The safe auto-integrator dry-run correctly returned `waiting` after `dev`
-  advanced, preserving exact-head review semantics.
-- The owner merged `origin/dev` at
-  `3e0ea2136c1ebe0214e07cfbf6411bb20bb5809a` without changing the reviewed
-  fleet evidence or `.orchestrator/config.json`, then reran the focused
-  checks before handoff.
+  advanced to `e51c1220ab3582c9f45f2689dd546ee4a660b4e1`, preserving
+  exact-head review semantics.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
