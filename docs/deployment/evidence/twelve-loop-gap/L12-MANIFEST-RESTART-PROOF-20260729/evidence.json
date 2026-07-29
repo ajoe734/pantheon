@@ -4,7 +4,8 @@
   "task": {
     "id": "L12-MANIFEST-RESTART-PROOF-20260729",
     "title": "L12 manifest isolated restart proof workstream",
-    "owner": "Codex2",
+    "owner": "Codex",
+    "delivery_worker_identity": "Codex2",
     "reviewer": "Claude2",
     "status": "review_approved",
     "repository": "ajoe734/pantheon",
@@ -117,9 +118,31 @@
     "reviewer": "Claude2",
     "independent_decision": "approve",
     "reviewed_at": "2026-07-29T03:11:38Z",
-    "exact_task_pr_head": "1656574ca9314f93a02af0a34b56ed2ac966ee7a",
+    "exact_task_pr_head": "69e36e76da0cc41aff7a6faf765bc38e0efca985",
+    "exact_task_pr_head_note": "The head that actually merged to dev, via PR #4338. Earlier manifest revisions cited 1656574ca (PR #4334's head), which was the first reviewed head, not the delivered one.",
+    "reviewed_head_chain": [
+      {
+        "pr": 4334,
+        "head_sha": "1656574ca9314f93a02af0a34b56ed2ac966ee7a",
+        "canonical_review_status_id": "51264813501",
+        "decision": "approve"
+      },
+      {
+        "pr": 4338,
+        "head_sha": "801852aeb59991526d37904491ceda62410ec701",
+        "canonical_review_status_id": "51265159718",
+        "decision": "approve",
+        "note": "Delta re-review of the manifest-only change on top of #4334."
+      },
+      {
+        "pr": 4338,
+        "head_sha": "69e36e76da0cc41aff7a6faf765bc38e0efca985",
+        "decision": "merged",
+        "note": "Owner refresh of the approved branch onto current dev. Carries no evidence-directory change: all six blobs are byte-identical to approved head 801852aeb (README.md 5fccbc867, evidence.json 9e88dd52c, evidence.sha256 5da5cf07a, fixture.compose.yml 1c2020122, proof-run.json 6c407410e, run-proof.sh f5a01ea21)."
+      }
+    ],
     "reviewed_evidence_anchor": "afac18b8f",
-    "canonical_review_status_id": "51264813501",
+    "canonical_review_status_id": "51265159718",
     "required_checks": [
       "re-run or inspect the isolated proof",
       "confirm RestartCount increments on the same container ID",
@@ -145,5 +168,37 @@
       "done_guardrail_dry_run": "pass"
     },
     "note": "Claude2 independently re-ran run-proof.sh under isolated project l12-restart-proof-review-claude2 at PR #4334 exact head 1656574ca9314f93a02af0a34b56ed2ac966ee7a. The evidence directory was byte-identical to reviewed anchor afac18b8f; the merge commit only incorporated unrelated dev files. The same isolated container restarted after host-namespace PID 1 SIGKILL with PID 180354 -> 183080 and RestartCount 0 -> 1. No Docker stop/kill API was used, no start/up command followed the signal, the shared pantheon worker snapshot stayed unchanged, cleanup left zero isolated containers and networks, checksum verification passed, and the done guardrail dry-run reported no gaps."
+  },
+  "unstrand": {
+    "why": "PR #4338 merged at 2026-07-29T03:38:04Z before the bound reviewer verdict landed on the canonical row, stranding the row at status 'review'. approve fails closed on a non-open PR; command_blocker and command_restore_approved are owner-only (and the latter also requires status=in_progress), so the reviewer had no canonical channel to move or even flag the row. Eight re-dispatches confirmed the deadlock without changing it.",
+    "authorized_by": {
+      "packet": "docs/bff/execution-tasks/2026-07-29-l12-final-gap-fleet-dispatch/tasks.json",
+      "wave": 0,
+      "wave_task_id": "L12-MANIFEST-RESTART-PROOF-UNSTRAND-20260729",
+      "source_pr": 4344,
+      "source_commit": "e51c1220ab3582c9f45f2689dd546ee4a660b4e1",
+      "constraint": "no .orchestrator/config.json edits"
+    },
+    "canonical_row_at_unstrand": {
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "in_progress",
+      "reopened_at": "2026-07-29T04:25:19Z",
+      "note": "Owner and reviewer were rotated by the Wave 0 dispatch. The delivery-time owner/reviewer recorded in this manifest's task and review blocks are Codex and Claude2 and are unchanged."
+    },
+    "deliverable_reopened": false,
+    "deliverable_integrity_recheck": {
+      "checked_at_dev_head": "e51c1220ab3582c9f45f2689dd546ee4a660b4e1",
+      "method": "git archive origin/dev of the evidence directory, then git hash-object and sha256sum -c",
+      "blob_ids_unchanged_since_approved_head_801852aeb": true,
+      "checksum_verification": "5/5 OK",
+      "acceptance_status": "AC1-AC4 all pass"
+    },
+    "residual_nits_repaired": [
+      "task.owner read 'Codex2' (a worker identity) where the canonical delivery owner was 'Codex'; the worker identity is now recorded separately in task.delivery_worker_identity.",
+      "review.exact_task_pr_head cited 1656574ca, the first reviewed head from PR #4334, rather than 69e36e76da0cc41aff7a6faf765bc38e0efca985, the head that actually merged to dev; the full reviewed head chain is now recorded.",
+      "review.canonical_review_status_id was pinned to the PR #4334 status 51264813501; it now matches the canonical row's github_review_bridge.status_id 51265159718 for approved head 801852aeb."
+    ],
+    "process_gap_for_upstream": "Once a task PR merges ahead of the bound reviewer verdict, approve, reviewer-side reopen and reviewer-side blocker are all unavailable, and the reviewer cannot clear the pending handoff that keeps re-triggering dispatch. Suggested fix: let the review bridge accept a MERGED PR whose head matches the reviewed head for approve and reopen, or allow the reviewer to file a blocker."
   }
 }
