@@ -4,21 +4,21 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Verify live supervisor and provider-first dispatch health
-- Status: review_approved (base refresh required before merge)
+- Status: review (owner base refresh complete; pending exact-head re-approval)
 - Owner: Codex
 - Reviewer: Antigravity
 - Task branch: `task/SUP-L12-FLEET-DISPATCH-HEALTH-20260729`
 - Pull request: `#4328`
 - Approved head: Antigravity independently approved
   `17cf35d0aef7bcfe830dd812d06fda4975da8f0a`.
-- Base race: `dev` advanced to
+- Base refresh: `dev` advanced to
   `5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a` before the approved head
-  could merge. The safe integrator rejected the stale head because refreshing
-  the base changes the reviewed commit.
-- Next: owner refreshes the task branch from current `origin/dev`, reruns the
-  focused checks, and hands the new exact head to the unchanged reviewer
-  Antigravity. Merge and governed `done` remain blocked until that head is
-  independently approved.
+  could merge. The owner merged that base as
+  `f6c49d8f2a09cb4256e59c10a2f00f28f86d2989` after the safe integrator
+  rejected the stale head.
+- Next: Antigravity independently reviews the refreshed exact head and
+  re-approves PR #4328. The owner then reruns the exact-head integrator and
+  governed `done`; ownership and reviewer assignment remain unchanged.
 
 ## Summary
 Fleet health task to ensure this packet is actually handled by supervisor/auto workers.
@@ -50,6 +50,8 @@ Fleet health task to ensure this packet is actually handled by supervisor/auto w
 - The canonical review gate succeeded for `17cf35d0aef7bcfe830dd812d06fda4975da8f0a`.
 - The safe auto-integrator dry-run correctly returned `waiting` after `dev`
   advanced, preserving exact-head review semantics.
+- The owner merged `origin/dev` without changing the reviewed fleet evidence
+  or `.orchestrator/config.json`, then reran the focused checks before handoff.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
