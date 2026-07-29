@@ -4,7 +4,7 @@
     "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
     "title": "Repair promote PR CI trigger and auto-merge path",
     "phase": "Repository Merge Governance",
-    "owner": "Codex",
+    "owner": "Codex2",
     "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "in_progress",
-  "generated_at": "2026-07-29T10:26:41Z",
+  "generated_at": "2026-07-29T11:02:40Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -382,6 +382,49 @@
     },
     "next": "commit and push this refreshed evidence head, reacquire Branch CI and Antigravity exact-head approval, then merge PR #4262 through the governed integrator"
   },
+  "codex2_owner_finalize_refresh": {
+    "canonical_status_observed_at": "2026-07-29T10:55:01Z",
+    "canonical_owner": "Codex2",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
+    "approval_recorded_at": "2026-07-29T10:50:50Z",
+    "dispatch_metadata_anchor_commit": "0b80fc368b6ad58e82bae73de8b1c2697a51dbd8",
+    "base_commit": "5503111f5e94d6e8be249db5ffa773b829629815",
+    "base_update_merge_commit": "0463d6a9a651ecc2d67529b0b37c98b5ea19ae64",
+    "incoming_scope": "supervisor preferred-lane scheduling and L12 recovery documents only; no promote implementation or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T11:02:40Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.204s",
+      "pytest": "73 focused tests passed in 9.63s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "legacy_pr": 4138,
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_check_count": 0,
+      "legacy_supports_dispatch": false,
+      "fresh_release_tag": "release/v2026.07.29.6",
+      "fresh_release_commit": "e7eab746afc8ad09321c6da69263dbda4d5eccce",
+      "fresh_release_supports_dispatch": true
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "base_is_current_at_validation": true,
+      "remote_pr_head_before_push": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
+      "local_pre_evidence_head": "0463d6a9a651ecc2d67529b0b37c98b5ea19ae64",
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity approval on the resulting exact head, then wait for Human/Ops to bind the root-freeze context"
+    }
+  },
   "delivery": {
     "implementation_pr": 4258,
     "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
@@ -417,10 +460,10 @@
       }
     },
     "merge_gate": {
-      "observed_at": "2026-07-29T10:26:41Z",
-      "observed_head": "b88cf3d849fb948879ecb45a0dd15b85cacbf7b6",
+      "observed_at": "2026-07-29T11:02:40Z",
+      "observed_head": "0463d6a9a651ecc2d67529b0b37c98b5ea19ae64",
       "pr_state": "open",
-      "mergeable_state": "local_base_current_pending_push",
+      "mergeable_state": "local_base_current_pending_evidence_commit_and_push",
       "auto_merge_enabled": false,
       "merge_policy": "review_before_merge",
       "external_required_contexts": [
@@ -479,11 +522,11 @@
     "ancestry_evidence": null
   },
   "review": {
-    "status": "approved_head_superseded_by_strict_base_refresh_pending_exact_head_review",
+    "status": "approved_head_superseded_by_owner_finalize_refresh_pending_exact_head_review",
     "reviewer": "Antigravity",
-    "reviewed_head": "f81a9b1e96de5d5bbfd1530daabd6f3441c13893",
-    "reviewed_at": "2026-07-29T10:20:30Z",
-    "decision": "approved_for_exact_head_before_strict_base_refresh",
+    "reviewed_head": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
+    "reviewed_at": "2026-07-29T10:50:50Z",
+    "decision": "approved_for_exact_head_before_owner_finalize_refresh",
     "latest_reopened_review": {
       "reviewer": "Codex2",
       "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",

@@ -287,6 +287,35 @@ CI and Antigravity approval bound to the new exact head before the governed
 integrator can merge it. The owner does not reuse the superseded approval or
 weaken strict branch protection.
 
+## Codex2 Owner Finalization Refresh
+
+Antigravity approved exact head
+`c249265c8b6cde99ed20376491d3a8ff88a7aff2` at
+2026-07-29T10:50:50Z after the eight Branch CI jobs and the canonical review
+status succeeded. The supervisor then reassigned finalization ownership from
+Codex to Codex2. Before closeout, `dev` advanced again and strict branch
+protection reported PR `#4262` as `BEHIND`.
+
+Codex2 preserved the supervisor-generated dispatch brief in anchor
+`0b80fc368b6ad58e82bae73de8b1c2697a51dbd8`, then composed current
+`origin/dev` `5503111f5e94d6e8be249db5ffa773b829629815` through
+conflict-free merge `0463d6a9a651ecc2d67529b0b37c98b5ea19ae64`.
+The incoming changes cover supervisor preferred-lane scheduling and L12
+recovery documents only; they do not overlap promote implementation or this
+task evidence.
+
+At the composed tree, all 25 `PublishPromoteTests` passed in 0.204 seconds and
+the 73-test focused pytest slice passed in 9.63 seconds. `py_compile`, both
+workflow YAML parses, evidence JSON parsing, and both diff checks passed. A
+live read-only REST probe still found 26 open promote PRs, including legacy PR
+`#4138` with zero checks and no dispatch contract, and confirmed that
+`release/v2026.07.29.6` contains the guarded dispatch contract.
+
+The evidence commit and push will create another exact PR head. The prior
+approval cannot authorize it. PR `#4262` must reacquire Branch CI and
+Antigravity approval on that head; Human/Ops must independently supply
+`Pantheon root merge freeze 2026-07-27` before governed integration.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
