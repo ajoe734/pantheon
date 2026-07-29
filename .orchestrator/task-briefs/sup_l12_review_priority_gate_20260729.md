@@ -45,6 +45,16 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Visible GitHub gates passed: commit trailers, runtime mirror guard, smoke
   acceptance, canonical review gate, root merge freeze, and orchestrator sync.
 
+## Owner Verification
+
+- `PYTHONPATH=.orchestrator python3 -m unittest discover -s .orchestrator -p
+  'test_supervisor.py'` — `452` tests passed.
+- `python3 -m py_compile .orchestrator/supervisor.py` — passed.
+- `git diff --check` — passed.
+- `git diff --exit-code cbcb4574da48e353e3e33673f81dce5dc13e790d..HEAD
+  -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py` — no
+  post-review implementation or regression-test changes.
+
 ## Owner Closeout Boundary
 
 - Preserve `.orchestrator/supervisor.py` and
