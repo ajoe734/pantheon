@@ -16,8 +16,10 @@ Clean command-root correction: `2026-07-29T09:31Z`
 
 Current-state refresh: `2026-07-29T10:25Z`
 
+Runtime/fleet delta: `2026-07-29T11:40Z`
+
 Source audit:
-`docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md`
+`docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1140Z.md`
 
 This task plan avoids duplicate artifact ownership. Existing L12 task rows
 remain canonical for product implementation. New `SUP-*` tasks are guard and
@@ -40,6 +42,41 @@ The current dispatch authority is
 - #4330 is merged but `L12-MANIFEST-REVIEW-GAP-TASKS-20260729` remains
   canonical-row blocked because closeout metadata must be reconciled.
 - Active product work remains KNOW, LEARN, RUNTIME, OBS, FE, HOSTED, CLOSE.
+
+## 2026-07-29T11:40Z runtime/fleet delta
+
+The current dispatch authority is now
+`docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1140Z.md`.
+
+- #4371 is merged to `dev` and live-promoted as
+  `c1e396495d37a1c9dfeea5704e7eb73db6acde0e`; the deployed supervisor root
+  has no config diff from
+  `/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json`.
+- Live supervisor restart was intentional for deployment only; new PID was
+  `4191254`.
+- Human/Ops performed a temporary live repair by clearing stale Claude2/L12
+  `missing_process` failure streaks from runtime state. Backup:
+  `.orchestrator/state.json.bak-human-ops-clear-l12-stale-failure-streaks-20260729T1133Z`.
+- That live repair enabled real Claude2 fleet dispatch:
+  `claude2-20260729T113336Z-08eddb2f` on `L12-VERIFY-OBS-001`.
+- Antigravity completed real supervisor work:
+  `antigravity1-1-20260729T112638Z-2b127a26` on
+  `OPS-PROMOTE-PR-CI-TRIGGER-001`.
+- Helper-claim routing still fell to Codex2 while Claude2 was busy:
+  `SUP-L12-STALE-PR-RETIRE-20260729` and
+  `SUP-L12-FLEET-DISPATCH-READBACK-20260729` both launched Codex2 fallback
+  workers and failed with SIGTERM/code 143. Those runs are invalid as
+  provider-first proof.
+- The failed Codex2 fallback runs returned the SUP-L12 rows to
+  Antigravity/Claude2 ownership, but this exposed missing tests for
+  running-worker/row-owner reconciliation and long finalize/lease pressure.
+
+New guard tasks from this delta:
+
+1. `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`
+2. `SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729`
+3. `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
+4. `SUP-L12-LONG-FINALIZE-LEASE-20260729`
 
 ## Current parallel dispatch waves
 
@@ -126,6 +163,10 @@ These can run in parallel with Wave 1 if artifact scopes do not overlap:
 3. `SUP-L12-TASK-BRIEF-SYNC-20260729`.
 4. `SUP-L12-WORKER-PYDEPS-20260729`.
 5. `SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729`.
+6. `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`.
+7. `SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729`.
+8. `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`.
+9. `SUP-L12-LONG-FINALIZE-LEASE-20260729`.
 
 ## Active product lanes
 
@@ -427,6 +468,85 @@ progress.
     quota accounting;
   - do not edit `.orchestrator/config.json`.
 
+### `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`
+
+- Owner: `Claude2`
+- Reviewer: `Antigravity`
+- Current state: new guard task to materialize after the 11:40Z packet merges.
+- Scope:
+  - `.orchestrator/supervisor.py` failure-streak/chair-triage dispatch policy;
+  - `.orchestrator/state.json` schema handling without ad-hoc runtime edits;
+  - `.orchestrator/test_supervisor.py` regression coverage.
+- Acceptance:
+  - reproduce stale L12 `missing_process` streaks blocking healthy
+    Claude2/Antigravity dispatch after a supervisor fix is merged and promoted;
+  - add a bounded reaper or eligibility check so stale/cleared failure causes
+    cannot keep provider-first rows in chair-triage deadlock;
+  - prove the repaired path launches Claude2/Antigravity before any Codex-family
+    fallback for L12/SUP-L12 rows;
+  - preserve a runtime repair audit trail without manually editing
+    `.orchestrator/config.json`;
+  - validate with focused unit tests and the full supervisor regression suite.
+
+### `SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729`
+
+- Owner: `Antigravity`
+- Reviewer: `Claude2`
+- Current state: new guard task to materialize after the 11:40Z packet merges.
+- Scope:
+  - helper-claim candidate selection for provider-first L12/SUP-L12 rows;
+  - busy preferred-provider behavior when Claude2 or Antigravity is already
+    running an eligible row;
+  - Codex/Codex2 fallback admission tests.
+- Acceptance:
+  - reproduce the 2026-07-29T11:34Z case where Claude2 was busy on
+    `L12-VERIFY-OBS-001` and SUP-L12 helper claims still launched Codex2;
+  - change policy so busy preferred providers cause wait/defer or
+    Claude/Antigravity-family fallback before Codex-family fallback;
+  - prove Codex/Codex2 cannot claim provider-first L12/SUP-L12 work merely
+    because the preferred provider is temporarily busy;
+  - keep non-L12 emergency fallback behavior intact where explicitly allowed;
+  - do not edit `.orchestrator/config.json`.
+
+### `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
+
+- Owner: `Claude2`
+- Reviewer: `Antigravity`
+- Current state: new guard task to materialize after the 11:40Z packet merges.
+- Scope:
+  - authoritative task rows versus live `worker_runner.py` processes;
+  - owner/reviewer changes after failed helper/fallback runs;
+  - task brief and evidence row reconciliation.
+- Acceptance:
+  - reproduce row ownership/reviewer changes while a live or recently terminal
+    worker still exists for the same canonical task;
+  - add a reconciliation check that reports exact row owner, reviewer, status,
+    run id, PID, exit code, and source SHA before claiming fleet health;
+  - prevent stale fallback failures from overwriting provider-first owner truth
+    without a recorded reason;
+  - archive an evidence table for active rows and terminal runs;
+  - do not edit `.orchestrator/config.json`.
+
+### `SUP-L12-LONG-FINALIZE-LEASE-20260729`
+
+- Owner: `Antigravity`
+- Reviewer: `Claude2`
+- Current state: new guard task to materialize after the 11:40Z packet merges.
+- Scope:
+  - long-running finalize/review worker detection;
+  - provider quota accounting when non-L12 OPS/finalize work competes with L12;
+  - supervisor status/readback messages.
+- Acceptance:
+  - reproduce a long owner/reviewer/finalize run consuming a provider slot while
+    L12 review/owner work is eligible;
+  - add status/readback that distinguishes healthy long-running work from a
+    stuck lease that masks L12 readiness;
+  - prove L12 provider-first priority still applies after lease expiry,
+    completion, interruption, or terminal cleanup;
+  - do not terminate healthy workers as part of the test unless the test owns
+    them in an isolated fixture;
+  - do not edit `.orchestrator/config.json`.
+
 ## Dispatch order
 
 1. Prioritize `L12-VERIFY-OBS-001` Claude2 review for PR #4364 before any
@@ -445,12 +565,14 @@ progress.
    run on Claude2/Antigravity, never on Codex/Codex2.
 7. Materialize the new `SUP-L12-*` guard tasks above through the
    supervisor/auto-worker path with Claude2/Antigravity-first ownership.
-8. Dispatch FE only with strict live-BFF evidence and no swallowed-failure UI.
-9. Dispatch HOSTED, then CLOSE.
+8. Treat any Codex/Codex2 helper claim on those provider-first rows as a
+   runtime bug to be captured, not as valid fleet progress.
+9. Dispatch FE only with strict live-BFF evidence and no swallowed-failure UI.
+10. Dispatch HOSTED, then CLOSE.
 
 ## Current fleet health checkpoint
 
-Observed after the 08:20Z rescue and updated at 08:48Z:
+Observed after the 08:20Z rescue and updated at 11:40Z:
 
 - `Claude2` can launch governed auto workers, but `L12-VERIFY-KNOW-001` failed
   as `claude2-20260729T083251Z-33cfa39f` and returned to `todo`.
@@ -500,6 +622,24 @@ Observed after the 08:20Z rescue and updated at 08:48Z:
     chair-reassignment-triage state;
   - `L12-VERIFY-RUNTIME-001` and `L12-VERIFY-KNOW-001`: Claude2 owner work is
     blocked by the same failure-loop / chair-reassignment-triage state.
+
+11:40Z update:
+
+- #4371 merged and live-promoted the priority/preemption repair as
+  `c1e396495d37a1c9dfeea5704e7eb73db6acde0e`; supervisor restarted
+  intentionally as PID `4191254`, with no config diff.
+- Human/Ops cleared stale Claude2/L12 `missing_process` streaks as a temporary
+  live repair; the durable missing development is
+  `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`.
+- `Claude2` launched `claude2-20260729T113336Z-08eddb2f` on
+  `L12-VERIFY-OBS-001`, proving the fleet path can run after the stale-streak
+  repair.
+- `Antigravity` completed `OPS-PROMOTE-PR-CI-TRIGGER-001` as
+  `antigravity1-1-20260729T112638Z-2b127a26`.
+- Helper claims still sent SUP-L12 work to Codex2 while Claude2 was busy, so
+  `SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729`,
+  `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`, and
+  `SUP-L12-LONG-FINALIZE-LEASE-20260729` are now required guard work.
 
 ## Final audit result
 
