@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -182,6 +183,51 @@ def test_scheduler_run_tick_handles_url_error() -> None:
         result = scheduler.run_tick(api_url="http://test")
     assert result["status"] == "error"
     assert "connection refused" in result["detail"]
+
+
+def test_scheduler_health_requires_recent_successful_fail_closed_tick(
+    tmp_path: Path,
+) -> None:
+    scheduler = _load_scheduler_module()
+    health_file = tmp_path / "shadow-eval-health.json"
+    success = {
+        "status": "ok",
+        "candidate_count": 0,
+        "production_training": "fail_closed",
+    }
+    cycle = {"status": "ok", "processed_count": 0}
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-health",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "1",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(health_file),
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler,
+        "run_recovery",
+        return_value={"status": "ok", "reset_count": 0},
+    ), mock.patch.object(
+        scheduler,
+        "run_tick",
+        return_value=success,
+    ), mock.patch.object(
+        scheduler,
+        "run_claim_cycle",
+        return_value=cycle,
+    ):
+        assert scheduler.main() == 0
+        assert scheduler.healthcheck() == 0
+
+    state = json.loads(health_file.read_text(encoding="utf-8"))
+    assert state["worker_name"] == "policy-learning-shadow-eval-scheduler"
+    assert state["status"] == "ok"
+    assert state["ticks"] == 1
+    assert state["production_training"] == "fail_closed"
 
 
 # ---------------------------------------------------------------------------

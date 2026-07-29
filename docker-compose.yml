@@ -341,6 +341,16 @@ services:
         condition: service_healthy
       registry:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=os.getenv(\"ALPHA_REPLICATION_CONTROLLER_STATE_PATH\",\"/data/research-orchestrator/alpha-replication/controller_state.json\");interval=float(os.getenv(\"ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS\",\"60\"));window=max(2*interval,interval+180);sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=window else 1)'",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   search-svc:
     stop_grace_period: 30s
@@ -408,9 +418,22 @@ services:
       SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
       SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
       SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
+      SEARCH_INDEX_SCHEDULER_ALIVE_PATH: ${SEARCH_INDEX_SCHEDULER_ALIVE_PATH:-/data/search/search_scheduler_alive}
+    volumes:
+      - search-data:/data/search
     depends_on:
       search-svc:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=os.getenv(\"SEARCH_INDEX_SCHEDULER_ALIVE_PATH\",\"/data/search/search_scheduler_alive\");interval=float(os.getenv(\"SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS\",\"300\"));window=max(2*interval,interval+300);sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=window else 1)'",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   training-session-svc:
     stop_grace_period: 30s
@@ -568,6 +591,7 @@ services:
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
       SHADOW_EVAL_MAX_DATASETS: ${SHADOW_EVAL_MAX_DATASETS:-}
+      SHADOW_EVAL_SCHEDULER_HEALTH_FILE: ${SHADOW_EVAL_SCHEDULER_HEALTH_FILE:-/tmp/policy-learning-shadow-eval-scheduler-health.json}
       # Same credential and same tenant scope as policy-learning-svc above.
       # The scheduler presents this token as `Authorization: Bearer` and the
       # tenant as `X-Tenant-Id`; both must resolve to the same values the API
@@ -579,6 +603,12 @@ services:
     depends_on:
       policy-learning-svc:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/policy-learning/scheduler_worker.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
 
   research-orchestrator-svc:
     build:
@@ -1906,11 +1936,20 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+      PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/tmp/paper-signal-producer-health.json}
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_CANARY_EXECUTION_ENABLED: "false"
     depends_on:
       runtime-manager:
         condition: service_healthy
       signal-store:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   reconciliation-drift-svc:
     stop_grace_period: 30s
@@ -1977,6 +2016,8 @@ services:
       RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS:-1}
       RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ: ${RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ:-false}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/tmp/reconciliation-drift-consumer-health.json}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -1984,6 +2025,12 @@ services:
         condition: service_healthy
       telemetry:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/consumer.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   reconciliation-drift-scheduler:
     build:
@@ -1998,9 +2045,17 @@ services:
       RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/tmp/reconciliation-drift-scheduler-health.json}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/scheduler_worker.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   reconciliation-drift-incident-listener:
     build:
@@ -2017,6 +2072,8 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_STATE_PATH: /data/reconciliation-drift/incident-listener-state.json
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -2024,6 +2081,12 @@ services:
         condition: service_healthy
       incidents:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/incident_listener.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   research-worker-gateway-svc:
     build:

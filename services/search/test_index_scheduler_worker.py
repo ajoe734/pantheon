@@ -68,3 +68,14 @@ def test_search_index_scheduler_can_refresh_without_materialize() -> None:
 
     assert [url for url, _body in recorder.calls] == ["http://search-svc:8098/api/search/index/refresh"]
     assert result["materialize"] is None
+
+
+def test_search_index_scheduler_main_touches_alive_path(tmp_path) -> None:
+    alive_file = tmp_path / "search_scheduler_alive"
+    recorder = _PostRecorder()
+    with mock.patch("services.search.scheduler_worker.urllib.request.urlopen", recorder), \
+         mock.patch.dict("os.environ", {"SEARCH_INDEX_SCHEDULER_ALIVE_PATH": str(alive_file), "SEARCH_INDEX_SCHEDULER_MAX_TICKS": "1"}):
+        from services.search.scheduler_worker import main
+        res = main()
+        assert res == 0
+        assert alive_file.exists()
