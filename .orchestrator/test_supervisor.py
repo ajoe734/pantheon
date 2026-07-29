@@ -16395,6 +16395,104 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         worker.update(overrides)
         return worker
 
+    def test_worker_launch_captures_dispatch_assignment_and_source_sha(
+        self,
+    ) -> None:
+        task = self._task(owner="Codex2")
+        state: dict[str, object] = {}
+        request = supervisor.DeliveryRequest(
+            agent_id="codex2",
+            provider="codex2",
+            delivery_mode="codex",
+            message="wake",
+            task_id=str(task["id"]),
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+        )
+        result = mock.Mock(
+            ok=True,
+            run_id="codex2-captured",
+            session_id=None,
+            mode="codex",
+            manual_confirmation_required=False,
+            auto_delivered=True,
+            resume_token=None,
+            pr_url=None,
+            session_url=None,
+            command=["codex"],
+            log_path="/tmp/codex.log",
+            payload_path=None,
+            pid=6060,
+            heartbeat_path=None,
+            runner_status_path=None,
+            notes="started",
+            metadata={},
+            adapter="codex",
+        )
+        result.as_dict.return_value = {"ok": True}
+        adapter = mock.Mock()
+        adapter.deliver.return_value = result
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+            mock.patch.object(
+                supervisor,
+                "build_adapter",
+                return_value=adapter,
+            ),
+            mock.patch.object(
+                supervisor,
+                "status_command_runtime_env",
+                return_value={
+                    "PANTHEON_COMMAND_ROOT": "/runtime",
+                    "PANTHEON_COMMAND_RUNTIME_SHA": self.SOURCE_SHA,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                },
+            ),
+            mock.patch.object(
+                supervisor,
+                "status_command_runtime_record_from_env",
+                return_value={"source_sha": self.SOURCE_SHA},
+            ),
+            mock.patch.object(supervisor, "save_runtime_state"),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            started, run_id, _details = supervisor.start_worker_for_request(
+                self.config,
+                state,
+                {},
+                request,
+                queue_event_id="evt-captured",
+                attempt_count=1,
+                event_id_for_log="evt-captured",
+            )
+
+        self.assertTrue(started)
+        self.assertEqual(run_id, "codex2-captured")
+        worker = state["workers"]["codex2-captured"]
+        self.assertEqual(
+            worker["task_assignment_at_dispatch"],
+            {
+                "task_id": task["id"],
+                "owner": "Codex2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T12:00:00Z",
+            },
+        )
+        self.assertEqual(
+            worker["status_command_runtime"]["source_sha"],
+            self.SOURCE_SHA,
+        )
+        self.assertEqual(
+            request.metadata["task_assignment_at_dispatch"]["owner"],
+            "Codex2",
+        )
+
     def test_live_worker_for_previous_owner_is_superseded_with_exact_evidence(
         self,
     ) -> None:

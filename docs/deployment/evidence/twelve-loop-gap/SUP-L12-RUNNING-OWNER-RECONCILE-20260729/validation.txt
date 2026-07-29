@@ -1,0 +1,31 @@
+SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
+Observed: 2026-07-29T15:22:01Z
+
+1. Syntax
+   command: python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py
+   result: PASS
+
+2. New focused suite
+   command: cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests
+   result: 7 passed in 1.21s
+
+3. Related regression suites
+   command: cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests
+   result: 113 passed, 2 subtests passed in 19.24s
+
+4. Full supervisor suite
+   command: cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py
+   result: 464 passed, 4 subtests passed in 56.82s
+
+5. Diff hygiene
+   command: git diff --check
+   result: PASS
+
+6. Config boundary
+   command: git diff --name-only HEAD -- .orchestrator/config.json
+   result: PASS (no paths)
+
+Environment note:
+Running the legacy top-level test module from the repository root cannot
+resolve its intentional top-level `import supervisor`. The validated command
+runs from `.orchestrator/`, which is the module's native collection context.
