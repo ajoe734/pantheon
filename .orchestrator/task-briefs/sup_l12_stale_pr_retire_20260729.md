@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity
 - Reviewer: Claude2
-- Next: Human/Ops pre-review gate: PR #4372 is OPEN but BEHIND current dev at head c98673fe0dbe564f77117ceb09fd3214c34532d7. Its evidence also cites stale PR #4364 head 1131ea3d while PR #4364 is now ecadf3ad and itself behind. Rebase onto current origin/dev, refresh evidence against the live PR #4364 head/status, rerun required CI, then handoff to Claude2 for exact-head review.
+- Next: Human/Ops dependency freshness gate: PR #4372 head 07f163cb21e047a491b1b90c5422dbba69ea0563 is rebased, but its evidence binds live PR #4364 head ecf17e9d088e37102b4128ebc2a7d77e4328be8a. That #4364 head has been reopened because it diverges from current dev and is not acceptable proof. Wait for L12-VERIFY-OBS-001 to produce a non-BEHIND exact head, then refresh #4372 evidence/README/evidence.sha256 against that live head, rerun CI, and handoff Claude2.
 
 ## Summary
 Retire or supersede stale L12 PRs without closing active product proof.
