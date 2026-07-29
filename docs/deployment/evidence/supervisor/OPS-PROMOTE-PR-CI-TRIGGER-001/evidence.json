@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "review_approved",
-  "generated_at": "2026-07-29T12:45:14Z",
+  "generated_at": "2026-07-29T13:03:56Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -803,25 +803,58 @@
       }
     }
   },
+  "owner_closeout_finalization": {
+    "status": "pending_final_exact_head_review_and_merge",
+    "canonical_status_observed_at": "2026-07-29T12:59:17Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "a72f80ddad120452b0d0c8cd4549a55fe771a942",
+    "approval_recorded_at": "2026-07-29T12:57:27Z",
+    "canonical_review_status_id": 51290534381,
+    "pr": 4380,
+    "approval_checkpoint_anchor": "a4df29864c7952736addc92368de8988380373d2",
+    "base_commit": "2c07f509bd74c022acd742bad8bbccfaa4053cd2",
+    "base_update_merge_commit": "7f8d84169e617da73a1f0659348b0057073efcd2",
+    "incoming_scope": "SUP-L12-MERGED-ROW-RECONCILE-20260729 evidence packet only; no promote implementation, workflow, test, or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T13:03:56Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "27 PublishPromoteTests passed in 0.242s",
+      "pytest": "75 focused tests passed in 8.93s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed",
+      "live_promote_pr": "PR #4378 remains merged at d46444611ab0eacf2b2b4f5c8fa0ec3018d37348 as master commit 2c9388e07b9a99ac2938d58a0edf6e4d34002dd5 with all four Branch CI checks successful",
+      "stale_pr_readback": "27 of 27 PRs remain closed; every release commit is an ancestor of release/v2026.07.29.8 and reachable from origin/master; zero failures",
+      "open_promote_pr_count": 0
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "approved_head_became_behind": true,
+      "local_pre_evidence_head": "7f8d84169e617da73a1f0659348b0057073efcd2",
+      "auto_merge_enabled": false,
+      "next": "commit and push this final strict-base evidence, reacquire Antigravity approval on the resulting exact PR #4380 head, merge through the governed integrator, then run governed done"
+    }
+  },
   "review": {
-    "status": "approved_implementation_with_owner_closeout_followup_pending_final_exact_head_gate",
+    "status": "approved_exact_head_superseded_for_merge_by_required_strict_base_refresh",
     "reviewer": "Antigravity",
-    "reviewed_head": "bbbe33fe77121374677569a1b063ae01f9c0a02d",
-    "reviewed_at": "2026-07-29T12:24:55Z",
+    "reviewed_head": "a72f80ddad120452b0d0c8cd4549a55fe771a942",
+    "reviewed_at": "2026-07-29T12:57:27Z",
     "decision": "approved",
     "latest_exact_head_review": {
       "reviewer": "Antigravity",
-      "reviewed_head": "bbbe33fe77121374677569a1b063ae01f9c0a02d",
-      "reviewed_at": "2026-07-29T12:24:55Z",
+      "reviewed_head": "a72f80ddad120452b0d0c8cd4549a55fe771a942",
+      "reviewed_at": "2026-07-29T12:57:27Z",
       "decision": "approved",
-      "canonical_review_status_id": 51288676082,
-      "pr": 4377,
-      "merge_commit": "715308c381a73b80cfe974689f00b4a42877255f",
+      "canonical_review_status_id": 51290534381,
+      "pr": 4380,
       "verification": {
-        "unittest": "25 PublishPromoteTests passed",
-        "pytest": "73 focused tests passed",
+        "unittest": "27 PublishPromoteTests passed",
+        "pytest": "75 focused tests passed",
         "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed",
-        "exact_head_ci": "PR #4377 exact head received the canonical review and root merge-freeze commit statuses before merge"
+        "exact_head_ci": "PR #4380 exact head supplied successful Branch CI checks and canonical review status 51290534381"
       }
     },
     "latest_reopened_review": {
@@ -857,7 +890,7 @@
     "owner_closeout_followup": {
       "reason": "fresh PR #4378 proved workflow_dispatch checks succeeded but did not enter the PR rollup until the action_required pull_request Branch CI placeholder was rerun",
       "anchor_commit": "5cff7b71f307761538841c5efc45ff2038e571fa",
-      "final_gate": "the final task PR containing this narrow rollup repair and completed evidence must reacquire Antigravity exact-head approval and merge to dev before done"
+      "final_gate": "the strict-base refreshed task PR containing this narrow rollup repair and completed evidence must reacquire Antigravity exact-head approval and merge to dev before done"
     },
     "required_closeout_followups": [
       "merge the final rollup repair and completed evidence through a task PR with exact-head review",

@@ -480,3 +480,36 @@ parsing, and `git diff --check`. The remaining closeout gate is repository
 publication only: the final task PR containing the rollup repair and this
 evidence must receive Antigravity exact-head approval and merge to `dev`
 before the owner runs governed `done`.
+
+## Owner Closeout Strict-Base Refresh
+
+Antigravity approved PR `#4380` exact head
+`a72f80ddad120452b0d0c8cd4549a55fe771a942` at
+2026-07-29T12:57:27Z, with canonical review status `51290534381`. Before
+owner closeout, `origin/dev` advanced to
+`2c07f509bd74c022acd742bad8bbccfaa4053cd2`, so strict branch protection
+reported the approved PR as `BEHIND`.
+
+Codex preserved the supervisor-generated exact-head approval summary in
+anchor `a4df29864c7952736addc92368de8988380373d2`, then composed current
+`origin/dev` through conflict-free merge
+`7f8d84169e617da73a1f0659348b0057073efcd2`. The incoming commit contains
+only the `SUP-L12-MERGED-ROW-RECONCILE-20260729` evidence packet. It does not
+overlap the promote implementation, Branch CI workflows, tests, or this task's
+evidence.
+
+At the composed tree, all 27 `PublishPromoteTests` passed in 0.242 seconds and
+the 75-test focused pytest slice passed in 8.93 seconds. `py_compile`, both
+workflow YAML parses, evidence JSON parsing, and both diff checks passed. A
+live read-only GitHub readback confirmed that PR `#4378` remains merged as
+master commit `2c9388e07b9a99ac2938d58a0edf6e4d34002dd5` with all four Branch CI
+checks successful. All 27 retired PRs remain closed, all 27 release commits
+remain ancestors of `release/v2026.07.29.8` and reachable from
+`origin/master`, and the open `promote/*` PR count remains zero.
+
+The required task-brief checkpoint, base merge, and this evidence refresh
+create a new PR head. The approval of `a72f80ddad120452b0d0c8cd4549a55fe771a942`
+remains the accepted review record but cannot authorize a different head.
+PR `#4380` must therefore reacquire Antigravity approval on the resulting
+exact head and merge through the governed integrator before the owner runs
+`done`.
