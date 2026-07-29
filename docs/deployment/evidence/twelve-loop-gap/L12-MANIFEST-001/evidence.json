@@ -3,23 +3,23 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-MANIFEST-001 product-level runtime manifest evidence admission.",
-    "note": "Owner evidence cut v1.0.1. v1.0.0 replaced the prior 34-line evidence.json committed as a106af4251782c1672b9fb5db056f925ae4dbee6, which asserted status review_approved with owner Antigravity and reviewer Claude2 while the canonical row was in_progress with owner Claude2 and reviewer Antigravity, and which carried no implementation diff. The manifest below records the real docker-compose.yml and scripts/deploy_nonprod_vm.sh change and the readbacks taken against the live dev stack. v1.0.1 is an owner-initiated correction, not new work: v1.0.0 read its kill-one probe as proof that the unless-stopped policy restarted the worker unaided, and the container's RestartCount reads 0, which refutes that. The claim is withdrawn and downgraded to not proven across validation, behavioral_proof, hosted_readback, integrity, and acceptance, and the gap is stated as residual risk auto_restart_policy_not_proven_end_to_end. No implementation file changed between v1.0.0 and v1.0.1.",
+    "note": "Owner evidence cut v1.0.1. v1.0.0 replaced the prior 34-line evidence.json committed as a106af4251782c1672b9fb5db056f925ae4dbee6, which asserted status review_approved with owner Antigravity and reviewer Claude2 while the canonical row was in_progress with owner Claude2 and reviewer Antigravity, and which carried no implementation diff. The manifest below records the real docker-compose.yml and scripts/deploy_nonprod_vm.sh change and the readbacks taken against the live dev stack. v1.0.1 is an owner-initiated correction, not new work: v1.0.0 read its kill-one probe as proof that the unless-stopped policy restarted the worker unaided, and the container's RestartCount reads 0, which refutes that. The claim is withdrawn and downgraded to not proven across validation, behavioral_proof, hosted_readback, integrity, and acceptance, and the gap is stated as residual risk auto_restart_policy_not_proven_end_to_end. No implementation file changed between v1.0.0 and v1.0.1. v1.0.2 is the approval and closeout cut. It adds nothing to the implementation claim set: docker-compose.yml and scripts/deploy_nonprod_vm.sh are unchanged from the reviewed head 6783e252adca302e2b5ef3363fa2b225b67f4c97, which merged to dev as 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff. What v1.0.2 adds is the independent Antigravity verdict, transcribed from the authoritative task-state event log rather than authored here, the required-check and external-status provenance of the reviewed head, and the reviewer's adjudication of the AC2 scope question that v1.0.1 left open. The withdrawn daemon-side auto-restart claim stays withdrawn.",
     "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This cut records the owner implementation and its verification; the independent reviewer verdict is appended by the reviewer, not by the owner.",
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. The owner records the implementation and its verification and never authors a reviewer verdict. The independent verdict is issued only through the governed approve command, which writes it to the authoritative task-state event log and posts the 'Pantheon canonical review gate' commit status; because that command does not itself edit this manifest, the owner transcribes the already-issued verdict verbatim at closeout and must cite its event sequence, actor, timestamp, and commit-status id so any reader can re-derive it from the authoritative store.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-29T00:36:31Z",
-    "evidence_cut_semantics": "Owner evidence cut v1.0.1 at task branch head 94abec5f84e18481511496955d322c7842a01612 over base dev f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8, correcting v1.0.0 which was cut at 4cf8feedbc3b988e356d67b36be8e628d17eaf2e. Canonical task state at cut time is owner Claude2, reviewer Antigravity, status in_progress. All twenty-seven required loop workers now resolve from docker-compose.yml with no profile selected; scripts/deploy_nonprod_vm.sh refuses any deploy whose selected profiles do not resolve every one of them. docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to the v1.0.0 validation head, so every compose, gate, healthcheck, and regression result recorded here still applies unchanged; validated_head_sha therefore still names 4cf8feed. The one substantive change in v1.0.1 is the withdrawal of the auto-restart claim described in schema_status.note. The independent reviewer verdict is not yet recorded. The done guard therefore refuses this cut on two counts, both intended: overall_admission carries 'pending' and record_log holds no approved reviewer verdict. The approval cut must update both fields and record the PR's required_checks; the owner does not pre-write them.",
+    "evidence_cut_at": "2026-07-29T01:21:37Z",
+    "evidence_cut_semantics": "Owner approval and closeout cut v1.0.2, taken after the reviewed delivery merged. Reviewed head 6783e252adca302e2b5ef3363fa2b225b67f4c97 carried v1.0.1; PR #4326 merged that exact head into dev as merge commit 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff at 2026-07-29T01:10:09Z, so docker-compose.yml and scripts/deploy_nonprod_vm.sh are now dev truth rather than branch truth. No implementation file changed in v1.0.2 and no proof claim was added, strengthened, or re-scoped; validated_head_sha still names 4cf8feed (historical) and the withdrawn daemon-side auto-restart trigger claim stays withdrawn and unproven. v1.0.2 closes the two gaps v1.0.1 deliberately left for the reviewer. First, overall_admission now records the approved state instead of a pending one. Second, record_log entry 6 carries the independent Antigravity verdict. That entry is a transcription, not an owner judgement: Antigravity issued it through the governed approve command, which recorded it at sequence 4264 of the authoritative task-state event log (committed_at 2026-07-29T01:08:43Z) and posted commit status 51260833640 'Pantheon canonical review gate' as success on 6783e252adca302e2b5ef3363fa2b225b67f4c97. Every field of entry 6 is re-derivable from those two sources; the owner-side act of transcribing it is itself logged as entry 7. The reviewer's adjudication of the AC2 scope question is carried into acceptance.AC2 and into residual risk auto_restart_policy_not_proven_end_to_end: Antigravity accepted the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2, which is the acceptance branch that risk's own expiry clause already named, so the risk stays open and non-blocking rather than being retired. One replay caveat is disclosed here rather than left for a later reader to rediscover. implementation_delivery.pull_request records merge_sha because that is the complete and checkable fact, and it is checkable today: git merge-base --is-ancestor 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff origin/dev succeeds. The done guard's own ancestry check does not fire on the canonical closeout path, because that check keys off a repository field the canonical task row does not carry; the row names the delivery repo as target_repo instead. It does fire on the evidence manifest replay path, which derives repository from this manifest, and that path resolves ancestry with git merge-base inside the pinned supervisor command root rather than a dev-tip checkout. While that pin sits behind the merge it will report 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff as not an ancestor of HEAD. That is a property of the pin, not of the delivery, and it clears once the command root advances past the merge.",
     "id": "L12-MANIFEST-001",
-    "overall_admission": "accepted_owner_implementation_pending_independent_review",
+    "overall_admission": "approved_independent_review_recorded_and_delivery_merged",
     "owner": "Claude2",
     "phase": "Twelve Loop Remediation / Runtime Integration",
     "product_level_required": true,
@@ -72,25 +72,87 @@
         "subject": "L12-MANIFEST-001: activate all required loop workers"
       },
       {
-        "delivery_state": "current_branch",
+        "delivery_state": "merged_to_dev",
         "note": "Removed the opt-in profile gate from policy-learning-shadow-eval-scheduler and search-index-scheduler, added restart and stop_grace_period across the twenty-seven required loop workers, and wired heartbeat healthchecks onto strategy-distillation-worker and deployment-outbox-consumer.",
         "sha": "0a8b2ee862d98bdcb2853734ab72a15a359ab80d",
         "subject": "L12-MANIFEST-001: anchor default-on loop worker manifest"
       },
       {
-        "delivery_state": "current_branch",
+        "delivery_state": "merged_to_dev",
         "note": "Added validate_required_loop_workers, dropped search-index-scheduler from the default profile string, and recorded the adjudication that keeps source-ingest-scheduler and source-ingest-agora-projector behind the bounded egress gate.",
         "sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e",
         "subject": "L12-MANIFEST-001: anchor fail-closed loop worker deploy guard"
       },
       {
-        "delivery_state": "current_branch",
+        "delivery_state": "merged_to_dev",
         "note": "Evidence-only commit carrying owner cut v1.0.0. No implementation file changed; docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to 4cf8feed.",
         "sha": "94abec5f84e18481511496955d322c7842a01612",
         "subject": "L12-MANIFEST-001: recut runtime manifest evidence"
+      },
+      {
+        "delivery_state": "reviewed_and_merged_head",
+        "note": "Evidence-only commit carrying owner cut v1.0.1, which withdrew the unproven daemon-side auto-restart claim. This is the exact head Antigravity approved and the exact head PR #4326 merged; docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to 4cf8feed.",
+        "sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+        "subject": "L12-MANIFEST-001: withdraw unproven auto-restart claim"
       }
     ],
-    "required_checks": []
+    "required_checks": [
+      {
+        "completed_at": "2026-07-29T00:40:00Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+        "run_id": 30411800817,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30411800817",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-29T00:40:03Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+        "run_id": 30411800817,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30411800817",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-29T00:40:47Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+        "run_id": 30411800817,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30411800817",
+        "workflow": "Smoke acceptance"
+      },
+      {
+        "completed_at": "2026-07-29T01:08:42Z",
+        "conclusion": "success",
+        "event": "commit_status",
+        "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+        "note": "External commit status posted by scripts/git/github_review_bridge.py when Antigravity's governed approve carried REVIEW_PR=4326 and REVIEW_HEAD_SHA=6783e252adca302e2b5ef3363fa2b225b67f4c97. No workflow posts this context.",
+        "run_id": 51260833640,
+        "url": "https://github.com/ajoe734/pantheon/pull/4326",
+        "workflow": "Pantheon canonical review gate"
+      },
+      {
+        "completed_at": "2026-07-29T01:09:45Z",
+        "conclusion": "success",
+        "event": "commit_status",
+        "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+        "note": "External commit status required by dev branch protection and posted outside the Actions workflows.",
+        "run_id": 51260871216,
+        "url": "https://github.com/ajoe734/pantheon/pull/4326",
+        "workflow": "Pantheon root merge freeze 2026-07-27"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+      "merge_sha": "2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff",
+      "merged_at": "2026-07-29T01:10:09Z",
+      "number": 4326,
+      "url": "https://github.com/ajoe734/pantheon/pull/4326"
+    }
   },
   "validation": {
     "commands": [
@@ -276,7 +338,8 @@
       "id": "AC2",
       "statement": "Workers have restart, health, heartbeat, durable volumes, auth, and graceful-stop configuration.",
       "status": "pass",
-      "blocking_until": "Scope of this pass, stated so the reviewer can disagree with it. The criterion as worded is about configuration, and the configuration is proven: 27/27 required loop workers render restart: unless-stopped and stop_grace_period: 30s, 21/27 carry a healthcheck with the six exceptions recorded as a residual risk, durable volumes and service-token auth are rendered per the inventory table in manifest-readback.md, and docker inspect confirms unless-stopped and StopTimeout 30 reach the live runtime rather than only the file. Worker-side recovery after an abrupt termination was also observed clean. What is NOT proven is the daemon-side trigger — that the unless-stopped policy fires unaided — because the attempted probe used docker kill, which the daemon excludes from the restart policy by design, and RestartCount read back as 0. This owner cut treats that as outside the wording of AC2 and records it as residual risk auto_restart_policy_not_proven_end_to_end rather than folding it into this status. If the reviewer reads AC2 as requiring the runtime trigger too, this item is not a pass and the reviewer should withhold approval until an in-container PID 1 crash probe is authorised and RestartCount is read back as incremented."
+      "blocking_until": "Scope of this pass, stated so the reviewer can disagree with it. The criterion as worded is about configuration, and the configuration is proven: 27/27 required loop workers render restart: unless-stopped and stop_grace_period: 30s, 21/27 carry a healthcheck with the six exceptions recorded as a residual risk, durable volumes and service-token auth are rendered per the inventory table in manifest-readback.md, and docker inspect confirms unless-stopped and StopTimeout 30 reach the live runtime rather than only the file. Worker-side recovery after an abrupt termination was also observed clean. What is NOT proven is the daemon-side trigger — that the unless-stopped policy fires unaided — because the attempted probe used docker kill, which the daemon excludes from the restart policy by design, and RestartCount read back as 0. This owner cut treats that as outside the wording of AC2 and records it as residual risk auto_restart_policy_not_proven_end_to_end rather than folding it into this status. If the reviewer reads AC2 as requiring the runtime trigger too, this item is not a pass and the reviewer should withhold approval until an in-container PID 1 crash probe is authorised and RestartCount is read back as incremented.",
+      "reviewer_adjudication": "Resolved by the independent reviewer, not by the owner. Antigravity approved with the configuration reading of AC2 and did not withhold approval on the daemon-side trigger, verifying that 27/27 required workers render unless-stopped and StopTimeout 30, that the docker inspect readback matches, and that the residual-risk wording for the unproven trigger is reasonable. Recorded at sequence 4264 of the authoritative task-state event log, 2026-07-29T01:08:43Z, and as commit status 51260833640. AC2 therefore stands at pass on its configuration wording, and the unproven daemon-side trigger remains open as residual risk auto_restart_policy_not_proven_end_to_end."
     },
     {
       "evidence_refs": [
@@ -314,7 +377,8 @@
       "expiry": "When an in-container PID 1 crash probe is run against one required loop worker and RestartCount is read back as incremented, or when the reviewer accepts the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2.",
       "owner": "Claude2 owner slice, adjudication delegated to reviewer Antigravity",
       "recheck_trigger": "Any change to a required loop worker's restart or stop_grace_period setting, or authorisation to run a destructive in-container crash probe on the dev stack.",
-      "severity": "medium"
+      "severity": "medium",
+      "reviewer_adjudication": "This risk's expiry offered two branches: run an in-container PID 1 crash probe and read RestartCount back as incremented, or have the reviewer accept the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2. Antigravity took the second branch at 2026-07-29T01:08:43Z. That settles the AC2 adjudication only. The daemon-side trigger is still not proven end to end, so the risk stays open and non-blocking, and the crash-probe branch of the expiry remains the only way to close it on evidence rather than on judgement."
     },
     "six_workers_without_a_heartbeat_surface": {
       "blocking_for_this_task": false,
@@ -417,6 +481,24 @@
       "sequence": 5,
       "sha": "94abec5f84e18481511496955d322c7842a01612",
       "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-29T01:08:43Z",
+      "reference": "Transcribed verbatim by the owner from the authoritative task-state event log; not authored in this manifest. Source: sequence 4264 of /home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl, committed_at 2026-07-29T01:08:43Z, source actor Antigravity, which moved L12-MANIFEST-001 from review to review_approved and bound github_review_bridge {pr 4326, head_sha 6783e252adca302e2b5ef3363fa2b225b67f4c97, base dev, decision approve, mode required_commit_status, status_context 'Pantheon canonical review gate', status_id 51260833640, status_state success}. Canonical review note: 審查通過：驗證27/27必要worker組態皆含unless-stopped與StopTimeout 30，驗證docker inspect輸出符合預期；驗證AC2組態面pass與殘餘風險說明合理；批准PR #4326之變更。 Reviewer next field: exact-head bind of the existing Antigravity review; evidence.json verified for PR #4326 head 6783e252adca302e2b5ef3363fa2b225b67f4c97; the withdrawn daemon auto-restart-trigger claim remains withdrawn. Re-derive with: gh api repos/ajoe734/pantheon/commits/6783e252adca302e2b5ef3363fa2b225b67f4c97/status. Recorded without smoothing: the same bridge entry carries review_error 'gh: Unprocessable Entity (HTTP 422)', which is the GitHub pull-request review API call failing while the required commit status posted successfully as status_state success. That is why PR #4326 shows an empty reviewDecision even though the canonical review gate is green, and the canonical verdict is the event-log record, not the GitHub review object.",
+      "sequence": 6,
+      "sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+      "status": "approved"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_closeout_evidence_cut",
+      "recorded_at": "2026-07-29T01:21:37Z",
+      "reference": "Owner cut v1.0.2 on the merged delivery. PR #4326 merged reviewed head 6783e252adca302e2b5ef3363fa2b225b67f4c97 into dev as merge commit 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff at 2026-07-29T01:10:09Z; verify with git merge-base --is-ancestor 6783e252adca302e2b5ef3363fa2b225b67f4c97 origin/dev. This cut changes no implementation file and adds no proof claim. It records the independent verdict as sequence 6, the five required dev branch-protection contexts as implementation_delivery.required_checks, the reviewer's AC2 adjudication, and the merge facts including merge_sha. One replay caveat about that merge_sha and the pinned supervisor command root is disclosed in task.evidence_cut_semantics.",
+      "sequence": 7,
+      "sha": "2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff",
+      "status": "owner_closeout_recorded"
     }
   ]
 }

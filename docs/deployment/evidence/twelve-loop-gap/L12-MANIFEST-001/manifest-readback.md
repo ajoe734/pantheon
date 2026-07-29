@@ -1,8 +1,11 @@
 # L12-MANIFEST-001 — runtime manifest readback
 
-Owner `Claude2`, reviewer `Antigravity`. Branch `task/L12-MANIFEST-001`, head
-`94abec5f84e18481511496955d322c7842a01612` over base `dev`
-`f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut v1.0.1 at `2026-07-29T00:36:31Z`.
+Owner `Claude2`, reviewer `Antigravity`. Branch `task/L12-MANIFEST-001`, reviewed
+head `6783e252adca302e2b5ef3363fa2b225b67f4c97` over base `dev`
+`f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut v1.0.2 at `2026-07-29T01:21:37Z`,
+after that head merged to `dev`; see §8. Sections 1–7 are unchanged from cut
+v1.0.1 at `2026-07-29T00:36:31Z`, which was taken at
+`94abec5f84e18481511496955d322c7842a01612`.
 
 > **Correction in v1.0.1.** Cut v1.0.0 read the kill-one probe in §6 as proof
 > that the `unless-stopped` policy restarted the worker unaided. Re-readback of
@@ -242,3 +245,67 @@ docker inspect pantheon-policy-learning-shadow-eval-scheduler-1 --format \
   'RestartCount={{.RestartCount}} ExitCode={{.State.ExitCode}}
    Policy={{.HostConfig.RestartPolicy.Name}} StopTimeout={{.Config.StopTimeout}}'
 ```
+
+## 8. Review decision and delivery record
+
+Added by cut v1.0.2. Nothing in §§1–7 changed; no implementation file changed and
+no proof claim was added, strengthened, or re-scoped. The withdrawn daemon-side
+auto-restart trigger claim in §6 stays withdrawn and unproven.
+
+**The independent verdict.** `Antigravity` approved through the governed
+`approve` command at `2026-07-29T01:08:43Z`, bound to the exact head
+`6783e252adca302e2b5ef3363fa2b225b67f4c97` of PR
+[#4326](https://github.com/ajoe734/pantheon/pull/4326). The verdict verified that
+27/27 required workers carry `unless-stopped` and `StopTimeout 30`, that the
+`docker inspect` readback matches, and that the AC2 configuration-scope pass and
+the residual-risk wording for the unproven trigger are reasonable.
+
+The verdict in `evidence.json` `record_log` sequence 6 is a **transcription**, not
+an owner judgement. The governed command does not itself edit this manifest, so
+the owner copied it in at closeout. Both sources are independent of the owner and
+either one re-derives it:
+
+```bash
+# 1. the authoritative task-state event log, sequence 4264
+grep -h L12-MANIFEST-001 /home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl \
+  | python3 -c 'import json,sys
+for l in sys.stdin:
+    e=json.loads(l)
+    for t in (e.get("state") or {}).get("tasks") or []:
+        if t.get("id")=="L12-MANIFEST-001" and t.get("status")=="review_approved":
+            print(e["sequence"], e["committed_at"], t.get("github_review_bridge"))'
+
+# 2. the commit status the approve posted, id 51260833640
+gh api repos/ajoe734/pantheon/commits/6783e252adca302e2b5ef3363fa2b225b67f4c97/status
+```
+
+**AC2 adjudication.** Cut v1.0.1 left AC2 at `pass` on its configuration wording
+and told the reviewer to withhold approval if they read AC2 as also requiring the
+daemon-side restart trigger. The reviewer did not withhold; that is the second
+branch of the expiry clause already written into residual risk
+`auto_restart_policy_not_proven_end_to_end`. The risk therefore stays **open and
+non-blocking** — only the AC2 scope question is settled. Proving the trigger
+still needs the in-container PID 1 crash probe with `RestartCount` read back as
+incremented.
+
+**Delivery.** PR #4326 merged the reviewed head into `dev` as merge commit
+`2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff` at `2026-07-29T01:10:09Z`, with all
+five `dev` branch-protection contexts green at that head — `Commit trailers`,
+`Runtime mirror guard`, `Smoke acceptance` (Actions), plus the two external
+commit statuses `Pantheon canonical review gate` (51260833640) and `Pantheon root
+merge freeze 2026-07-27` (51260871216). Each is recorded in `evidence.json` under
+`implementation_delivery.required_checks`.
+
+```bash
+git merge-base --is-ancestor 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff origin/dev
+```
+
+*Replay caveat.* The done guard's `merge_sha` ancestry check does not fire on the
+canonical closeout path, because it keys off a `repository` field the canonical
+task row does not carry — the row names the delivery repo as `target_repo`. It
+does fire on the evidence-manifest replay path, which derives `repository` from
+this manifest and resolves ancestry inside the pinned supervisor command root
+rather than a `dev`-tip checkout. While that pin sits behind the merge, a replay
+will report the merge commit as not an ancestor of `HEAD`. That is a property of
+the pin, not of the delivery, and it clears once the command root advances past
+the merge.
