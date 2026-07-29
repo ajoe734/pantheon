@@ -40,7 +40,7 @@ snapshot_container() {
 
 cleanup() {
   if [[ "$cleanup_pending" == "1" ]]; then
-    compose down --remove-orphans >/dev/null 2>&1 || true
+    compose down --remove-orphans --timeout 5 >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -92,18 +92,33 @@ sleep 12
 worker_before="$(snapshot_container "$worker_id")"
 stub_before="$(snapshot_container "$stub_id")"
 
-jq --exit-status '
+jq --exit-status --arg project "$project" '
   .running == true
   and .restart_count == 0
   and .restart_policy == "unless-stopped"
   and .stop_timeout_seconds == 30
-  and .project == "l12-manifest-restart-proof-20260729"
+  and .project == $project
 ' <<<"$worker_before" >/dev/null
 
+target_pid="$(jq -r '.pid' <<<"$worker_before")"
+if [[ ! "$target_pid" =~ ^[1-9][0-9]+$ || "$target_pid" == "1" ]]; then
+  printf 'refusing invalid host PID: %s\n' "$target_pid" >&2
+  exit 3
+fi
+target_cgroup="$(sed -n '1,20p' "/proc/$target_pid/cgroup")"
+if [[ "$target_cgroup" != *"docker-$worker_id.scope"* ]]; then
+  printf 'refusing PID whose cgroup does not bind the isolated container\n' >&2
+  exit 3
+fi
+
 set +e
-docker exec "$worker_id" sh -c 'kill -KILL 1'
+sudo -n kill -KILL "$target_pid"
 crash_command_exit_code=$?
 set -e
+if [[ "$crash_command_exit_code" != "0" ]]; then
+  printf 'host PID signal failed with exit code %s\n' "$crash_command_exit_code" >&2
+  exit 3
+fi
 
 restart_observed=0
 for _attempt in $(seq 1 60); do
@@ -149,7 +164,7 @@ shared_unchanged="$(
     '$before == $after'
 )"
 
-compose down --remove-orphans
+compose down --remove-orphans --timeout 5
 cleanup_pending=0
 
 remaining_container_count="$(
@@ -185,6 +200,7 @@ jq --null-input \
   --argjson crash_command_exit_code "$crash_command_exit_code" \
   --argjson remaining_container_count "$remaining_container_count" \
   --argjson remaining_network_count "$remaining_network_count" \
+  --arg target_cgroup "$target_cgroup" \
   --arg worker_logs "$worker_logs" \
   '{
     record_type: $record_type,
@@ -217,9 +233,12 @@ jq --null-input \
       rendered_worker: $rendered_worker
     },
     unsolicited_pid1_crash: {
-      command: "docker exec <isolated-worker-id> sh -c '\''kill -KILL 1'\''",
+      command: "sudo -n kill -KILL <validated-isolated-worker-host-pid>",
       command_exit_code: $crash_command_exit_code,
-      operator_stop_api_used: false
+      signal_origin: "host PID namespace",
+      target_cgroup_before_signal: $target_cgroup,
+      docker_stop_or_kill_api_used: false,
+      docker_start_or_up_used_after_signal: false
     },
     observed: {
       worker_before: $worker_before,
