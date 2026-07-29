@@ -220,7 +220,14 @@ def test_catalog_uses_sa21_maturity_and_truth_vocabularies() -> None:
 def test_reconciled_claim_requires_controller_queries_restart_and_live_proof() -> None:
     registry = _registry()
     mutated = copy.deepcopy(registry)
-    loop = mutated["loops"][0]
+    # Loops whose controller is already implemented carry the required contract
+    # fields, so the "no controller yet" rejection must be exercised on a loop
+    # that still declares `not_implemented`.
+    loop = next(
+        candidate
+        for candidate in mutated["loops"]
+        if candidate["controller_contract"]["status"] == "not_implemented"
+    )
     loop["maturity"]["current"] = "reconciled"
 
     errors = _validation_errors(mutated)
