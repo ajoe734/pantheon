@@ -1,0 +1,422 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-MANIFEST-001 product-level runtime manifest evidence admission.",
+    "note": "Owner evidence cut v1.0.1. v1.0.0 replaced the prior 34-line evidence.json committed as a106af4251782c1672b9fb5db056f925ae4dbee6, which asserted status review_approved with owner Antigravity and reviewer Claude2 while the canonical row was in_progress with owner Claude2 and reviewer Antigravity, and which carried no implementation diff. The manifest below records the real docker-compose.yml and scripts/deploy_nonprod_vm.sh change and the readbacks taken against the live dev stack. v1.0.1 is an owner-initiated correction, not new work: v1.0.0 read its kill-one probe as proof that the unless-stopped policy restarted the worker unaided, and the container's RestartCount reads 0, which refutes that. The claim is withdrawn and downgraded to not proven across validation, behavioral_proof, hosted_readback, integrity, and acceptance, and the gap is stated as residual risk auto_restart_policy_not_proven_end_to_end. No implementation file changed between v1.0.0 and v1.0.1.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This cut records the owner implementation and its verification; the independent reviewer verdict is appended by the reviewer, not by the owner.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-29T00:36:31Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.0.1 at task branch head 94abec5f84e18481511496955d322c7842a01612 over base dev f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8, correcting v1.0.0 which was cut at 4cf8feedbc3b988e356d67b36be8e628d17eaf2e. Canonical task state at cut time is owner Claude2, reviewer Antigravity, status in_progress. All twenty-seven required loop workers now resolve from docker-compose.yml with no profile selected; scripts/deploy_nonprod_vm.sh refuses any deploy whose selected profiles do not resolve every one of them. docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to the v1.0.0 validation head, so every compose, gate, healthcheck, and regression result recorded here still applies unchanged; validated_head_sha therefore still names 4cf8feed. The one substantive change in v1.0.1 is the withdrawal of the auto-restart claim described in schema_status.note. The independent reviewer verdict is not yet recorded. The done guard therefore refuses this cut on two counts, both intended: overall_admission carries 'pending' and record_log holds no approved reviewer verdict. The approval cut must update both fields and record the PR's required_checks; the owner does not pre-write them.",
+    "id": "L12-MANIFEST-001",
+    "overall_admission": "accepted_owner_implementation_pending_independent_review",
+    "owner": "Claude2",
+    "phase": "Twelve Loop Remediation / Runtime Integration",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "dev single-VM compose stack",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-MANIFEST-001",
+    "title": "Activate all required loop workers under one safe runtime manifest"
+  },
+  "authorities": {
+    "actual_state": [
+      "docker compose config --services resolution for a given profile set",
+      "live pantheon project container state, restart policy, and healthcheck exit codes",
+      "worker heartbeat files written by the running containers"
+    ],
+    "desired_state": [
+      "merged domain worker contracts from the twelve loop implementation tasks",
+      "safe dev runtime policy: deny-by-default source egress and no live capital"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-MANIFEST-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Single domain integration owner of docker-compose.yml and of the nonprod deploy script's compose profile selection and required-worker gate",
+    "composes_with": [
+      "L12-IMIT-001 policy-learning shadow evaluation sidecar contract",
+      "L12-DIST-001 distillation controller heartbeat surface",
+      "L12-DEP-001 deployment outbox consumer health file",
+      "L12-CAP-001 paper fleet reconciler binding ownership",
+      "L12-TRUTH-001 controller record emission for the same worker set"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "scripts/deploy_nonprod_vm.sh"
+    ],
+    "not_changing": "Service source code, the bounded source-ingest egress rules in validate_source_refresh_profile, the deploy up/health/readback sequence, the legacy static-paper-runtime profile definition, .orchestrator/config.json, and any live-capital or canary control.",
+    "owned_layer": "Which loop workers the runtime manifest starts by default, and their restart, healthcheck, graceful-stop, durable-volume, and auth wiring; plus the deploy-time gate that refuses a profile set which does not activate every required loop worker."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "superseded_by_owner_cut",
+        "note": "Prior commit on this branch. Added a 34-line evidence.json only; it contained no docker-compose.yml or deploy-script change and its owner/reviewer/status fields contradicted the canonical row.",
+        "sha": "a106af4251782c1672b9fb5db056f925ae4dbee6",
+        "subject": "L12-MANIFEST-001: activate all required loop workers"
+      },
+      {
+        "delivery_state": "current_branch",
+        "note": "Removed the opt-in profile gate from policy-learning-shadow-eval-scheduler and search-index-scheduler, added restart and stop_grace_period across the twenty-seven required loop workers, and wired heartbeat healthchecks onto strategy-distillation-worker and deployment-outbox-consumer.",
+        "sha": "0a8b2ee862d98bdcb2853734ab72a15a359ab80d",
+        "subject": "L12-MANIFEST-001: anchor default-on loop worker manifest"
+      },
+      {
+        "delivery_state": "current_branch",
+        "note": "Added validate_required_loop_workers, dropped search-index-scheduler from the default profile string, and recorded the adjudication that keeps source-ingest-scheduler and source-ingest-agora-projector behind the bounded egress gate.",
+        "sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e",
+        "subject": "L12-MANIFEST-001: anchor fail-closed loop worker deploy guard"
+      },
+      {
+        "delivery_state": "current_branch",
+        "note": "Evidence-only commit carrying owner cut v1.0.0. No implementation file changed; docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to 4cf8feed.",
+        "sha": "94abec5f84e18481511496955d322c7842a01612",
+        "subject": "L12-MANIFEST-001: recut runtime manifest evidence"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "claim_scope": "current",
+        "command": "docker compose -p pantheon-audit -f docker-compose.yml config --quiet, run once per profile set: empty, the deploy default set, the default set plus source-ingest-scheduler, and static-paper-runtime",
+        "conclusion": "All four profile sets render without error.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "docker compose -f docker-compose.yml --env-file /dev/null config --format json with no profile selected",
+        "conclusion": "Fifty services resolve. All twenty-seven required loop workers are present, every one carries restart: unless-stopped and stop_grace_period: 30s, and twenty-one carry a healthcheck. pantheon-paper-runtime does not resolve.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "conclusion": "No syntax error.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "validate_required_loop_workers extracted verbatim from scripts/deploy_nonprod_vm.sh and exercised over five profile sets: default, empty, bounded source refresh, static-paper-runtime, and an injected non-existent required worker",
+        "conclusion": "The first three pass; static-paper-runtime is refused with 'duplicate legacy workers activated alongside the loop manifest: pantheon-paper-runtime'; the injected worker is refused with 'required loop workers not activated by the selected profiles'. Both failure paths fire, not just one.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "docker exec pantheon-strategy-distillation-worker-1 sh -c '<rendered healthcheck test>'",
+        "conclusion": "Exit 0 against the live worker whose alive file had been rewritten 49 seconds earlier; exit 1 when the same probe is given a zero-second freshness bound.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "docker exec pantheon-deployment-outbox-consumer-1 sh -c '<rendered healthcheck test>'",
+        "conclusion": "Exit 1 with no heartbeat file, exit 0 with a fresh heartbeat file, exit 1 with a heartbeat file aged past the 120-second bound.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-recreate policy-learning-shadow-eval-scheduler",
+        "conclusion": "The worker that no default deploy previously started came up in the live dev stack and logged startup_recovery status ok followed by tick 1 with result status ok, eval_type shadow, production_training fail_closed, and no 401.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "docker kill --signal=SIGKILL pantheon-policy-learning-shadow-eval-scheduler-1, then re-read with docker inspect --format 'RestartCount={{.RestartCount}} ExitCode={{.State.ExitCode}} FinishedAt={{.State.FinishedAt}} StartedAt={{.State.StartedAt}} RestartPolicy={{.HostConfig.RestartPolicy.Name}} StopTimeout={{.Config.StopTimeout}}' and docker logs --timestamps over the same window",
+        "conclusion": "Corrected on independent re-readback; the prior cut's reading of this command is withdrawn. What the readback does support: the container stopped at 2026-07-29T00:14:50.962927635Z, was running again at 2026-07-29T00:16:32.319332602Z, and on coming back logged startup_recovery status ok with reset_count 0 plus a fresh tenant-bound authenticated tick at 2026-07-29T00:16:33.111Z with no 401; RestartPolicy reads unless-stopped and StopTimeout reads 30, so both rendered settings reach the runtime. What it does not support: that Docker's restart policy performed that restart. The same container reads RestartCount=0 and ExitCode=0, which a policy-driven restart would not produce, and the 101.4-second gap is consistent with operator-initiated recovery. docker kill is in fact not a sound probe of a restart policy at all, because the daemon records an explicit kill or stop as operator intent and deliberately suppresses unless-stopped. The end-to-end auto-restart claim is therefore downgraded to not proven.",
+        "result": "partial_config_reaches_runtime_auto_restart_not_proven"
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv/bin/python -m pytest -q over services/search/tests/test_service_activation_contract.py, services/policy-learning/tests/test_policy_learning_compose_activation.py, services/source_ingestion/test_compose_activation.py, services/evolution/test_compose_activation.py, services/training-session/tests/test_compose_activation.py, services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py, services/trade_journey/test_lifecycle_projector_compose.py, scripts/test_paper_runtime_topology_contract.py",
+        "conclusion": "24 passed.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv/bin/python -m pytest -q over the twelve scripts/test_*deploy* / cutover / lease / watchdog / bootstrap contract modules that read scripts/deploy_nonprod_vm.sh",
+        "conclusion": "106 passed.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-29T00:20:00Z",
+    "validated_base_sha": "f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8",
+    "validated_head_sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e"
+  },
+  "deployment": {
+    "applicable": true,
+    "canonical_root_deploy": {
+      "reason": "The manifest change is verified by compose resolution plus a scoped live-stack activation of the one newly default-on worker. A full canonical root deploy recreates every container in the shared dev stack and is left to the normal deploy pipeline on merge.",
+      "status": "not_run_in_owner_slice"
+    },
+    "environment": "dev single-VM compose stack, docker compose project pantheon",
+    "identity_admission": {
+      "proof": "The newly default-on policy-learning-shadow-eval-scheduler presents the same POLICY_LEARNING_SERVICE_TOKEN and POLICY_LEARNING_AGORA_TENANT_ID that policy-learning-svc authorizes; its live ticks returned status ok with no 401 or 403.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_for_runtime_manifest_slice",
+    "publish_cut": {
+      "reason": "This task changes which workers the dev stack runs; it does not switch hosting or publish a frontend cut.",
+      "status": "not_applicable_in_owner_slice"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "live dev compose project pantheon",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-29T00:16:33Z",
+      "status": "local_integration_pass",
+      "terminal_readback": "Before the change the live stack ran 55 containers with no policy-learning-shadow-eval-scheduler container at all, confirming the human_imitation_shadow_evaluation loop worker was never started by the deploy default. After the change that worker was started in the same project and completed startup recovery and an authenticated tick. It was then force-stopped and, once running again, recovered cleanly with startup_recovery status ok, reset_count 0, and a fresh authenticated tick. Its RestartPolicy reads unless-stopped and its StopTimeout reads 30 in docker inspect. Its RestartCount reads 0, so that particular recovery was operator-initiated and is not evidence that the restart policy fires unaided; the prior cut claimed otherwise and that claim is withdrawn here. Both new heartbeat healthchecks were exercised positive and negative inside the already-running strategy-distillation-worker and deployment-outbox-consumer containers."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "pantheon-paper-runtime is the legacy static paper worker that duplicates the bindings paper-fleet-reconciler owns. paper-fleet-reconciler and paper-signal-producer are now unconditional members of the required worker manifest, so the two can no longer be co-enabled by accident.",
+        "validate_required_loop_workers refuses any profile selection that resolves pantheon-paper-runtime, and that refusal was observed rather than assumed.",
+        "The two schedulers that stopped being profile-gated kept their existing service keys, so a non-prod upgrade replaces the prior container instead of leaving a second ticking orphan."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "The deploy fails closed rather than degrading: a narrowed PANTHEON_DEV_COMPOSE_PROFILES that drops a required loop worker now aborts the deploy with the missing worker named, instead of silently deploying a stack with a dead loop.",
+        "The two new healthchecks read a heartbeat file's freshness rather than a business status, so a single upstream failure marks the worker degraded only when it actually stops ticking. Both were shown to return 1 on an absent heartbeat and on a stale heartbeat.",
+        "The six required workers that still carry no healthcheck are listed in residual_risks; their liveness rests on restart: unless-stopped and on their dependencies' health conditions, and that limit is stated rather than papered over."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "The newly default-on scheduler's live tick carries a tick_id and a worker_id and reports the candidate ids it produced, so a tick is correlatable to the policy-learning candidates it creates.",
+        "deployment-outbox-consumer now writes its per-tick health record by default, which carries consumer_name, tick count, last_success, last_failure, and last_failure_reason for downstream correlation."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Every one of the twenty-seven required loop workers renders restart: unless-stopped and stop_grace_period: 30s, so a supervised restart is the declared default and a worker gets 30 seconds to finish in-flight work before it is force-terminated.",
+        "Those settings reach the runtime and not only the file: docker inspect on the live pantheon-policy-learning-shadow-eval-scheduler-1 reports RestartPolicy unless-stopped and StopTimeout 30.",
+        "Worker-side recovery from an abrupt termination is proven. The container was force-stopped at 2026-07-29T00:14:50.962927635Z and was running again at 2026-07-29T00:16:32.319332602Z; docker logs show it then emitted startup_recovery status ok with reset_count 0 and a fresh tenant-bound authenticated tick at 2026-07-29T00:16:33.111Z with no 401. An interrupted worker therefore resumes cleanly and needs no manual state repair.",
+        "Not proven, and withdrawn from the prior cut: that Docker's unless-stopped policy itself performed that restart with no operator action. The same container reads RestartCount=0 and ExitCode=0, which is inconsistent with a policy-driven restart, and the 101.4-second outage is consistent with operator-initiated recovery. The method was unsound rather than the configuration: docker kill records explicit operator intent, so the daemon suppresses the restart policy by design. A sound probe crashes the container's PID 1 from inside, leaving the exit unsolicited, and is confirmed by RestartCount incrementing. That probe was not run in this slice; it is recorded in residual_risks as auto_restart_policy_not_proven_end_to_end for the reviewer to adjudicate."
+      ],
+      "status": "partial_auto_restart_not_proven"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "The change is confined to two tracked files and is revertible by reverting the two anchor commits; no data migration, credential rotation, or schema change is involved.",
+        "An operator who needs the legacy static paper worker can still select its profile for a component that does not run the root gate; the gate documents that the root deploy path refuses the combination.",
+        "The bounded source refresh path is unchanged, so the existing operator procedure for a bounded provider pull still works exactly as before."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the dev compose stack was touched, and only by adding one container that the manifest intends to be default-on. No production or live runtime was changed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "proof": "This task changes compose service activation and the nonprod deploy gate only; it does not change the frontend or its hosting.",
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "No new operator-facing mutation route is introduced; the workers activated here are internal schedulers reached only over the compose network.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "With no operator override the manifest renders runtime-manager with PANTHEON_LIVE_BROKER_ENABLED=false and PANTHEON_CANARY_EXECUTION_ENABLED=false, and broker with BROKER_PAPER_ENABLED=false, so paper execution is opt-in and live execution is denied by the file itself. The deploy path continues to pin PANTHEON_CANARY_EXECUTION_ENABLED=false, PANTHEON_LIVE_BROKER_ENABLED=false, and BROKER_PAPER_ENABLED=true. No worker activated by this change has order, broker, or capital authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "The newly default-on shadow-eval scheduler authenticates to policy-learning-svc with a bearer service token and an X-Tenant-Id header drawn from the same compose variables the API authorizes; an unwired scheduler fails closed at start-up rather than emitting unauthenticated ticks.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The scheduler's tenant scope is the exact POLICY_LEARNING_AGORA_TENANT_ID that policy-learning-svc lists in POLICY_LEARNING_SERVICE_TENANTS; its live ticks were tenant-bound and returned production_training fail_closed with no cross-tenant read.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Canonical owner is Claude2 and canonical reviewer is Antigravity; they are distinct. The independent reviewer verdict is not yet recorded and is the remaining gate before done.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "docker-compose.yml",
+        "scripts/deploy_nonprod_vm.sh",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+      ],
+      "id": "AC1",
+      "statement": "Every required scheduled or async worker is represented and started by the intended default.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docker-compose.yml",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+      ],
+      "id": "AC2",
+      "statement": "Workers have restart, health, heartbeat, durable volumes, auth, and graceful-stop configuration.",
+      "status": "pass",
+      "blocking_until": "Scope of this pass, stated so the reviewer can disagree with it. The criterion as worded is about configuration, and the configuration is proven: 27/27 required loop workers render restart: unless-stopped and stop_grace_period: 30s, 21/27 carry a healthcheck with the six exceptions recorded as a residual risk, durable volumes and service-token auth are rendered per the inventory table in manifest-readback.md, and docker inspect confirms unless-stopped and StopTimeout 30 reach the live runtime rather than only the file. Worker-side recovery after an abrupt termination was also observed clean. What is NOT proven is the daemon-side trigger — that the unless-stopped policy fires unaided — because the attempted probe used docker kill, which the daemon excludes from the restart policy by design, and RestartCount read back as 0. This owner cut treats that as outside the wording of AC2 and records it as residual risk auto_restart_policy_not_proven_end_to_end rather than folding it into this status. If the reviewer reads AC2 as requiring the runtime trigger too, this item is not a pass and the reviewer should withhold approval until an in-container PID 1 crash probe is authorised and RestartCount is read back as incremented."
+    },
+    {
+      "evidence_refs": [
+        "docker-compose.yml",
+        "scripts/deploy_nonprod_vm.sh"
+      ],
+      "id": "AC3",
+      "statement": "Source egress remains bounded and deny-by-default.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docker-compose.yml",
+        "scripts/deploy_nonprod_vm.sh"
+      ],
+      "id": "AC4",
+      "statement": "Paper execution remains isolated and live writes remain disabled.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/deploy_nonprod_vm.sh",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+      ],
+      "id": "AC5",
+      "statement": "Compose config and local stack health pass with no duplicate legacy workers.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "auto_restart_policy_not_proven_end_to_end": {
+      "blocking_for_this_task": false,
+      "containment": "The configuration half is proven at the runtime and not merely in the file: docker inspect on the live container reports RestartPolicy unless-stopped and StopTimeout 30, and all twenty-seven required loop workers render both keys. The worker half is proven too: after an abrupt termination the worker resumed with startup_recovery status ok, reset_count 0, and a fresh authenticated tick, so an unattended restart would not require manual state repair. What is unproven is only the daemon-side trigger, and unless-stopped is Docker's own default-supervised behaviour rather than anything this task implements.",
+      "description": "No probe in this slice demonstrates that Docker's unless-stopped policy restarts a required loop worker unaided. The attempted probe used docker kill, which the daemon records as explicit operator intent and therefore excludes from the restart policy; the observed RestartCount stayed 0 and the container came back only after operator action. A sound probe crashes the container's PID 1 from inside so the exit is unsolicited, and is confirmed by RestartCount incrementing, but that is a destructive action against the shared live dev stack and was not authorised in the owner slice.",
+      "expiry": "When an in-container PID 1 crash probe is run against one required loop worker and RestartCount is read back as incremented, or when the reviewer accepts the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2.",
+      "owner": "Claude2 owner slice, adjudication delegated to reviewer Antigravity",
+      "recheck_trigger": "Any change to a required loop worker's restart or stop_grace_period setting, or authorisation to run a destructive in-container crash probe on the dev stack.",
+      "severity": "medium"
+    },
+    "six_workers_without_a_heartbeat_surface": {
+      "blocking_for_this_task": false,
+      "containment": "All six carry restart: unless-stopped, a 30-second graceful stop, and a service_healthy dependency condition on the API they drive, so a crash is supervised even though a hung tick is not detected.",
+      "description": "alpha-replication-worker, policy-learning-shadow-eval-scheduler, paper-signal-producer, reconciliation-drift-consumer, reconciliation-drift-scheduler, and reconciliation-drift-incident-listener have no healthcheck because their worker modules publish no heartbeat file or healthcheck entry point. Adding one requires a service source change, which is outside this task's artifact scope of docker-compose.yml and scripts/deploy_nonprod_vm.sh.",
+      "expiry": "When each owning loop task adds a heartbeat surface, at which point the manifest can wire a healthcheck the same way it now does for strategy-distillation-worker and deployment-outbox-consumer.",
+      "owner": "L12-ALPHA-001, L12-IMIT-001, L12-CAP-001, L12-REC-001",
+      "recheck_trigger": "Any change to those worker modules that adds a heartbeat file or a healthcheck subcommand.",
+      "severity": "medium"
+    },
+    "source_ingestion_scheduled_tick_requires_a_bounded_run": {
+      "blocking_for_this_task": false,
+      "containment": "source-ingest itself is default-on with a healthcheck and durable volume, so the loop's owning service is running and reconcilable; only the provider-facing refresh tick is opt-in, and the deploy refuses a non-deny egress posture whenever that profile is not selected.",
+      "description": "source-ingest-scheduler and source-ingest-agora-projector stay behind the bounded source-ingest-scheduler profile. This is the deliberate adjudication of the conflict between the required-worker rule and the deny-by-default egress rule: an always-on scheduler ticking every 60 seconds against Yahoo, CoinGecko, TWSE/TPEx, MOPS, FinMind, SEC/FRED/FINRA, and stooq is continuous crawling from one cloud egress IP. The consequence is that the source_ingestion loop's scheduled_tick evidence still requires an explicit bounded operator run rather than arriving from the default deploy.",
+      "expiry": "When a reviewed, rate-limited always-on posture for provider refresh is agreed, or when the twelve-loop verification tasks accept a bounded run as the source of scheduled_tick evidence.",
+      "owner": "L12-MANIFEST-001 adjudication, verification delegated to the L12-VERIFY-* lane",
+      "recheck_trigger": "Any proposal to make provider refresh always-on, or any change to validate_source_refresh_profile.",
+      "severity": "medium"
+    },
+    "independent_review": {
+      "blocking_for_this_task": false,
+      "containment": "The task remains in_progress and cannot reach done until the reviewer's verdict is recorded; the done guard independently refuses a manifest with no approved reviewer verdict in record_log.",
+      "description": "Antigravity has not yet reviewed this owner cut. No reviewer verdict is recorded in record_log.",
+      "expiry": "When Antigravity records an exact-head review decision on the task PR.",
+      "owner": "Antigravity",
+      "recheck_trigger": "Any task branch head change or reviewer decision.",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+    "normalized_hosted_readback": {
+      "all_required_loop_workers_default_on": true,
+      "duplicate_legacy_worker_resolved": false,
+      "hosted_activation_claimed": false,
+      "kill_one_restart_observed": false,
+      "observed_container_restart_count": 0,
+      "restart_policy_reaches_runtime": true,
+      "stop_grace_period_reaches_runtime": true,
+      "worker_recovery_after_abrupt_stop_observed": true,
+      "live_broker_enabled_default": false,
+      "source_external_egress_default": "deny"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file seals the readback document; the manifest itself is sealed by the task commit rather than by a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {
+      "docker-compose.yml@v1.0.0": "f110c57fbb67b7f2b3314817cb3e4524dd026accdf2352170237761037f49547",
+      "scripts/deploy_nonprod_vm.sh@v1.0.0": "968dea78a353bab66c0943f5cea2c8ff4da440e07a42259b53c7085a63f2a6d6"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Claude2",
+      "kind": "owner_gap_confirmation",
+      "recorded_at": "2026-07-29T00:05:00Z",
+      "reference": "docker compose config --services under the deploy default profile set did not include policy-learning-shadow-eval-scheduler, and the live dev stack ran 55 containers with no such container. This reproduces Gap 1 of docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md independently.",
+      "sequence": 1,
+      "sha": "f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8",
+      "status": "gap_confirmed"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_implementation_anchor",
+      "recorded_at": "2026-07-29T00:12:00Z",
+      "reference": "Default-on manifest for the required loop workers, with restart, graceful stop, and the two heartbeat healthchecks.",
+      "sequence": 2,
+      "sha": "0a8b2ee862d98bdcb2853734ab72a15a359ab80d",
+      "status": "anchor_committed"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_implementation_anchor",
+      "recorded_at": "2026-07-29T00:18:00Z",
+      "reference": "Fail-closed validate_required_loop_workers gate in the nonprod deploy script, exercised over five profile sets including both failure paths.",
+      "sequence": 3,
+      "sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e",
+      "status": "anchor_committed"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-29T00:20:00Z",
+      "reference": "Owner evidence cut v1.0.0 recorded against branch head 4cf8feedbc3b988e356d67b36be8e628d17eaf2e, including the live kill-one restart readback and the corrected owner/reviewer/status fields. Awaiting the independent Antigravity verdict.",
+      "sequence": 4,
+      "sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e",
+      "status": "superseded_by_owner_correction"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_evidence_correction",
+      "recorded_at": "2026-07-29T00:36:31Z",
+      "reference": "Owner cut v1.0.1 withdraws v1.0.0's claim that Docker's unless-stopped policy restarted pantheon-policy-learning-shadow-eval-scheduler-1 unaided. Independent re-readback of the same live container reports RestartCount=0 and ExitCode=0 against a claimed policy-driven restart, and the 101.4-second gap between FinishedAt 2026-07-29T00:14:50.962927635Z and StartedAt 2026-07-29T00:16:32.319332602Z indicates operator-initiated recovery. The probe method was itself unsound: docker kill records explicit operator intent, so the daemon suppresses the restart policy by design. Retained as proven from the same readback: RestartPolicy unless-stopped and StopTimeout 30 reach the live runtime, and the worker recovered cleanly with startup_recovery status ok, reset_count 0, and a fresh authenticated tick at 2026-07-29T00:16:33.111Z. The sound probe, an in-container PID 1 crash confirmed by an incremented RestartCount, is destructive against the shared live dev stack and was not authorised in this slice; it is recorded as residual risk auto_restart_policy_not_proven_end_to_end for reviewer adjudication. No implementation file changed. Awaiting the independent Antigravity verdict.",
+      "sequence": 5,
+      "sha": "94abec5f84e18481511496955d322c7842a01612",
+      "status": "ready_for_independent_review"
+    }
+  ]
+}
