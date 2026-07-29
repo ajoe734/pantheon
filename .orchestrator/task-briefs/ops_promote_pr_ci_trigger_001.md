@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair promote PR CI trigger and auto-merge path
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex2
-- Reviewer: Codex
-- Next: PR #4258 merged the exact-head dispatch. Follow-up removes statusCheckRollup from the 1,000-row bulk query after two fail-closed GraphQL 502 runs; merge that repair, cut a fresh release, prove its promote PR, then retire only demonstrably superseded stale PRs and hand evidence to Codex.
+- Reviewer: Antigravity
+- Next: Codex2 已 anchor finalize dispatch、無衝突 compose origin/dev 575040212，並在 composed tree 重跑 25 unittest、73 pytest 與 compile/YAML/JSON/diff checks 全綠。提交與推送 final evidence head 後，需重新取得 Branch CI、Antigravity exact-head 核准及 Human/Ops root-freeze context，再由 governed integrator 合併 PR #4262。
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
@@ -15,7 +15,3 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
-
-## Task Evidence
-- Manifest: `docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json`
-- Narrative: `docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md`

@@ -20,6 +20,7 @@ commit for `publish/<VER>`. `master-release.yml` reacts on merge.
 from __future__ import annotations
 
 import argparse
+import base64
 from collections import Counter
 import json
 import os
@@ -28,6 +29,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -123,20 +125,43 @@ def publish_ref_matches_tag(version: str, publish_prefix: str, release_prefix: s
     return publish.stdout.strip() == release.stdout.strip()
 
 
-def find_open_promote_pr(promote_branch: str) -> tuple[dict | None, str | None]:
-    """Return the open PR for a promote branch, failing closed on API errors."""
+def _gh_api_rows(endpoint: str, jq_filter: str) -> tuple[list[dict], str | None]:
+    """Return paginated REST rows without relying on GitHub GraphQL."""
+
     proc = subprocess.run(
         [
             "gh",
-            "pr",
-            "list",
-            "--head",
-            promote_branch,
-            "--state",
-            "open",
-            "--json",
-            "number,url,mergeStateStatus,headRefOid,statusCheckRollup",
+            "api",
+            "--paginate",
+            "--method",
+            "GET",
+            endpoint,
+            "--jq",
+            jq_filter,
         ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    if proc.returncode != 0:
+        return [], _result_detail(proc)
+    rows: list[dict] = []
+    try:
+        for line in proc.stdout.splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    rows.append(row)
+    except json.JSONDecodeError:
+        return [], "GitHub REST API returned invalid JSON"
+    return rows, None
+
+
+def _gh_api_object(endpoint: str) -> tuple[dict | None, str | None]:
+    """Return one REST object without routing through GitHub GraphQL."""
+
+    proc = subprocess.run(
+        ["gh", "api", "--method", "GET", endpoint],
         capture_output=True,
         text=True,
         cwd=ROOT,
@@ -144,41 +169,70 @@ def find_open_promote_pr(promote_branch: str) -> tuple[dict | None, str | None]:
     if proc.returncode != 0:
         return None, _result_detail(proc)
     try:
-        rows = json.loads(proc.stdout or "[]")
+        row = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        return None, "GitHub returned invalid JSON while looking up an existing PR"
-    return (rows[0] if rows else None), None
+        return None, "GitHub REST API returned invalid JSON"
+    if not isinstance(row, dict):
+        return None, "GitHub REST API did not return an object"
+    return row, None
+
+
+def _list_open_pull_rows(main_branch: str | None = None) -> tuple[list[dict], str | None]:
+    query = "state=open&per_page=100"
+    if main_branch:
+        query += f"&base={quote(main_branch, safe='')}"
+    return _gh_api_rows(
+        f"repos/{{owner}}/{{repo}}/pulls?{query}",
+        ".[] | {number,html_url,head:{ref:.head.ref,sha:.head.sha}} | @json",
+    )
+
+
+def _required_check_rollup(head_sha: str) -> tuple[list[dict], str | None]:
+    return _gh_api_rows(
+        f"repos/{{owner}}/{{repo}}/commits/{head_sha}/check-runs?per_page=100",
+        ".check_runs[] | {name,status,conclusion} | @json",
+    )
+
+
+def _normalize_pull(row: dict) -> dict:
+    head = row.get("head") or {}
+    return {
+        "number": row.get("number"),
+        "url": row.get("html_url"),
+        "headRefName": head.get("ref"),
+        "headRefOid": head.get("sha"),
+    }
+
+
+def find_open_promote_pr(promote_branch: str) -> tuple[dict | None, str | None]:
+    """Return the open PR for a promote branch, failing closed on API errors."""
+    rows, error = _list_open_pull_rows()
+    if error:
+        return None, error
+    for raw in rows:
+        pr = _normalize_pull(raw)
+        if pr["headRefName"] != promote_branch:
+            continue
+        head_sha = str(pr.get("headRefOid") or "")
+        if not head_sha:
+            return None, "existing promote PR did not expose an exact head SHA"
+        checks, check_error = _required_check_rollup(head_sha)
+        if check_error:
+            return None, check_error
+        pr["statusCheckRollup"] = checks
+        return pr, None
+    return None, None
 
 
 def list_open_promote_prs(main_branch: str) -> tuple[dict[str, dict], str | None]:
     """Load the promote PR backlog in one API call for hourly discovery."""
-    proc = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--base",
-            main_branch,
-            "--state",
-            "open",
-            "--limit",
-            "1000",
-            "--json",
-            "number,url,headRefName,mergeStateStatus,headRefOid",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    if proc.returncode != 0:
-        return {}, _result_detail(proc)
-    try:
-        rows = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return {}, "GitHub returned invalid JSON while listing promote PRs"
+    rows, error = _list_open_pull_rows(main_branch)
+    if error:
+        return {}, error
+    normalized = [_normalize_pull(row) for row in rows]
     return {
         row["headRefName"]: row
-        for row in rows
+        for row in normalized
         if str(row.get("headRefName", "")).startswith("promote/")
     }, None
 
@@ -189,32 +243,18 @@ def fetch_blocking_issue_map(
     """Load version-specific and global regression blockers in one API call."""
     if not os.environ.get("GH_TOKEN"):
         return {}, [], None
-    proc = subprocess.run(
-        [
-            "gh",
-            "issue",
-            "list",
-            "--state",
-            "open",
-            "--limit",
-            "1000",
-            "--json",
-            "number,title,labels",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
+    issues, error = _gh_api_rows(
+        "repos/{owner}/{repo}/issues?state=open&per_page=100",
+        ".[] | {number,title,labels,pull_request} | @json",
     )
-    if proc.returncode != 0:
-        return {}, [], _result_detail(proc)
-    try:
-        issues = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return {}, [], "GitHub returned invalid JSON while listing regression issues"
+    if error:
+        return {}, [], error
 
     by_version: dict[str, list[str]] = {}
     global_blockers: list[str] = []
     for issue in issues:
+        if issue.get("pull_request"):
+            continue
         names = {label.get("name", "") for label in issue.get("labels", [])}
         summary = f"#{issue['number']} {issue['title']}"
         for name in names:
@@ -234,6 +274,31 @@ def missing_required_promote_checks(pr: dict) -> list[str]:
         if isinstance(check, dict)
     }
     return sorted(REQUIRED_PROMOTE_CHECKS - present)
+
+
+def promote_ref_supports_ci_dispatch(head_sha: str) -> tuple[bool, str | None]:
+    """Prove the exact promote ref contains the guarded dispatch contract."""
+
+    if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+        return False, "promote PR head must be a full lowercase commit SHA"
+    endpoint = (
+        "repos/{owner}/{repo}/contents/.github/workflows/branch-ci.yml"
+        f"?ref={quote(head_sha, safe='')}"
+    )
+    payload, error = _gh_api_object(endpoint)
+    if error:
+        return False, error
+    encoded = str((payload or {}).get("content") or "").replace("\n", "")
+    try:
+        workflow = base64.b64decode(encoded, validate=True).decode()
+    except (ValueError, UnicodeDecodeError):
+        return False, "branch-ci workflow content was not valid base64 text"
+    required_markers = (
+        "workflow_dispatch:",
+        "expected_head_sha:",
+        "promote_pr_number:",
+    )
+    return all(marker in workflow for marker in required_markers), None
 
 
 def dispatch_promote_ci(
@@ -265,6 +330,33 @@ def dispatch_promote_ci(
         check=True,
         cwd=ROOT,
     )
+
+
+def request_verified_auto_merge(
+    promote_branch: str, pr_number: int | str
+) -> dict[str, bool]:
+    """Request protected auto-merge and verify the result through REST."""
+
+    subprocess.run(
+        ["gh", "pr", "merge", promote_branch, "--auto", "--merge"],
+        check=True,
+        cwd=ROOT,
+    )
+    payload, error = _gh_api_object(
+        f"repos/{{owner}}/{{repo}}/pulls/{pr_number}"
+    )
+    if error:
+        raise RuntimeError(f"auto-merge verification failed: {error}")
+    auto_merge_enabled = bool((payload or {}).get("auto_merge"))
+    merged = bool((payload or {}).get("merged_at"))
+    if not auto_merge_enabled and not merged:
+        raise RuntimeError(
+            f"auto-merge request for PR #{pr_number} was not observable through REST"
+        )
+    return {
+        "auto_merge_enabled": auto_merge_enabled,
+        "merged": merged,
+    }
 
 
 def assess_promotion_mode(main_ref: str, release_ref: str) -> tuple[str, str]:
@@ -585,17 +677,35 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         promote_head = str(existing_pr.get("headRefOid", "")).strip()
         if not promote_head:
             raise RuntimeError("existing promote PR did not expose an exact head SHA")
+        supports_dispatch, contract_error = promote_ref_supports_ci_dispatch(
+            promote_head
+        )
+        if contract_error:
+            raise RuntimeError(
+                f"existing promote CI contract lookup failed: {contract_error}"
+            )
+        if not supports_dispatch:
+            return {
+                "version": version,
+                "disposition": "legacy_ci_contract",
+                "missing_required_checks": missing,
+                "head_sha": promote_head,
+                "detail": (
+                    f"existing PR #{existing_pr['number']} predates the exact-head "
+                    "Branch CI dispatch contract; retain it for evidence-based "
+                    "retirement after a newer accepted release"
+                ),
+            }
         dispatch_promote_ci(promote_branch, promote_head, existing_pr["number"])
-        subprocess.run(
-            ["gh", "pr", "merge", promote_branch, "--auto", "--merge"],
-            check=False,
-            cwd=ROOT,
+        auto_merge = request_verified_auto_merge(
+            promote_branch, existing_pr["number"]
         )
         return {
             "version": version,
             "disposition": "ci_dispatched",
             "missing_required_checks": missing,
             "head_sha": promote_head,
+            **auto_merge,
             "detail": (
                 f"dispatched required Branch CI for existing PR "
                 f"#{existing_pr['number']} at {promote_head}"
@@ -656,6 +766,14 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         raise RuntimeError(
             "created promote PR head changed before required CI dispatch"
         )
+    supports_dispatch, contract_error = promote_ref_supports_ci_dispatch(promote_head)
+    if contract_error:
+        raise RuntimeError(f"created promote CI contract lookup failed: {contract_error}")
+    if not supports_dispatch:
+        raise RuntimeError(
+            "created promote PR head does not contain the exact-head Branch CI "
+            "dispatch contract"
+        )
     if promote_label:
         subprocess.run(
             ["gh", "pr", "edit", promote_branch, "--add-label", promote_label],
@@ -663,19 +781,18 @@ def open_candidate(cand: dict, settings: dict) -> dict:
             cwd=ROOT,
         )
     dispatch_promote_ci(promote_branch, promote_head, opened_pr["number"])
-    subprocess.run(
-        ["gh", "pr", "merge", promote_branch, "--auto", "--merge"],
-        check=False,
-        cwd=ROOT,
+    auto_merge = request_verified_auto_merge(
+        promote_branch, opened_pr["number"]
     )
     return {
         "version": version,
         "disposition": "pr_opened",
         "promotion_mode": cand.get("promotion_mode", "clean_merge"),
         "head_sha": promote_head,
+        **auto_merge,
         "detail": (
             f"opened {promote_branch}, dispatched required Branch CI, "
-            "and requested protected auto-merge"
+            "and verified protected auto-merge"
         ),
     }
 
