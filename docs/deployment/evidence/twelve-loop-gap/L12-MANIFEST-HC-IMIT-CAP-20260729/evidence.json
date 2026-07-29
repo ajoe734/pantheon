@@ -121,6 +121,14 @@
     }
   ],
   "validation": {
+    "owner_closeout_post_alpha_refresh": {
+      "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
+      "result": "pass",
+      "conclusion": "57 passed, 4 skipped, 1 warning in 16.76s; py_compile, exact rendered Compose healthcheck argv, literal false live/canary flags, and git diff --check also passed.",
+      "validated_head_sha": "725d61aae8d8e599ec1a67a9d13b9cef4d2a6583",
+      "refreshed_dev_sha": "8b3574f015e779681743616f0d362a5e03197a47",
+      "task_owned_diff_vs_previous_reviewed_head": "none; refresh commit merges dev-only alpha workstream evidence without changing this task's implementation or evidence paths"
+    },
     "owner_closeout_post_dev_refresh": {
       "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
       "result": "pass",

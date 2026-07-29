@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: L12 manifest imitation/capital health heartbeat workstream
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude2
-- Next: Helper-claimed by Codex while Claude2 is dispatch-paused.
+- Next: Owner closeout revalidated refresh head 725d61aae8d8e599ec1a67a9d13b9cef4d2a6583 after #4337 merged. Previous Claude2 review on 78abf4b119a507ec9eda26c6c56deb650a393bb9 is stale; re-review the final PR #4335 head after this task-scoped evidence update passes checks.
 
 ## Summary
 補 policy-learning-shadow-eval-scheduler 與 paper-signal-producer 的 health/heartbeat 證據或 waiver，保留 paper/no-live-capital。

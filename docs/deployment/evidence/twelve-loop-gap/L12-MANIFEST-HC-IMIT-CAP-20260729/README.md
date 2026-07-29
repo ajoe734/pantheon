@@ -74,6 +74,14 @@ and `git diff --check` also passed. The refresh added only the already-landed
 restart-proof evidence from `dev`; it did not change this task's implementation
 or evidence paths.
 
+After the alpha workstream merged into `dev`, PR #4335 was refreshed again at
+`725d61aae8d8e599ec1a67a9d13b9cef4d2a6583`. Owner closeout reran the same
+combined suite on that exact refresh head: 57 passed, 4 skipped, and 1 warning
+in 16.76 seconds. `py_compile`, the exact rendered Compose healthcheck argv
+assertions, literal `false` live/canary assertions, and `git diff --check` also
+passed. The new merge delta is confined to already-landed alpha workstream
+files from `dev`; this task's implementation and evidence paths are unchanged.
+
 ## Baseline-only failure kept out of the claim
 
 `services/execution/lean_runtime/test_devloop_wire.py` is not counted as task
