@@ -1,274 +1,4 @@
 {
-  "schema_version": "loop_product_evidence.v1",
-  "schema_status": {
-    "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "L12-TRUTH-001 product-level review-file admission gate.",
-    "note": "Authored directly against schemas/product-evidence.schema.json by the task owner. No prior reviewed manifest exists for this task, so there is no preserved source artifact to reference.",
-    "status": "formalized"
-  },
-  "evidence_policy": {
-    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.sha256",
-    "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes. The governed approve command binds REVIEW_FILE and posts the commit status but never edits this manifest, so the owner transcribes the already-issued reviewer verdict into record_log at closeout and logs that transcription as a separate owner entry citing the authoritative task-state event.",
-    "recording_mode": "logical_append_only",
-    "redacted": true,
-    "self_hashing": false
-  },
-  "task": {
-    "base_branch": "dev",
-    "evidence_cut_at": "2026-07-29T05:08:59Z",
-    "evidence_cut_semantics": "Owner evidence cut for independent review. The delivery makes the loop catalog state which controllers actually exist, adds catalog-to-runtime exactness validation in both directions, and proves all-loop controller-record conformance plus tenant-scoped operator-truth readback through the BFF read models. No maturity is promoted and no liveness is admitted.",
-    "id": "L12-TRUTH-001",
-    "overall_admission": "pending_independent_review",
-    "owner": "Claude2",
-    "phase": "Twelve Loop Remediation / Operator Truth",
-    "product_level_required": true,
-    "repository": "ajoe734/pantheon",
-    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
-    "reviewer": "Antigravity",
-    "target_environment": "dev integration; validated locally against the repository checkout at the recorded head",
-    "target_maturity": "reconciled",
-    "task_branch": "task/L12-TRUTH-001",
-    "title": "Backend/controller/operator truth surfaces for L12"
-  },
-  "authorities": {
-    "actual_state": [
-      "loop_controller_records via services/loop-control",
-      "domain terminal actual-state observation carried on the controller record",
-      "BFF loop-health read model"
-    ],
-    "desired_state": [
-      "loop catalog controller contract (docs/deployment/loop-catalog.registry.json)",
-      "domain desired-state observation carried on the controller record"
-    ],
-    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TRUTH-001.md"
-  },
-  "scope": {
-    "authoritative_write_owner": "The loop-control store owns every write to loop_controller_records under the (tenant_id, environment, loop_id) identity key. The loop catalog owns the declared controller contract. The BFF is a read-only projector of both and never manufactures liveness.",
-    "composes_with": [
-      "L12-CTRL-001 canonical controller record contract",
-      "L12-MANIFEST-001 runtime worker manifest",
-      "L12-BFF-001 loop-health read model",
-      "L12-HOSTED-001 hosted evidence admission",
-      "L12-CLOSE-001 twelve-loop signoff"
-    ],
-    "evidence_changed_files": [
-      ".orchestrator/task-briefs/l12_truth_001.md",
-      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/README.md",
-      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
-      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.sha256"
-    ],
-    "implementation_changed_files": [
-      "docs/deployment/loop-catalog.registry.json",
-      "services/control-plane/bff/loop_inventory.py",
-      "services/control-plane/bff/test_loop_health_read_model_contract.py",
-      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
-      "tests/test_loop_catalog_registry.py"
-    ],
-    "not_changing": "No change to liveness admission rules, maturity levels, evidence_profile statuses, controller implementations, the loop-control store or writer, the loop catalog JSON schema, or services/control-plane/bff/main.py. No loop is promoted to reconciled or proven-live.",
-    "owned_layer": "Operator truth surfaces: the loop catalog's declared controller contract, the BFF loop-inventory projection of that declaration, and the contract tests that bind catalog claims to runtime implementation and prove all-loop record conformance with tenant-scoped readback."
-  },
-  "implementation_delivery": {
-    "anchor_commits": [
-      {
-        "sha": "4068400c9f2cf3e3bba1db347f2bd03d1e003ad9",
-        "subject": "L12-TRUTH-001: anchor catalog controller truth",
-        "delivery_state": "on task/L12-TRUTH-001",
-        "hosted_cut_inclusion": false,
-        "note": "Catalog controller_contract truth for the three loops that run a canonical loop-control controller, the BFF projection of that declaration, and the repair of tests/test_loop_catalog_registry.py, which pinned its not_implemented rejection case to loops[0]."
-      },
-      {
-        "sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-        "subject": "L12-TRUTH-001: bind catalog controller claims to runtime",
-        "delivery_state": "head of PR #4350 into dev",
-        "hosted_cut_inclusion": false,
-        "note": "Catalog-to-runtime exactness, all-loop record conformance with tenant-scoped readback, the all-loop stale/archive-only/contradicted negatives, and this evidence manifest. This is the tree the recorded validation commands were run against."
-      },
-      {
-        "sha": "47f752dbd",
-        "subject": "L12-TRUTH-001: record delivery head in evidence",
-        "delivery_state": "evidence-only commit on task/L12-TRUTH-001; no implementation file changes",
-        "hosted_cut_inclusion": false,
-        "note": "Evidence-only. PR #4350 into dev carries the implementation head 880ca444fc63a9d325b970559fed4927b8f391af plus this and any later evidence commits. implementation_delivery.pull_requests is filled at closeout with the real merge_sha, because writing the PR head into this manifest advances that head."
-      }
-    ],
-    "required_checks": [
-      {
-        "workflow": "Commit trailers",
-        "event": "pull_request",
-        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-        "conclusion": "success"
-      },
-      {
-        "workflow": "Forward to orchestrator",
-        "event": "pull_request",
-        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-        "conclusion": "success"
-      },
-      {
-        "workflow": "Runtime mirror guard",
-        "event": "pull_request",
-        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-        "conclusion": "success"
-      },
-      {
-        "workflow": "Python packaging provision",
-        "event": "pull_request",
-        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-        "conclusion": "success"
-      },
-      {
-        "workflow": "Smoke acceptance",
-        "event": "pull_request",
-        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-        "conclusion": "success"
-      }
-    ]
-  },
-  "validation": {
-    "commands": [
-      {
-        "command": "python -m pytest tests/test_loop_catalog_registry.py -q",
-        "result": "19 passed",
-        "conclusion": "pass"
-      },
-      {
-        "command": "python -m pytest services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py -q",
-        "result": "25 passed",
-        "conclusion": "pass"
-      },
-      {
-        "command": "negative control: rename source_ingestion controller_name in the catalog",
-        "result": "test_loop_catalog_controller_contract_matches_runtime_implementation FAILED",
-        "conclusion": "pass"
-      },
-      {
-        "command": "negative control: set a catalog loop maturity.current to reconciled",
-        "result": "test_loop_catalog_stops_at_implemented_until_hosted_evidence_is_admitted FAILED",
-        "conclusion": "pass"
-      },
-      {
-        "command": "negative control: add an undeclared PANTHEON_CONTROLLER_NAME service to docker-compose.yml",
-        "result": "test_loop_catalog_controller_contract_matches_runtime_implementation FAILED",
-        "conclusion": "pass"
-      },
-      {
-        "command": "negative control: widen _CONTROLLER_RECORD_MAX_AGE_SECONDS in loop_inventory.py",
-        "result": "test_stale_and_contradicted_records_stay_unaccepted_for_every_loop FAILED",
-        "conclusion": "pass"
-      },
-      {
-        "command": "negative control: drop the catalog eligibility gate from live acceptance in loop_inventory.py",
-        "result": "test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped FAILED",
-        "conclusion": "pass"
-      }
-    ],
-    "validated_at": "2026-07-29T05:08:59Z",
-    "validated_base_sha": "b1527e868654fb93765b3e5788adeea1f5e869a2",
-    "validated_head_sha": "880ca444fc63a9d325b970559fed4927b8f391af"
-  },
-  "deployment": {
-    "applicable": false,
-    "environment": "not_deployed",
-    "public_bff_base_url": "not_applicable",
-    "publish_cut": {
-      "status": "not_applicable",
-      "note": "This task changes a static catalog, a read-model projection, and contract tests. Hosted activation and its publish cut belong to L12-HOSTED-001."
-    },
-    "canonical_root_deploy": {
-      "status": "not_applicable",
-      "note": "No runtime component is deployed by this task."
-    },
-    "identity_admission": {
-      "status": "not_applicable",
-      "note": "No hosted identity is exercised; the read models are validated in-process against the repository checkout."
-    }
-  },
-  "hosted_readback": {
-    "pre_deploy": {
-      "status": "pass",
-      "surface": "BFF v5 loop-inventory and loop-health read models, exercised in-process at the recorded head",
-      "loop_inventory_list_http": 200,
-      "loop_health_list_http": 200,
-      "loop_health_unscoped_http": 403,
-      "loop_health_foreign_tenant_http": 403,
-      "loop_health_foreign_environment_http": 403,
-      "canonical_loop_count": 12,
-      "inventory_entry_count": 13,
-      "conformant_controller_records": 12,
-      "accepted_live_liveness_loop_count": 0,
-      "note": "All twelve canonical loops read back desired-state presence, controller health, last success, last failure, downstream actual state, and provenance under the authenticated tenant and environment. None is admitted as live truth because the catalog does not yet admit any live claim."
-    }
-  },
-  "behavioral_proof": {
-    "duplicate_safety": {
-      "status": "pass",
-      "proof": [
-        "The controller record identity key remains (tenant_id, environment, loop_id); this task adds no new write path.",
-        "test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped feeds one record per loop plus a second consultation record scoped to another tenant, and asserts the foreign record's evidence ref never appears on any projected loop."
-      ]
-    },
-    "failure_and_degraded_behavior": {
-      "status": "pass",
-      "proof": [
-        "test_stale_and_contradicted_records_stay_unaccepted_for_every_loop drives all twelve loops through three refusal cases: a stale heartbeat, archive-only evidence refs, and contradicted evidence provenance.",
-        "In every case controller_health.current_record_accepted is false, evidence_packet.accepted_live_liveness is false, and operator_truth.degraded is true, with a specific rejection_reason on each loop whose catalog contract is implemented.",
-        "The loop-health surface reports status degraded and controller_health_record_count 0 for the stale case rather than hiding the loops."
-      ]
-    },
-    "request_receipt_downstream_correlation": {
-      "status": "pass",
-      "proof": [
-        "Each projected loop carries evidence_packet.source, runtime_record_evidence_basis, runtime_evidence_refs, and highest_truth_level, so an operator can trace a displayed value back to the controller record that produced it.",
-        "archived_task_completion_accepted stays false on every loop, so task-archive completion is visible as reference-only and never as runtime correlation."
-      ]
-    },
-    "restart_and_recovery": {
-      "status": "pass",
-      "proof": [
-        "The catalog now records each implemented controller's restart_behavior, and test_loop_catalog_controller_contract_matches_runtime_implementation asserts the named controller module actually contains the durable state-path environment variable and identity-refresh symbols that behavior describes: SOURCE_INGEST_CONTROLLER_STATE_PATH and refresh_runtime_identity for source_ingestion, DISTILLATION_CONTROLLER_STATE_PATH and refresh_runtime_identity for strategy_distillation, and ALPHA_REPLICATION_CONTROLLER_STATE_PATH for alpha_replication.",
-        "A controller restart produces a fresh heartbeat; the read model accepts a record only inside the 900 second freshness window, and the negative control that widened that window was caught by the all-loop staleness test.",
-        "Controller restart and recovery behavior itself is owned and proved by L12-CTRL-001 and L12-MANIFEST-RESTART-PROOF-20260729; this task binds the catalog's description of it to the code that implements it."
-      ]
-    },
-    "rollback_or_compensation": {
-      "status": "pass",
-      "proof": [
-        "The delivery is a static catalog change plus read-model and test changes; reverting the task commits restores the previous catalog exactly.",
-        "No stored data is migrated and no runtime write path is altered, so there is nothing to compensate."
-      ]
-    }
-  },
-  "security_and_safety": {
-    "environment_boundary": {
-      "status": "pass",
-      "note": "Loop-health reads remain bound to the deployed PANTHEON_ENV unless the authenticated identity declares broader environments; a request for another environment is rejected with 403 environment_scope."
-    },
-    "hosted_frontend": {
-      "status": "not_applicable",
-      "note": "No frontend file is changed by this task."
-    },
-    "mfa": {
-      "status": "not_applicable",
-      "note": "The loop read models are read-only operator surfaces; no privileged mutation is introduced."
-    },
-    "no_live_capital": {
-      "status": "pass",
-      "note": "No trading, broker, or capital path is touched. capital_pool_execution keeps controller_contract.status not_implemented and gains no liveness."
-    },
-    "rbac": {
-      "status": "pass",
-      "note": "Both read models keep their existing read-role requirement; the unchanged strict-JWT test asserts 401 without a token and 403 for audit_only."
-    },
-    "tenant_isolation": {
-      "status": "pass",
-      "note": "test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped proves a foreign-tenant controller record never reaches the authenticated tenant's view, and meta.scope reports the resolved tenant and environment."
-    },
-    "two_person_approval": {
-      "status": "pass",
-      "note": "Owner Claude2 and reviewer Antigravity are distinct; the delivery merges through a reviewed task PR into dev."
-    }
-  },
   "acceptance": [
     {
       "evidence_refs": [
@@ -323,34 +53,155 @@
       "status": "pass"
     }
   ],
-  "residual_risks": {
-    "nine_loops_without_a_canonical_controller": {
-      "blocking_for_this_task": false,
-      "containment": "Those nine loops keep controller_contract.status not_implemented with null contract fields, the exactness test forbids them from declaring contract fields, and the read model reports controller_health.status not_implemented with rejection_reason 'catalog controller contract is not implemented' even when a record is present.",
-      "description": "Only source_ingestion, strategy_distillation, and alpha_replication run a canonical loop-control controller today. The other nine canonical loops emit no controller record from a named controller. This task records that fact rather than concealing it; building those controllers is not in this task's scope.",
-      "expiry": "when the remaining nine loop controllers land",
-      "owner": "L12-CLOSE-001",
-      "recheck_trigger": "any new controller added to docker-compose.yml, which the exactness test fails closed on until the catalog declares it",
-      "severity": "medium"
+  "authorities": {
+    "actual_state": [
+      "loop_controller_records via services/loop-control",
+      "domain terminal actual-state observation carried on the controller record",
+      "BFF loop-health read model"
+    ],
+    "desired_state": [
+      "loop catalog controller contract (docs/deployment/loop-catalog.registry.json)",
+      "domain desired-state observation carried on the controller record"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TRUTH-001.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "The controller record identity key remains (tenant_id, environment, loop_id); this task adds no new write path.",
+        "test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped feeds one record per loop plus a second consultation record scoped to another tenant, and asserts the foreign record's evidence ref never appears on any projected loop."
+      ],
+      "status": "pass"
     },
-    "pre_existing_cross_loop_drill_failure": {
-      "blocking_for_this_task": false,
-      "containment": "Reproduced at the task base commit b1527e868654fb93765b3e5788adeea1f5e869a2 before any change in this task, so it is not a regression from this delivery. The file is outside this task's artifact scope and branch CI does not run it.",
-      "description": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py::TestDrill1SourceToHealth::test_loop_health_endpoint_does_not_promote_historical_drill_fixture fails with 403 tenant_scope because its request headers predate the tenant-scope requirement on /bff/v5/loop-health.",
-      "expiry": "next task that owns that drill file",
-      "owner": "L12-CLOSE-001",
-      "recheck_trigger": "any change to _authenticated_loop_truth_scope or to that drill file",
-      "severity": "low"
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "test_stale_and_contradicted_records_stay_unaccepted_for_every_loop drives all twelve loops through three refusal cases: a stale heartbeat, archive-only evidence refs, and contradicted evidence provenance.",
+        "In every case controller_health.current_record_accepted is false, evidence_packet.accepted_live_liveness is false, and operator_truth.degraded is true, with a specific rejection_reason on each loop whose catalog contract is implemented.",
+        "The loop-health surface reports status degraded and controller_health_record_count 0 for the stale case rather than hiding the loops."
+      ],
+      "status": "pass"
     },
-    "catalog_binding_table_lives_in_the_test": {
-      "blocking_for_this_task": false,
-      "containment": "The binding table is asserted against the catalog, the controller modules, and docker-compose.yml on every run, so it cannot silently drift from any of the three.",
-      "description": "The catalog-to-runtime binding (controller module path, Compose service, required module literals) is declared in services/control-plane/bff/test_loop_inventory_read_model_contract.py rather than inside the catalog, because docs/deployment/loop-catalog.schema.json forbids additional properties on controller_contract and that schema is outside this task's artifact scope.",
-      "expiry": "when a task owns the loop catalog schema and can add a runtime_binding property",
-      "owner": "L12-CLOSE-001",
-      "recheck_trigger": "any change to docs/deployment/loop-catalog.schema.json",
-      "severity": "low"
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Each projected loop carries evidence_packet.source, runtime_record_evidence_basis, runtime_evidence_refs, and highest_truth_level, so an operator can trace a displayed value back to the controller record that produced it.",
+        "archived_task_completion_accepted stays false on every loop, so task-archive completion is visible as reference-only and never as runtime correlation."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "The catalog now records each implemented controller's restart_behavior, and test_loop_catalog_controller_contract_matches_runtime_implementation asserts the named controller module actually contains the durable state-path environment variable and identity-refresh symbols that behavior describes: SOURCE_INGEST_CONTROLLER_STATE_PATH and refresh_runtime_identity for source_ingestion, DISTILLATION_CONTROLLER_STATE_PATH and refresh_runtime_identity for strategy_distillation, and ALPHA_REPLICATION_CONTROLLER_STATE_PATH for alpha_replication.",
+        "A controller restart produces a fresh heartbeat; the read model accepts a record only inside the 900 second freshness window, and the negative control that widened that window was caught by the all-loop staleness test.",
+        "Controller restart and recovery behavior itself is owned and proved by L12-CTRL-001 and L12-MANIFEST-RESTART-PROOF-20260729; this task binds the catalog's description of it to the code that implements it."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "The delivery is a static catalog change plus read-model and test changes; reverting the task commits restores the previous catalog exactly.",
+        "No stored data is migrated and no runtime write path is altered, so there is nothing to compensate."
+      ],
+      "status": "pass"
     }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "note": "No runtime component is deployed by this task.",
+      "status": "not_applicable"
+    },
+    "environment": "not_deployed",
+    "identity_admission": {
+      "note": "No hosted identity is exercised; the read models are validated in-process against the repository checkout.",
+      "status": "not_applicable"
+    },
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "note": "This task changes a static catalog, a read-model projection, and contract tests. Hosted activation and its publish cut belong to L12-HOSTED-001.",
+      "status": "not_applicable"
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes. The governed approve command binds REVIEW_FILE and posts the commit status but never edits this manifest, so the owner transcribes the already-issued reviewer verdict into record_log at closeout and logs that transcription as a separate owner entry citing the authoritative task-state event.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "accepted_live_liveness_loop_count": 0,
+      "canonical_loop_count": 12,
+      "conformant_controller_records": 12,
+      "inventory_entry_count": 13,
+      "loop_health_foreign_environment_http": 403,
+      "loop_health_foreign_tenant_http": 403,
+      "loop_health_list_http": 200,
+      "loop_health_unscoped_http": 403,
+      "loop_inventory_list_http": 200,
+      "note": "All twelve canonical loops read back desired-state presence, controller health, last success, last failure, downstream actual state, and provenance under the authenticated tenant and environment. None is admitted as live truth because the catalog does not yet admit any live claim.",
+      "status": "pass",
+      "surface": "BFF v5 loop-inventory and loop-health read models, exercised in-process at the recorded head"
+    }
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "on task/L12-TRUTH-001",
+        "hosted_cut_inclusion": false,
+        "note": "Catalog controller_contract truth for the three loops that run a canonical loop-control controller, the BFF projection of that declaration, and the repair of tests/test_loop_catalog_registry.py, which pinned its not_implemented rejection case to loops[0].",
+        "sha": "806ff1f2bc07f235d5b885cf9aa82c3924e55d77",
+        "subject": "L12-TRUTH-001: anchor catalog controller truth"
+      },
+      {
+        "delivery_state": "head of PR #4350 into dev",
+        "hosted_cut_inclusion": false,
+        "note": "Catalog-to-runtime exactness, all-loop record conformance with tenant-scoped readback, the all-loop stale/archive-only/contradicted negatives, and this evidence manifest. This is the rebased implementation tree; focused validation was rerun on the rebased PR head 0c14bc6cc57147217e3844c7edfe4d9655a75ed5.",
+        "sha": "35e525fe835711bfd8b7b716502fe360d61ebea5",
+        "subject": "L12-TRUTH-001: bind catalog controller claims to runtime"
+      },
+      {
+        "delivery_state": "evidence-only commit on task/L12-TRUTH-001; no implementation file changes",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence-only commit after rebase. PR #4350 into dev carries the rebased implementation head 35e525fe835711bfd8b7b716502fe360d61ebea5 plus evidence commits. implementation_delivery.pull_requests is filled at closeout with the real merge_sha, because writing the PR head into this manifest advances that head.",
+        "sha": "00548f554e6b0bce8cb62bc10ade104af4172fdd",
+        "subject": "L12-TRUTH-001: record delivery head in evidence"
+      },
+      {
+        "delivery_state": "evidence-only commit on task/L12-TRUTH-001; no implementation file changes",
+        "hosted_cut_inclusion": false,
+        "note": "Drops pre-merge pull_request facts and keeps final PR merge facts for closeout, matching sibling twelve-loop evidence convention.",
+        "sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "subject": "L12-TRUTH-001: fill PR facts at closeout, not before"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "workflow": "Commit trailers"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "workflow": "Python packaging provision"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "workflow": "Smoke acceptance"
+      }
+    ]
   },
   "integrity": {
     "algorithm": "sha256",
@@ -377,29 +228,193 @@
     {
       "actor": "Claude2",
       "kind": "owner_evidence_ready",
-      "recorded_at": "2026-07-29T05:08:59Z",
+      "recorded_at": "2026-07-29T05:23:52Z",
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
       "sequence": 1,
-      "sha": "4068400c9f2cf3e3bba1db347f2bd03d1e003ad9",
+      "sha": "806ff1f2bc07f235d5b885cf9aa82c3924e55d77",
       "status": "pass"
     },
     {
       "actor": "Claude2",
       "kind": "owner_delivery_head_recorded",
-      "recorded_at": "2026-07-29T05:15:00Z",
+      "recorded_at": "2026-07-29T05:23:52Z",
       "reference": "https://github.com/ajoe734/pantheon/pull/4350",
       "sequence": 2,
-      "sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+      "sha": "35e525fe835711bfd8b7b716502fe360d61ebea5",
       "status": "pass"
     },
     {
       "actor": "Claude2",
       "kind": "owner_evidence_correction",
-      "recorded_at": "2026-07-29T05:17:00Z",
+      "recorded_at": "2026-07-29T05:23:52Z",
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
       "sequence": 3,
-      "sha": "47f752dbd",
+      "sha": "00548f554e6b0bce8cb62bc10ade104af4172fdd",
+      "status": "pass"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "owner_evidence_rebase_correction",
+      "recorded_at": "2026-07-29T05:23:52Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
+      "sequence": 4,
+      "sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
       "status": "pass"
     }
-  ]
+  ],
+  "residual_risks": {
+    "catalog_binding_table_lives_in_the_test": {
+      "blocking_for_this_task": false,
+      "containment": "The binding table is asserted against the catalog, the controller modules, and docker-compose.yml on every run, so it cannot silently drift from any of the three.",
+      "description": "The catalog-to-runtime binding (controller module path, Compose service, required module literals) is declared in services/control-plane/bff/test_loop_inventory_read_model_contract.py rather than inside the catalog, because docs/deployment/loop-catalog.schema.json forbids additional properties on controller_contract and that schema is outside this task's artifact scope.",
+      "expiry": "when a task owns the loop catalog schema and can add a runtime_binding property",
+      "owner": "L12-CLOSE-001",
+      "recheck_trigger": "any change to docs/deployment/loop-catalog.schema.json",
+      "severity": "low"
+    },
+    "nine_loops_without_a_canonical_controller": {
+      "blocking_for_this_task": false,
+      "containment": "Those nine loops keep controller_contract.status not_implemented with null contract fields, the exactness test forbids them from declaring contract fields, and the read model reports controller_health.status not_implemented with rejection_reason 'catalog controller contract is not implemented' even when a record is present.",
+      "description": "Only source_ingestion, strategy_distillation, and alpha_replication run a canonical loop-control controller today. The other nine canonical loops emit no controller record from a named controller. This task records that fact rather than concealing it; building those controllers is not in this task's scope.",
+      "expiry": "when the remaining nine loop controllers land",
+      "owner": "L12-CLOSE-001",
+      "recheck_trigger": "any new controller added to docker-compose.yml, which the exactness test fails closed on until the catalog declares it",
+      "severity": "medium"
+    },
+    "pre_existing_cross_loop_drill_failure": {
+      "blocking_for_this_task": false,
+      "containment": "Reproduced at the task base commit 89e1e80c69b688df80d6ccb2bdc2e3d4a9041d3c before any change in this task, so it is not a regression from this delivery. The file is outside this task's artifact scope and branch CI does not run it.",
+      "description": "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py::TestDrill1SourceToHealth::test_loop_health_endpoint_does_not_promote_historical_drill_fixture fails with 403 tenant_scope because its request headers predate the tenant-scope requirement on /bff/v5/loop-health.",
+      "expiry": "next task that owns that drill file",
+      "owner": "L12-CLOSE-001",
+      "recheck_trigger": "any change to _authenticated_loop_truth_scope or to that drill file",
+      "severity": "low"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-TRUTH-001 product-level review-file admission gate.",
+    "note": "Authored directly against schemas/product-evidence.schema.json by the task owner. No prior reviewed manifest exists for this task, so there is no preserved source artifact to reference.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "The loop-control store owns every write to loop_controller_records under the (tenant_id, environment, loop_id) identity key. The loop catalog owns the declared controller contract. The BFF is a read-only projector of both and never manufactures liveness.",
+    "composes_with": [
+      "L12-CTRL-001 canonical controller record contract",
+      "L12-MANIFEST-001 runtime worker manifest",
+      "L12-BFF-001 loop-health read model",
+      "L12-HOSTED-001 hosted evidence admission",
+      "L12-CLOSE-001 twelve-loop signoff"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_truth_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docs/deployment/loop-catalog.registry.json",
+      "services/control-plane/bff/loop_inventory.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "tests/test_loop_catalog_registry.py"
+    ],
+    "not_changing": "No change to liveness admission rules, maturity levels, evidence_profile statuses, controller implementations, the loop-control store or writer, the loop catalog JSON schema, or services/control-plane/bff/main.py. No loop is promoted to reconciled or proven-live.",
+    "owned_layer": "Operator truth surfaces: the loop catalog's declared controller contract, the BFF loop-inventory projection of that declaration, and the contract tests that bind catalog claims to runtime implementation and prove all-loop record conformance with tenant-scoped readback."
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "note": "Loop-health reads remain bound to the deployed PANTHEON_ENV unless the authenticated identity declares broader environments; a request for another environment is rejected with 403 environment_scope.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "note": "No frontend file is changed by this task.",
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "note": "The loop read models are read-only operator surfaces; no privileged mutation is introduced.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "note": "No trading, broker, or capital path is touched. capital_pool_execution keeps controller_contract.status not_implemented and gains no liveness.",
+      "status": "pass"
+    },
+    "rbac": {
+      "note": "Both read models keep their existing read-role requirement; the unchanged strict-JWT test asserts 401 without a token and 403 for audit_only.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "note": "test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped proves a foreign-tenant controller record never reaches the authenticated tenant's view, and meta.scope reports the resolved tenant and environment.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "note": "Owner Claude2 and reviewer Antigravity are distinct; the delivery merges through a reviewed task PR into dev.",
+      "status": "pass"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-29T05:08:59Z",
+    "evidence_cut_semantics": "Owner evidence cut for independent review. The delivery makes the loop catalog state which controllers actually exist, adds catalog-to-runtime exactness validation in both directions, and proves all-loop controller-record conformance plus tenant-scoped operator-truth readback through the BFF read models. No maturity is promoted and no liveness is admitted.",
+    "id": "L12-TRUTH-001",
+    "overall_admission": "pending_independent_review",
+    "owner": "Claude2",
+    "phase": "Twelve Loop Remediation / Operator Truth",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration; validated locally against the repository checkout at the recorded head",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-TRUTH-001",
+    "title": "Backend/controller/operator truth surfaces for L12"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python -m pytest tests/test_loop_catalog_registry.py -q",
+        "conclusion": "pass",
+        "result": "19 passed"
+      },
+      {
+        "command": "python -m pytest services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py -q",
+        "conclusion": "pass",
+        "result": "25 passed"
+      },
+      {
+        "command": "negative control: rename source_ingestion controller_name in the catalog",
+        "conclusion": "pass",
+        "result": "test_loop_catalog_controller_contract_matches_runtime_implementation FAILED"
+      },
+      {
+        "command": "negative control: set a catalog loop maturity.current to reconciled",
+        "conclusion": "pass",
+        "result": "test_loop_catalog_stops_at_implemented_until_hosted_evidence_is_admitted FAILED"
+      },
+      {
+        "command": "negative control: add an undeclared PANTHEON_CONTROLLER_NAME service to docker-compose.yml",
+        "conclusion": "pass",
+        "result": "test_loop_catalog_controller_contract_matches_runtime_implementation FAILED"
+      },
+      {
+        "command": "negative control: widen _CONTROLLER_RECORD_MAX_AGE_SECONDS in loop_inventory.py",
+        "conclusion": "pass",
+        "result": "test_stale_and_contradicted_records_stay_unaccepted_for_every_loop FAILED"
+      },
+      {
+        "command": "negative control: drop the catalog eligibility gate from live acceptance in loop_inventory.py",
+        "conclusion": "pass",
+        "result": "test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped FAILED"
+      },
+      {
+        "command": "PYTHONPATH=/tmp/l12-truth-rebase-uYSPvG/pantheon /tmp/l12-rec-001-venv.rJ98sk/bin/python -m pytest tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py -q -p no:warnings # rebased PR head 0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "conclusion": "pass",
+        "result": "44 passed in 15.94s"
+      }
+    ],
+    "validated_at": "2026-07-29T05:23:52Z",
+    "validated_base_sha": "89e1e80c69b688df80d6ccb2bdc2e3d4a9041d3c",
+    "validated_head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5"
+  }
 }
