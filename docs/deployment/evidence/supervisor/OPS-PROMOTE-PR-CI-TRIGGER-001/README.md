@@ -344,6 +344,35 @@ head, then the governed integrator must observe the independently controlled
 root-freeze context before merging. No release ref, promote PR, stale PR,
 branch protection, or external status was mutated during this refresh.
 
+## Codex Strict-Base Refresh After Exact-Head Approval
+
+Antigravity approved exact head
+`6d6586da85ce3e2bb48870052d6e8c0bece0f195` at
+2026-07-29T11:27:36Z. Both Branch CI runs supplied eight successful check
+runs, and canonical review status `51285723012` succeeded. Before governed
+integration, strict `dev` advanced to
+`c1e396495d37a1c9dfeea5704e7eb73db6acde0e`, so PR `#4262` became
+`BEHIND`; the separately controlled `Pantheon root merge freeze 2026-07-27`
+context was also absent.
+
+Codex preserved the supervisor-generated approved dispatch brief in anchor
+`9d33e83b5785011f7ccf80904f60bb615d873d77`, then composed current
+`origin/dev` through conflict-free merge
+`7776a4967868b61e329cc72ec7808b4ac873ef0c`. The incoming change protects
+wave-0 recovery workers in the supervisor and adds its tests. It does not
+overlap promote implementation or this task evidence.
+
+At the composed tree, all 25 `PublishPromoteTests` passed in 0.216 seconds and
+the 73-test focused pytest slice passed in 9.76 seconds. `py_compile`, both
+workflow YAML parses, evidence JSON parsing, and both diff checks passed.
+
+This evidence commit will create another exact PR head. The prior approval is
+therefore recorded as superseded, not reused. PR `#4262` must obtain fresh
+Branch CI and Antigravity approval on the new head, then Human/Ops must
+independently bind the root-freeze context before the governed integrator can
+merge. Auto-merge remains off, and no release ref, promote PR, stale PR,
+branch protection, or external status was mutated during this refresh.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is

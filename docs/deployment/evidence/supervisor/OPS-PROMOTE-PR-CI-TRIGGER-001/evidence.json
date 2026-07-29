@@ -467,6 +467,42 @@
       "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity approval on the resulting exact head, then merge through the governed integrator"
     }
   },
+  "codex_strict_base_refresh_after_approval": {
+    "canonical_status_observed_at": "2026-07-29T11:28:40Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "6d6586da85ce3e2bb48870052d6e8c0bece0f195",
+    "approval_recorded_at": "2026-07-29T11:27:36Z",
+    "canonical_review_status_id": 51285723012,
+    "dispatch_metadata_anchor_commit": "9d33e83b5785011f7ccf80904f60bb615d873d77",
+    "base_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+    "base_update_merge_commit": "7776a4967868b61e329cc72ec7808b4ac873ef0c",
+    "incoming_scope": "supervisor wave-0 preemption protection and tests only; no promote implementation or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T11:33:55Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.216s",
+      "pytest": "73 focused tests passed in 9.76s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "approved_head_became_behind": true,
+      "approved_head_branch_ci_check_runs": 8,
+      "approved_head_canonical_review_gate": "success",
+      "approved_head_root_freeze_context": "missing",
+      "local_pre_evidence_head": "7776a4967868b61e329cc72ec7808b4ac873ef0c",
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity exact-head approval, then wait for Human/Ops to bind the root-freeze context"
+    }
+  },
   "delivery": {
     "implementation_pr": 4258,
     "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
@@ -486,12 +522,12 @@
     "rest_followup_pr": 4262,
     "rest_followup_code_commit": "c0254c6faa70b9bd18b6132567cb8cf87b46c136",
     "rest_followup_pre_evidence_head": "25d8f0764352369dbb6394694627e05d29087448",
-    "rest_followup_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+    "rest_followup_head": "6d6586da85ce3e2bb48870052d6e8c0bece0f195",
     "rest_followup_merge_commit": null,
     "rest_followup_checks": {
-      "observed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
-      "push_run": 30423656277,
-      "pull_request_run": 30423658834,
+      "observed_head": "6d6586da85ce3e2bb48870052d6e8c0bece0f195",
+      "push_run": 30447311573,
+      "pull_request_run": 30447312653,
       "required_contexts": {
         "Commit trailers": "success",
         "Runtime mirror guard": "success",
@@ -502,8 +538,8 @@
       }
     },
     "merge_gate": {
-      "observed_at": "2026-07-29T11:20:43Z",
-      "observed_head": "f1fafb7c4db246d7054e6c748ed5e4bac9c579a0",
+      "observed_at": "2026-07-29T11:34:04Z",
+      "observed_head": "7776a4967868b61e329cc72ec7808b4ac873ef0c",
       "pr_state": "open",
       "mergeable_state": "local_base_current_pending_evidence_commit_and_push",
       "auto_merge_enabled": false,
@@ -516,7 +552,7 @@
       "head_commit_statuses": 0,
       "owner_rescue_requires_fresh_head_gates": true,
       "waiting_for": [
-        "Codex finalization evidence commit, push, and fresh Branch CI",
+        "Codex strict-base evidence commit, push, and fresh Branch CI",
         "Antigravity independent exact-head review",
         "Pantheon canonical review gate",
         "Human Ops root merge freeze release"
@@ -564,11 +600,25 @@
     "ancestry_evidence": null
   },
   "review": {
-    "status": "approved_head_superseded_by_owner_finalize_refresh_pending_exact_head_review",
+    "status": "approved_head_superseded_by_strict_base_refresh_pending_exact_head_review",
     "reviewer": "Antigravity",
-    "reviewed_head": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
-    "reviewed_at": "2026-07-29T10:50:50Z",
-    "decision": "approved_for_exact_head_before_owner_finalize_refresh",
+    "reviewed_head": "6d6586da85ce3e2bb48870052d6e8c0bece0f195",
+    "reviewed_at": "2026-07-29T11:27:36Z",
+    "decision": "approved_for_exact_head_before_strict_base_refresh",
+    "latest_exact_head_review": {
+      "reviewer": "Antigravity",
+      "reviewed_head": "6d6586da85ce3e2bb48870052d6e8c0bece0f195",
+      "reviewed_at": "2026-07-29T11:27:36Z",
+      "decision": "approved",
+      "canonical_review_status_id": 51285723012,
+      "verification": {
+        "unittest": "25 PublishPromoteTests passed",
+        "pytest": "73 focused tests passed",
+        "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed",
+        "exact_head_ci": "push run 30447311573 and pull-request run 30447312653 supplied eight successful Branch CI checks"
+      },
+      "superseded_reason": "strict dev advanced to c1e396495d37a1c9dfeea5704e7eb73db6acde0e before integration"
+    },
     "latest_reopened_review": {
       "reviewer": "Codex2",
       "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
