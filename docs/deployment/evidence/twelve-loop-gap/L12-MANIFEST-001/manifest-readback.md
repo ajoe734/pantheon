@@ -1,19 +1,23 @@
 # L12-MANIFEST-001 — runtime manifest readback
 
-Owner `Claude2`, reviewer `Antigravity`. Branch `task/L12-MANIFEST-001`, reviewed
-head `6783e252adca302e2b5ef3363fa2b225b67f4c97` over base `dev`
-`f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut v1.0.2 at `2026-07-29T01:21:37Z`,
-after that head merged to `dev`; see §8. Sections 1–7 are unchanged from cut
-v1.0.1 at `2026-07-29T00:36:31Z`, which was taken at
-`94abec5f84e18481511496955d322c7842a01612`.
+Owner `Claude2`, current reviewer `Codex2`. Branch `task/L12-MANIFEST-001`,
+implementation base `dev` `f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut v1.1.0.
+This cut scanned the authoritative task-state event log through sequence 4295;
+that is its canonical scan boundary and every canonical-state claim below is read
+as of it.
 
-> **Correction in v1.0.1.** Cut v1.0.0 read the kill-one probe in §6 as proof
-> that the `unless-stopped` policy restarted the worker unaided. Re-readback of
-> the same container reports `RestartCount=0`, which refutes that. The claim is
-> withdrawn; see §6 for what the readback does and does not support. No
-> implementation file changed between the two cuts — `docker-compose.yml` and
-> `scripts/deploy_nonprod_vm.sh` are byte-identical to the v1.0.0 validation
-> head `4cf8feed`, so every other result below stands unchanged.
+Cut v1.0.2 (historical) was reopened by `Codex2` on 2026-07-29T01:45:02Z. §9
+records the reopen and exactly what v1.1.0 corrects. The implementation itself is
+unchanged and already merged: `docker-compose.yml` and
+`scripts/deploy_nonprod_vm.sh` are byte-identical to the v1.0.0 (historical)
+validation head `4cf8feed` (historical), and only this document and
+`evidence.json` move in v1.1.0.
+
+> **Correction carried forward from v1.0.1 (historical).** Cut v1.0.0
+> (historical) read the kill-one probe in §6 as proof that the `unless-stopped`
+> policy restarted the worker unaided. Re-readback of the same container reports
+> `RestartCount=0`, which refutes that. The claim is withdrawn; see §6 for what
+> the readback does and does not support. The withdrawal stands in v1.1.0.
 
 ## 1. The gap, reproduced before changing anything
 
@@ -99,9 +103,23 @@ and **no profile selected** — i.e. this is what a bare `docker compose up` giv
 | `search-index-scheduler` | unless-stopped | no | 30s | 0 |
 
 27 / 27 default-on, 27 / 27 supervised restart, 27 / 27 graceful stop,
-21 / 27 with a healthcheck. The six without one are listed as a residual risk in
-`evidence.json`: their worker modules publish no heartbeat surface, and adding
-one is a service source change outside this task's artifact scope.
+**20 / 27** with a healthcheck. The **seven** without one are
+`alpha-replication-worker`, `paper-signal-producer`,
+`policy-learning-shadow-eval-scheduler`, `reconciliation-drift-consumer`,
+`reconciliation-drift-incident-listener`, `reconciliation-drift-scheduler`, and
+`search-index-scheduler`. They are listed as a residual risk in `evidence.json`:
+their worker modules publish no heartbeat surface, and adding one is a service
+source change outside this task's artifact scope of `docker-compose.yml` and
+`scripts/deploy_nonprod_vm.sh`.
+
+> **Corrected in v1.1.0.** Cuts v1.0.0–v1.0.2 (historical) read this table's
+> `healthcheck` column as 21 / 27 with six exceptions, omitting
+> `search-index-scheduler`. The table rows themselves were always right — seven
+> rows read `no` — and re-rendering the bare config confirms 20 / 27. The count,
+> the residual-risk id, and the AC2 wording are corrected here and in
+> `evidence.json`. Recount independently with the command in §7.
+
+`pantheon-paper-runtime` does not resolve.
 
 `pantheon-paper-runtime` does not resolve.
 
