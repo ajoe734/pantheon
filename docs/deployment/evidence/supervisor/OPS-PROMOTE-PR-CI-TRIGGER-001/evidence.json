@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "in_progress",
-  "generated_at": "2026-07-29T04:37:21Z",
+  "generated_at": "2026-07-29T04:54:47Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -222,6 +222,62 @@
     },
     "next": "push the current composed head with auto-merge revoked, reacquire Branch CI, obtain Codex2 exact-head approval, merge through the governed integrator, then run a fresh promote candidate"
   },
+  "current_dev_refresh": {
+    "review_reopen_context_anchor_commit": "13583c5ea8b54fd418453ba47a9b4bd0a5f2cb07",
+    "reviewed_head": "c89bff92a314641714c771971492385d576c1ccb",
+    "reviewed_head_ci": {
+      "push_run": 30422862189,
+      "pull_request_run": 30422863646,
+      "github_actions_check_count": 8,
+      "all_github_actions_checks_successful": true,
+      "required_contexts": {
+        "Commit trailers": "success",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "success"
+      },
+      "additional_contexts": {
+        "Python packaging provision": "success"
+      }
+    },
+    "base_compositions": [
+      {
+        "base_commit": "b1527e868654fb93765b3e5788adeea1f5e869a2",
+        "base_update_merge_commit": "d63ff5f7ad2a934b8fc9e2ed31179bf1f9fb5b1c"
+      },
+      {
+        "base_commit": "3eb6a6bd86093a0296fcd18871e0f014a4292e7b",
+        "base_update_merge_commit": "8d17cdbaf90d1469c36d111a5002ef95b6a3336c"
+      }
+    ],
+    "scope_changed": false,
+    "validated_at": "2026-07-29T04:54:07Z",
+    "validation": {
+      "unittest": "22 PublishPromoteTests passed in 0.248s",
+      "pytest": "70 focused tests passed in 9.43s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD passed",
+      "interpreter": ".venv-pantheon/bin/python3"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "representative_pr": 4138,
+      "representative_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "representative_check_count": 0
+    },
+    "pre_push_pr_state": {
+      "pr": 4262,
+      "head": "c89bff92a314641714c771971492385d576c1ccb",
+      "base": "dev",
+      "merge_state": "BEHIND",
+      "auto_merge_enabled": false,
+      "github_actions_check_count": 8,
+      "all_github_actions_checks_successful": true,
+      "external_commit_status_count": 0,
+      "strict_base_required": true
+    },
+    "next": "commit and push the current evidence refresh, reacquire Branch CI on the resulting exact PR head, obtain Codex2 exact-head approval, and merge through the governed integrator"
+  },
   "delivery": {
     "implementation_pr": 4258,
     "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
@@ -241,12 +297,12 @@
     "rest_followup_pr": 4262,
     "rest_followup_code_commit": "c0254c6faa70b9bd18b6132567cb8cf87b46c136",
     "rest_followup_pre_evidence_head": "25d8f0764352369dbb6394694627e05d29087448",
-    "rest_followup_head": null,
+    "rest_followup_head": "c89bff92a314641714c771971492385d576c1ccb",
     "rest_followup_merge_commit": null,
     "rest_followup_checks": {
-      "observed_head": "ee04032de9e00cde74a948b5ba1389217bcccbc4",
-      "push_run": 30294569664,
-      "pull_request_run": 30294571835,
+      "observed_head": "c89bff92a314641714c771971492385d576c1ccb",
+      "push_run": 30422862189,
+      "pull_request_run": 30422863646,
       "required_contexts": {
         "Commit trailers": "success",
         "Runtime mirror guard": "success",
@@ -257,12 +313,12 @@
       }
     },
     "merge_gate": {
-      "observed_at": "2026-07-27T18:40:26Z",
+      "observed_at": "2026-07-29T04:52:31Z",
+      "observed_head": "c89bff92a314641714c771971492385d576c1ccb",
       "pr_state": "open",
-      "mergeable_state": "blocked",
-      "auto_merge_enabled": true,
-      "required_approving_review_count": 1,
-      "require_last_push_approval": true,
+      "mergeable_state": "behind",
+      "auto_merge_enabled": false,
+      "merge_policy": "review_before_merge",
       "external_required_contexts": [
         "Pantheon canonical review gate",
         "Pantheon root merge freeze 2026-07-27"
@@ -271,7 +327,9 @@
       "head_commit_statuses": 0,
       "owner_rescue_requires_fresh_head_gates": true,
       "waiting_for": [
-        "Claude independent review",
+        "current dev composition push and fresh Branch CI",
+        "Codex2 independent exact-head review",
+        "Pantheon canonical review gate",
         "Human Ops root merge freeze release"
       ]
     }
@@ -322,6 +380,25 @@
     "reviewed_head": null,
     "reviewed_at": null,
     "decision": null,
+    "latest_reopened_review": {
+      "reviewer": "Codex2",
+      "reviewed_head": "c89bff92a314641714c771971492385d576c1ccb",
+      "reviewed_at": "2026-07-29T04:47:38Z",
+      "decision": "reopened_for_stale_base_and_stale_evidence",
+      "implementation_finding": "REST repair is sound at the reviewed head",
+      "verification": {
+        "unittest": "22 PublishPromoteTests passed",
+        "pytest": "70 focused tests passed",
+        "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed",
+        "live_read_only": "26 promote PRs discovered through REST; PR 4138 exact head had zero check runs",
+        "exact_head_ci": "push run 30422862189 and pull-request run 30422863646 supplied eight successful Branch CI checks"
+      },
+      "required_changes": [
+        "compose the latest origin/dev into the task branch",
+        "commit evidence naming the reviewed exact head and its check runs",
+        "reacquire Branch CI and independent review on the resulting new PR head"
+      ]
+    },
     "prior_independent_review": {
       "reviewer": "Claude",
       "reviewed_head": "50c1a229f4d0bc31035a8dd67146e8dc5f28b211",

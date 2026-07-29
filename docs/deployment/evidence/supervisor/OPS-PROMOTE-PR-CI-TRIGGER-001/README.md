@@ -156,13 +156,45 @@ The live read-only REST smoke still returned 26 open promote PRs and found PR
 `#4138` at exact head
 `cb90dc479214c6ff0779aff70f915593ec9196c4` with zero checks.
 
-Before the new head is pushed, PR `#4262` remains at
+At the time of that pre-push observation, PR `#4262` remained at
 `3ade46dceb24ca621c3801d22db8d1348ce54643`: its eight GitHub Actions checks
-are successful, but it is behind `dev`. Current repository policy is
-`review_before_merge`, so finalization must revoke the historical auto-merge
-request before updating the PR. The updated exact head must then reacquire CI,
-receive Codex2's independent approval, and merge through the governed
-integrator before a fresh promote candidate can provide the live proof.
+were successful, but it was behind `dev`. Current repository policy is
+`review_before_merge`, so the historical auto-merge request was removed before
+the next reviewed head. Every later exact head must reacquire CI, receive
+Codex2's independent approval, and merge through the governed integrator
+before a fresh promote candidate can provide the live proof.
+
+## Exact-Head Review Reopen and Current Dev Composition
+
+Codex2 independently reproduced the repair at exact head
+`c89bff92a314641714c771971492385d576c1ccb`. Both its push run
+`30422862189` and pull-request run `30422863646` completed successfully, for
+eight total check runs covering `Commit trailers`, `Runtime mirror guard`,
+`Python packaging provision`, and `Smoke acceptance`. The reviewer repeated
+the 22-test unittest slice, 70-test focused pytest slice, Python compilation,
+workflow YAML and evidence JSON parsing, `git diff --check`, and the live
+read-only REST smoke.
+
+The implementation was sound, but the reviewer reopened delivery because
+`origin/dev` had advanced and strict branch protection made the PR `BEHIND`.
+The committed manifest also still named older observed heads rather than the
+reviewed `c89bff92` head. Codex anchored that reopen context as
+`13583c5ea8b54fd418453ba47a9b4bd0a5f2cb07`, composed `origin/dev`
+`b1527e868654fb93765b3e5788adeea1f5e869a2` through
+`d63ff5f7ad2a934b8fc9e2ed31179bf1f9fb5b1c`, then composed the next dev tip
+`3eb6a6bd86093a0296fcd18871e0f014a4292e7b` through
+`8d17cdbaf90d1469c36d111a5002ef95b6a3336c`.
+
+At that latest composed tree, Codex again passed all 22 unittest cases and all
+70 focused pytest cases, compiled the helper and tests, parsed both workflow
+YAML files and this evidence JSON, and passed `git diff --check`. The live
+read-only REST smoke still listed 26 open promote PRs and found PR `#4138` at
+`cb90dc479214c6ff0779aff70f915593ec9196c4` with zero checks. Before this
+evidence refresh is pushed, the live PR remains on reviewed head `c89bff92`,
+has eight successful Branch CI checks, is `BEHIND`, has no auto-merge request,
+and has zero external commit statuses. The refreshed PR head must reacquire
+Branch CI and Codex2 exact-head approval; the canonical review and root-freeze
+contexts remain Human/Ops-controlled.
 
 ## Live Proof and Stale-PR Retirement
 
