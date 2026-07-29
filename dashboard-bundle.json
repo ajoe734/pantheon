@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-29T09:58:00Z",
+  "generated_at": "2026-07-18T10:56:43Z",
   "focus_mode": "execution",
   "focus_mode_source": "planning_state_fallback",
   "runtime_summary": {
@@ -55,8 +55,8 @@
     "in_review": 0,
     "blocked": 1,
     "review_approved": 0,
-    "done": 2282,
-    "superseded": 53,
+    "done": 2255,
+    "superseded": 52,
     "live_attached": 0,
     "mismatch_count": 0,
     "planning_backed_total": 0,
@@ -78,36 +78,36 @@
     "recent_sessions": []
   },
   "archive_summary": {
-    "updated_at": "2026-07-24T10:12:08Z",
+    "updated_at": "2026-07-16T15:56:59Z",
     "counts": {
-      "total": 2335,
-      "completed": 2282,
-      "superseded": 53,
-      "completed_in_sprint": 890,
-      "superseded_in_sprint": 30
+      "total": 2307,
+      "completed": 2255,
+      "superseded": 52,
+      "completed_in_sprint": 863,
+      "superseded_in_sprint": 29
     },
     "sprint_started_at": "2026-06-09T00:00:00Z",
     "recent_terminal_ids": [
-      "AG-HOSTED-CLOSE-001",
-      "AG-HOSTED-CLOSE-002",
-      "OPS-ANTIGRAVITY-AUTH-PROBE-001",
-      "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
-      "OPS-DEV-LIFECYCLE-FRESHNESS-001",
-      "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
-      "AG-GOV-WORKSHOP-CONTRACT-001",
-      "OPS-REVIEW-BUS-BASE-001",
-      "OPS-DEV-DEPLOY-REF-GATE-001",
-      "AG-COMPAT-002-GATE",
-      "SUP-REVIEW-REDISPATCH-001",
-      "TJ-E2E-012",
-      "OPS-DISPATCH-AUTHORITY-RECOVERY-001",
-      "AG-COMPAT-001-FE",
-      "AG-COMPAT-001-BE",
-      "AG-WS-OPS-002",
-      "PAN-LIFECYCLE-RECOVERY-001",
-      "PAN-SOURCE-FRESH-001",
-      "OPS-SECURITY-DEPENDENCY-001",
-      "OPS-TASK-PR-TRIAGE-001"
+      "OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001",
+      "TJ-E2E-009",
+      "TJ-E2E-011",
+      "PTJ-007",
+      "PINT-007",
+      "TJ-E2E-007",
+      "TJ-E2E-008",
+      "PINT-005",
+      "AG-GAP-008",
+      "TJ-E2E-006",
+      "AG-GAP-009",
+      "PINT-003",
+      "AG-GAP-003",
+      "PINT-002",
+      "AG-GAP-004",
+      "AG-GAP-002",
+      "AG-GAP-010",
+      "AG-GAP-011",
+      "AG-GAP-006",
+      "AG-GAP-012"
     ],
     "recent_terminal_tasks": [],
     "bff_consol_archived_ids": [
@@ -211,25 +211,18 @@
     "max_dispatches_per_tick": 10,
     "max_tasks_per_agent": null,
     "max_tasks_per_agent_by_agent": {
-      "Claude": 1,
-      "Claude2": 1,
-      "Antigravity": 1,
+      "Claude": 0,
+      "Claude2": 0,
+      "Antigravity": 0,
       "Antigravity2": 0,
       "Codex": 4,
       "Codex2": 4,
       "Copilot": 0
     },
-    "max_concurrent_per_account": {
-      "claude_account_shared_max_1": 1,
-      "antigravity": 1,
-      "antigravity2": 0,
-      "codex1": 4,
-      "codex2": 4,
-      "copilot": 0
-    },
     "max_concurrent_per_quota_group": {
-      "claude_account_shared_max_1": 1,
-      "antigravity": 1,
+      "claude": 0,
+      "claude2": 0,
+      "antigravity": 0,
       "antigravity2": 0,
       "codex1": 4,
       "codex2": 4,
@@ -237,6 +230,9 @@
     },
     "sidecar_only_agents": [],
     "disabled_agents": [
+      "Claude",
+      "Claude2",
+      "Antigravity",
       "Antigravity2",
       "Copilot"
     ]
