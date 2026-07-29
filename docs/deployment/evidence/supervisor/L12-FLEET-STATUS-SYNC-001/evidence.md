@@ -123,7 +123,7 @@ env -u PANTHEON_COMMAND_ROOT \
     -u PANTHEON_STATUS_COMMAND_SHA \
   .venv-pantheon/bin/python3 -m pytest -q \
   scripts/test_ai_status.py scripts/test_status_file_guard.py
-168 passed, 31 subtests passed in 26.65s at the refreshed PR head
+168 passed, 31 subtests passed in 28.38s at the refreshed PR head
 
 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py \
   -k 'dashboard_flags_merged_delivery_that_still_needs_closeout or
@@ -135,7 +135,7 @@ env -u PANTHEON_COMMAND_ROOT \
 .venv-pantheon/bin/python3 -m pytest -q \
   services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py \
   -k authoritative_bridge_dispatch_survives_next_projection_cycle
-1 passed, 26 deselected in 1.05s at the refreshed PR head
+1 passed, 26 deselected in 0.81s at the refreshed PR head
 
 git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev
 git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev
