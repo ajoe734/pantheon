@@ -7,8 +7,9 @@ Completed:
    PASS — checkout-scoped .venv-pantheon provisioned and foreign-cwd imports verified.
 
 2. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_canonical_review_check.py
-   PASS — 33 passed, including loss of a pre-existing context/app_id pair and
-   baseline strict drift.
+   PASS — 37 passed. New regressions reject github-actions app id 15368,
+   slug github-actions, an App owned by ajoe734, a same-name Actions check
+   against an external-App plan, and attacker-controlled task-branch bases.
 
 3. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py
    PASS — 92 passed.
@@ -16,37 +17,67 @@ Completed:
 4. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_github_review_bridge.py
    PASS — 6 passed.
 
-5. .venv-pantheon/bin/python3 -m py_compile scripts/git/canonical_review_check.py scripts/git/test_canonical_review_check.py
+5. Aggregate focused command across the three suites above.
+   PASS — 135 passed.
+
+6. .venv-pantheon/bin/python3 -m py_compile
+   scripts/git/canonical_review_check.py
+   scripts/git/test_canonical_review_check.py
    PASS.
 
-6. JSON parse for baseline.json, activation-plan.json,
-   merge-entrypoint-matrix.json, and evidence.json.
+7. JSON parse for baseline.json, activation-plan.json,
+   issuer-provenance.json, merge-entrypoint-matrix.json, and evidence.json.
    PASS.
 
-7. YAML safe-load of .github/workflows/canonical-review-gate.yml plus
+8. YAML safe-load of .github/workflows/canonical-review-gate.yml plus
    WorkflowContractTests.
-   PASS — trusted base checkout, read-only repository permissions plus checks
-   write, exact-head custom check publication, and Actions app-id readback
-   assertions all passed.
-
-8. git diff --check
-   PASS.
+   PASS — dev/master allowlist precedes comment fetch and checkout; checkout
+   uses captured base SHA; repository permissions are read-only; no check-runs
+   API call or Actions App-id trust remains.
 
 9. actionlint v1.7.12 .github/workflows/canonical-review-gate.yml
    PASS — release asset checksum verified before running the temporary binary.
 
-10. canonical_review_check.py protection-plan against a fresh two-check fixture,
-    followed by verify-protection against the exact activated fixture with
-    --plan-json.
-    PASS — generated activation order is repository auto-merge disable, admin
-    enforcement, then required-check update; readback preserved strict plus
-    both pre-existing context/app_id pairs and returned ok=true.
+10. canonical_review_check.py protection-plan with a synthetic dedicated
+    external App canary (id 987654, slug pantheon-canonical-review, owner
+    pantheon-review-security), followed by verify-protection against the exact
+    activated fixture.
+    PASS — schema-v2 plan binds App id/slug/external owner, canary
+    check-run/head/payload digest, credential boundary, and explicit rejection
+    of github-actions id 15368. Readback returned ok=true while preserving
+    baseline strict and both existing Actions context/app_id pairs.
 
-11. canonical_review_check.py verify-protection against the same machine plan
-    after removing the pre-existing Smoke acceptance/App 15368 pair.
-    EXPECTED FAIL-CLOSED (exit 1) — canonical check, admin enforcement, and
-    auto-merge disable were all still present, but readback returned ok=false
-    with "required status checks do not match the activation plan's full
+11. canonical_review_check.py protection-plan with an otherwise identical
+    same-name canary from app id 15368/slug github-actions.
+    EXPECTED FAIL-CLOSED (exit 1) — reason=issuer_provenance_invalid and
+    summary states the generic github-actions App cannot be the issuer.
+
+12. canonical_review_check.py verify-protection using the valid external-App
+    machine plan but a same-name required check from app id 15368.
+    EXPECTED FAIL-CLOSED (exit 1) — readback expected app id 987654 and also
+    rejected the full context/app_id set mismatch.
+
+13. canonical_review_check.py verify-protection using the same plan after
+    removing the pre-existing Smoke acceptance/App 15368 pair.
+    EXPECTED FAIL-CLOSED (exit 1) — readback returned ok=false with
+    "required status checks do not match the activation plan's full
     context/app_id set".
 
-Aggregate focused Python result: 131 passed.
+14. Read-only GitHub evidence:
+    gh api commits/293cb1d.../check-runs; repository Actions permissions;
+    repository rulesets.
+    PASS — all observed successful workflow checks were app id 15368/slug
+    github-actions; Actions allowed_actions=all; sha_pinning_required=false;
+    rulesets=[].
+
+15. git diff --check
+    PASS.
+
+Aggregate focused Python result: 135 passed.
+
+Not run:
+
+- No dedicated external GitHub App was created, installed, or used; that
+  requires Human/Ops and a credential boundary outside shared owner runtime.
+- No live branch protection, repository auto-merge setting, key, merge, or
+  auto-merge mutation was authorized or performed.

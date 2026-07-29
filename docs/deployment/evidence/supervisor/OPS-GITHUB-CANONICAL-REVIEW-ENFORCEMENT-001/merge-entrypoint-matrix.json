@@ -3,37 +3,40 @@
   "activation_required": true,
   "proof_basis": [
     "GitHub required status checks must pass before a protected-branch PR can merge.",
-    "GitHub branch protection can pin a required status check to a specific GitHub App; statuses from another user or integration do not satisfy it.",
+    "GitHub branch protection can pin a required status check to a specific GitHub App; checks from another user or integration do not satisfy it.",
+    "The GitHub Checks API write surface is available only to GitHub Apps. Repository Actions uses the generic github-actions App id 15368, so the required check must instead be pinned to a dedicated external App whose installation token is outside repository Actions and shared owner runtime.",
     "GitHub branch protection must be configured to apply to administrators to remove the shared owner/admin bypass.",
     "Repository auto-merge must be disabled to block UI/GraphQL auto-merge creation rather than merely waiting to block finalization.",
-    "scripts/git/canonical_review_check.py verify-protection requires the fresh machine plan and returns success only when all three boundary controls are present, strict is unchanged, and the full pre-existing context/app_id multiset is preserved."
+    "scripts/git/canonical_review_check.py protection-plan requires a successful external-App canary and rejects github-actions id 15368, slug github-actions, or an App owned by ajoe734.",
+    "scripts/git/canonical_review_check.py verify-protection requires that retained machine plan and returns success only when the dedicated App-pinned check and both remaining boundary controls are present, strict is unchanged, and the full pre-existing context/app_id multiset is preserved."
   ],
   "official_sources": [
     "https://docs.github.com/en/pull-requests/reference/status-checks",
     "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches",
     "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request",
-    "https://docs.github.com/en/rest/branches/branch-protection"
+    "https://docs.github.com/en/rest/branches/branch-protection",
+    "https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-checks"
   ],
   "entrypoints": [
     {
       "entrypoint": "GitHub web UI direct merge",
       "preapproval_result_after_activation": "blocked",
-      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+      "control": "Dedicated external GitHub App-pinned required exact-head check plus enforce_admins"
     },
     {
       "entrypoint": "gh pr merge",
       "preapproval_result_after_activation": "blocked",
-      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+      "control": "Dedicated external GitHub App-pinned required exact-head check plus enforce_admins"
     },
     {
       "entrypoint": "REST PUT /pulls/{pull_number}/merge",
       "preapproval_result_after_activation": "blocked",
-      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+      "control": "Dedicated external GitHub App-pinned required exact-head check plus enforce_admins"
     },
     {
       "entrypoint": "GraphQL mergePullRequest",
       "preapproval_result_after_activation": "blocked",
-      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+      "control": "Dedicated external GitHub App-pinned required exact-head check plus enforce_admins"
     },
     {
       "entrypoint": "web UI / GraphQL enablePullRequestAutoMerge",
@@ -43,7 +46,7 @@
     {
       "entrypoint": "auto-merge finalization",
       "preapproval_result_after_activation": "blocked",
-      "control": "Actions-app-pinned required exact-head check plus enforce_admins"
+      "control": "Dedicated external GitHub App-pinned required exact-head check plus enforce_admins"
     },
     {
       "entrypoint": "administrator bypass",
@@ -61,7 +64,11 @@
     "self_owned_attestation",
     "attestation_expired",
     "attestation_time_invalid",
-    "ambiguous_attestation"
+    "ambiguous_attestation",
+    "generic_github_actions_canary",
+    "same_name_github_actions_check",
+    "shared_repository_owner_app",
+    "attacker_controlled_task_base"
   ],
-  "live_result": "not_run_without_human_ops_authorization"
+  "live_result": "blocked_pending_dedicated_external_app_and_human_ops_authorization"
 }

@@ -1,0 +1,74 @@
+{
+  "schema": "pantheon.github-canonical-review-issuer-provenance/v1",
+  "repository": "ajoe734/pantheon",
+  "captured_at": "2026-07-29T08:56:43Z",
+  "capture": {
+    "actor": "Codex",
+    "method": "read-only gh api",
+    "mutations_performed": []
+  },
+  "rejected_previous_issuer": {
+    "app_id": 15368,
+    "app_slug": "github-actions",
+    "reason": "The identity is shared by every repository Actions workflow and therefore is not unique to the trusted verifier.",
+    "exact_head": "293cb1d4780653c9753ee19d9567f917511b7b70",
+    "observed_successful_checks": [
+      "Commit trailers",
+      "Python packaging provision",
+      "Runtime mirror guard",
+      "Smoke acceptance"
+    ],
+    "observed_check_run_ids": [
+      90523289573,
+      90523289588,
+      90523289645,
+      90523304993,
+      90523305010,
+      90523305153,
+      90523386006,
+      90523404201
+    ],
+    "same_name_forgery_model": "A task-branch workflow/job named Pantheon canonical reviewer attestation, or any repository Actions job with checks:write, would still be emitted as app id 15368 and could satisfy the previous plan without a reviewer envelope."
+  },
+  "repository_actions_readback": {
+    "enabled": true,
+    "allowed_actions": "all",
+    "sha_pinning_required": false,
+    "rulesets": []
+  },
+  "replacement_contract": {
+    "mode": "dedicated_external_github_app",
+    "check_name": "Pantheon canonical reviewer attestation",
+    "required_app_id": null,
+    "required_app_slug": null,
+    "required_app_owner": "must differ from ajoe734",
+    "credential_boundary": "installation token minted outside repository Actions and shared owner runtime",
+    "repository_workflow_check_write_removed": true,
+    "successful_external_app_canary_present": false,
+    "activation_eligible": false,
+    "next_gate": "Human/Ops provisions the external App and verifier, then supplies a read-only successful canary check-run JSON to protection-plan."
+  },
+  "negative_regressions": [
+    {
+      "test": "test_generic_github_actions_canary_is_rejected",
+      "result": "pass",
+      "meaning": "Protection-plan generation fails closed when the canary App is id 15368/slug github-actions."
+    },
+    {
+      "test": "test_forged_actions_app_check_cannot_satisfy_external_issuer",
+      "result": "pass",
+      "meaning": "A same-name success from app id 15368 fails plan-bound protection readback when the required identity is the dedicated external App."
+    },
+    {
+      "test": "test_shared_repository_owner_app_is_rejected",
+      "result": "pass",
+      "meaning": "A custom App owned by the shared repository account is not accepted as an external trust boundary."
+    },
+    {
+      "test": "test_workflow_never_publishes_merge_authoritative_check",
+      "result": "pass",
+      "meaning": "The repository workflow has no checks:write permission or check-runs API call."
+    }
+  ],
+  "live_mutations_performed_by_task": []
+}

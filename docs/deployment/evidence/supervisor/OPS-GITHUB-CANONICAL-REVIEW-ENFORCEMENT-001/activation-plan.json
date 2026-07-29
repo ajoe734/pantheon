@@ -1,21 +1,37 @@
 {
-  "schema": "pantheon.github-canonical-review-activation/v1",
+  "schema": "pantheon.github-canonical-review-activation/v2",
   "repository": "ajoe734/pantheon",
-  "status": "not_applied_requires_human_ops",
+  "status": "blocked_pending_dedicated_external_github_app",
   "required_check": {
     "context": "Pantheon canonical reviewer attestation",
-    "expected_app_id": 15368,
-    "source": "GitHub Actions custom check run on the exact PR head"
+    "expected_app_id": null,
+    "expected_app_slug": null,
+    "expected_app_owner": "must differ from shared repository owner ajoe734",
+    "source": "Dedicated external GitHub App installation whose credential minting and runtime are unavailable to repository Actions and shared owner credentials",
+    "forbidden_issuers": [
+      {
+        "app_id": 15368,
+        "app_slug": "github-actions",
+        "reason": "Every repository Actions workflow shares this identity, so candidate code can emit the same check name."
+      },
+      {
+        "app_owner": "ajoe734",
+        "reason": "An App owned by the shared repository account does not establish an external credential boundary."
+      }
+    ]
   },
   "preconditions": [
     "Human/Ops gives explicit authorization for the named branch and exact captured baseline.",
-    "canonical-review-gate.yml is already merged into the target branch; dev and master are activated separately after the workflow exists on each branch.",
+    "Human/Ops provisions a dedicated GitHub App owned outside ajoe734, grants only the minimum repository metadata/read plus checks:write permissions, and keeps private-key/installation-token minting outside repository Actions, the Pantheon repo, the status root, and shared owner runtime.",
+    "The external verifier independently fetches the PR, rejects every base except dev/master before loading verifier code, pins the exact captured base SHA, evaluates the signed reviewer envelope, and publishes the exact-head check through only the dedicated App installation token.",
+    "The external verifier re-evaluates pull-request and issue-comment changes plus expiry/key-revocation deadlines so a stale success cannot survive.",
     ".github/canonical-review-keys.json has been populated by a separately reviewed bootstrap PR; the shipped empty registry intentionally fails closed.",
     "Each reviewer signer key is absolute, mode 0600, outside the repository and status root, and exposed only to the protected governed command runtime.",
-    "A canary PR has produced the exact check name from GitHub Actions app id 15368 within the last seven days.",
-    "The scheduled re-evaluation has been observed updating an open canary so attestation expiry and key revocation cannot leave a stale success.",
+    "A successful signed canary check has been fetched read-only from GitHub; its name, head SHA, check-run id, App id, App slug, and external App owner are retained as the --issuer-check-run-json input.",
+    "scripts/git/canonical_review_check.py protection-plan accepts that canary. It must reject app id 15368, slug github-actions, an App owned by ajoe734, a wrong-name check, or a non-successful canary.",
     "A fresh full protection response, scoped required-review response, enforce-admin response, repository response, and ruleset response have been captured after any external freeze/release operation.",
-    "The freshly generated machine plan preserves strict plus every unrelated context/app_id pair and writes rollback payloads before activation."
+    "The freshly generated machine plan preserves strict plus every unrelated context/app_id pair and writes rollback payloads before activation.",
+    ".github/workflows/canonical-review-gate.yml remains a read-only diagnostic workflow and is never selected as the merge-authoritative required check."
   ],
   "activation_order": [
     {
@@ -37,25 +53,27 @@
       "operation": "PATCH repos/ajoe734/pantheon/branches/{branch}/protection/required_status_checks",
       "body_contract": {
         "strict": "preserve fresh baseline",
-        "checks": "preserve every fresh baseline check and append exactly one {context: Pantheon canonical reviewer attestation, app_id: 15368}"
+        "checks": "preserve every fresh baseline check and append exactly one {context: Pantheon canonical reviewer attestation, app_id: <verified dedicated external App id from canary>}"
       },
-      "reason": "Only the Actions-app check produced by the trusted-base verifier can satisfy the new merge requirement."
+      "reason": "Only the separately provisioned external App can satisfy the canonical required-check identity."
     }
   ],
   "readback": {
-    "plan_command": "python3 scripts/git/canonical_review_check.py protection-plan --repository ajoe734/pantheon --branch <branch> --protection-json <fresh-pre-activation-protection.json> --repository-json <fresh-pre-activation-repository.json> --output <fresh-plan.json>",
+    "plan_command": "python3 scripts/git/canonical_review_check.py protection-plan --repository ajoe734/pantheon --branch <branch> --protection-json <fresh-pre-activation-protection.json> --repository-json <fresh-pre-activation-repository.json> --issuer-check-run-json <fresh-successful-external-app-canary.json> --output <fresh-plan.json>",
     "command": "python3 scripts/git/canonical_review_check.py verify-protection --protection-json <fresh-post-activation-protection.json> --repository-json <fresh-post-activation-repository.json> --plan-json <fresh-plan.json>",
     "must_prove": [
-      "exact context occurs once with app_id 15368",
+      "machine plan schema v2 binds the dedicated App id, slug, external owner, canary check-run id/head/digest, and explicit rejection of github-actions app id 15368",
+      "exact context occurs once with the dedicated external App id from the retained successful canary",
+      "a same-name success from github-actions app id 15368 does not satisfy readback",
       "enforce_admins is true",
       "allow_auto_merge is false",
       "strict is identical to the fresh pre-activation baseline",
-      "the full pre-existing required-check context/app_id multiset is unchanged except replacement of any same-name canonical context by the one app-pinned check",
+      "the full pre-existing required-check context/app_id multiset is unchanged except replacement of any same-name canonical context by the dedicated App-pinned check",
       "missing, rejected, stale-head, forged, expired, and self-owned attestations produce a failing exact-head check"
     ]
   },
   "rollback": {
-    "trigger": "Any missing/unreadable key registry, wrong app id, lost pre-existing check, canary false pass, merge bypass, or workflow outage.",
+    "trigger": "Any missing/unreadable key registry, missing external issuer, wrong App identity, lost pre-existing check, canary false pass, merge bypass, or external verifier outage.",
     "order": [
       "PATCH the branch required_status_checks endpoint with the exact fresh pre-activation strict/checks payload.",
       "Restore enforce_admins with POST or DELETE exactly as recorded in the fresh baseline.",

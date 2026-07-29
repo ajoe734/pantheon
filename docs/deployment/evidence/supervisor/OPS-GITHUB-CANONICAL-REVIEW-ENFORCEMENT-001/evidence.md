@@ -2,117 +2,156 @@
 
 ## Outcome
 
-Repository delivery adds a cryptographically signed exact-head reviewer
-attestation and a trusted-base GitHub workflow that publishes an Actions-app
-check on the exact PR head. The shared GitHub user can still write ordinary
-commit statuses and comments, but cannot create a valid reviewer signature or
-an Actions-app-owned check.
+Repository delivery now separates signed-review evaluation from
+merge-authoritative check issuance.
 
-No live GitHub protection or repository setting was changed. Activation remains
-a Human/Ops operation after a fresh baseline and canary.
+`canonical-review-gate.yml` is a read-only diagnostic workflow. It rejects any
+PR base other than `dev` or `master` before checkout, captures `.base.sha`, and
+checks out that immutable SHA. It has no `checks: write` permission and makes
+no check-runs API call.
+
+The required `Pantheon canonical reviewer attestation` check must instead be
+issued by a dedicated external GitHub App owned outside the shared repository
+account. Its private key and installation-token minting must be unavailable to
+repository Actions and shared owner runtime. `protection-plan` cannot produce
+an activation payload until it receives a successful read-only canary
+check-run response from that App.
+
+No GitHub App, live protection, repository setting, reviewer key, merge, or
+auto-merge state was created or changed. External App provisioning and live
+activation remain Human/Ops operations.
+
+## Why GitHub Actions is not an issuer
+
+Read-only metadata for rejected PR #4303 head
+`293cb1d4780653c9753ee19d9567f917511b7b70` shows Commit trailers, Runtime
+mirror guard, Python packaging provision, and Smoke acceptance all came from
+App id `15368`, slug `github-actions`. Repository Actions is enabled with
+`allowed_actions=all`, SHA pinning is off, and no repository ruleset was
+returned.
+
+Therefore a task-branch workflow/job named
+`Pantheon canonical reviewer attestation` could emit the same name and App
+identity as the previous design. App id `15368` proves only that GitHub Actions
+ran; it does not prove the trusted verifier validated a signed reviewer
+envelope.
+
+`issuer-provenance.json` records the read-only check-run ids and the negative
+forgery model.
 
 ## Trust chain
 
-1. The governed reviewer records the canonical exact PR/head approval.
+1. The governed reviewer records the canonical exact PR/head decision.
 2. `canonical_review_check.py issue` re-reads canonical task plus immutable
    approval binding and refuses owner/self, stale head, missing event, revoked
    approval, or an unprotected signer key.
 3. The protected reviewer key signs repository, task, PR, base, branch, head,
    owner, reviewer, decision, canonical record digest, timestamp, expiry, and
    nonce.
-4. The reviewer public key is selected from
-   `.github/canonical-review-keys.json` in the protected PR base branch. The
-   shipped registry is empty and fails closed until Human/Ops lands a
-   separately reviewed bootstrap/rotation PR.
-5. The signed envelope may be transported by the shared GitHub credential in a
-   PR comment; transport identity grants no authority.
-6. `canonical-review-gate.yml` runs from the protected base branch, verifies
-   every current comment, and creates `Pantheon canonical reviewer attestation`
-   on the exact PR head through the GitHub Actions token.
-7. PR/comment changes are evaluated immediately; a 15-minute schedule
-   re-evaluates every open dev/master PR so expiry, key revocation, or removed
-   evidence cannot leave a stale successful check indefinitely.
-8. Authorized branch protection pins that context to Actions app id `15368`.
-   A same-name user status does not satisfy it.
+4. The dedicated external verifier fetches the live PR, accepts only
+   `dev|master`, captures the exact base SHA, loads the checker/key registry
+   from that SHA, and evaluates all current signed envelopes.
+5. The verifier publishes the exact-head check only through its dedicated
+   external App installation token. Repository workflows and the shared owner
+   runtime never receive that credential.
+6. Pull-request/comment changes and expiry/key-revocation deadlines trigger
+   re-evaluation so a removed or expired approval cannot leave a stale success.
+7. Human/Ops captures a successful signed canary from GitHub and gives the raw
+   check-run JSON to `protection-plan`.
+8. Plan generation rejects App id `15368`, slug `github-actions`, an App owned
+   by `ajoe734`, a wrong check name, a non-successful run, or malformed
+   App/head/check-run metadata.
+9. Authorized branch protection pins the exact check name to the verified
+   dedicated App id retained in the machine plan.
 
-## Baseline truth
+The repository workflow remains useful diagnostics, but its Actions check is
+never merge authority.
 
-The dependency task recorded the original dev hole on 2026-07-27:
-`required_approving_review_count=0`, stale/last-push review enforcement off,
-and `enforce_admins=false`.
+## Trusted-base workflow correction
 
-During this task's read-only capture, live state changed externally:
+All workflow event paths now converge on the same pre-checkout guard:
 
-- `master`: required approvals `0`, admins unenforced, three Actions-app CI
-  checks.
-- `dev`: admin enforcement enabled; the scoped review endpoint returned one
-  required approval, while the adjacent full protection response omitted the
-  review block; existing canonical status and temporary root-freeze contexts
-  remained.
-- repository: `allow_auto_merge=true`.
+- fetch PR JSON;
+- require `.base.ref` to be exactly `dev` or `master`;
+- require `.base.repo.full_name` to match the current repository;
+- require full `.base.sha` and `.head.sha` identities;
+- only then fetch comments;
+- checkout `${{ steps.snapshot.outputs.base_sha }}` with persisted credentials
+  disabled.
 
-`baseline.json` preserves both the historical hole and current drift. No stale
-payload is safe to apply.
+The explicit attacker fixture uses base `task/ATTACKER-001` and verifies the
+allowlist guard appears before both comment retrieval and
+`actions/checkout`.
 
-## Merge entry points
+## Protection and entry points
 
-GitHub documents that required checks must pass before a protected-branch PR
-can merge, that a required check can be restricted to one GitHub App source,
-and that branch restrictions must explicitly include administrators. GitHub
-also requires repository-level enablement before PR auto-merge can be created.
+GitHub documents that protected branches may require a check from a specific
+GitHub App, and that check-run writes are available only to GitHub Apps. The
+security property comes from pinning a separately controlled App, not merely
+from using the Checks API.
 
-The authorized target configuration therefore requires all three:
+An authorized target configuration requires all three controls:
 
-- exact check context pinned to GitHub Actions app id `15368`;
+- the exact context pinned to the verified dedicated external App id;
 - `enforce_admins=true`;
 - repository `allow_auto_merge=false`.
 
-`verify-protection` also requires the machine plan generated from the fresh
-pre-activation baseline. It fails unless all three boundary controls are read
-back, `strict` is unchanged, and the full pre-existing `context/app_id`
-multiset remains present alongside the app-pinned canonical check. This closes
-web UI, `gh pr merge`, REST merge, GraphQL merge, auto-merge finalization,
-auto-merge creation, and administrator bypass without silently weakening
-unrelated CI requirements, as listed in `merge-entrypoint-matrix.json`.
+`verify-protection` derives the issuer only from the retained schema-v2 machine
+plan. It also requires unchanged baseline `strict` and the full pre-existing
+`context/app_id` multiset. A same-name success from `github-actions` App id
+`15368`, an unpinned status, any lost existing check, strict drift, admin
+bypass, or enabled auto-merge fails readback.
+
+This configuration contract covers web UI direct merge, `gh pr merge`, REST
+merge, GraphQL merge, auto-merge creation/finalization, and administrator
+bypass as listed in `merge-entrypoint-matrix.json`. Live negative merge probes
+remain withheld.
 
 Official references:
 
-- <https://docs.github.com/en/pull-requests/reference/status-checks>
-- <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
-- <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request>
 - <https://docs.github.com/en/rest/branches/branch-protection>
+- <https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-checks>
+- <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
+- <https://docs.github.com/en/pull-requests/reference/status-checks>
+- <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request>
 
 ## Activation boundary
 
-`activation-plan.json` is deliberately not executable as a stale snapshot.
-Human/Ops must:
+`activation-plan.json` is non-executable and has
+`status=blocked_pending_dedicated_external_github_app`. Human/Ops must:
 
-1. merge the trusted workflow to the target branch;
-2. land the protected public-key registry through a separately reviewed PR and
-   provision repo-external reviewer signer keys;
-3. create and validate a signed canary check from Actions app id `15368`;
-4. capture fresh full and scoped GitHub protection/repository/ruleset state;
-5. generate and retain the exact machine plan containing baseline, ordered
-   activation, expected readback, and rollback payloads;
-6. authorize and apply the scoped operations;
-7. run `verify-protection` and negative canary merge probes;
-8. roll back immediately on any wrong app id, lost check, false pass, bypass,
-   or workflow outage.
+1. provision an externally owned dedicated GitHub App and verifier with
+   minimum read/check-write permissions;
+2. keep App private keys and installation-token minting outside repository
+   Actions, the Pantheon repository/status root, and shared owner runtime;
+3. land the protected reviewer public-key registry and provision reviewer
+   signer keys;
+4. prove exact base allowlisting/SHA pinning plus event and expiry
+   re-evaluation in the external verifier;
+5. obtain a successful signed canary and capture its raw GitHub check-run JSON;
+6. capture fresh full/scoped protection, repository, and ruleset baselines;
+7. generate and retain the schema-v2 machine plan with
+   `--issuer-check-run-json`;
+8. authorize and apply the ordered operations;
+9. run plan-bound readback and negative merge/forgery probes;
+10. roll back on any wrong App identity, lost check, false pass, bypass, or
+    verifier outage.
 
-Dev and master are separate rollouts. Master must not be activated until the
-workflow has reached master.
+Dev and master are separate rollouts. The committed snapshot is evidence, not
+an activation payload.
 
 ## Review focus
 
 Reviewer should independently verify:
 
-- candidate code never supplies the workflow/checker used by
-  `pull_request_target` or `issue_comment`;
-- public key lookup binds `key_id -> reviewer`;
-- owner equals reviewer fails;
-- exact repository/PR/head/branch/base comparisons precede success;
-- the latest valid signed rejection overrides an older approval;
-- expired/future/ambiguous/forged/stale envelopes fail;
-- required-check readback requires app id `15368`, baseline `strict`, and the
-  complete pre-existing `context/app_id` multiset;
-- no command in this task mutated GitHub protection or auto-merge.
+- repository workflow permissions are read-only and it cannot write checks;
+- every workflow event path rejects non-`dev|master` bases before checkout;
+- checkout uses the captured base SHA, not a mutable branch ref;
+- App id `15368` and slug `github-actions` cannot generate a protection plan;
+- an App owned by `ajoe734` cannot generate a protection plan;
+- same-name App id `15368` success fails plan-bound readback;
+- schema-v2 plan binds App id/slug/external owner plus canary
+  check-run/head/payload digest;
+- baseline strict and every pre-existing `context/app_id` pair are preserved;
+- no command in this task mutated GitHub protection, App installation, or
+  auto-merge.
