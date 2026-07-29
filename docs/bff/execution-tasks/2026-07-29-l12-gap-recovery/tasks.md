@@ -8,6 +8,8 @@ Review correction: `2026-07-29T08:35Z`
 
 Fleet correction: `2026-07-29T08:40Z`
 
+Dispatch-priority correction: `2026-07-29T08:48Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
 
@@ -38,9 +40,10 @@ coordination lanes only.
 
 - Owner: `Claude2`
 - Reviewer: `Antigravity`
-- Current state: live supervisor dispatched `Claude2` owner run
-  `claude2-20260729T083911Z-b350d04f` at `2026-07-29T08:39:11Z`.
-  This supersedes the earlier `todo_waiting_for_claude2_quota` note.
+- Current state: `todo`; the `Claude2` owner run
+  `claude2-20260729T083911Z-b350d04f` was superseded at
+  `2026-07-29T08:43:00Z` to free `Claude2` for higher-priority
+  review/finalize work. No terminal RUNTIME evidence or PR exists yet.
 - Scope: `scripts/verify_twelve_loop_runtime.py` and
   `docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001`.
 - Required delivery:
@@ -91,12 +94,16 @@ coordination lanes only.
 
 - Owner: `Antigravity`
 - Reviewer: `Claude2`
-- Current state: `in_progress` after two `Claude2` rejections. The
+- Current state: `review`; after two `Claude2` rejections, Antigravity opened
+  PR #4364 at head `ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd` with checks
+  green but merge state `BLOCKED`. `Claude2` review has not run yet because the
+  supervisor repeatedly dispatched non-L12 `OPS-PROMOTE-PR-CI-TRIGGER-001`
+  review to the only Claude2 slot.
+- Prior failed attempts: the
   `65aa15358` evidence refresh was rejected at `2026-07-29T08:31:49Z`; the
   follow-up anchor `ac87dc46a` was rejected at `2026-07-29T08:38:37Z` because
   it still used the same self-attesting verifier and only regenerated UUIDs and
-  timestamps. The supervisor then redispatched owner work to `Antigravity` run
-  `antigravity1-1-20260729T083928Z-4bc23525`.
+  timestamps.
 - Rejected heads:
   - #4355 `8ba6792a2f00010ad1c401fd4cf526bde65269b8`
   - #4360 `f10a6015a48947adbd51a2b2fc12a8a78f426d1e`
@@ -263,45 +270,72 @@ progress.
     Claude/Antigravity;
   - document any Human/Ops status gate as an external gate, not a fake pass.
 
+### `SUP-L12-REVIEW-PRIORITY-GATE-20260729`
+
+- Owner: `Claude2`
+- Reviewer: `Antigravity`
+- Current state: new guard task to materialize after this packet merges.
+- Scope:
+  - supervisor dispatch ordering for `review` tasks;
+  - provider quota selection when L12 tasks compete with non-L12 OPS tasks;
+  - queue lease cleanup after manual/live priority interruption.
+- Acceptance:
+  - reproduce the 2026-07-29T08:46Z/08:48Z condition where
+    `L12-VERIFY-OBS-001` was in `review` for `Claude2` on PR #4364, but the
+    supervisor dispatched `OPS-PROMOTE-PR-CI-TRIGGER-001` to `Claude2` twice;
+  - ensure L12 `review` tasks with fresh PR heads and green checks outrank
+    non-L12 OPS reviews when they share the only Claude2 quota slot;
+  - after a non-L12 worker is interrupted for L12 priority, prevent immediate
+    redispatch of the same non-L12 queue event ahead of the waiting L12 review;
+  - add regression covering queue event ordering, lease cleanup, and provider
+    quota accounting;
+  - do not edit `.orchestrator/config.json`.
+
 ## Dispatch order
 
-1. Do not count the failed/preempted KNOW runs as delivery; preserve their logs
+1. Prioritize `L12-VERIFY-OBS-001` Claude2 review for PR #4364 before any
+   non-L12 OPS Claude2 review.
+2. Do not count the failed/preempted KNOW runs as delivery; preserve their logs
    and redispatch KNOW only when `Claude2` can run it without another
    higher-priority preemption.
-2. Monitor current RUNTIME owner run
-   `claude2-20260729T083911Z-b350d04f`; if it fails, preserve the log and
-   reopen the exact bootstrap/product blocker instead of marking the loop done.
-3. Keep LEARN blocked until a new implementation proves real service-boundary
+3. Redispatch RUNTIME only after OBS review no longer needs the sole Claude2
+   slot; the last RUNTIME run was superseded before terminal evidence.
+4. Keep LEARN blocked until a new implementation proves real service-boundary
    evidence rather than pass literals.
-4. Keep OBS with `Antigravity` for implementation rework after the `Claude2`
-   rejection; only request review again after a fresh PR proves service-backed
-   readbacks.
-5. Keep legacy `SUP-L12-FAKE-VERIFIER-GATE-20260729` and
+5. Keep OBS in `review` until `Claude2` performs exact review of PR #4364 head
+   `ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd`.
+6. Keep legacy `SUP-L12-FAKE-VERIFIER-GATE-20260729` and
    `SUP-L12-LIVE-WORKER-RECON-20260729` out of the active board unless they can
    run on Claude2/Antigravity, never on Codex/Codex2.
-6. Materialize the four new `SUP-L12-*` guard tasks above through the
+7. Materialize the new `SUP-L12-*` guard tasks above through the
    supervisor/auto-worker path with Claude2/Antigravity-first ownership.
-7. Dispatch FE only with strict live-BFF evidence and no swallowed-failure UI.
-8. Dispatch HOSTED, then CLOSE.
+8. Dispatch FE only with strict live-BFF evidence and no swallowed-failure UI.
+9. Dispatch HOSTED, then CLOSE.
 
 ## Current fleet health checkpoint
 
-Observed after the 08:20Z rescue and updated at 08:40Z:
+Observed after the 08:20Z rescue and updated at 08:48Z:
 
 - `Claude2` can launch governed auto workers, but `L12-VERIFY-KNOW-001` failed
-  as `claude2-20260729T083251Z-33cfa39f` and returned to `todo`; current
-  `Claude2` capacity is on `L12-VERIFY-RUNTIME-001`
-  (`claude2-20260729T083911Z-b350d04f`).
-- `Antigravity` can launch and move governed tasks, but the OBS attempt was
-  correctly rejected by `Claude2` twice as still synthetic and is back in
-  implementation repair on `antigravity1-1-20260729T083928Z-4bc23525`.
+  as `claude2-20260729T083251Z-33cfa39f` and returned to `todo`.
+- `L12-VERIFY-RUNTIME-001` briefly ran as
+  `claude2-20260729T083911Z-b350d04f`, then was superseded back to `todo`.
+- `L12-VERIFY-OBS-001` is now `review` on PR #4364 head
+  `ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd`; all visible PR checks are green,
+  but branch protection is `BLOCKED` and no Claude2 review evidence exists yet.
+- `Claude2` was instead redispatched to non-L12
+  `OPS-PROMOTE-PR-CI-TRIGGER-001` as
+  `claude2-20260729T084759Z-b06bd849` after an attempted live priority
+  interruption, proving the dispatch priority bug is durable.
+- `Antigravity` can launch and move governed tasks; after #4364 handoff it was
+  also dispatched back to `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`.
 - `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` proved Antigravity owner
   dispatch by reaching `review`, but the reviewer was auto-reassigned from
   `Codex2` to `Codex` after repeated Codex2 terminal failures. This is an
   observed provider-first violation until #4362 merges and is validated in the
   live command root.
-- `Claude2` account quota is effectively `1/1`; RUNTIME is currently occupying
-  it, and KNOW is waiting.
+- `Claude2` account quota is effectively `1/1`; OBS review, RUNTIME, KNOW, and
+  non-L12 OPS review currently compete for it, and the ordering is wrong.
 - `Antigravity` account quota is effectively `1/1`, so OBS/guard work must be
   serialized unless the account policy changes.
 - Runtime deps were temporarily rescued in `/tmp/l12-alpha-pydeps`; this is

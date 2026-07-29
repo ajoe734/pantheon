@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T08:40:00Z",
+  "updated_at": "2026-07-29T08:48:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
@@ -61,6 +61,37 @@
       "PR #4361 and #4362 visible checks are green but blocked by Human/Ops branch-protection contexts"
     ]
   },
+  "fleet_checkpoint_2026_07_29T0848Z": {
+    "claude2": {
+      "quota": "1/1",
+      "active_task": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "run_id": "claude2-20260729T084759Z-b06bd849",
+      "priority_blocker": "L12-VERIFY-OBS-001 is in review on PR #4364/head ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd but was not dispatched to Claude2 before non-L12 OPS review"
+    },
+    "l12_obs": {
+      "status": "review",
+      "pr": 4364,
+      "head": "ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd",
+      "visible_checks": "success",
+      "merge_state": "BLOCKED",
+      "reviewer_worker": null
+    },
+    "l12_runtime": {
+      "status": "todo_after_superseded",
+      "superseded_run_id": "claude2-20260729T083911Z-b350d04f"
+    },
+    "live_priority_repair_attempt": {
+      "terminated_run_id": "claude2-20260729T084333Z-7b4dc4c8",
+      "exit_code": 143,
+      "status_blocker_attempt": "rejected_by_status_command_lease_guard",
+      "result": "Supervisor redispatched the same non-L12 OPS review ahead of L12 OBS review"
+    },
+    "not_complete": [
+      "L12-VERIFY-OBS-001 PR #4364 needs exact Claude2 review and merge/signoff",
+      "L12-VERIFY-RUNTIME-001 and L12-VERIFY-KNOW-001 are both todo",
+      "Dispatch ordering must be fixed so fresh L12 review tasks outrank non-L12 OPS review on the only Claude2 slot"
+    ]
+  },
   "waves": [
     {
       "wave": 0,
@@ -96,8 +127,11 @@
           "target_repo": "pantheon",
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2"],
-          "status_at_packet_update": "in_progress_after_second_claude2_rejection",
-          "live_run_id": "antigravity1-1-20260729T083928Z-4bc23525",
+          "status_at_packet_update": "review_waiting_for_claude2_on_pr_4364",
+          "live_run_id": null,
+          "latest_owner_run_id": "antigravity1-1-20260729T083928Z-4bc23525",
+          "current_pr": 4364,
+          "current_head": "ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd",
           "latest_rejected_anchor": "ac87dc46a",
           "depends_on": ["L12-REC-001", "L12-EVO-001", "L12-BFF-001", "L12-TRUTH-001"],
           "scope": [
@@ -109,7 +143,7 @@
             "Telemetry, drift, incident, postmortem, EvolutionDecision, downstream action, and BFF health proof are service-backed readbacks",
             "Duplicate rejection and restart/replay idempotency are proven against the store",
             "False reviewer/governance claims such as governed_by=Claude2 are removed unless an actual governed approval exists",
-            "A fresh task PR to dev exists before review is requested"
+            "PR #4364 head ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd receives exact independent Claude2 review before any acceptance claim"
           ]
         },
         {
@@ -118,8 +152,9 @@
           "target_repo": "pantheon",
           "owner_preference": ["Claude2"],
           "reviewer_preference": ["Antigravity"],
-          "status_at_packet_update": "running_on_claude2",
-          "live_run_id": "claude2-20260729T083911Z-b350d04f",
+          "status_at_packet_update": "todo_after_superseded_claude2_run",
+          "live_run_id": null,
+          "latest_superseded_run_id": "claude2-20260729T083911Z-b350d04f",
           "depends_on": ["L12-CAP-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
           "scope": [
             "scripts/verify_twelve_loop_runtime.py",
@@ -216,6 +251,26 @@
             "Verify live command root has no dirty .py/.sh executable/import files",
             "Run helper-claim regression and prove Codex/Codex2 cannot claim Claude/Antigravity L12 owner work",
             "Human/Ops branch-protection contexts are recorded as external gates, never faked"
+          ]
+        },
+        {
+          "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/supervisor.py review dispatch ordering",
+            ".orchestrator/supervisor.py queue lease cleanup after interrupted worker",
+            ".orchestrator/test_supervisor.py provider quota priority regression"
+          ],
+          "acceptance": [
+            "Reproduce L12-VERIFY-OBS-001 waiting in review on PR #4364 while OPS-PROMOTE-PR-CI-TRIGGER-001 is dispatched to the only Claude2 slot",
+            "Fresh L12 review tasks with green PR evidence outrank non-L12 OPS reviews when provider quota is shared",
+            "Interrupted non-L12 queue events do not immediately redispatch ahead of a waiting L12 review",
+            "Regression covers queue event ordering, lease cleanup, and provider quota accounting",
+            "No .orchestrator/config.json edits"
           ]
         }
       ]

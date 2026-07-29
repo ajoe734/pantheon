@@ -8,6 +8,8 @@ Review correction captured at: `2026-07-29T08:35Z`
 
 Fleet correction captured at: `2026-07-29T08:40Z`
 
+Dispatch-priority correction captured at: `2026-07-29T08:48Z`
+
 Program: `pantheon-twelve-loop-gap-2026-07-26`
 
 This is a current-state audit, not a completion claim. The purpose is to keep
@@ -357,6 +359,30 @@ The 08:40Z live state check adds four material corrections to the addendum:
   auto-worker fallback. It still violates the intended Claude/Antigravity-first
   posture until #4362 merges and is validated in the live command root.
 
+### Dispatch-priority correction — 08:48Z OBS review was not dispatched
+
+The 08:48Z live state check adds another fleet-control gap:
+
+- `Antigravity` opened OBS PR #4364 at head
+  `ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd`; visible checks were green, but
+  merge state remained `BLOCKED` and the canonical task row stayed `review`
+  awaiting `Claude2`.
+- `L12-VERIFY-RUNTIME-001` run `claude2-20260729T083911Z-b350d04f` was
+  superseded and returned to `todo`; `L12-VERIFY-KNOW-001` also remained
+  `todo`.
+- The only `Claude2` quota slot was then dispatched to non-L12
+  `OPS-PROMOTE-PR-CI-TRIGGER-001` instead of OBS review. A live priority
+  interruption sent SIGTERM to
+  `claude2-20260729T084333Z-7b4dc4c8` and it exited with code 143, but
+  foreground `ai-status blocker` was rejected by the status-command lease
+  guard. The supervisor then redispatched the same non-L12 OPS review as
+  `claude2-20260729T084759Z-b06bd849`.
+- Therefore the remaining fleet blocker is not Claude2 auth or quota; it is
+  dispatch ordering and queue lease selection. A durable fix must make fresh
+  L12 `review` tasks with green PR evidence outrank non-L12 OPS review tasks
+  sharing the same provider quota, and prevent immediate redispatch of an
+  interrupted non-L12 event ahead of the waiting L12 review.
+
 ## Pass 3 — dispatch, fleet, and guardrail audit
 
 ### Confirmed fleet usage
@@ -364,18 +390,21 @@ The 08:40Z live state check adds four material corrections to the addendum:
 The work was routed through the repository supervisor/auto-worker mechanism,
 not Codex subagents:
 
-- Latest 08:40Z process check has L12 product work live on the intended
-  supervisor/auto-worker path: `Claude2` owns `L12-VERIFY-RUNTIME-001` via
-  `claude2-20260729T083911Z-b350d04f`, and `Antigravity` owns
-  `L12-VERIFY-OBS-001` via `antigravity1-1-20260729T083928Z-4bc23525`.
+- Latest 08:48Z process check shows no Claude2 L12 worker live. OBS is in
+  `review` on PR #4364/head `ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd`, but
+  Claude2 is instead running non-L12 `OPS-PROMOTE-PR-CI-TRIGGER-001` as
+  `claude2-20260729T084759Z-b06bd849`.
+- `L12-VERIFY-RUNTIME-001` is not currently delivered; the latest Claude2
+  owner worker was superseded and the row is `todo`.
 - `L12-VERIFY-KNOW-001` is not currently delivered; the latest Claude2 owner
   worker failed/preempted and the row is `todo`.
 - `Antigravity` completed `L12-VERIFY-LEARN-001` via
   `antigravity1-1-20260729T071100Z-af38b1e4`, but its PR #4358 was rejected as
   fake proof, so the task is blocked rather than accepted.
-- `Antigravity` completed prior `L12-VERIFY-OBS-001` attempts, but PR #4360
-  and subsequent anchors `65aa15358` and `ac87dc46a` were rejected as
-  synthetic/self-attesting proof, so the task remains in implementation repair.
+- `Antigravity` completed prior `L12-VERIFY-OBS-001` attempts; PR #4360 and
+  subsequent anchors `65aa15358` and `ac87dc46a` were rejected as
+  synthetic/self-attesting proof. PR #4364 is the current candidate and still
+  requires exact Claude2 review.
 - `L12-FE-TRUTH-001` has no confirmed live worker at the latest check.
 - A Codex chair review and a Codex reviewer for
   `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` were also live; those are
