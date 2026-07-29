@@ -12624,6 +12624,14 @@ def choose_helper_claim_agent(
         return False
     if not owner_name or owner_name == idle_agent_name:
         return False
+    if task_preferred_lane_blocks_helper_claim(
+        config,
+        task=task,
+        owner_name=owner_name,
+        idle_agent_name=idle_agent_name,
+        owner_paused=owner_paused,
+    ):
+        return False
     fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
     if not fallbacks:
         return False
@@ -12641,6 +12649,40 @@ def choose_helper_claim_agent(
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
     return idle_agent_name in fallbacks
+
+
+def task_preferred_lane_blocks_helper_claim(
+    config: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    owner_name: str,
+    idle_agent_name: str,
+    owner_paused: bool = False,
+) -> bool:
+    preferred_lanes = task_preferred_lane_order(config, task)
+    if not preferred_lanes:
+        return False
+    idle_agent_name = canonical_agent_name(config, idle_agent_name)
+    owner_name = canonical_agent_name(config, owner_name)
+    if idle_agent_name not in preferred_lanes:
+        return True
+    if owner_paused:
+        return False
+    if owner_name not in preferred_lanes:
+        return False
+    return preferred_lanes.index(idle_agent_name) > preferred_lanes.index(owner_name)
+
+
+def task_preferred_lane_order(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
+    raw_lanes = task.get("preferred_lane_order")
+    if not isinstance(raw_lanes, list):
+        return []
+    lanes: list[str] = []
+    for raw_lane in raw_lanes:
+        lane = canonical_agent_name(config, str(raw_lane or ""))
+        if lane and lane not in lanes:
+            lanes.append(lane)
+    return lanes
 
 
 def is_sidecar_review_of_current_parent(
