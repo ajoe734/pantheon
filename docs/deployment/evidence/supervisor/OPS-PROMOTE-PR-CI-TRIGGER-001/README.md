@@ -140,6 +140,30 @@ reviewed task head still exposed eight successful check runs whose names
 include every required context. No release, promote PR, stale PR, branch
 protection, or external status was mutated by this verification.
 
+## Resumed Live-Proof Delivery
+
+The supervisor returned the task to Codex as `in_progress` on
+2026-07-29 with Codex2 as the canonical reviewer because the approved repair
+still lacked its required live acceptance. Codex anchored that dispatch state,
+then merged current `origin/dev`
+`e51c1220ab3582c9f45f2689dd546ee4a660b4e1` through conflict-free merge
+`d0d8e0398b41f39f6bd044d3469e573344c33b5f`.
+
+At the composed tree, the 22-test unittest slice passed in 0.315 seconds, the
+70-test focused pytest slice passed in 8.40 seconds, Python compilation,
+workflow YAML and evidence JSON parsing, and `git diff --check` all passed.
+The live read-only REST smoke still returned 26 open promote PRs and found PR
+`#4138` at exact head
+`cb90dc479214c6ff0779aff70f915593ec9196c4` with zero checks.
+
+Before the new head is pushed, PR `#4262` remains at
+`3ade46dceb24ca621c3801d22db8d1348ce54643`: its eight GitHub Actions checks
+are successful, but it is behind `dev`. Current repository policy is
+`review_before_merge`, so finalization must revoke the historical auto-merge
+request before updating the PR. The updated exact head must then reacquire CI,
+receive Codex2's independent approval, and merge through the governed
+integrator before a fresh promote candidate can provide the live proof.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
