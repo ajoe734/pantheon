@@ -1098,6 +1098,14 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertEqual(workflow.count("Validate explicit promote dispatch"), 2)
         self.assertIn('[[ "$REF_NAME" != promote/* ]]', workflow)
         self.assertIn('[[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]', workflow)
+        self.assertIn(
+            '[[ "$EVENT" == "workflow_dispatch" && "$REF_NAME" == promote/* ]]',
+            workflow,
+        )
+        self.assertIn(
+            "Skipping commit trailer re-scan for exact-head promote dispatch",
+            workflow,
+        )
         self.assertIn("actions: write", publish_workflow)
         self.assertIn("checks: read", publish_workflow)
 

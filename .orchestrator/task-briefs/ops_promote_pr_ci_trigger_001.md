@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Codex2 已 anchor finalize dispatch、無衝突 compose origin/dev 575040212，並在 composed tree 重跑 25 unittest、73 pytest 與 compile/YAML/JSON/diff checks 全綠。提交與推送 final evidence head 後，需重新取得 Branch CI、Antigravity exact-head 核准及 Human/Ops root-freeze context，再由 governed integrator 合併 PR #4262。
+- Next: PR #4262 已合併；fresh promote PR #4375 證明 exact-head dispatch 與 auto-merge，但 run 30450718720 暴露 workflow_dispatch 仍重掃已驗證 release history。需先合併 narrow trailer-range repair，再以新 immutable release 完成 required checks、master ancestry 與 stale PR retirement 證據。
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
