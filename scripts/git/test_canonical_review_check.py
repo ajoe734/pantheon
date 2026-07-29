@@ -30,6 +30,28 @@ HEAD = "1" * 40
 OTHER_HEAD = "2" * 40
 NOW = datetime(2026, 7, 28, 15, 0, tzinfo=UTC)
 APPROVED_AT = NOW - timedelta(minutes=10)
+EXTERNAL_ISSUER_APP_ID = 987654
+
+
+def issuer_check_run(
+    *,
+    app_id: int = EXTERNAL_ISSUER_APP_ID,
+    app_slug: str = "pantheon-canonical-review",
+    app_owner: str = "pantheon-review-security",
+) -> dict[str, Any]:
+    return {
+        "id": 501,
+        "name": check.CHECK_NAME,
+        "head_sha": HEAD,
+        "status": "completed",
+        "conclusion": "success",
+        "details_url": "https://verifier.example/check-runs/501",
+        "app": {
+            "id": app_id,
+            "slug": app_slug,
+            "owner": {"login": app_owner},
+        },
+    }
 
 
 def pr_payload(
@@ -586,6 +608,7 @@ class ProtectionPlanTests(unittest.TestCase):
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         self.assertEqual(
             plan["activation"][0]["body"],
@@ -594,8 +617,24 @@ class ProtectionPlanTests(unittest.TestCase):
         self.assertEqual(plan["activation"][1]["method"], "POST")
         activation_checks = plan["activation"][2]["body"]["checks"]
         self.assertIn(
-            {"context": check.CHECK_NAME, "app_id": 15368},
+            {
+                "context": check.CHECK_NAME,
+                "app_id": EXTERNAL_ISSUER_APP_ID,
+            },
             activation_checks,
+        )
+        self.assertEqual(plan["schema"], check.PROTECTION_PLAN_SCHEMA)
+        self.assertEqual(
+            plan["issuer"]["mode"],
+            check.ISSUER_MODE,
+        )
+        self.assertEqual(
+            plan["issuer"]["app_owner"],
+            "pantheon-review-security",
+        )
+        self.assertEqual(
+            plan["issuer"]["github_actions_app_id_rejected"],
+            check.GITHUB_ACTIONS_APP_ID,
         )
         self.assertEqual(
             plan["expected_active"]["required_status_checks"],
@@ -611,6 +650,38 @@ class ProtectionPlanTests(unittest.TestCase):
             {"allow_auto_merge": True},
         )
 
+    def test_generic_github_actions_canary_is_rejected(self) -> None:
+        protection, repository = self.baseline()
+        with self.assertRaisesRegex(
+            check.CanonicalReviewError,
+            "generic github-actions App",
+        ):
+            check.build_protection_plan(
+                repository_slug="ajoe734/pantheon",
+                branch="dev",
+                protection=protection,
+                repository=repository,
+                issuer_check_run=issuer_check_run(
+                    app_id=check.GITHUB_ACTIONS_APP_ID,
+                    app_slug=check.GITHUB_ACTIONS_APP_SLUG,
+                    app_owner="github",
+                ),
+            )
+
+    def test_shared_repository_owner_app_is_rejected(self) -> None:
+        protection, repository = self.baseline()
+        with self.assertRaisesRegex(
+            check.CanonicalReviewError,
+            "shared repository account",
+        ):
+            check.build_protection_plan(
+                repository_slug="ajoe734/pantheon",
+                branch="dev",
+                protection=protection,
+                repository=repository,
+                issuer_check_run=issuer_check_run(app_owner="ajoe734"),
+            )
+
     def test_plan_preserves_existing_admin_enforcement(self) -> None:
         protection, repository = self.baseline(admins=True)
         plan = check.build_protection_plan(
@@ -618,6 +689,7 @@ class ProtectionPlanTests(unittest.TestCase):
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         self.assertEqual(plan["rollback"][1]["method"], "POST")
 
@@ -632,16 +704,22 @@ class ProtectionPlanTests(unittest.TestCase):
         self.assertIsNone(summary["required_approving_review_count"])
         self.assertIsNone(summary["dismiss_stale_reviews"])
 
-    def test_active_readback_requires_actions_app_admins_and_no_auto_merge(self) -> None:
+    def test_active_readback_requires_external_app_admins_and_no_auto_merge(
+        self,
+    ) -> None:
         protection, repository = self.baseline(admins=True)
         plan = check.build_protection_plan(
             repository_slug="ajoe734/pantheon",
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         protection["required_status_checks"]["checks"].append(
-            {"context": check.CHECK_NAME, "app_id": 15368}
+            {
+                "context": check.CHECK_NAME,
+                "app_id": EXTERNAL_ISSUER_APP_ID,
+            }
         )
         repository["allow_auto_merge"] = False
         result = check.verify_active_protection(
@@ -663,6 +741,7 @@ class ProtectionPlanTests(unittest.TestCase):
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         protection["required_status_checks"]["checks"].append(
             {"context": check.CHECK_NAME, "app_id": None}
@@ -674,7 +753,42 @@ class ProtectionPlanTests(unittest.TestCase):
             plan=plan,
         )
         self.assertFalse(result["ok"])
-        self.assertIn("expected 15368", result["failures"][0])
+        self.assertIn(
+            f"expected {EXTERNAL_ISSUER_APP_ID}",
+            result["failures"][0],
+        )
+
+    def test_forged_actions_app_check_cannot_satisfy_external_issuer(
+        self,
+    ) -> None:
+        protection, repository = self.baseline(admins=True)
+        plan = check.build_protection_plan(
+            repository_slug="ajoe734/pantheon",
+            branch="dev",
+            protection=protection,
+            repository=repository,
+            issuer_check_run=issuer_check_run(),
+        )
+        protection["required_status_checks"]["checks"].append(
+            {
+                "context": check.CHECK_NAME,
+                "app_id": check.GITHUB_ACTIONS_APP_ID,
+            }
+        )
+        repository["allow_auto_merge"] = False
+        result = check.verify_active_protection(
+            protection=protection,
+            repository=repository,
+            plan=plan,
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            f"expected {EXTERNAL_ISSUER_APP_ID}",
+            result["failures"][0],
+        )
+        self.assertFalse(
+            result["all_entrypoints_blocked_without_exact_approval"]
+        )
 
     def test_auto_merge_or_admin_bypass_fails_readback(self) -> None:
         protection, repository = self.baseline(admins=False)
@@ -683,9 +797,13 @@ class ProtectionPlanTests(unittest.TestCase):
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         protection["required_status_checks"]["checks"].append(
-            {"context": check.CHECK_NAME, "app_id": 15368}
+            {
+                "context": check.CHECK_NAME,
+                "app_id": EXTERNAL_ISSUER_APP_ID,
+            }
         )
         result = check.verify_active_protection(
             protection=protection,
@@ -712,10 +830,14 @@ class ProtectionPlanTests(unittest.TestCase):
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         protection["required_status_checks"]["checks"] = [
             {"context": "Commit trailers", "app_id": 15368},
-            {"context": check.CHECK_NAME, "app_id": 15368},
+            {
+                "context": check.CHECK_NAME,
+                "app_id": EXTERNAL_ISSUER_APP_ID,
+            },
         ]
         repository["allow_auto_merge"] = False
         result = check.verify_active_protection(
@@ -737,10 +859,14 @@ class ProtectionPlanTests(unittest.TestCase):
             branch="dev",
             protection=protection,
             repository=repository,
+            issuer_check_run=issuer_check_run(),
         )
         protection["required_status_checks"]["strict"] = False
         protection["required_status_checks"]["checks"].append(
-            {"context": check.CHECK_NAME, "app_id": 15368}
+            {
+                "context": check.CHECK_NAME,
+                "app_id": EXTERNAL_ISSUER_APP_ID,
+            }
         )
         repository["allow_auto_merge"] = False
         result = check.verify_active_protection(
@@ -772,7 +898,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("issue_comment:", self.workflow)
         self.assertIn('cron: "*/15 * * * *"', self.workflow)
         self.assertIn(
-            "ref: refs/heads/${{ steps.snapshot.outputs.base_ref }}",
+            "ref: ${{ steps.snapshot.outputs.base_sha }}",
+            self.workflow,
+        )
+        self.assertIn(
+            'base_sha="$(jq -r \'.base.sha // empty\' "$pr_json")"',
             self.workflow,
         )
         self.assertIn("persist-credentials: false", self.workflow)
@@ -781,11 +911,35 @@ class WorkflowContractTests(unittest.TestCase):
             self.workflow,
         )
 
-    def test_workflow_has_only_read_permissions_plus_app_check_write(self) -> None:
+    def test_attacker_controlled_task_base_fails_before_checkout(self) -> None:
+        attacker_pr = {
+            "base": {
+                "ref": "task/ATTACKER-001",
+                "sha": "a" * 40,
+                "repo": {"full_name": "ajoe734/pantheon"},
+            }
+        }
+        self.assertNotIn(attacker_pr["base"]["ref"], {"dev", "master"})
+        guard = (
+            'if [[ "$base_ref" != "dev" && "$base_ref" != "master" ]]; then'
+        )
+        self.assertIn(guard, self.workflow)
+        self.assertLess(
+            self.workflow.index(guard),
+            self.workflow.index("uses: actions/checkout@v6"),
+        )
+        self.assertLess(
+            self.workflow.index(guard),
+            self.workflow.index(
+                '"repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100"'
+            ),
+        )
+
+    def test_workflow_has_read_only_repository_permissions(self) -> None:
         self.assertIn("contents: read", self.workflow)
         self.assertIn("pull-requests: read", self.workflow)
         self.assertIn("issues: read", self.workflow)
-        self.assertIn("checks: write", self.workflow)
+        self.assertNotIn("checks: write", self.workflow)
         self.assertNotIn("contents: write", self.workflow)
         self.assertNotIn("vars.PANTHEON_CANONICAL_REVIEW", self.workflow)
         self.assertIn(
@@ -793,12 +947,11 @@ class WorkflowContractTests(unittest.TestCase):
             self.workflow,
         )
 
-    def test_workflow_publishes_and_reads_back_actions_app_owned_check(self) -> None:
-        self.assertIn('"repos/$GITHUB_REPOSITORY/check-runs"', self.workflow)
-        self.assertIn("check-runs/$existing_id", self.workflow)
-        self.assertIn("--method PATCH", self.workflow)
-        self.assertIn('EXPECTED_ACTIONS_APP_ID: "15368"', self.workflow)
-        self.assertIn(".app.id == $app_id", self.workflow)
+    def test_workflow_never_publishes_merge_authoritative_check(self) -> None:
+        self.assertNotIn('"repos/$GITHUB_REPOSITORY/check-runs"', self.workflow)
+        self.assertNotIn("check-runs/$existing_id", self.workflow)
+        self.assertNotIn("EXPECTED_ACTIONS_APP_ID", self.workflow)
+        self.assertIn("diagnostic", self.workflow)
         self.assertIn(check.CHECK_NAME, self.workflow)
 
 

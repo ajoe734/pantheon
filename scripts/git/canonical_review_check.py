@@ -9,10 +9,12 @@ the protected command runtime and binds it to one exact repository, task, PR,
 base, head branch, and head commit.
 
 The GitHub workflow in ``.github/workflows/canonical-review-gate.yml`` checks
-the signed envelope from trusted base-branch code and publishes a check run on
-the exact PR head.  Branch protection must pin that check to the GitHub Actions
-app id; a user-owned PAT can create neither the signature nor an app-owned
-check run.
+the signed envelope from trusted base-branch code as read-only diagnostics.  It
+must not publish the merge-authoritative check: all repository workflows share
+the generic ``github-actions`` App identity and candidate code can imitate a
+same-name workflow job.  Branch protection instead pins the canonical check to
+a dedicated external GitHub App whose installation token is unavailable to
+repository Actions and shared owner credentials.
 
 This module deliberately has no network client.  Callers capture PR/comments
 JSON with ``gh api`` and pass files in, which keeps the verifier deterministic
@@ -61,7 +63,13 @@ DEFAULT_MAX_AGE_SECONDS = 24 * 60 * 60
 MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 CLOCK_SKEW_SECONDS = 120
 PUBLIC_KEYS_ENV = "PANTHEON_CANONICAL_REVIEW_PUBLIC_KEYS_JSON"
-DEFAULT_ACTIONS_APP_ID = 15368
+GITHUB_ACTIONS_APP_ID = 15368
+GITHUB_ACTIONS_APP_SLUG = "github-actions"
+ISSUER_MODE = "dedicated_external_github_app"
+ISSUER_CREDENTIAL_BOUNDARY = (
+    "installation token minted outside repository Actions and shared owner runtime"
+)
+PROTECTION_PLAN_SCHEMA = "pantheon.canonical-review-protection-plan/v2"
 
 
 class CanonicalReviewError(RuntimeError):
@@ -1164,14 +1172,220 @@ def summarize_protection(
     return summary
 
 
+@dataclass(frozen=True)
+class CheckIssuer:
+    app_id: int
+    app_slug: str
+    app_owner: str
+    canary_check_run_id: int
+    canary_head_sha: str
+    canary_details_url: str
+    canary_payload_sha256: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "mode": ISSUER_MODE,
+            "app_id": self.app_id,
+            "app_slug": self.app_slug,
+            "app_owner": self.app_owner,
+            "check_name": CHECK_NAME,
+            "canary_check_run_id": self.canary_check_run_id,
+            "canary_head_sha": self.canary_head_sha,
+            "canary_details_url": self.canary_details_url,
+            "canary_payload_sha256": self.canary_payload_sha256,
+            "github_actions_app_id_rejected": GITHUB_ACTIONS_APP_ID,
+            "credential_boundary": ISSUER_CREDENTIAL_BOUNDARY,
+        }
+
+
+def _validate_dedicated_issuer_identity(
+    *,
+    app_id: Any,
+    app_slug: Any,
+) -> tuple[int, str]:
+    if (
+        not isinstance(app_id, int)
+        or isinstance(app_id, bool)
+        or app_id <= 0
+    ):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer app id must be a positive integer",
+        )
+    slug = str(app_slug or "").strip()
+    if not slug:
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer app slug is required",
+        )
+    if app_id == GITHUB_ACTIONS_APP_ID or (
+        slug.casefold() == GITHUB_ACTIONS_APP_SLUG
+    ):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "the generic github-actions App cannot be the canonical issuer",
+        )
+    return app_id, slug
+
+
+def issuer_from_canary_check_run(
+    check_run: Mapping[str, Any],
+    *,
+    repository_owner: str,
+    context: str = CHECK_NAME,
+) -> CheckIssuer:
+    if str(check_run.get("name") or "") != context:
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            f"canary check name must be {context!r}",
+        )
+    if check_run.get("status") != "completed" or (
+        check_run.get("conclusion") != "success"
+    ):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer canary must be completed successfully",
+        )
+    raw_check_run_id = check_run.get("id")
+    if (
+        not isinstance(raw_check_run_id, int)
+        or isinstance(raw_check_run_id, bool)
+        or raw_check_run_id <= 0
+    ):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer canary check-run id must be a positive integer",
+        )
+    head_sha = str(check_run.get("head_sha") or "").strip()
+    if not OID_RE.fullmatch(head_sha):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer canary head_sha must be a full commit oid",
+        )
+    raw_app = check_run.get("app")
+    if not isinstance(raw_app, Mapping):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer canary is missing GitHub App metadata",
+        )
+    app_id, app_slug = _validate_dedicated_issuer_identity(
+        app_id=raw_app.get("id"),
+        app_slug=raw_app.get("slug"),
+    )
+    raw_app_owner = raw_app.get("owner")
+    if not isinstance(raw_app_owner, Mapping):
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer canary is missing GitHub App owner metadata",
+        )
+    app_owner = str(raw_app_owner.get("login") or "").strip()
+    if not app_owner:
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer GitHub App owner is required",
+        )
+    if app_owner.casefold() == repository_owner.casefold():
+        raise CanonicalReviewError(
+            "issuer_provenance_invalid",
+            "dedicated issuer GitHub App must not be owned by the shared "
+            "repository account",
+        )
+    return CheckIssuer(
+        app_id=app_id,
+        app_slug=app_slug,
+        app_owner=app_owner,
+        canary_check_run_id=raw_check_run_id,
+        canary_head_sha=head_sha,
+        canary_details_url=str(check_run.get("details_url") or "").strip(),
+        canary_payload_sha256=canonical_sha256(dict(check_run)),
+    )
+
+
+def _issuer_from_plan(plan: Mapping[str, Any]) -> CheckIssuer:
+    raw_issuer = plan.get("issuer")
+    if not isinstance(raw_issuer, Mapping):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "readback plan requires dedicated issuer provenance",
+        )
+    if raw_issuer.get("mode") != ISSUER_MODE:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            f"issuer mode must be {ISSUER_MODE}",
+        )
+    app_id, app_slug = _validate_dedicated_issuer_identity(
+        app_id=raw_issuer.get("app_id"),
+        app_slug=raw_issuer.get("app_slug"),
+    )
+    app_owner = str(raw_issuer.get("app_owner") or "").strip()
+    repository_slug = str(plan.get("repository") or "")
+    repository_owner = repository_slug.partition("/")[0]
+    if not app_owner or app_owner.casefold() == repository_owner.casefold():
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "issuer GitHub App owner must be external to the shared "
+            "repository account",
+        )
+    if raw_issuer.get("check_name") != CHECK_NAME:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            f"issuer check name must be {CHECK_NAME!r}",
+        )
+    raw_check_run_id = raw_issuer.get("canary_check_run_id")
+    if (
+        not isinstance(raw_check_run_id, int)
+        or isinstance(raw_check_run_id, bool)
+        or raw_check_run_id <= 0
+    ):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "issuer canary check-run id must be a positive integer",
+        )
+    head_sha = str(raw_issuer.get("canary_head_sha") or "").strip()
+    if not OID_RE.fullmatch(head_sha):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "issuer canary head_sha must be a full commit oid",
+        )
+    payload_sha256 = str(
+        raw_issuer.get("canary_payload_sha256") or ""
+    ).strip()
+    if not SHA256_RE.fullmatch(payload_sha256):
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "issuer canary payload digest must be sha256",
+        )
+    if raw_issuer.get("github_actions_app_id_rejected") != GITHUB_ACTIONS_APP_ID:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "issuer plan must explicitly reject the github-actions App id",
+        )
+    if raw_issuer.get("credential_boundary") != ISSUER_CREDENTIAL_BOUNDARY:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            "issuer plan must retain the external credential boundary",
+        )
+    return CheckIssuer(
+        app_id=app_id,
+        app_slug=app_slug,
+        app_owner=app_owner,
+        canary_check_run_id=raw_check_run_id,
+        canary_head_sha=head_sha,
+        canary_details_url=str(
+            raw_issuer.get("canary_details_url") or ""
+        ).strip(),
+        canary_payload_sha256=payload_sha256,
+    )
+
+
 def build_protection_plan(
     *,
     repository_slug: str,
     branch: str,
     protection: Mapping[str, Any],
     repository: Mapping[str, Any],
+    issuer_check_run: Mapping[str, Any],
     context: str = CHECK_NAME,
-    app_id: int = DEFAULT_ACTIONS_APP_ID,
 ) -> dict[str, Any]:
     if not REPOSITORY_RE.fullmatch(repository_slug):
         raise CanonicalReviewError(
@@ -1183,12 +1397,22 @@ def build_protection_plan(
             "protection_plan_invalid",
             "branch is required",
         )
+    if context != CHECK_NAME:
+        raise CanonicalReviewError(
+            "protection_plan_invalid",
+            f"canonical required check name must remain {CHECK_NAME!r}",
+        )
+    issuer = issuer_from_canary_check_run(
+        issuer_check_run,
+        repository_owner=repository_slug.partition("/")[0],
+        context=context,
+    )
     baseline = summarize_protection(protection, repository=repository)
     original_checks = list(baseline["required_status_checks"])
     activated_checks = [
         item for item in original_checks if item.get("context") != context
     ]
-    activated_checks.append({"context": context, "app_id": app_id})
+    activated_checks.append({"context": context, "app_id": issuer.app_id})
     strict = bool(baseline["strict_required_status_checks"])
     branch_api = (
         f"repos/{repository_slug}/branches/{quote(branch, safe='')}/protection"
@@ -1233,14 +1457,15 @@ def build_protection_plan(
         },
     ]
     return {
-        "schema": "pantheon.canonical-review-protection-plan/v1",
+        "schema": PROTECTION_PLAN_SCHEMA,
         "repository": repository_slug,
         "branch": branch,
+        "issuer": issuer.as_dict(),
         "baseline": baseline,
         "activation": activation,
         "expected_active": {
             "context": context,
-            "app_id": app_id,
+            "app_id": issuer.app_id,
             "enforce_admins": True,
             "allow_auto_merge": False,
             "strict_required_status_checks": strict,
@@ -1293,15 +1518,15 @@ def _plan_check_pairs(
 
 def _expected_readback_from_plan(
     plan: Mapping[str, Any],
-    *,
-    context: str,
-    app_id: int,
-) -> tuple[bool, list[tuple[str, int | None]]]:
-    if plan.get("schema") != "pantheon.canonical-review-protection-plan/v1":
+) -> tuple[bool, list[tuple[str, int | None]], CheckIssuer]:
+    if plan.get("schema") != PROTECTION_PLAN_SCHEMA:
         raise CanonicalReviewError(
             "protection_plan_invalid",
             "readback plan has an unsupported schema",
         )
+    issuer = _issuer_from_plan(plan)
+    context = CHECK_NAME
+    app_id = issuer.app_id
     baseline = plan.get("baseline")
     expected_active = plan.get("expected_active")
     activation = plan.get("activation")
@@ -1400,7 +1625,7 @@ def _expected_readback_from_plan(
                 "protection_plan_invalid",
                 f"activation[{index}] endpoint must end with {endpoint_suffix}",
             )
-    return strict, expected_pairs
+    return strict, expected_pairs, issuer
 
 
 def verify_active_protection(
@@ -1408,14 +1633,10 @@ def verify_active_protection(
     protection: Mapping[str, Any],
     repository: Mapping[str, Any],
     plan: Mapping[str, Any],
-    context: str = CHECK_NAME,
-    app_id: int = DEFAULT_ACTIONS_APP_ID,
 ) -> dict[str, Any]:
-    expected_strict, expected_pairs = _expected_readback_from_plan(
-        plan,
-        context=context,
-        app_id=app_id,
-    )
+    expected_strict, expected_pairs, issuer = _expected_readback_from_plan(plan)
+    context = CHECK_NAME
+    app_id = issuer.app_id
     summary = summarize_protection(protection, repository=repository)
     actual_pairs = _plan_check_pairs(
         summary["required_status_checks"],
@@ -1456,22 +1677,22 @@ def verify_active_protection(
     entrypoints = [
         {
             "entrypoint": "web_ui_direct_merge",
-            "control": "actions_app_pinned_required_check",
+            "control": "dedicated_external_app_pinned_required_check",
             "blocked_without_exact_approval": active,
         },
         {
             "entrypoint": "gh_pr_merge",
-            "control": "actions_app_pinned_required_check",
+            "control": "dedicated_external_app_pinned_required_check",
             "blocked_without_exact_approval": active,
         },
         {
             "entrypoint": "rest_pull_merge",
-            "control": "actions_app_pinned_required_check",
+            "control": "dedicated_external_app_pinned_required_check",
             "blocked_without_exact_approval": active,
         },
         {
             "entrypoint": "graphql_merge_pull_request",
-            "control": "actions_app_pinned_required_check",
+            "control": "dedicated_external_app_pinned_required_check",
             "blocked_without_exact_approval": active,
         },
         {
@@ -1481,7 +1702,7 @@ def verify_active_protection(
         },
         {
             "entrypoint": "auto_merge_finalization",
-            "control": "actions_app_pinned_required_check",
+            "control": "dedicated_external_app_pinned_required_check",
             "blocked_without_exact_approval": active,
         },
         {
@@ -1494,6 +1715,7 @@ def verify_active_protection(
         "ok": active,
         "context": context,
         "app_id": app_id,
+        "issuer": issuer.as_dict(),
         "plan": {
             "schema": plan["schema"],
             "repository": plan.get("repository"),
@@ -1570,16 +1792,13 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--branch", required=True)
     plan.add_argument("--protection-json", type=Path, required=True)
     plan.add_argument("--repository-json", type=Path, required=True)
-    plan.add_argument("--context", default=CHECK_NAME)
-    plan.add_argument("--app-id", type=int, default=DEFAULT_ACTIONS_APP_ID)
+    plan.add_argument("--issuer-check-run-json", type=Path, required=True)
     plan.add_argument("--output", type=Path)
 
     verify = subparsers.add_parser("verify-protection")
     verify.add_argument("--protection-json", type=Path, required=True)
     verify.add_argument("--repository-json", type=Path, required=True)
     verify.add_argument("--plan-json", type=Path, required=True)
-    verify.add_argument("--context", default=CHECK_NAME)
-    verify.add_argument("--app-id", type=int, default=DEFAULT_ACTIONS_APP_ID)
     verify.add_argument("--output", type=Path)
     return parser
 
@@ -1671,12 +1890,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "protection-plan":
             protection = _load_json_file(args.protection_json)
             repository = _load_json_file(args.repository_json)
+            issuer_check_run = _load_json_file(args.issuer_check_run_json)
             if not isinstance(protection, Mapping) or not isinstance(
                 repository, Mapping
+            ) or not isinstance(
+                issuer_check_run, Mapping
             ):
                 raise CanonicalReviewError(
                     "input_malformed",
-                    "protection and repository JSON must be objects",
+                    "protection, repository, and issuer check-run JSON "
+                    "must be objects",
                 )
             _write_json(
                 args.output,
@@ -1685,8 +1908,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     branch=args.branch,
                     protection=protection,
                     repository=repository,
-                    context=args.context,
-                    app_id=args.app_id,
+                    issuer_check_run=issuer_check_run,
                 ),
             )
             return 0
@@ -1707,8 +1929,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 protection=protection,
                 repository=repository,
                 plan=plan,
-                context=args.context,
-                app_id=args.app_id,
             )
             _write_json(args.output, result)
             return 0 if result["ok"] else 1

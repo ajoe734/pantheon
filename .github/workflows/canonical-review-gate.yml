@@ -1,8 +1,14 @@
-name: Canonical Review Gate
+name: Canonical Review Audit
 
-# This workflow always executes trusted code from the PR base branch.  It does
-# not run or checkout candidate code before resolving the base ref, so a task
-# PR cannot weaken the verifier it is being measured by.
+# This repository workflow is diagnostic only. It has no check-write
+# permission and must never be configured as the canonical required check:
+# every repository workflow runs as the generic github-actions App and can be
+# imitated by candidate code. The merge-authoritative check is issued by a
+# dedicated external GitHub App whose installation token is unavailable to
+# repository Actions and shared owner credentials.
+#
+# Before any checkout, every event path accepts only dev/master and captures
+# the immutable base SHA. Candidate code is never checked out or executed.
 on:
   pull_request_target:
     types:
@@ -30,7 +36,6 @@ permissions:
   contents: read
   pull-requests: read
   issues: read
-  checks: write
 
 jobs:
   discover:
@@ -75,7 +80,7 @@ jobs:
           echo "pr_numbers=$pr_numbers" >> "$GITHUB_OUTPUT"
 
   evaluate:
-    name: Evaluate signed canonical review
+    name: Audit signed canonical review (not required issuer)
     needs:
       - discover
     if: needs.discover.outputs.pr_numbers != '[]'
@@ -89,11 +94,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      EXPECTED_ACTIONS_APP_ID: "15368"
       PR_NUMBER: ${{ matrix.pr_number }}
 
     steps:
-      - name: Capture exact PR head and review comments
+      - name: Capture and validate exact PR base and head
         id: snapshot
         shell: bash
         run: |
@@ -105,18 +109,29 @@ jobs:
           pr_json="$RUNNER_TEMP/canonical-review-pr.json"
           comments_json="$RUNNER_TEMP/canonical-review-comments.json"
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pr_json"
+          base_ref="$(jq -r '.base.ref // empty' "$pr_json")"
+          base_sha="$(jq -r '.base.sha // empty' "$pr_json")"
+          base_repository="$(jq -r '.base.repo.full_name // empty' "$pr_json")"
+          head_sha="$(jq -r '.head.sha // empty' "$pr_json")"
+          if [[ "$base_ref" != "dev" && "$base_ref" != "master" ]]; then
+            echo "Untrusted PR base '$base_ref'; only dev or master is allowed" >&2
+            exit 1
+          fi
+          if [[ "$base_repository" != "$GITHUB_REPOSITORY" ]]; then
+            echo "PR base repository does not match $GITHUB_REPOSITORY" >&2
+            exit 1
+          fi
+          if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GitHub did not return an exact PR base/head identity" >&2
+            exit 1
+          fi
           gh api --paginate \
             "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
             --jq '.[]' \
             > "$comments_json"
-          base_ref="$(jq -r '.base.ref // empty' "$pr_json")"
-          head_sha="$(jq -r '.head.sha // empty' "$pr_json")"
-          if [[ -z "$base_ref" || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "GitHub did not return an exact PR base/head identity" >&2
-            exit 1
-          fi
           {
             echo "base_ref=$base_ref"
+            echo "base_sha=$base_sha"
             echo "head_sha=$head_sha"
             echo "pr_json=$pr_json"
             echo "comments_json=$comments_json"
@@ -125,11 +140,11 @@ jobs:
       - name: Checkout trusted base-branch verifier
         uses: actions/checkout@v6
         with:
-          ref: refs/heads/${{ steps.snapshot.outputs.base_ref }}
+          ref: ${{ steps.snapshot.outputs.base_sha }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Evaluate exact-head signed attestation
+      - name: Evaluate exact-head signed attestation for diagnostics
         id: evaluate
         shell: bash
         run: |
@@ -145,16 +160,7 @@ jobs:
           if [[ "$checker_rc" -ne 0 && "$checker_rc" -ne 1 ]]; then
             checker_rc=1
           fi
-          echo "checker_rc=$checker_rc" >> "$GITHUB_OUTPUT"
-
-      - name: Publish app-owned exact-head check run
-        shell: bash
-        run: |
-          set -euo pipefail
           result_json="$RUNNER_TEMP/canonical-review-result.json"
-          check_json="$RUNNER_TEMP/canonical-review-check-run.json"
-          update_json="$RUNNER_TEMP/canonical-review-check-update.json"
-          response_json="$RUNNER_TEMP/canonical-review-check-response.json"
           if [[ ! -s "$result_json" ]]; then
             jq -n \
               --arg check_name "Pantheon canonical reviewer attestation" \
@@ -166,62 +172,6 @@ jobs:
                 summary: "The trusted verifier produced no result."
               }' > "$result_json"
           fi
-          conclusion="$(jq -r '.conclusion // "failure"' "$result_json")"
-          if [[ "$conclusion" != "success" && "$conclusion" != "failure" ]]; then
-            conclusion="failure"
-          fi
-          jq -n \
-            --arg name "Pantheon canonical reviewer attestation" \
-            --arg head_sha "${{ steps.snapshot.outputs.head_sha }}" \
-            --arg conclusion "$conclusion" \
-            --arg details_url \
-              "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg title "$(jq -r '.title // "Canonical review blocked"' "$result_json")" \
-            --arg summary "$(jq -r '.summary // "Verifier failed closed."' "$result_json")" \
-            '{
-              name: $name,
-              head_sha: $head_sha,
-              status: "completed",
-              conclusion: $conclusion,
-              details_url: $details_url,
-              output: {
-                title: $title,
-                summary: $summary
-              }
-            }' > "$check_json"
-          existing_id="$(
-            gh api \
-              "repos/$GITHUB_REPOSITORY/commits/${{ steps.snapshot.outputs.head_sha }}/check-runs?filter=latest&per_page=100" \
-              --jq \
-              ".check_runs
-               | map(select(
-                   .name == \"Pantheon canonical reviewer attestation\" and
-                   .app.id == ($EXPECTED_ACTIONS_APP_ID | tonumber)
-                 ))
-               | sort_by(.id)
-               | last
-               | .id // empty"
-          )"
-          if [[ "$existing_id" =~ ^[1-9][0-9]*$ ]]; then
-            jq 'del(.head_sha)' "$check_json" > "$update_json"
-            if ! gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/check-runs/$existing_id" \
-              --input "$update_json" > "$response_json"; then
-              gh api --method POST \
-                "repos/$GITHUB_REPOSITORY/check-runs" \
-                --input "$check_json" > "$response_json"
-            fi
-          else
-            gh api --method POST \
-              "repos/$GITHUB_REPOSITORY/check-runs" \
-              --input "$check_json" > "$response_json"
-          fi
-          jq -e \
-            --arg name "Pantheon canonical reviewer attestation" \
-            --arg head_sha "${{ steps.snapshot.outputs.head_sha }}" \
-            --argjson app_id "$EXPECTED_ACTIONS_APP_ID" \
-            '.name == $name and .head_sha == $head_sha and .app.id == $app_id' \
-            "$response_json" > /dev/null
-          jq -r '"\(.conclusion): \(.output.title) — \(.output.summary)"' \
-            "$response_json" >> "$GITHUB_STEP_SUMMARY"
-          exit "${{ steps.evaluate.outputs.checker_rc }}"
+          jq -r '"diagnostic \(.conclusion): \(.title) — \(.summary)"' \
+            "$result_json" >> "$GITHUB_STEP_SUMMARY"
+          exit "$checker_rc"
