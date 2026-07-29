@@ -113,7 +113,7 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [],
         "environment_any_of": [
           "TRAINING_SESSION_JWT_SECRET",
@@ -126,8 +126,7 @@
         "environment_equals": {
           "TRAINING_SESSION_AUTH_MODE": "strict"
         },
-        "rationale": "authority_configuration_health reports jwt_verifier_missing for strict mode without a service-specific or runtime verifier.",
-        "gap_reason": "Bare Compose renders neither TRAINING_SESSION_AUTH_MODE nor any accepted JWT/JWKS/OIDC verifier input."
+        "rationale": "TRAINING_SESSION_AUTH_MODE=strict and TRAINING_SESSION_JWT_SECRET now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -149,15 +148,14 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "TRAINING_SESSION_WORKER_TOKEN",
           "TRAINING_SESSION_TENANT_ID"
         ],
         "environment_any_of": [],
         "environment_equals": {},
-        "rationale": "_authority_headers refuses to issue a request without both worker token and tenant.",
-        "gap_reason": "Compose injects neither TRAINING_SESSION_WORKER_TOKEN nor TRAINING_SESSION_TENANT_ID."
+        "rationale": "TRAINING_SESSION_WORKER_TOKEN and TRAINING_SESSION_TENANT_ID now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -234,7 +232,7 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "CONSULTATION_SERVICE_TOKEN"
         ],
@@ -242,8 +240,7 @@
         "environment_equals": {
           "CONSULTATION_AUTH_REQUIRED": "true"
         },
-        "rationale": "When CONSULTATION_AUTH_REQUIRED is true the API requires a service/operator bearer token and explicit tenant.",
-        "gap_reason": "Bare Compose renders neither CONSULTATION_AUTH_REQUIRED=true nor a service token, leaving the service in legacy unauthenticated mode."
+        "rationale": "CONSULTATION_AUTH_REQUIRED=true and CONSULTATION_SERVICE_TOKEN now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -292,15 +289,14 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "PANTHEON_DEPLOYMENT_SERVICE_TOKEN",
           "PANTHEON_DEPLOYMENT_TENANT_ID"
         ],
         "environment_any_of": [],
         "environment_equals": {},
-        "rationale": "_deployment_headers raises before a request when either value is absent.",
-        "gap_reason": "Compose injects PANTHEON_RUNTIME_MANAGER_TOKEN but omits both deployment service auth variables."
+        "rationale": "PANTHEON_DEPLOYMENT_SERVICE_TOKEN and PANTHEON_DEPLOYMENT_TENANT_ID now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "delegated",
@@ -381,7 +377,7 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [],
         "environment_any_of": [
           "CAPITAL_JWT_SECRET",
@@ -394,8 +390,7 @@
         "environment_equals": {
           "CAPITAL_AUTH_MODE": "strict"
         },
-        "rationale": "authority_configuration_health reports unconfigured when strict mode has no JWT/JWKS/OIDC verifier.",
-        "gap_reason": "Bare Compose renders neither CAPITAL_AUTH_MODE nor any accepted capital/runtime verifier input; S3 keys are storage credentials and do not satisfy API auth."
+        "rationale": "CAPITAL_AUTH_MODE=strict and CAPITAL_JWT_SECRET now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -470,7 +465,7 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "RECONCILIATION_DRIFT_AUTH_TOKEN"
         ],
@@ -478,8 +473,7 @@
         "environment_equals": {
           "RECONCILIATION_DRIFT_AUTH_MODE": "token"
         },
-        "rationale": "Hosted/internal token mode requires a configured bearer token and X-Tenant-Id.",
-        "gap_reason": "Bare Compose renders neither RECONCILIATION_DRIFT_AUTH_MODE=token nor RECONCILIATION_DRIFT_AUTH_TOKEN."
+        "rationale": "RECONCILIATION_DRIFT_AUTH_MODE=token and RECONCILIATION_DRIFT_AUTH_TOKEN now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -500,14 +494,13 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "RECONCILIATION_DRIFT_AUTH_TOKEN"
         ],
         "environment_any_of": [],
         "environment_equals": {},
-        "rationale": "The worker adds Authorization only when the token is configured.",
-        "gap_reason": "Compose does not inject RECONCILIATION_DRIFT_AUTH_TOKEN into the consumer."
+        "rationale": "RECONCILIATION_DRIFT_AUTH_TOKEN now renders in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -528,14 +521,13 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "RECONCILIATION_DRIFT_AUTH_TOKEN"
         ],
         "environment_any_of": [],
         "environment_equals": {},
-        "rationale": "The request builder emits Authorization only when RECONCILIATION_DRIFT_AUTH_TOKEN is set.",
-        "gap_reason": "Compose does not inject RECONCILIATION_DRIFT_AUTH_TOKEN into the scheduler."
+        "rationale": "RECONCILIATION_DRIFT_AUTH_TOKEN now renders in bare Compose."
       },
       "durable_volume": {
         "applicability": "delegated",
@@ -555,14 +547,13 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [
           "RECONCILIATION_DRIFT_AUTH_TOKEN"
         ],
         "environment_any_of": [],
         "environment_equals": {},
-        "rationale": "The listener adds Authorization only when the reconciliation token is configured.",
-        "gap_reason": "Compose does not inject RECONCILIATION_DRIFT_AUTH_TOKEN into the incident listener."
+        "rationale": "RECONCILIATION_DRIFT_AUTH_TOKEN now renders in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -697,7 +688,7 @@
       ],
       "auth": {
         "applicability": "manifest_required",
-        "status": "gap",
+        "status": "pass",
         "environment_all_of": [],
         "environment_any_of": [
           "PANTHEON_BFF_JWT_SECRET",
@@ -708,8 +699,7 @@
           "PANTHEON_BFF_AUTH_MODE": "strict",
           "PANTHEON_BFF_AUTH_STUB": "false"
         },
-        "rationale": "Strict mode disables the dev stub and requires a JWT, JWKS, or OIDC verifier.",
-        "gap_reason": "Bare Compose renders strict/stub-false but all accepted verifier inputs are empty; hosted env injection may repair runtime, but the default readback cannot claim it."
+        "rationale": "PANTHEON_BFF_AUTH_MODE=strict, PANTHEON_BFF_AUTH_STUB=false, and PANTHEON_BFF_JWT_SECRET now render in bare Compose."
       },
       "durable_volume": {
         "applicability": "manifest_required",
@@ -777,7 +767,7 @@
     {
       "service": "search-index-scheduler",
       "loop_id": "bff_health_monitoring",
-      "rationale": "The poller is stateless and calls the current unauthenticated internal search API, which owns index jobs and materialized results.",
+      "rationale": "The poller calls the current unauthenticated internal search API and writes/reads its scheduler alive marker on the shared search-data volume rendered by Compose.",
       "evidence_refs": [
         "docker-compose.yml",
         "services/search/scheduler_worker.py"
@@ -791,11 +781,12 @@
         "rationale": "The source exposes no token input and the target search contract has no client-auth mode in this manifest slice."
       },
       "durable_volume": {
-        "applicability": "delegated",
+        "applicability": "manifest_required",
         "status": "pass",
-        "expected_targets": [],
-        "state_owner": "search-svc",
-        "rationale": "Index scheduling, pipeline retention, materialization, and evidence are service-owned; the scheduler retains no local checkpoint."
+        "expected_targets": [
+          "/data/search"
+        ],
+        "rationale": "The scheduler health surface and index scheduler state share the search-data named volume at /data/search."
       }
     }
   ]
