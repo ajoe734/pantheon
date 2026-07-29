@@ -65,6 +65,15 @@ The four skips are existing optional real-Postgres / LEAN availability gates.
 container-local positive health probes passed; the paper image completed one
 real zero-binding tick before its probe was evaluated.
 
+After the reviewed head was refreshed with `dev` commit
+`97d9ecd85826296d56d323ad6d8298c05c07ce08`, owner closeout reran the combined
+suite on refresh commit `5ba43460682dd807dc6562224618ffa696e1a003`: 57 passed,
+4 skipped, and 1 warning in 29.63 seconds. `py_compile`, the exact rendered
+Compose healthcheck argv assertions, literal `false` live/canary assertions,
+and `git diff --check` also passed. The refresh added only the already-landed
+restart-proof evidence from `dev`; it did not change this task's implementation
+or evidence paths.
+
 ## Baseline-only failure kept out of the claim
 
 `services/execution/lean_runtime/test_devloop_wire.py` is not counted as task
