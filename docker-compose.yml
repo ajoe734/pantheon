@@ -95,6 +95,7 @@ services:
       retries: 5
 
   consultation-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/consultation/Dockerfile
@@ -130,6 +131,7 @@ services:
       start_period: 5s
 
   source-ingest:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -268,6 +270,7 @@ services:
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.distillation_controller"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
       # The source-ingest scheduler deliberately sets its shared max-ticks
@@ -277,6 +280,7 @@ services:
       SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${STRATEGY_DISTILLATION_CONTROLLER_MAX_TICKS:-0}
       DISTILLATION_CONTROLLER_STATE_PATH: /data/source-ingest/distill_controller_state.json
       DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
+      DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS: ${DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS:-300}
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
@@ -294,6 +298,19 @@ services:
         condition: service_healthy
       registry:
         condition: service_healthy
+    # The controller rewrites its alive file in the `finally` of every
+    # reconcile tick, so file freshness is a true liveness heartbeat and does
+    # not flip unhealthy on a single upstream business failure.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=sys.argv[1];sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=float(sys.argv[2]) else 1)' /data/source-ingest/distill_controller_alive ${DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS:-300}",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
 
   alpha-replication-worker:
     build:
@@ -301,6 +318,7 @@ services:
       dockerfile: services/research/Dockerfile
     command: ["python", "-m", "services.research.alpha_replication.replication_controller"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS: ${ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS:-60}
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
@@ -325,6 +343,7 @@ services:
         condition: service_healthy
 
   search-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/search/Dockerfile
@@ -374,11 +393,15 @@ services:
       start_period: 5s
 
   search-index-scheduler:
-    profiles: ["search-index-scheduler"]
+    # Default-on: this scheduler only talks to the in-stack search service, so
+    # the runtime manifest — not an operator-selected profile — is the single
+    # source of truth for whether the required loop worker is running.
     build:
       context: .
       dockerfile: services/search/Dockerfile
     command: ["python", "-m", "services.search.scheduler_worker"]
+    restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       SEARCH_API_URL: http://search-svc:8098
       SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
@@ -390,6 +413,7 @@ services:
         condition: service_healthy
 
   training-session-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -449,6 +473,7 @@ services:
       dockerfile: services/training-session/Dockerfile
     command: ["python", "services/training-session/preview_eval_worker.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       TRAINING_SESSION_API_URL: http://training-session-svc:8099
       TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
@@ -473,6 +498,7 @@ services:
       start_period: 60s
 
   policy-learning-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
@@ -525,11 +551,17 @@ services:
       start_period: 5s
 
   policy-learning-shadow-eval-scheduler:
-    profiles: ["policy-learning-shadow-eval-scheduler"]
+    # Default-on. This is the human-imitation shadow-evaluation loop worker;
+    # leaving it behind an opt-in profile meant the loop never ticked on a
+    # normal deploy. It performs no external egress: it authenticates to the
+    # in-stack policy-learning API with the same service token and tenant
+    # scope as that API authorizes.
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
     command: ["python", "services/policy-learning/scheduler_worker.py"]
+    restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
@@ -755,6 +787,7 @@ services:
       start_period: 5s
 
   broker:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/broker/Dockerfile
@@ -781,6 +814,7 @@ services:
       start_period: 5s
 
   runtime-manager:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/runtime-manager/Dockerfile
@@ -991,6 +1025,7 @@ services:
       start_period: 5s
 
   operator-bff:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
@@ -1278,6 +1313,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
@@ -1552,6 +1588,7 @@ services:
       start_period: 5s
 
   capital:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/capital/Dockerfile
@@ -1585,6 +1622,7 @@ services:
       start_period: 5s
 
   deployment:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -1622,12 +1660,16 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.deployment.outbox_consumer_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       DEPLOYMENT_API_URL: http://deployment:8095
       DEPLOYMENT_OUTBOX_CONSUMER_NAME: ${DEPLOYMENT_OUTBOX_CONSUMER_NAME:-deployment-outbox-consumer}
       DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS:-10}
       DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS: ${DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS:-0}
-      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-}
+      # Default the heartbeat on. The consumer rewrites this file on every
+      # tick (success or failure), which is what the healthcheck below reads.
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/tmp/deployment-outbox-consumer-health.json}
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}
       # Empty for the default global consumer; task-scoped one-shot recovery can
       # isolate a single saga without racing unrelated pending aggregates.
       DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID: ${DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID:-}
@@ -1644,6 +1686,16 @@ services:
         condition: service_healthy
       runtime-manager:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=sys.argv[1];sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=float(sys.argv[2]) else 1)' ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/tmp/deployment-outbox-consumer-health.json} ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
 
   evolution:
     build:
@@ -1798,6 +1850,7 @@ services:
       start_period: 5s
 
   paper-fleet-reconciler:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/execution/runtime-manager/Dockerfile
@@ -1844,6 +1897,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
+    stop_grace_period: 30s
     command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
     environment:
       SIGNAL_STORE_URL: redis://signal-store:6379
@@ -1859,6 +1913,7 @@ services:
         condition: service_healthy
 
   reconciliation-drift-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1912,6 +1967,7 @@ services:
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/consumer.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
@@ -1935,6 +1991,7 @@ services:
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/scheduler_worker.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS:-300}
@@ -1951,6 +2008,7 @@ services:
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/incident_listener.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
