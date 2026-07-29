@@ -1,0 +1,49 @@
+{
+  "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+  "task_title": "L12 manifest alpha/source health heartbeat workstream",
+  "status": "review",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "generated_at": "2026-07-29T03:06:55Z",
+  "artifacts": [
+    "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-ALPHA-SRC-20260729/analysis.md",
+    "docker-compose.yml",
+    "services/search/scheduler_worker.py",
+    "services/search/test_index_scheduler_worker.py",
+    "services/search/tests/test_service_activation_contract.py"
+  ],
+  "dispositions": {
+    "alpha-replication-worker": {
+      "option": "Option 1 (State Path mtime Healthcheck)",
+      "state_path_env": "ALPHA_REPLICATION_CONTROLLER_STATE_PATH",
+      "default_state_path": "/data/research-orchestrator/alpha-replication/controller_state.json",
+      "interval_env": "ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS",
+      "default_interval_seconds": 60,
+      "window_expression": "max(2 * interval, interval + 180)",
+      "default_window_seconds": 240,
+      "residual_risk": "State path liveness check relies on atomic state file mtime updates during controller ticks; if filesystem mounts fail or state file write is blocked by disk exhaustion, container healthcheck will fail after 240s, marking the container unhealthy (no automatic Compose restart without an external watcher)."
+    },
+    "search-index-scheduler": {
+      "option": "Option 2 (Heartbeat File via Code Touch + Compose Healthcheck)",
+      "alive_path_env": "SEARCH_INDEX_SCHEDULER_ALIVE_PATH",
+      "default_alive_path": "/data/search/search_scheduler_alive",
+      "interval_env": "SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS",
+      "default_interval_seconds": 300,
+      "window_expression": "max(2 * interval, interval + 300)",
+      "default_window_seconds": 600,
+      "residual_risk": "If search-svc stalls silently without raising an exception during HTTP calls, search-index-scheduler will delay updating SEARCH_INDEX_SCHEDULER_ALIVE_PATH. The container healthcheck will transition to unhealthy after 600s, but because Docker restart: unless-stopped acts on process exit only (and no autoheal sidecar is enabled), the container will remain unhealthy without automatic restart unless an external watcher intervenes."
+    }
+  },
+  "verification": {
+    "python_provisioning": "python3 scripts/dev/provision_python_distribution.py",
+    "unit_tests": [
+      "$PANTHEON_PY -m pytest -q services/search/test_index_scheduler_worker.py services/search/tests/test_service_activation_contract.py services/research/alpha_replication/test_replication_controller.py",
+      "$PANTHEON_PY -m pytest -q services/research/alpha_replication/"
+    ],
+    "unit_test_results": {
+      "target_tests": "11 passed",
+      "alpha_replication_suite": "27 passed"
+    }
+  },
+  "updated_at_utc": "2026-07-29T03:32:30Z"
+}

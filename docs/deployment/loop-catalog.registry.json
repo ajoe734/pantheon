@@ -90,7 +90,7 @@
         "domain": "source_ingestion",
         "service_or_doc": "services/source_ingestion",
         "authoritative_write_owner": "source-ingest connector and schedule stores",
-        "current_controller_owner": null
+        "current_controller_owner": "source-ingestion-controller"
       },
       "trigger_model": {
         "primary": "cron/scheduled",
@@ -128,14 +128,14 @@
         "rationale": "Connector registry and schedule APIs exist, but persona requirements do not auto-register connectors or guarantee scheduler workers."
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "source-ingestion-controller",
+        "desired_state_query": "persona/data requirement snapshot",
+        "actual_state_query": "/api/source-ingest/controller/readback",
         "idempotency_key": "planned: persona_id + dataset_id + connector_id + schedule_cadence",
         "duplicate_event_policy": "planned: duplicate ticks must verify existing connector and schedule records without creating duplicates",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from SOURCE_INGEST_CONTROLLER_STATE_PATH, refresh runtime identity with a new generation id, and refuse persisted state whose tenant or environment does not match this runtime.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-SRC-004 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -214,7 +214,7 @@
         "domain": "research_control_plane",
         "service_or_doc": "services/research",
         "authoritative_write_owner": "strategy draft head writer",
-        "current_controller_owner": null
+        "current_controller_owner": "strategy-distillation-controller"
       },
       "trigger_model": {
         "primary": "event-driven",
@@ -251,14 +251,14 @@
         "rationale": "Normalized source and strategy objects exist, but no durable event consumer owns source-to-draft updates."
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "strategy-distillation-controller",
+        "desired_state_query": "normalized SourceRecords from the source evidence repository",
+        "actual_state_query": "distillation job queue metrics plus Registry terminal readback",
         "idempotency_key": "planned: source_record_id + strategy_family + draft_head_version",
         "duplicate_event_policy": "planned: duplicate source events must converge on one draft update or no-op",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from DISTILLATION_CONTROLLER_STATE_PATH and re-issue a fresh controller id; unacknowledged queue jobs are re-claimed after their lease expires.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-001 plus LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -318,7 +318,7 @@
         "domain": "research_control_plane",
         "service_or_doc": "services/research/experiments",
         "authoritative_write_owner": "research task and experiment run stores",
-        "current_controller_owner": null
+        "current_controller_owner": "alpha-replication-controller"
       },
       "trigger_model": {
         "primary": "review-driven",
@@ -358,14 +358,14 @@
         "rationale": "Research task and artifact APIs exist, but durable replication queue ownership and revalidation are incomplete."
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "alpha-replication-controller",
+        "desired_state_query": "approved StrategySpec registry entries discovered from the distillation seed store",
+        "actual_state_query": "alpha replication queue and revalidation worker metrics",
         "idempotency_key": "planned: strategy_spec_id + review_decision_id + replication_profile",
         "duplicate_event_policy": "planned: duplicate review events must not enqueue duplicate replication work",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from ALPHA_REPLICATION_CONTROLLER_STATE_PATH; a missing state file starts a new controller identity and the durable replication queue is re-processed idempotently.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-002 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {

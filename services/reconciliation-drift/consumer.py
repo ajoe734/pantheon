@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import urllib.error
@@ -16,6 +17,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from services.background_worker_health import (
+    healthcheck as check_worker_health,
+    write_health,
+)
 from services.trade_journey.correlation_envelope import propagate_envelope
 
 
@@ -33,6 +38,7 @@ SUMMARY_NUMERIC_FIELDS = (
     "event_delivery_lag_ms",
 )
 CONSUMER_STATE_VERSION = 2
+_WORKER_NAME = "reconciliation-drift-consumer"
 
 
 class ConsumerStateError(RuntimeError):
@@ -1071,6 +1077,43 @@ def run_consumer_once(*, service_url: str, input_paths: Iterable[str]) -> dict[s
     return post_events(service_url, events)
 
 
+def healthcheck() -> int:
+    try:
+        interval_seconds = float(
+            os.getenv("RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS", "60")
+        )
+        max_age_seconds = float(
+            os.getenv(
+                "RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS",
+                "300",
+            )
+        )
+    except ValueError:
+        return 1
+    return check_worker_health(
+        health_file=os.getenv(
+            "RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE",
+            "",
+        ),
+        interval_seconds=interval_seconds,
+        max_age_seconds=max_age_seconds,
+        worker_name=_WORKER_NAME,
+    )
+
+
+def _health_failure_reason(result: dict[str, Any]) -> str | None:
+    source_error = result.get("source_error")
+    if source_error:
+        return str(source_error)
+    errors = result.get("errors") or result.get("delivery_errors")
+    if isinstance(errors, list) and errors:
+        first = errors[0]
+        if isinstance(first, dict):
+            return str(first.get("detail") or first)
+        return str(first)
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Consume authoritative runtime telemetry into reconciliation-drift.")
     parser.add_argument(
@@ -1101,6 +1144,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    health_file = os.getenv("RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE", "")
+    health: dict[str, Any] = {
+        "worker_name": _WORKER_NAME,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "controller_status": "starting",
+        "pid": os.getpid(),
+    }
+    write_health(health_file, health)
+
     inputs = args.inputs or _input_paths_from_env()
     state = ConsumerWorkerState(args.state_path or None)
     max_attempts = int(os.getenv("RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS", "3"))
@@ -1120,22 +1177,67 @@ def main(argv: list[str] | None = None) -> int:
     )
     tick = 0
     while args.max_ticks <= 0 or tick < args.max_ticks:
-        if inputs:
-            result = run_consumer_once(service_url=args.service_url, input_paths=inputs)
-            result["source"] = "explicit_fixture_input"
-        else:
-            result = run_runtime_summary_consumer_once(
-                service_url=args.service_url,
-                telemetry_url=args.telemetry_url,
-                state=state,
-                max_attempts=max_attempts,
-                retry_backoff_seconds=retry_backoff_seconds,
-                replay_dead_letters=replay_dead_letters,
-                worker_id=worker_id,
-                lease_seconds=lease_seconds,
+        try:
+            if inputs:
+                result = run_consumer_once(
+                    service_url=args.service_url,
+                    input_paths=inputs,
+                )
+                result["source"] = "explicit_fixture_input"
+            else:
+                result = run_runtime_summary_consumer_once(
+                    service_url=args.service_url,
+                    telemetry_url=args.telemetry_url,
+                    state=state,
+                    max_attempts=max_attempts,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    replay_dead_letters=replay_dead_letters,
+                    worker_id=worker_id,
+                    lease_seconds=lease_seconds,
+                )
+        except Exception as exc:
+            failed_at = utc_now()
+            health.update(
+                {
+                    "status": "error",
+                    "ticks": tick,
+                    "last_tick_at": failed_at,
+                    "last_failure_at": failed_at,
+                    "last_failure_reason": str(exc),
+                    "controller_status": "unhealthy",
+                }
             )
-        print(json.dumps(result, sort_keys=True))
+            write_health(health_file, health)
+            raise
+
         tick += 1
+        tick_at = utc_now()
+        controller_status = str(
+            result.get("controller_status")
+            or (
+                "healthy"
+                if result.get("status") in {"ok", "no_events"}
+                else result.get("status")
+                or "unknown"
+            )
+        )
+        failure_reason = _health_failure_reason(result)
+        health.update(
+            {
+                "status": "ok",
+                "ticks": tick,
+                "last_tick_at": tick_at,
+                "controller_status": controller_status,
+            }
+        )
+        if controller_status == "healthy":
+            health["last_success_at"] = tick_at
+            health["last_failure_reason"] = None
+        else:
+            health["last_failure_at"] = tick_at
+            health["last_failure_reason"] = failure_reason
+        write_health(health_file, health)
+        print(json.dumps(result, sort_keys=True))
         if args.max_ticks == 1:
             break
         time.sleep(args.interval_seconds)
@@ -1143,4 +1245,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
     raise SystemExit(main())
