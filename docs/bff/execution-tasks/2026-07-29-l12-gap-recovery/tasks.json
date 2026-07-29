@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-29-l12-gap-recovery",
+  "generated_at": "2026-07-29T07:23:00Z",
+  "updated_at": "2026-07-29T08:30:00Z",
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "dirty or unmerged live command-root patches",
+    "synthetic UUID verifier proof",
+    "self-attesting pass-printer verifier scripts",
+    "same-author GitHub independent approval"
+  ],
+  "live_supervisor": {
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "status_root": "/home/lupin/pantheon",
+    "runtime_sha_observed": "a6d56c366f7436574e6d2d241b47564558beac74"
+  },
+  "fleet_checkpoint_2026_07_29T0830Z": {
+    "claude2": {
+      "quota": "1/1",
+      "active_task": "L12-VERIFY-KNOW-001",
+      "run_id": "claude2-20260729T082322Z-0b3d4613"
+    },
+    "antigravity": {
+      "quota": "1/1",
+      "latest_owner_task": "L12-VERIFY-OBS-001",
+      "latest_owner_run_id": "antigravity1-1-20260729T082732Z-560e0361"
+    },
+    "not_complete": [
+      "L12-VERIFY-RUNTIME-001 still waits for Claude2 quota",
+      "L12-VERIFY-OBS-001 still requires independent Claude2 review",
+      "L12-VERIFY-KNOW-001 still requires terminal evidence, PR, review, and merge"
+    ]
+  },
+  "waves": [
+    {
+      "wave": 0,
+      "parallel": true,
+      "purpose": "Protect live fleet recovery and finish active verifier lanes.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-KNOW-001",
+          "canonical_task": "L12-VERIFY-KNOW-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "status_at_packet_update": "in_progress",
+          "live_run_id": "claude2-20260729T082322Z-0b3d4613",
+          "depends_on": ["L12-DIST-001", "L12-ALPHA-001", "L12-TRUTH-001"],
+          "scope": [
+            "scripts/verify_twelve_loop_knowledge.py",
+            "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001"
+          ],
+          "acceptance": [
+            "Real Persona requirement produces durable SourceRecord",
+            "SourceRecord produces one mutable StrategySpec draft with readback",
+            "Approved StrategySpec produces authoritative ExperimentRun",
+            "Unapproved and immutable-approved negative gates fail closed",
+            "Duplicate, concurrency, provider, registry, research failure, restart, and BFF/controller terminal readbacks are archived",
+            "Evidence manifest is concrete, checksummed, and independently reviewed"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-OBS-001",
+          "canonical_task": "L12-VERIFY-OBS-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "status_at_packet_update": "review",
+          "live_run_id": "antigravity1-1-20260729T082732Z-560e0361",
+          "depends_on": ["L12-REC-001", "L12-EVO-001", "L12-BFF-001", "L12-TRUTH-001"],
+          "scope": [
+            "scripts/verify_twelve_loop_observability.py",
+            "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001"
+          ],
+          "acceptance": [
+            "Claude2 independently reviews the evidence manifest and anchor commit 65aa15358",
+            "Telemetry, drift, incident, postmortem, EvolutionDecision, downstream action, and BFF health proof are service-backed readbacks",
+            "Synthetic UUID proof is rejected",
+            "Review uses governed approve/reopen status command with review evidence"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-RUNTIME-001",
+          "canonical_task": "L12-VERIFY-RUNTIME-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "status_at_packet_update": "todo_waiting_for_claude2_quota",
+          "depends_on": ["L12-CAP-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
+          "scope": [
+            "scripts/verify_twelve_loop_runtime.py",
+            "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001"
+          ],
+          "acceptance": [
+            "Immutable approved artifact reaches one RuntimeBinding and one governed-paper worker",
+            "Duplicate and crash-after-side-effect paths create no duplicate binding or order",
+            "Kill, pause, retire, and full restart converge correctly",
+            "Missing or mismatched signal scope is rejected and durable-DLQ'd",
+            "Order fill, position, heartbeat, and BFF truth share authoritative correlation",
+            "No live capital is enabled"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 1,
+      "parallel": true,
+      "purpose": "Repair guardrails revealed by live fleet rescue without owning product verifier artifacts.",
+      "tasks": [
+        {
+          "id": "SUP-L12-TASK-BRIEF-SYNC-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/task-briefs",
+            ".orchestrator/supervisor.py task-brief generation and copy path",
+            ".orchestrator/test_supervisor.py or equivalent regression"
+          ],
+          "acceptance": [
+            "Reproduce stale status-root task brief owner/reviewer drift",
+            "Fix task-brief materialization to use authoritative task-state rows",
+            "Worker prompt and copied task-brief file agree on owner, reviewer, status, last_update, and next",
+            "No .orchestrator/config.json edits"
+          ]
+        },
+        {
+          "id": "SUP-L12-WORKER-PYDEPS-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "scope": [
+            "worker bootstrap/provisioning docs",
+            "L12 verifier dependency preflight",
+            "tests for verifier runtime dependencies"
+          ],
+          "acceptance": [
+            "Reproduce missing fastapi and uvicorn blocker from the live Claude2 KNOW worker",
+            "Add durable dependency provisioning or preflight for fastapi, uvicorn, httpx, pytest, and verifier service deps",
+            "Prove workers do not rely on mutable /tmp pydeps as completion evidence",
+            "Archive temporary runtime rescue as non-authoritative"
+          ]
+        },
+        {
+          "id": "SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/supervisor.py chair/failure-loop policy",
+            ".orchestrator/test_supervisor.py regression coverage"
+          ],
+          "acceptance": [
+            "Reproduce stale task_failure_streaks causing Codex2 chair triage to bypass cooldown",
+            "Prevent stale or cleared failure causes from preempting L12 Claude2/Antigravity owner dispatch",
+            "Reject Codex/Codex2 reassignment targets for provider-first L12 work when Claude2/Antigravity owner lanes are canonical",
+            "No .orchestrator/config.json edits"
+          ]
+        },
+        {
+          "id": "SUP-L12-PROVIDER-FIRST-MERGE-GATE-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "target_prs": [4362],
+          "scope": [
+            "PR #4362",
+            "live command-root SHA and dirty executable/import file checks",
+            "provider-first helper-claim regression test"
+          ],
+          "acceptance": [
+            "Confirm #4362 merges before relying on provider-first behavior after supervisor restart",
+            "Verify live command root HEAD equals merged runtime SHA",
+            "Verify live command root has no dirty .py/.sh executable/import files",
+            "Run helper-claim regression and prove Codex/Codex2 cannot claim Claude/Antigravity L12 owner work",
+            "Human/Ops branch-protection contexts are recorded as external gates, never faked"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "parallel": true,
+      "purpose": "Finish remaining product lanes once verifier and guard lanes are accepted.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-LEARN-001",
+          "canonical_task": "L12-VERIFY-LEARN-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "status_at_packet_update": "blocked_fake_verifier_rewrite_required",
+          "depends_on": [],
+          "scope": [
+            "scripts/verify_twelve_loop_learning.py",
+            "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-001"
+          ],
+          "acceptance": [
+            "No pass-printer or self-attesting literal pass results",
+            "Training/session, Agora, imitation, and consultation service boundaries are called and read back",
+            "Tenant/RBAC, duplicate, restart, DLQ, and no-runtime-mutation negative cases are proven"
+          ]
+        },
+        {
+          "id": "L12-FE-TRUTH-001",
+          "canonical_task": "L12-FE-TRUTH-001",
+          "target_repo": "execute-plans",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "scope": [
+            "execute-plans/src",
+            "execute-plans/tests",
+            "execute-plans/docs/deployment/evidence/twelve-loop-gap/L12-FE-TRUTH-001"
+          ],
+          "acceptance": [
+            "All twelve canonical loop ids render from strict live BFF",
+            "Hosted 1440px and 390px evidence, axe, keyboard, reduced-motion, and network capture are archived",
+            "Seed, stale, degraded, failed, and live-call failure states cannot render falsely green",
+            "Hosted FE/BFF identity manifest is tied to served deployment"
+          ]
+        },
+        {
+          "id": "L12-HOSTED-001",
+          "canonical_task": "L12-HOSTED-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [
+            "L12-FE-TRUTH-001",
+            "L12-VERIFY-KNOW-001",
+            "L12-VERIFY-LEARN-001",
+            "L12-VERIFY-RUNTIME-001",
+            "L12-VERIFY-OBS-001"
+          ],
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-001",
+            "hosted deployment manifest"
+          ],
+          "acceptance": [
+            "Hosted deployment identifies exact Pantheon and execute-plans commits/images",
+            "All twelve current controller records are accepted",
+            "Full-stack restart does not duplicate effects",
+            "Hosted desktop/mobile/auth/tenant/no-live-capital evidence is archived"
+          ]
+        },
+        {
+          "id": "L12-CLOSE-001",
+          "canonical_task": "L12-CLOSE-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": ["L12-HOSTED-001"],
+          "human_ops_signoff_required": true,
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+            "program closeout manifest"
+          ],
+          "acceptance": [
+            "Every predecessor is done with merged reviewed current evidence",
+            "Every evidence manifest schema/checksum/replay passes",
+            "Current controller and terminal actual-state readbacks are accepted",
+            "Human/Ops verdict is archived through the protected signoff path"
+          ]
+        }
+      ]
+    }
+  ]
+}

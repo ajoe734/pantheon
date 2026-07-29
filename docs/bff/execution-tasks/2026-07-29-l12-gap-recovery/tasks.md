@@ -2,6 +2,8 @@
 
 Generated at: `2026-07-29T07:23Z`
 
+Live-rescue update: `2026-07-29T08:30Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
 
@@ -32,9 +34,9 @@ coordination lanes only.
 
 - Owner: `Claude2`
 - Reviewer: `Antigravity`
-- Current state: `todo`; latest observed Claude2 worker
-  `claude2-20260729T071353Z-4c29a045` failed at `2026-07-29T07:19:59Z`, and
-  the supervisor preempted the row back to `todo`.
+- Current state: `todo`; latest observed Claude2 workers failed before the
+  08:20Z runtime rescue. It remains waiting for the single `Claude2` account
+  slot to free after `L12-VERIFY-KNOW-001`.
 - Scope: `scripts/verify_twelve_loop_runtime.py` and
   `docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001`.
 - Required delivery:
@@ -49,8 +51,10 @@ coordination lanes only.
 
 - Owner: `Claude2`
 - Reviewer: `Antigravity`
-- Current state: `todo`.
-- Dispatch rule: start as soon as Claude2 has a true free worker slot.
+- Current state: `in_progress` after real supervisor/auto-worker dispatch to
+  `Claude2` run `claude2-20260729T082322Z-0b3d4613`.
+- Dispatch rule: do not start a duplicate while this worker is live. If it
+  fails, redispatch only after preserving its log and fixing the exact blocker.
 - Required delivery:
   - real Persona requirement to durable `SourceRecord`;
   - one mutable `StrategySpec` draft;
@@ -81,7 +85,8 @@ coordination lanes only.
 
 - Owner: `Antigravity`
 - Reviewer: `Claude2`
-- Current state: `blocked` after rejected synthetic PRs.
+- Current state: `review` after real supervisor/auto-worker dispatch to
+  `Antigravity` run `antigravity1-1-20260729T082732Z-560e0361`.
 - Rejected heads:
   - #4355 `8ba6792a2f00010ad1c401fd4cf526bde65269b8`
   - #4360 `f10a6015a48947adbd51a2b2fc12a8a78f426d1e`
@@ -92,6 +97,11 @@ coordination lanes only.
   - approved action terminal downstream receipt with retry/compensation;
   - BFF downstream stop and recovery telemetry;
   - no locally fabricated UUID proof.
+- Required review:
+  - `Claude2` must independently validate the refreshed evidence manifest,
+    service-boundary readbacks, and anchor commit `65aa15358`;
+  - if the evidence still depends on synthetic UUIDs, reopen to `Antigravity`
+    with exact rejected proof paths.
 
 ## Dependent product lanes
 
@@ -164,15 +174,107 @@ progress.
   - do not edit `.orchestrator/config.json`;
   - produce a dispatch-health evidence record.
 
+### `SUP-L12-TASK-BRIEF-SYNC-20260729`
+
+- Owner: `Claude2`
+- Reviewer: `Antigravity`
+- Current state: new guard task to materialize after this packet merges.
+- Scope:
+  - `.orchestrator/task-briefs/*`
+  - supervisor task-brief generation/sync code
+  - worker task-brief copy/admission tests
+- Acceptance:
+  - reproduce the drift where status-root
+    `l12_verify_{know,runtime,obs}_001.md` kept old `Codex2`/`Codex`
+    owner/reviewer while dev-root had `Claude2`/`Antigravity`;
+  - fix materialization so the status-root and worker worktree task brief are
+    generated from the authoritative task-state row;
+  - add regression covering owner, reviewer, status, last update, and `next`;
+  - prove a dispatched worker receives the same canonical row in prompt and
+    task-brief file;
+  - do not change `.orchestrator/config.json`.
+
+### `SUP-L12-WORKER-PYDEPS-20260729`
+
+- Owner: `Antigravity`
+- Reviewer: `Claude2`
+- Current state: new guard task to materialize after this packet merges.
+- Scope:
+  - worker bootstrap/provisioning documentation and tests;
+  - L12 verifier dependency declaration;
+  - no product verifier artifact ownership.
+- Acceptance:
+  - reproduce the live `Claude2` KNOW worker missing `fastapi` and shared
+    `/tmp/l12-alpha-pydeps` missing `uvicorn`;
+  - define durable dependency provisioning for L12 verifier workers;
+  - add a preflight command/test that verifies `fastapi`, `uvicorn`, `httpx`,
+    `pytest`, and service-specific verifier dependencies without manual `/tmp`
+    repair;
+  - document the temporary 2026-07-29 runtime rescue as non-authoritative;
+  - do not rely on global site-packages or mutable `/tmp` as completion proof.
+
+### `SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729`
+
+- Owner: `Claude2`
+- Reviewer: `Antigravity`
+- Current state: new guard task to materialize after this packet merges.
+- Scope:
+  - supervisor chair/failure-loop dispatch policy tests;
+  - provider guardrail failure-streak handling.
+- Acceptance:
+  - reproduce stale `task_failure_streaks` causing
+    `chair_review:reassignment_triage` to bypass cooldown and dispatch Codex2
+    before L12 owner work;
+  - fail closed when failure causes are stale/cleared or when the only
+    reassignment target violates provider-first L12 routing;
+  - add tests proving L12 owner dispatch is attempted before Codex/Codex2
+    chair triage when `Claude2`/`Antigravity` lanes have eligible work;
+  - record recovery evidence without editing `.orchestrator/config.json`.
+
+### `SUP-L12-PROVIDER-FIRST-MERGE-GATE-20260729`
+
+- Owner: `Antigravity`
+- Reviewer: `Claude2`
+- Current state: new guard task to materialize after this packet merges.
+- Scope:
+  - PR #4362 tracking and post-merge live runtime verification.
+- Acceptance:
+  - confirm #4362 is merged before relying on provider-first helper-claim
+    behavior after supervisor restart;
+  - after merge, verify live command root HEAD equals the merged runtime SHA and
+    has no dirty executable/import files;
+  - run the helper-claim regression test in live command root;
+  - prove Codex/Codex2 cannot helper-claim L12 owner work assigned to
+    Claude/Antigravity;
+  - document any Human/Ops status gate as an external gate, not a fake pass.
+
 ## Dispatch order
 
-1. Keep RUNTIME `todo` until a real Claude2 worker slot is available.
-2. Keep LEARN blocked until a new implementation proves real service-boundary
+1. Keep current KNOW on `Claude2` running; do not duplicate it.
+2. Dispatch RUNTIME as soon as the real `Claude2` worker slot is available.
+3. Keep LEARN blocked until a new implementation proves real service-boundary
    evidence rather than pass literals.
-3. Keep OBS blocked until a new implementation proves durable telemetry,
-   incident, evolution, downstream receipt, and BFF health readbacks.
-4. Keep both `SUP-*` guard tasks out of the active board unless they can run
-   on Claude2/Antigravity, never on Codex/Codex2.
-5. Dispatch KNOW when a Claude2 worker slot is free.
-6. Dispatch FE only with strict live-BFF evidence and no swallowed-failure UI.
-7. Dispatch HOSTED, then CLOSE.
+4. Review OBS with `Claude2`; only accept if the refreshed evidence is
+   service-backed and not synthetic.
+5. Keep legacy `SUP-L12-FAKE-VERIFIER-GATE-20260729` and
+   `SUP-L12-LIVE-WORKER-RECON-20260729` out of the active board unless they can
+   run on Claude2/Antigravity, never on Codex/Codex2.
+6. Materialize the four new `SUP-L12-*` guard tasks above through the
+   supervisor/auto-worker path with Claude2/Antigravity-first ownership.
+7. Dispatch FE only with strict live-BFF evidence and no swallowed-failure UI.
+8. Dispatch HOSTED, then CLOSE.
+
+## Current fleet health checkpoint
+
+Observed after the 08:20Z rescue:
+
+- `Claude2` can launch and run a governed auto worker (`L12-VERIFY-KNOW-001`).
+- `Antigravity` can launch and move a governed task to `review`
+  (`L12-VERIFY-OBS-001` and
+  `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`).
+- `Claude2` account quota is effectively `1/1`, so RUNTIME waits for KNOW.
+- `Antigravity` account quota is effectively `1/1`, so OBS/guard work must be
+  serialized unless the account policy changes.
+- Runtime deps were temporarily rescued in `/tmp/l12-alpha-pydeps`; this is
+  not durable completion and must be formalized by
+  `SUP-L12-WORKER-PYDEPS-20260729`.

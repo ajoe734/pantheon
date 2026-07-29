@@ -2,8 +2,10 @@
 
 Program ID: `pantheon-twelve-loop-gap-2026-07-26`
 
-Status: three-pass audit archived; guarded execution catalog prepared; live
-materialization pending merged `dev` delivery and fleet-capacity proof
+Status: three-pass audit archived; 08:30Z live-rescue addendum captured;
+guarded execution catalog prepared; live materialization partially restored
+through supervisor/auto-workers but final `dev` delivery and accepted evidence
+remain pending
 
 Merge target: `dev`
 
@@ -45,6 +47,13 @@ The reconciled source of truth is:
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`
 - `docs/bff/execution-tasks/2026-07-28-twelve-loop-current-gap-drain/tasks.json`
 - `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.md`
+- `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.json`
+
+The 2026-07-29T07:10Z audit file includes a live-rescue addendum captured at
+`2026-07-29T08:30Z`. That addendum records restored supervisor/auto-worker
+dispatch to `Claude2` and `Antigravity`, stale chair/failure-streak cleanup,
+task-brief drift, missing worker Python dependencies, and the remaining
+durability gaps.
 
 ## Baseline verdict
 
@@ -93,6 +102,32 @@ Each fleet task must:
 - keep live capital disabled;
 - remain open when current evidence is stale, indirect, synthetic, or
   contradicted.
+
+## Current fleet checkpoint, 2026-07-29T08:30Z
+
+Live supervisor dispatch is no longer treated as hypothetical:
+
+- `L12-VERIFY-KNOW-001` is running on `Claude2`
+  (`claude2-20260729T082322Z-0b3d4613`).
+- `L12-VERIFY-OBS-001` was dispatched to `Antigravity` and is in `review`
+  after anchor commit `65aa15358`.
+- `L12-VERIFY-RUNTIME-001` is still `todo` because the single `Claude2` quota
+  slot is occupied by KNOW.
+- `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` reached `review` after
+  `Antigravity` owner handling.
+
+This checkpoint proves the fleet dispatch path can run real supervisor
+auto-workers. It does not prove the twelve loops are operable. Formal
+completion still requires terminal task evidence, independent review, merged
+PRs, replayable manifests, hosted identity, and Human/Ops closeout.
+
+New guard work from the live rescue is tracked in
+`docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.md`:
+
+- `SUP-L12-TASK-BRIEF-SYNC-20260729`
+- `SUP-L12-WORKER-PYDEPS-20260729`
+- `SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729`
+- `SUP-L12-PROVIDER-FIRST-MERGE-GATE-20260729`
 
 ## Completion boundary
 

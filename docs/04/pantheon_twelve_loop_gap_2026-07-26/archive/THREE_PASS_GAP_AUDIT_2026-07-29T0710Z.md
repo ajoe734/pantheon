@@ -2,6 +2,8 @@
 
 Captured at: `2026-07-29T07:23Z`
 
+Live-rescue addendum captured at: `2026-07-29T08:30Z`
+
 Program: `pantheon-twelve-loop-gap-2026-07-26`
 
 This is a current-state audit, not a completion claim. The purpose is to keep
@@ -196,6 +198,104 @@ KNOW, LEARN, RUNTIME, OBS, hosted identity, and formal signoff would be false.
 Pass 2 conclusion: green checks or opened PRs are insufficient. The currently
 accepted evidence only proves partial route repair and truth-catalog work, not
 all twelve loops.
+
+## Live-rescue addendum — three-pass recheck after 08:20Z fleet repair
+
+This addendum repeats the audit after the 08:20Z live repair because several
+failures were runtime/control-plane failures rather than product verifier
+failures. It is still not a completion claim.
+
+### Addendum pass 1 — current loop/task state
+
+Current supervisor heartbeat inspected at `2026-07-29T08:28:25Z` showed the
+supervisor alive with `execution.running=4`.
+
+Verified supervisor/auto-worker dispatches, not Codex subagents:
+
+- `L12-VERIFY-KNOW-001` was auto-started on `Claude2` as
+  `claude2-20260729T082322Z-0b3d4613`.
+- `L12-VERIFY-OBS-001` was auto-started on `Antigravity` as
+  `antigravity1-1-20260729T082732Z-560e0361`; the task subsequently reached
+  `review` at `2026-07-29T08:28:16Z` with next evidence pointing at
+  `docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001/evidence.json`
+  and anchor commit `65aa15358` on `task/L12-VERIFY-OBS-001`.
+- `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` was handled by `Antigravity`
+  and moved to `review` at `2026-07-29T08:26:02Z`; a `Codex2` reviewer worker
+  was then dispatched because the task row names `Codex2` as reviewer.
+- `L12-VERIFY-RUNTIME-001` remains `todo`; it cannot dispatch while the single
+  `Claude2` account quota is occupied by `L12-VERIFY-KNOW-001`.
+
+Current loop proof state after this rescue:
+
+| Lane | State after 08:30Z recheck | Remaining proof gap |
+|---|---|---|
+| KNOW (`source_ingestion`, `strategy_distillation`, `alpha_replication`) | `in_progress` on real `Claude2` auto worker | Still no terminal evidence, PR, review approval, or merged manifest. |
+| LEARN (`persona_teaching`, `agora`, `imitation`, `consultation`) | `blocked` by rejected fake verifier heads | Needs full service-boundary rewrite; no current valid worker result. |
+| RUNTIME (`promotion_deployment`, `capital_pool_execution`) | `todo`, waiting for `Claude2` quota | Still lacks governed-paper runtime proof and restart/DLQ evidence. |
+| OBS (`telemetry_reconciliation`, `evolution`, `bff_health_monitoring`) | `review` after real `Antigravity` auto worker | Needs independent `Claude2` review and closeout replay before it can count. |
+| FE/HOSTED/CLOSE | Not proven | Still dependent on accepted verifier and hosted identity evidence. |
+
+### Addendum pass 2 — newly confirmed development gaps
+
+The live repair exposed these additional development gaps that were not
+explicit enough in the 07:23Z audit:
+
+1. **Task-brief synchronization drift.** The live status root held stale
+   `.orchestrator/task-briefs/l12_verify_{know,runtime,obs}_001.md` files with
+   old owner/reviewer values `Codex2`/`Codex`, while the dev-root generated
+   briefs had the corrected `Claude2`/`Antigravity` or `Antigravity`/`Claude2`
+   assignment. A worker copied the stale status-root brief into its worktree
+   even though the wake prompt had the correct owner. This can make a correct
+   supervisor dispatch execute with wrong task context.
+2. **Worker runtime dependency provisioning is not reproducible.** The live
+   `Claude2` KNOW worker hit missing Python service dependencies (`fastapi`;
+   then shared `/tmp/l12-alpha-pydeps` lacked `uvicorn`). A temporary runtime
+   rescue installed `fastapi`, `uvicorn`, `httpx`, `pytest`, and related
+   packages into `/tmp/l12-alpha-pydeps`, but this is not a durable repo change
+   or worker image guarantee.
+3. **Stale failure streaks preempted L12 with Codex2 chair triage.** Five old
+   guardrail records (`tool_auth`, `missing_process`, and `context canceled`)
+   caused `chair_review:reassignment_triage` to bypass cooldown and repeatedly
+   queue `Codex2` chair reviews before L12 dispatch. Runtime-state-only repair
+   cleared the stale records after verifying `gh auth` and clean command-root,
+   but there is no merged regression yet.
+4. **Provider-first guard is not durable until #4362 merges.** PR #4362 adds a
+   provider-first helper-claim guard and tests, but branch protection still
+   blocks it behind Human/Ops contexts. Live command-root cannot carry the
+   unmerged patch because `worker_runner.py` refuses dirty executable/import
+   files and mismatched runtime SHAs.
+5. **Parallelism is bounded by provider account quota.** The live config allows
+   multiple total execution workers, but `Claude2` and `Antigravity` each have
+   effective account concurrency `1/1`. Running Codex workers do not consume
+   those quotas, but they can distract chair/ops flow. RUNTIME cannot start
+   until KNOW releases `Claude2`; OBS cannot run again until Antigravity frees.
+
+### Addendum pass 3 — new tests and validation still missing
+
+The following tests/validations must be added before the fleet can be called
+healthy:
+
+- Regression that task-brief materialization in the status root and worker
+  worktree always reflects the authoritative task-state row, including
+  owner/reviewer, status, last update, and `next`.
+- Worker bootstrap/provisioning test that verifies the Python dependencies
+  needed for the L12 service-boundary verifiers are available without manual
+  `/tmp` repair.
+- Supervisor regression that stale chair/failure-loop records cannot bypass
+  L12 owner dispatch when no viable reassignment target exists or when the
+  failure cause has been cleared.
+- Runtime admission test that a dirty/unmerged command root is refused with a
+  clear recovery path, and that the accepted recovery path is a merged runtime
+  SHA rather than a live patched checkout.
+- Fleet health smoke that proves `Claude2` and `Antigravity` can each complete
+  one short governed worker task, update status through
+  `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh`, and exit terminal without
+  leaving stale queue leases.
+
+Addendum verdict: the supervisor/fleet dispatch path is functioning again for
+at least `Claude2` and `Antigravity`, but the twelve-loop product goal remains
+incomplete and the newly exposed runtime-control gaps must be closed through
+PRs, not live-only repair.
 
 ## Pass 3 — dispatch, fleet, and guardrail audit
 
