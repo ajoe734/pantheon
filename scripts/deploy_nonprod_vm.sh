@@ -713,6 +713,91 @@ PY
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
 }
 
+# One required scheduled/async worker per twelve-loop lane. The deploy fails
+# closed if the selected profile set does not resolve every one of these, so a
+# narrowed PANTHEON_DEV_COMPOSE_PROFILES can no longer silently deactivate a
+# loop. source-ingest-scheduler and source-ingest-agora-projector are
+# deliberately absent: they stay opt-in behind the bounded egress profile that
+# validate_source_refresh_profile guards.
+REQUIRED_LOOP_WORKERS=(
+  # source_ingestion
+  source-ingest
+  # strategy_distillation
+  strategy-distillation-worker
+  # alpha_replication
+  alpha-replication-worker
+  # persona_teaching
+  training-session-svc
+  training-session-preview-worker
+  # agora_interaction_evidence
+  policy-learning-svc
+  # human_imitation_shadow_evaluation
+  policy-learning-shadow-eval-scheduler
+  # consultation
+  consultation-svc
+  # promotion_deployment
+  deployment
+  deployment-outbox-consumer
+  runtime-manager
+  # capital_pool_execution
+  broker
+  capital
+  paper-fleet-reconciler
+  paper-signal-producer
+  # telemetry_reconciliation
+  reconciliation-drift-svc
+  reconciliation-drift-consumer
+  reconciliation-drift-scheduler
+  reconciliation-drift-incident-listener
+  # evolution
+  evolution
+  evolution-dispatch-worker
+  evolution-daily-sweep-scheduler
+  evolution-threshold-sweep-producer
+  # bff_health_monitoring
+  operator-bff
+  loop-run-projector-scheduler
+  # shared search index behind source + agora reads
+  search-svc
+  search-index-scheduler
+)
+
+# The legacy static paper runtime duplicates the binding-scoped workers that
+# paper-fleet-reconciler owns. Two writers on the same bindings is the exact
+# duplicate-worker failure this manifest is supposed to prevent.
+FORBIDDEN_DUPLICATE_WORKERS=(
+  pantheon-paper-runtime
+)
+
+validate_required_loop_workers() {
+  local resolved missing=() duplicates=() worker
+
+  resolved="$(
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+      docker compose -p pantheon -f docker-compose.yml config --services
+  )" || error "unable to resolve compose services for the selected profiles"
+
+  for worker in "${REQUIRED_LOOP_WORKERS[@]}"; do
+    if ! grep -qxF -- "$worker" <<<"$resolved"; then
+      missing+=("$worker")
+    fi
+  done
+  for worker in "${FORBIDDEN_DUPLICATE_WORKERS[@]}"; do
+    if grep -qxF -- "$worker" <<<"$resolved"; then
+      duplicates+=("$worker")
+    fi
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    error "required loop workers not activated by the selected profiles: ${missing[*]}"
+  fi
+  if (( ${#duplicates[@]} > 0 )); then
+    error "duplicate legacy workers activated alongside the loop manifest: ${duplicates[*]}"
+  fi
+
+  info "required_loop_workers=${#REQUIRED_LOOP_WORKERS[@]} all activated; no duplicate legacy workers"
+}
+
 curl_with_retry() {
   local url="$1"
   local attempts="${2:-12}"
@@ -1775,6 +1860,11 @@ dump_dev_root_failure_diagnostics() {
 }
 
 retire_legacy_static_paper_runtime() {
+  # paper-fleet-reconciler and paper-signal-producer are now unconditional
+  # members of the required loop worker manifest, so co-enabling this profile
+  # always means two writers on the same bindings. On the root deploy path
+  # validate_required_loop_workers rejects that combination before we get
+  # here; this branch survives only for components that skip that guard.
   case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
     *,static-paper-runtime,*)
       info "static paper runtime profile explicitly enabled; leaving compatibility worker active"
@@ -1959,19 +2049,29 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #   dormant-smoke                experiments/finrl/qlib/rllib/ray-tune/trl
     #   openclaw                     openclaw-gateway + openclaw-data-init
     #   openclaw-activation-ready-e2e  openclaw-activation-ready-e2e
-    #   search-index-scheduler       search-index-scheduler
     #   smoke                        smoke-stack (depends on full service set)
     #   source-ingest-scheduler      source-ingest-scheduler
+    #                                + source-ingest-agora-projector
     #   source-search-bounded        source-search-bounded-smoke
+    #
+    # Every remaining profile above is a smoke or an optional integration.
+    # Required loop workers are no longer profile-gated: they are default-on
+    # in docker-compose.yml so the manifest, not this profile list, is the
+    # single source of truth for which loops are running. That inversion is
+    # what validate_required_loop_workers below enforces.
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
     #
-    # source-ingest-scheduler is deliberately NOT in the default set. It ticks
-    # every 60s against third-party providers (Yahoo, CoinGecko, TWSE/TPEx,
-    # MOPS, FinMind, SEC/FRED/FINRA, stooq); left always-on it is continuous
-    # crawling from one cloud egress IP. Add it explicitly for a bounded run.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-search-bounded}"
+    # source-ingest-scheduler is the one required worker still gated, and it
+    # stays gated deliberately. It ticks every 60s against third-party
+    # providers (Yahoo, CoinGecko, TWSE/TPEx, MOPS, FinMind, SEC/FRED/FINRA,
+    # stooq); left always-on it is continuous crawling from one cloud egress
+    # IP. Add it explicitly for a bounded run. source-ingest-agora-projector
+    # shares that profile because it must project only after the bounded
+    # refresh completes.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,smoke,source-search-bounded}"
     validate_source_refresh_profile
+    validate_required_loop_workers
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role

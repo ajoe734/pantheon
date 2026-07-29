@@ -1,0 +1,81 @@
+OPS-TASK-PR-TRIAGE-002 validation
+snapshot: 2026-07-29T03:47:00Z
+base: origin/dev=31d7eaebcb012a9beb5f5f0057db401d378b5beb
+
+PASS prerequisite
+  governed show OPS-PR-REVIEW-BEFORE-MERGE-GATE-001
+  canonical source=archive, status=done
+  PR #4218 merged as 9e4bb8e1fa9495d8802da58336b05ae68c7756ad
+
+PASS focused tests
+  python3 -m unittest scripts/git/test_task_pr_triage.py
+  Ran 26 tests; OK
+
+PASS Python compilation
+  python3 -m py_compile scripts/git/task_pr_triage.py scripts/git/test_task_pr_triage.py
+
+PASS live generation after fail-closed retry
+  python3 scripts/git/task_pr_triage.py generate \
+    --task-id OPS-TASK-PR-TRIAGE-002 \
+    --repository ajoe734/pantheon \
+    --remote origin \
+    --base-ref origin/dev \
+    --status-root "$PANTHEON_STATUS_ROOT" \
+    --as-of 2026-07-29T03:47:00Z \
+    --overdue-hours 24 \
+    --retention-days 30 \
+    --expected-cohort-count 25 \
+    --refresh \
+    --output /tmp/ops-task-pr-triage-002-report-refresh.json \
+    --markdown /tmp/ops-task-pr-triage-002-report-refresh.md \
+    --deletion-manifest /tmp/ops-task-pr-triage-002-deletion-refresh.json
+  first attempt rejected a PR #4333 head/ref race; refreshed retry passed
+  result: 25 overdue PRs; 2233 branches; 1334 deletion dry-run candidates
+
+PASS immutable ancestry and report validation
+  python3 scripts/git/task_pr_triage.py validate \
+    --report docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/triage-report.json \
+    --deletion-manifest docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/branch-deletion-dry-run.json \
+    --expected-cohort-count 25
+  result: valid: 25 PRs, 2233 branches, 1334 deletion dry-run candidates
+
+PASS fail-closed closure preview
+  python3 scripts/git/task_pr_triage.py close-superseded \
+    --report docs/deployment/evidence/supervisor/OPS-TASK-PR-TRIAGE-002/triage-report.json
+  result: {"mode":"dry-run","actions":[]}
+
+PASS machine assertions
+  report task_id=OPS-TASK-PR-TRIAGE-002
+  manifest task_id=OPS-TASK-PR-TRIAGE-002
+  cohort=25, open=25, unique PR numbers=25
+  dispositions=13 active-repair + 8 conflict-needs-owner + 4 protected-retain
+  closure_candidates=0
+  branch manifest mode=dry-run-only
+  branch manifest candidate_count=1334 and equals candidate array length
+  evidence reviewer=Codex and reviewed_head=null pending exact-head review
+
+PASS artifact SHA-256
+  98e93ab4d6363f8a381e442e272c0e49f869c6ea8d183b3694832cdffff8d7d7  triage-report.json
+  7f7937c825f39ff85cfe308072aa43249d576faa08527af9629b943ad65eb7d0  README.md
+  b4a63ac046139987adb1ac0991fdabd3d3861519c23f1f3ae3e9e9586aeb7b6e  branch-deletion-dry-run.json
+
+PASS live exact-head readback
+  gh pr list --repo ajoe734/pantheon --state open --base dev
+  all 25 cohort PRs remain open at the head SHA recorded in triage-report.json
+
+PASS base composition
+  git merge --no-edit origin/dev
+  merge commit 93ba38a7d9a153990930fea859718d22ac1787ce
+  immutable evidence base is the merge second parent 31d7eaebcb012a9beb5f5f0057db401d378b5beb
+
+PASS final repository checks
+  jq -e evidence.json
+  sha256 readback for all three generated artifacts
+  git diff --check
+
+NO MUTATION
+  PR closures: 0
+  PR merges: 0
+  branch deletions: 0
+  direct protected-branch pushes: 0
+  auto-merge requests: 0
