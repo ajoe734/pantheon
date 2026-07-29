@@ -2,8 +2,11 @@
 
 Program ID: `pantheon-twelve-loop-gap-2026-07-26`
 
-Status: three-pass audit archived; guarded execution catalog prepared; live
-materialization pending merged `dev` delivery and fleet-capacity proof
+Status: three-pass audit refreshed at 2026-07-29T10:25Z; supervisor
+priority-gate repair (#4365/#4366) is merged, archived, and promoted live;
+guarded execution catalog remains active because twelve-loop product evidence,
+hosted proof, stale-PR retirement, and merged-row closeout reconciliation are
+still pending
 
 Merge target: `dev`
 
@@ -41,8 +44,19 @@ The reconciled source of truth is:
 - [Current-state fleet gap delta, 2026-07-27T18:37Z](archive/CURRENT_STATE_FLEET_GAP_DELTA_2026-07-27T1837Z.md)
 - [Three-pass current gap audit, 2026-07-28T12:08Z](archive/THREE_PASS_GAP_AUDIT_2026-07-28T1208Z.md)
 - [Three-pass fleet gap audit refresh, 2026-07-28T19:00Z](archive/THREE_PASS_GAP_AUDIT_2026-07-28T1900Z.md)
+- [Three-pass gap audit refresh, 2026-07-29T07:10Z](archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md)
+- [Three-pass gap audit refresh, 2026-07-29T10:25Z](archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md)
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`
 - `docs/bff/execution-tasks/2026-07-28-twelve-loop-current-gap-drain/tasks.json`
+- `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.md`
+- `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.json`
+
+The 2026-07-29T10:25Z audit is the current dispatch authority. It incorporates
+the later #4365/#4366 supervisor priority-gate merge/archive/promotion, the
+live supervisor health check from root
+`8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`, the stale #4367 duplicate receipt
+PR, the behind state of #4361/#4364/#4313/#4297, and the still-open product
+evidence gaps for KNOW, LEARN, RUNTIME, OBS, FE, HOSTED, and CLOSE.
 
 ## Baseline verdict
 
@@ -91,6 +105,56 @@ Each fleet task must:
 - keep live capital disabled;
 - remain open when current evidence is stale, indirect, synthetic, or
   contradicted.
+
+## Current fleet checkpoint, 2026-07-29T08:30Z
+
+Live supervisor dispatch is no longer treated as hypothetical:
+
+- `L12-VERIFY-KNOW-001` is running on `Claude2`
+  (`claude2-20260729T082322Z-0b3d4613`).
+- `L12-VERIFY-OBS-001` was dispatched to `Antigravity`, reached `review`, was
+  rejected by `Claude2` as still synthetic, and is back in `in_progress` on
+  Antigravity.
+- `L12-VERIFY-RUNTIME-001` is still `todo` because the single `Claude2` quota
+  slot is occupied by KNOW.
+- `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` reached `review` after
+  `Antigravity` owner handling.
+
+This checkpoint proves the fleet dispatch path can run real supervisor
+auto-workers. It does not prove the twelve loops are operable. Formal
+completion still requires terminal task evidence, independent review, merged
+PRs, replayable manifests, hosted identity, and Human/Ops closeout.
+
+## Current fleet checkpoint, 2026-07-29T10:25Z
+
+The live supervisor now reports `supervisor_healthy` from
+`/home/lupin/pantheon-ci-deploy/dev-root`, with active root matching
+worker-runner root. The command-root SHA is
+`8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`.
+
+Completed control-plane item:
+
+- `SUP-L12-REVIEW-PRIORITY-GATE-20260729` is archived after #4365 merged to
+  `dev` as `18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d` and closeout evidence
+  #4366 merged as `8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`.
+
+Still not complete:
+
+- `L12-VERIFY-OBS-001` is only `review`; PR #4364 is open and behind.
+- `L12-VERIFY-KNOW-001` and `L12-VERIFY-RUNTIME-001` are `todo`.
+- `L12-VERIFY-LEARN-001` and `L12-FE-TRUTH-001` are `blocked`.
+- `L12-HOSTED-001` and `L12-CLOSE-001` are `todo` and correctly dependent.
+- `L12-MANIFEST-REVIEW-GAP-TASKS-20260729` is merged at PR level (#4330) but
+  still blocked at canonical row closeout.
+- #4367 is a stale duplicate closeout-receipt PR after #4366 archive.
+
+New guard work from the live rescue is tracked in
+`docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.md`:
+
+- `SUP-L12-TASK-BRIEF-SYNC-20260729`
+- `SUP-L12-WORKER-PYDEPS-20260729`
+- `SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729`
+- `SUP-L12-PROVIDER-FIRST-MERGE-GATE-20260729`
 
 ## Completion boundary
 
