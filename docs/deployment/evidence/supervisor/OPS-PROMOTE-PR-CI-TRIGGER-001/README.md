@@ -229,10 +229,35 @@ The checkout-local provisioned interpreter passed all 25
 compilation, both workflow YAML parses, evidence JSON parsing, and both diff
 checks also passed.
 
-These changes still require fresh Branch CI and Claude2 review on the final
+These changes still require fresh Branch CI and Antigravity review on the final
 PR head. The root merge-freeze status remains Human/Ops-controlled. Actual
 workflow dispatch, auto-merge observation, master reachability, and stale PR
 closure remain blocked until PR `#4262` merges into `dev`.
+
+## Finalize Dispatch Refresh
+
+The canonical task row now assigns Codex as owner and Antigravity as reviewer.
+Antigravity approved exact head
+`f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592` at
+2026-07-29T09:09:06Z. Before owner closeout could merge that head, `dev`
+advanced by one supervisor-only commit and strict branch protection reported
+PR `#4262` as `BEHIND`.
+
+Codex anchored the supervisor-issued owner/reviewer metadata as
+`7073c77b53d27b1bfe44107888ec4000e9208a52`, then composed current `origin/dev`
+`18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d` through conflict-free merge
+`5d40efd33a300d70ab6aa05350bfbca3cfe5e46f`. The incoming commit changes only
+supervisor dispatch ordering and tests; it does not overlap promote code or
+evidence. At the composed tree, all 25 `PublishPromoteTests` passed in 0.221
+seconds and the 73-test focused pytest slice passed in 9.77 seconds.
+`py_compile`, both workflow YAML parses, evidence JSON parsing, and both diff
+checks also passed.
+
+The resulting evidence commit and push will create a new exact PR head, so the
+earlier canonical approval cannot authorize that merge. The unchanged
+reviewer must bind Antigravity approval to the new head after Branch CI passes.
+Human/Ops must separately supply `Pantheon root merge freeze 2026-07-27` on
+the same exact head. The owner does not impersonate either authority.
 
 ## Live Proof and Stale-PR Retirement
 

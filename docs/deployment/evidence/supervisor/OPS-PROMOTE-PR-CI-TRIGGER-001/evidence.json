@@ -5,7 +5,7 @@
     "title": "Repair promote PR CI trigger and auto-merge path",
     "phase": "Repository Merge Governance",
     "owner": "Codex",
-    "reviewer": "Codex2",
+    "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "in_progress",
-  "generated_at": "2026-07-29T09:05:31Z",
+  "generated_at": "2026-07-29T10:12:46Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -318,7 +318,37 @@
       "fresh_release_supports_dispatch": true,
       "fresh_release_disposition": "eligible"
     },
-    "next": "commit and push the evidence head, reacquire Branch CI and Claude2 review, merge after Human Ops releases the root freeze, then execute fresh live proof and ancestry-based stale retirement"
+    "next": "push the finalization refresh, reacquire Branch CI and Antigravity exact-head review, merge after Human Ops releases the root freeze, then execute fresh live proof and ancestry-based stale retirement"
+  },
+  "finalize_dispatch_refresh": {
+    "canonical_status_observed_at": "2026-07-29T10:07:10Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "prior_approved_head": "f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592",
+    "prior_approval_recorded_at": "2026-07-29T09:09:06Z",
+    "dispatch_metadata_anchor_commit": "7073c77b53d27b1bfe44107888ec4000e9208a52",
+    "base_commit": "18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d",
+    "base_update_merge_commit": "5d40efd33a300d70ab6aa05350bfbca3cfe5e46f",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T10:12:46Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.221s",
+      "pytest": "73 focused tests passed in 9.77s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "base_is_current": true,
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity approval on the resulting exact head, then wait for Human/Ops to bind the root-freeze context"
+    }
   },
   "delivery": {
     "implementation_pr": 4258,
@@ -355,22 +385,22 @@
       }
     },
     "merge_gate": {
-      "observed_at": "2026-07-29T05:04:54Z",
-      "observed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+      "observed_at": "2026-07-29T10:12:46Z",
+      "observed_head": "5d40efd33a300d70ab6aa05350bfbca3cfe5e46f",
       "pr_state": "open",
-      "mergeable_state": "behind",
+      "mergeable_state": "local_base_current_pending_push",
       "auto_merge_enabled": false,
       "merge_policy": "review_before_merge",
       "external_required_contexts": [
         "Pantheon canonical review gate",
         "Pantheon root merge freeze 2026-07-27"
       ],
-      "head_check_runs": 8,
-      "head_commit_statuses": 1,
+      "head_check_runs": 0,
+      "head_commit_statuses": 0,
       "owner_rescue_requires_fresh_head_gates": true,
       "waiting_for": [
-        "current dev composition push and fresh Branch CI",
-        "Codex2 independent exact-head review",
+        "finalization evidence commit, push, and fresh Branch CI",
+        "Antigravity independent exact-head review",
         "Pantheon canonical review gate",
         "Human Ops root merge freeze release"
       ]
@@ -417,11 +447,11 @@
     "ancestry_evidence": null
   },
   "review": {
-    "status": "review_approved_at_77dc_owner_gap_repair_pending_current_head_review",
-    "reviewer": "Codex2",
-    "reviewed_head": null,
-    "reviewed_at": null,
-    "decision": null,
+    "status": "prior_approval_superseded_by_base_refresh_pending_exact_head_review",
+    "reviewer": "Antigravity",
+    "reviewed_head": "f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592",
+    "reviewed_at": "2026-07-29T09:09:06Z",
+    "decision": "approved_for_exact_head_before_finalize_dispatch_refresh",
     "latest_reopened_review": {
       "reviewer": "Codex2",
       "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
