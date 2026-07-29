@@ -76,15 +76,53 @@
         "delivery_state": "on task/L12-TRUTH-001",
         "hosted_cut_inclusion": false,
         "note": "Catalog controller_contract truth for the three loops that run a canonical loop-control controller, the BFF projection of that declaration, and the repair of tests/test_loop_catalog_registry.py, which pinned its not_implemented rejection case to loops[0]."
+      },
+      {
+        "sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+        "subject": "L12-TRUTH-001: bind catalog controller claims to runtime",
+        "delivery_state": "head of PR #4350 into dev",
+        "hosted_cut_inclusion": false,
+        "note": "Catalog-to-runtime exactness, all-loop record conformance with tenant-scoped readback, the all-loop stale/archive-only/contradicted negatives, and this evidence manifest. This is the tree the recorded validation commands were run against."
       }
     ],
     "required_checks": [
       {
-        "workflow": "branch-ci",
+        "workflow": "Commit trailers",
         "event": "pull_request",
-        "conclusion": "pending"
+        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Forward to orchestrator",
+        "event": "pull_request",
+        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Runtime mirror guard",
+        "event": "pull_request",
+        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Python packaging provision",
+        "event": "pull_request",
+        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Smoke acceptance",
+        "event": "pull_request",
+        "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+        "conclusion": "success"
       }
-    ]
+    ],
+    "pull_request": {
+      "number": 4350,
+      "url": "https://github.com/ajoe734/pantheon/pull/4350",
+      "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+      "base": "dev"
+    }
   },
   "validation": {
     "commands": [
@@ -126,7 +164,7 @@
     ],
     "validated_at": "2026-07-29T05:08:59Z",
     "validated_base_sha": "b1527e868654fb93765b3e5788adeea1f5e869a2",
-    "validated_head_sha": "4068400c9f2cf3e3bba1db347f2bd03d1e003ad9"
+    "validated_head_sha": "880ca444fc63a9d325b970559fed4927b8f391af"
   },
   "deployment": {
     "applicable": false,
@@ -342,6 +380,15 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
       "sequence": 1,
       "sha": "4068400c9f2cf3e3bba1db347f2bd03d1e003ad9",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_delivery_head_recorded",
+      "recorded_at": "2026-07-29T05:15:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4350",
+      "sequence": 2,
+      "sha": "880ca444fc63a9d325b970559fed4927b8f391af",
       "status": "pass"
     }
   ]
