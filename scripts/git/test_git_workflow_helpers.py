@@ -10,6 +10,7 @@ or with unittest discovery:
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import importlib.util
 import io
@@ -857,6 +858,16 @@ class PublishPromoteTests(unittest.TestCase):
                     ),
                 ],
             ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "request_verified_auto_merge",
+                return_value={"auto_merge_enabled": True, "merged": False},
+            ) as auto_merge,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             run_git.side_effect = lambda *args: "a" * 40 if args == ("rev-parse", "HEAD") else ""
@@ -868,7 +879,6 @@ class PublishPromoteTests(unittest.TestCase):
         for call in run_git.call_args_list:
             self.assertNotIn("--force", call.args)
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertIn(["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"], commands)
         self.assertIn(
             ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
             commands,
@@ -888,6 +898,7 @@ class PublishPromoteTests(unittest.TestCase):
             ],
             commands,
         )
+        auto_merge.assert_called_once_with("promote/v2026.20.0", 42)
 
     def test_open_candidate_is_idempotent_when_pr_exists(self) -> None:
         candidate = {
@@ -918,6 +929,16 @@ class PublishPromoteTests(unittest.TestCase):
                     None,
                 ),
             ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "request_verified_auto_merge",
+                return_value={"auto_merge_enabled": True, "merged": False},
+            ) as auto_merge,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
@@ -950,6 +971,16 @@ class PublishPromoteTests(unittest.TestCase):
                     None,
                 ),
             ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "request_verified_auto_merge",
+                return_value={"auto_merge_enabled": True, "merged": False},
+            ) as auto_merge,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
@@ -971,10 +1002,91 @@ class PublishPromoteTests(unittest.TestCase):
             ],
             commands,
         )
-        self.assertIn(
-            ["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"],
-            commands,
+        auto_merge.assert_called_once_with("promote/v2026.20.0", 42)
+
+    def test_existing_legacy_promote_ref_is_retained_without_dispatch_error(self) -> None:
+        candidate = {
+            "version": "v2026.07.26.2",
+            "publish_branch": "publish/v2026.07.26.2",
+            "age_days": 3.0,
+            "blockers": [],
+            "promote_branch": "promote/v2026.07.26.2",
+            "promotion_mode": "clean_merge",
+        }
+        with (
+            mock.patch.object(publish_promote, "run_git"),
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                return_value=(
+                    {
+                        "number": 4138,
+                        "url": "https://example.invalid/4138",
+                        "headRefOid": "c" * 40,
+                        "statusCheckRollup": [],
+                    },
+                    None,
+                ),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(False, None),
+            ),
+            mock.patch.object(
+                publish_promote, "dispatch_promote_ci"
+            ) as dispatch,
+            mock.patch.object(
+                publish_promote, "request_verified_auto_merge"
+            ) as auto_merge,
+        ):
+            result = publish_promote.open_candidate(candidate, self.SETTINGS)
+        self.assertEqual(result["disposition"], "legacy_ci_contract")
+        self.assertEqual(result["head_sha"], "c" * 40)
+        self.assertFalse(dispatch.called)
+        self.assertFalse(auto_merge.called)
+
+    def test_promote_ref_dispatch_contract_is_read_from_exact_head(self) -> None:
+        workflow = (
+            "on:\n  workflow_dispatch:\n    inputs:\n"
+            "      expected_head_sha:\n      promote_pr_number:\n"
         )
+        with mock.patch.object(
+            publish_promote,
+            "_gh_api_object",
+            return_value=(
+                {
+                    "content": base64.b64encode(workflow.encode()).decode(),
+                },
+                None,
+            ),
+        ) as api:
+            supported, error = publish_promote.promote_ref_supports_ci_dispatch(
+                "d" * 40
+            )
+        self.assertEqual((supported, error), (True, None))
+        self.assertIn("?ref=" + "d" * 40, api.call_args.args[0])
+
+    def test_verified_auto_merge_fails_when_rest_cannot_observe_it(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["gh", "pr", "merge"], returncode=0, stdout="", stderr=""
+        )
+        with (
+            mock.patch.object(
+                publish_promote.subprocess, "run", return_value=completed
+            ) as run,
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_object",
+                return_value=({"auto_merge": None, "merged_at": None}, None),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "was not observable"):
+                publish_promote.request_verified_auto_merge(
+                    "promote/v2026.20.0", 42
+                )
+        self.assertTrue(run.call_args.kwargs["check"])
 
     def test_branch_ci_exposes_exact_head_promote_dispatch(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
