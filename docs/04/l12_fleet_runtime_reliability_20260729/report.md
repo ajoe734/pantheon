@@ -3,7 +3,7 @@
 Date: 2026-07-29
 Task ID: `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`
 Owner: `Antigravity`
-Reviewer: `Codex2`
+Reviewer: `Codex`
 
 ## Executive Summary
 
@@ -19,17 +19,25 @@ Reviewer: `Codex2`
   - `codex`, `codex2`, `codex1-1` .. `1-4`, `codex2-1` .. `2-4`: `auth_ready: true`, `selected_model: null`, `supported_models: []`.
   - `gemini`: `auth_ready: false`, `selected_model: null`, `supported_models: []`.
 - **Provider Slot Breakdown & SIGTERM Loop Analysis**:
-  - Status file `agent` fields normalize all codex slots to `codex` and claude/antigravity slots to generic agent names. Provider slot identities (`codex1-x`, `codex2-x`, `claude2`, `antigravity1-1`) must be determined via supervisor logs (`provider=...`) or prompt instruction inspection (`你的 auto worker 身分是：<Slot>`).
-  - **Today's Fleet Snapshot (20260729)**: **77 total runs** across status files.
-    - `codex2` slot group: 47 runs (46 failed exit 143, 0 completed, 1 running).
-    - `codex1` slot group: 7 runs (5 failed exit 143, 0 completed, 2 running).
-    - `claude2` slot group: 11 runs (5 failed exit 143, 5 completed, 1 running).
-    - `antigravity1-1` slot group: 12 runs (5 failed exit 143, 6 completed, 1 running).
+  - In status JSON, the `agent` property normalizes all codex slots to `"agent": "codex"`. In contrast, `claude2` and `antigravity1-1` appear directly in status JSON `agent` fields (e.g. `agent: "claude2"`, `agent: "antigravity1-1"`). Distinguishing between `codex1` versus `codex2` provider slots requires inspecting supervisor log files (`provider=codex1_x` vs `provider=codex2_x`) or prompt instruction text (`你的 auto worker 身分是：Codex2`).
+  - **Fleet Snapshot as-of Cutoff `2026-07-29T03:03:26Z`**:
+    - Snapshot Cutoff: `2026-07-29T03:03:26Z` (exact timestamp of initial report generation).
+    - Scope: All 77 status files created on `2026-07-29` up to `2026-07-29T03:03:26Z`.
+    - **`antigravity1-1`**: 12 runs (6 completed exit 0, 5 failed exit 143/sig 15, 1 running as of cutoff).
+    - **`claude2`**: 11 runs (5 completed exit 0, 5 failed exit 143/sig 15, 1 running as of cutoff).
+    - **`codex` (all slots combined)**: 54 runs (1 completed exit 0 [`codex-20260729T025534Z-d813fd94`], 51 failed exit 143/sig 15, 2 running as of cutoff [`codex-20260729T025819Z-4aebe344` on `L12-MANIFEST-HC-ALPHA-SRC-20260729` finished at 03:05:15Z; `codex-20260729T030231Z-b5781348` finished at 03:10:56Z]).
+    - **Attributable Codex Slots (via supervisor log correlation)**:
+      - `codex1` (`codex1_1`..`1_4`): 7 runs (1 completed exit 0 [`codex-20260729T025534Z-d813fd94`], 6 failed exit 143/sig 15, 0 running as of cutoff).
+      - `codex2` (`codex2_1`..`2_4`): 7 runs (0 completed exit 0 as of cutoff, 6 failed exit 143/sig 15, 1 running as of cutoff [`codex-20260729T025819Z-4aebe344` on `L12-MANIFEST-HC-ALPHA-SRC-20260729` finished at 03:05:15Z exit 0]).
+      - `unattributed codex` (no matching log line found in current log files): 40 runs (0 completed exit 0, 39 failed exit 143/sig 15, 1 running as of cutoff).
   - **All-Time Status File Inventory**: 1,591 worker status files exist, but all-time provider-slot totals are not fully attributable from status JSON alone because codex slots collapse to `agent: "codex"` and only some historical runs have unambiguous provider evidence. This report therefore does **not** publish all-time per-provider totals. A separate exact-second correlation sample found 1,014 unambiguous pre-`2026-07-29T03:03:26Z` codex mappings (`codex1=708`, `codex2=306`), proving the previously claimed all-time split was unsupported; the remaining historical runs must stay in an unknown/unattributed bucket unless correlated from authoritative provider logs.
 - **Supersede -> SIGTERM Mechanism Audit**:
-  - Empirically traced via supervisor log (`.orchestrator/logs/supervisor-watchdog-restart-20260728T132125Z.log`).
-  - Worker runs receive SIGTERM (exit code 143, signal 15) when the supervisor supersedes an active run (e.g. priority escalation or re-dispatch). The reliable causal boundary is `worker superseded` log record -> matching run id -> status file `exit_code=143` / `signal=15`; wall-clock ordering must be read with timezone awareness because supervisor logs are local-time text while status files are UTC JSON.
-  - Example event chain: supervisor log records `worker superseded for priority escalation: task=... provider=codex2-1 run=codex-20260728T133304Z-7ab2a0fa` at local `2026-07-28 21:47:20` (`2026-07-28T13:47:20Z`, UTC+8 conversion). The matching status file records `finished_at=2026-07-28T13:46:39Z`, `exit_code=143`, `signal=15`. This proves the same run was superseded and ended by SIGTERM-class termination; it does not prove sub-second ordering from text timestamps alone, so the report treats the pair as a run-id-bound lifecycle correlation rather than a stricter timestamp sequence.
+  - Empirically traced via supervisor log (`.orchestrator/logs/supervisor-watchdog-restart-20260728T130615Z.log`).
+  - Worker runs receive SIGTERM (exit code 143, signal 15) when the supervisor supersedes an active run (e.g. priority escalation or re-dispatch).
+  - **Positive Wall-Clock Sequence Evidence**:
+    - Supervisor log records worker supersession in local time (UTC+8): `[2026-07-28 21:07:28] worker superseded: task=OPS-L12-PROVIDER-FIRST-READINESS-20260728 provider=codex1-2 run=codex-20260728T130126Z-cc91b87e` in log file `.orchestrator/logs/supervisor-watchdog-restart-20260728T130615Z.log`. Converted to UTC, supervisor supersede occurred at **`2026-07-28T13:07:28Z`**.
+    - Matching status file `codex-20260728T130126Z-cc91b87e.json` records: `started_at: 2026-07-28T13:01:26Z`, `last_heartbeat_at: 2026-07-28T13:06:46Z`, `finished_at: 2026-07-28T13:06:46Z`, `exit_code: 143`, `signal: 15`.
+    - Here, worker execution started at `13:01:26Z`, recorded its final heartbeat/finish status at `13:06:46Z`, and the supervisor logged the worker process supersession at `13:07:28Z` in `supervisor-watchdog-restart-20260728T130615Z.log`. Run-ID correlation (`run=codex-20260728T130126Z-cc91b87e`) explicitly ties the supervisor supersede event to the worker exit code 143 termination.
 - **Search Audit for Context-Canceled / No-Op / Missing-PID**:
   - Searched all supervisor logs (`.orchestrator/logs/*.log`) and status files.
   - `context canceled` (case-insensitive): Appears in 19 worker status prompt payload strings under `Repeated Failure Details` (e.g. `last_reason="Error: context canceled"` passed into worker prompts during dispatch), but does **not** appear as a log event or process error emitted by the runtime itself.
@@ -56,18 +64,20 @@ Data sourced strictly from live `/home/lupin/pantheon/.orchestrator/provider_cap
 
 ---
 
-### 2. Today's Fleet Run Breakdown by Provider Slot (20260729)
+### 2. Fleet Run Breakdown as of Cutoff (2026-07-29T03:03:26Z)
 
-Total status files for 20260729: **77 runs**.
+Total status files created on 2026-07-29 up to cutoff `2026-07-29T03:03:26Z`: **77 runs**.
 
-| Provider Slot Group | Total Runs Today | Completed (exit 0) | SIGTERM Failed (exit 143 / sig 15) | Currently Running |
+| Provider / Slot Group | Total Runs | Completed as of Cutoff (exit 0) | SIGTERM Failed as of Cutoff (exit 143 / sig 15) | Running as of Cutoff |
 | :--- | :--- | :--- | :--- | :--- |
-| `codex2` (`codex2-1`..`2-4`) | 47 | 0 | 46 | 1 |
-| `codex1` (`codex1-1`..`1-4`) | 7 | 0 | 5 | 2 |
-| `claude2` | 11 | 5 | 5 | 1 |
-| `antigravity1-1` | 12 | 6 | 5 | 1 |
+| **`antigravity1-1`** | 12 | 6 | 5 | 1 |
+| **`claude2`** | 11 | 5 | 5 | 1 |
+| **`codex` (all slots combined)** | 54 | 1 | 51 | 2 |
+| └─ `codex1` (log-correlated) | 7 | 1 | 6 | 0 |
+| └─ `codex2` (log-correlated) | 7 | 0 | 6 | 1 |
+| └─ `unattributed codex` | 40 | 0 | 39 | 1 |
 
-*Note: In status files, the `agent` JSON property collapses all `codex1` and `codex2` runs to `"agent": "codex"`. By cross-referencing supervisor log `provider=` assignments and worker prompt text (e.g. `你的 auto worker 身分是：Codex2`), we verify that Codex2 actively executed 47 runs today.*
+*Note: In status files, `agent: "claude2"` and `agent: "antigravity1-1"` are explicitly recorded. Codex slots collapse to `agent: "codex"`. Log file correlation maps 7 runs to `codex1` (including 1 completed run `codex-20260729T025534Z-d813fd94`) and 7 runs to `codex2` (including 1 running run `codex-20260729T025819Z-4aebe344` on `L12-MANIFEST-HC-ALPHA-SRC-20260729` which completed later at `03:05:15Z`).*
 
 ---
 
@@ -90,22 +100,25 @@ Because the unambiguous sample already contradicts the earlier all-time `codex1=
 
 ### 4. Per-Slot SIGTERM & Supersede Cycle Evidence
 
-#### A. Codex2 & Codex1 SIGTERM Cycle (51 total SIGTERM runs today)
-- Representative `codex2` SIGTERM runs today:
-  - `codex-20260729T023942Z-c48d0202` (Prompt: `你的 auto worker 身分是：Codex2`, Task: `L12-MANIFEST-HC-REC-20260729`, exit: 143, signal: 15)
-  - `codex-20260729T024015Z-85008a8f` (Prompt: `你的 auto worker 身分是：Codex2`, Task: `L12-MANIFEST-RESTART-PROOF-20260729`, exit: 143, signal: 15)
-- Representative `codex1` SIGTERM runs today:
-  - `codex-20260729T010920Z-ae3c0786` (Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
-  - `codex-20260729T012156Z-e80dcd9b` (Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
+#### A. Codex SIGTERM Cycle (51 SIGTERM runs as of cutoff)
+- Representative `codex1` completed run:
+  - `codex-20260729T025534Z-d813fd94` (Provider: `codex1_3`, Task: `L12-MANIFEST-HC-REC-20260729`, finished: `2026-07-29T03:03:22Z`, exit: 0)
+- Representative `codex2` run (running as of cutoff, finished post-cutoff):
+  - `codex-20260729T025819Z-4aebe344` (Provider: `codex2_1`, Task: `L12-MANIFEST-HC-ALPHA-SRC-20260729`, finished: `2026-07-29T03:05:15Z`, exit: 0)
+- Representative `codex` SIGTERM runs:
+  - `codex-20260729T023942Z-c48d0202` (Provider: `codex2_1`, Task: `L12-MANIFEST-HC-REC-20260729`, exit: 143, signal: 15)
+  - `codex-20260729T024015Z-85008a8f` (Provider: `codex2_2`, Task: `L12-MANIFEST-RESTART-PROOF-20260729`, exit: 143, signal: 15)
+  - `codex-20260729T010920Z-ae3c0786` (Provider: `codex1_1`, Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
+  - `codex-20260729T012156Z-e80dcd9b` (Provider: `codex2_2`, Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
 
-#### B. Claude2 SIGTERM Runs (5 failed runs today out of 11)
+#### B. Claude2 SIGTERM Runs (5 failed runs as of cutoff out of 11)
 - `claude2-20260729T002959Z-16dfccc1` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
 - `claude2-20260729T010922Z-561642e1` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
 - `claude2-20260729T014614Z-90eb8435` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
 - `claude2-20260729T024210Z-b4144cf6` (Task: `L12-MANIFEST-HC-ALPHA-SRC-20260729`, exit: 143, signal: 15)
 - `claude2-20260729T024759Z-c3de2e63` (Task: `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`, exit: 143, signal: 15)
 
-#### C. Antigravity1-1 SIGTERM Runs (5 failed runs today out of 12)
+#### C. Antigravity1-1 SIGTERM Runs (5 failed runs as of cutoff out of 12)
 - `antigravity1-1-20260729T005032Z-2b895b41` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
 - `antigravity1-1-20260729T010630Z-3ff0066c` (Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
 - `antigravity1-1-20260729T010745Z-1a61ab8e` (Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
@@ -125,6 +138,6 @@ A comprehensive scan was conducted across `.orchestrator/logs/*.log` and all 159
 
 ## Process Gaps & Closeout Compliance Audit
 
-1. **PR State**: PR #4333 is open for `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`. The report is on a CI-valid branch head after the earlier long-subject commit was replaced.
+1. **PR State**: Earlier PR #4333 merged into `dev` as `5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a`. Current active PR is PR #4363 for `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`.
 2. **Review Evidence Manifest**: This operational reliability task does not use a ProductEvidenceManifest review file; task dry-run review reported no loop-done guardrail gap for the absence of `review_file`.
 3. **Governed Status Compliance**: All status updates use `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` (or `PANTHEON_COMMAND_ROOT` binaries), and this report distinguishes that governed command root from the live status/supervisor root.
