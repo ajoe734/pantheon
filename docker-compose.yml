@@ -112,6 +112,13 @@ services:
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
       CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
+      # L12-MANIFEST-001 dev manifest admission: consultation has a source
+      # supported bearer-token boundary. Keep it enabled by default in the
+      # local/dev stack with a non-production placeholder token; hosted
+      # environments override CONSULTATION_SERVICE_TOKEN from their secret
+      # store.
+      CONSULTATION_AUTH_REQUIRED: ${CONSULTATION_AUTH_REQUIRED:-true}
+      CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
     volumes:
       - consultation-data:/data/consultation
     ports:
@@ -469,6 +476,11 @@ services:
       TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-}
       TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE:-}
       TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-}
+      # L12-MANIFEST-001 dev manifest admission: the persisted teaching API is
+      # strict by default and must render an actual verifier input. This is a
+      # local/dev placeholder secret, not a production credential.
+      TRAINING_SESSION_AUTH_MODE: ${TRAINING_SESSION_AUTH_MODE:-strict}
+      TRAINING_SESSION_JWT_SECRET: ${TRAINING_SESSION_JWT_SECRET:-pantheon-local-training-session-jwt-secret}
     volumes:
       - training-session-data:/data/training-session
       - source-ingest-data:/data/source-ingest:ro
@@ -504,6 +516,8 @@ services:
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
       TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-/data/training-session/preview-worker-alive}
+      TRAINING_SESSION_WORKER_TOKEN: ${TRAINING_SESSION_WORKER_TOKEN:-pantheon-local-training-session-worker}
+      TRAINING_SESSION_TENANT_ID: ${TRAINING_SESSION_TENANT_ID:-default}
     volumes:
       - training-session-data:/data/training-session
     depends_on:
@@ -1196,7 +1210,7 @@ services:
       # Kernel capabilities must be supplied explicitly for an authorized
       # operator/admin identity; public viewer sessions remain read-only.
       PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
-      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_BFF_JWKS_URI: ${PANTHEON_BFF_JWKS_URI:-}
@@ -1637,6 +1651,11 @@ services:
       CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
       CAPITAL_AUDIT_BACKEND: ${CAPITAL_AUDIT_BACKEND:-jsonl}
       CAPITAL_AUDIT_DSN: ${CAPITAL_AUDIT_DSN:-}
+      # L12-MANIFEST-001 dev manifest admission: capital is a protected API.
+      # Render strict auth and a local/dev verifier input without enabling live
+      # broker or capital-binding writes.
+      CAPITAL_AUTH_MODE: ${CAPITAL_AUTH_MODE:-strict}
+      CAPITAL_JWT_SECRET: ${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}
     volumes:
       - capital-data:/data/capital
     depends_on:
@@ -1705,6 +1724,8 @@ services:
       DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID: ${DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID:-}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-pantheon-local-deployment-consumer}
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -1974,6 +1995,8 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      RECONCILIATION_DRIFT_AUTH_MODE: ${RECONCILIATION_DRIFT_AUTH_MODE:-token}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -2018,6 +2041,7 @@ services:
       RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ: ${RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ:-false}
       RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/tmp/reconciliation-drift-consumer-health.json}
       RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -2047,6 +2071,7 @@ services:
       RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS:-1}
       RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/tmp/reconciliation-drift-scheduler-health.json}
       RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
@@ -2074,6 +2099,7 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS:-1}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
