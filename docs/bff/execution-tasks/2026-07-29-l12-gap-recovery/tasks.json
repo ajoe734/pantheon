@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T08:35:00Z",
+  "updated_at": "2026-07-29T08:40:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
@@ -37,6 +37,30 @@
       "L12-VERIFY-KNOW-001 still requires terminal evidence, PR, review, and merge"
     ]
   },
+  "fleet_checkpoint_2026_07_29T0840Z": {
+    "claude2": {
+      "quota": "1/1",
+      "active_task": "L12-VERIFY-RUNTIME-001",
+      "run_id": "claude2-20260729T083911Z-b350d04f",
+      "know_status": "L12-VERIFY-KNOW-001 returned to todo after failed/preempted run claude2-20260729T083251Z-33cfa39f"
+    },
+    "antigravity": {
+      "quota": "1/1",
+      "latest_owner_task": "L12-VERIFY-OBS-001",
+      "latest_owner_run_id": "antigravity1-1-20260729T083928Z-4bc23525",
+      "obs_status": "Claude2 rejected anchor ac87dc46a at 2026-07-29T08:38:37Z as the same self-attesting verifier with regenerated UUIDs/timestamps"
+    },
+    "provider_first_deviation": [
+      "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729 reached review from Antigravity but reviewer was auto-reassigned from Codex2 to Codex after repeated Codex2 terminal failures",
+      "Codex chair/reviewer workers are supervisor auto-workers, not Codex collaboration subagents, but they are not valid Claude/Antigravity-first delivery evidence until #4362 merges and is live-validated"
+    ],
+    "not_complete": [
+      "L12-VERIFY-OBS-001 still requires real implementation repair and a fresh PR",
+      "L12-VERIFY-KNOW-001 is not actively delivered and requires redispatch after preserving failure/preemption evidence",
+      "L12-VERIFY-RUNTIME-001 is running but has no terminal evidence, PR, review, or merge yet",
+      "PR #4361 and #4362 visible checks are green but blocked by Human/Ops branch-protection contexts"
+    ]
+  },
   "waves": [
     {
       "wave": 0,
@@ -49,8 +73,9 @@
           "target_repo": "pantheon",
           "owner_preference": ["Claude2"],
           "reviewer_preference": ["Antigravity"],
-          "status_at_packet_update": "in_progress",
-          "live_run_id": "claude2-20260729T082322Z-0b3d4613",
+          "status_at_packet_update": "todo_after_failed_preempted_claude2_run",
+          "live_run_id": null,
+          "latest_failed_run_id": "claude2-20260729T083251Z-33cfa39f",
           "depends_on": ["L12-DIST-001", "L12-ALPHA-001", "L12-TRUTH-001"],
           "scope": [
             "scripts/verify_twelve_loop_knowledge.py",
@@ -71,15 +96,16 @@
           "target_repo": "pantheon",
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2"],
-          "status_at_packet_update": "in_progress_after_claude2_rejection",
-          "live_run_id": "antigravity1-1-20260729T083305Z-e86d7488",
+          "status_at_packet_update": "in_progress_after_second_claude2_rejection",
+          "live_run_id": "antigravity1-1-20260729T083928Z-4bc23525",
+          "latest_rejected_anchor": "ac87dc46a",
           "depends_on": ["L12-REC-001", "L12-EVO-001", "L12-BFF-001", "L12-TRUTH-001"],
           "scope": [
             "scripts/verify_twelve_loop_observability.py",
             "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001"
           ],
           "acceptance": [
-            "Replace the byte-identical synthetic verifier rejected at anchor commit 65aa15358",
+            "Replace the byte-identical synthetic verifier rejected at anchor commits 65aa15358 and ac87dc46a",
             "Telemetry, drift, incident, postmortem, EvolutionDecision, downstream action, and BFF health proof are service-backed readbacks",
             "Duplicate rejection and restart/replay idempotency are proven against the store",
             "False reviewer/governance claims such as governed_by=Claude2 are removed unless an actual governed approval exists",
@@ -92,7 +118,8 @@
           "target_repo": "pantheon",
           "owner_preference": ["Claude2"],
           "reviewer_preference": ["Antigravity"],
-          "status_at_packet_update": "todo_waiting_for_claude2_quota",
+          "status_at_packet_update": "running_on_claude2",
+          "live_run_id": "claude2-20260729T083911Z-b350d04f",
           "depends_on": ["L12-CAP-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
           "scope": [
             "scripts/verify_twelve_loop_runtime.py",

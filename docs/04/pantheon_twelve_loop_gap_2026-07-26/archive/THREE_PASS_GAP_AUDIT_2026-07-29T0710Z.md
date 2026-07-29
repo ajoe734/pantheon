@@ -6,6 +6,8 @@ Live-rescue addendum captured at: `2026-07-29T08:30Z`
 
 Review correction captured at: `2026-07-29T08:35Z`
 
+Fleet correction captured at: `2026-07-29T08:40Z`
+
 Program: `pantheon-twelve-loop-gap-2026-07-26`
 
 This is a current-state audit, not a completion claim. The purpose is to keep
@@ -275,8 +277,10 @@ explicit enough in the 07:23Z audit:
 5. **Parallelism is bounded by provider account quota.** The live config allows
    multiple total execution workers, but `Claude2` and `Antigravity` each have
    effective account concurrency `1/1`. Running Codex workers do not consume
-   those quotas, but they can distract chair/ops flow. RUNTIME cannot start
-   until KNOW releases `Claude2`; OBS cannot run again until Antigravity frees.
+   those quotas, but they can distract chair/ops flow. The latest 08:40Z state
+   shows `L12-VERIFY-RUNTIME-001` did start on `Claude2`, while
+   `L12-VERIFY-KNOW-001` returned to `todo` after a failed/preempted Claude2
+   run. OBS is back on `Antigravity` after a second Claude2 rejection.
 
 ### Addendum pass 3 — new tests and validation still missing
 
@@ -328,6 +332,31 @@ health, and loop-health services; read back persisted records by id; prove
 duplicate rejection and restart/replay idempotency against the store; remove
 the false `governed_by=Claude2` claim; then open a fresh task PR to `dev`.
 
+### Fleet correction — 08:40Z live state changed again
+
+The 08:40Z live state check adds four material corrections to the addendum:
+
+- `L12-VERIFY-OBS-001` was rejected again by `Claude2` at
+  `2026-07-29T08:38:37Z`. The follow-up anchor `ac87dc46a` still had
+  `scripts/verify_twelve_loop_observability.py` byte-identical to the rejected
+  #4360 head and changed only regenerated UUIDs/timestamps in
+  `evidence.json`. OBS is therefore not merely pending review; it is back in
+  implementation repair on `Antigravity` run
+  `antigravity1-1-20260729T083928Z-4bc23525`.
+- `L12-VERIFY-KNOW-001` is no longer a healthy active Claude2 run. The latest
+  run `claude2-20260729T083251Z-33cfa39f` failed and the supervisor returned
+  the row to `todo` to free Claude2 for higher-priority review/runtime work.
+  This exposes a missing durable worker-bootstrap/preemption recovery test.
+- `L12-VERIFY-RUNTIME-001` did dispatch to `Claude2` as
+  `claude2-20260729T083911Z-b350d04f`. The earlier “waiting for Claude2 quota”
+  statement is stale as of 08:40Z.
+- `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` reached review from
+  `Antigravity`, but the supervisor auto-reassigned the reviewer from `Codex2`
+  to `Codex` after repeated Codex2 terminal failures. That is not a Codex
+  subagent created by this session; it is the repository supervisor's
+  auto-worker fallback. It still violates the intended Claude/Antigravity-first
+  posture until #4362 merges and is validated in the live command root.
+
 ## Pass 3 — dispatch, fleet, and guardrail audit
 
 ### Confirmed fleet usage
@@ -335,17 +364,23 @@ the false `governed_by=Claude2` claim; then open a fresh task PR to `dev`.
 The work was routed through the repository supervisor/auto-worker mechanism,
 not Codex subagents:
 
-- No L12 product or guard worker is live at the latest process check.
-- `Claude2` was recently live on `L12-VERIFY-RUNTIME-001` via
-  `claude2-20260729T071353Z-4c29a045`; that run failed and the row returned to
-  `todo`.
+- Latest 08:40Z process check has L12 product work live on the intended
+  supervisor/auto-worker path: `Claude2` owns `L12-VERIFY-RUNTIME-001` via
+  `claude2-20260729T083911Z-b350d04f`, and `Antigravity` owns
+  `L12-VERIFY-OBS-001` via `antigravity1-1-20260729T083928Z-4bc23525`.
+- `L12-VERIFY-KNOW-001` is not currently delivered; the latest Claude2 owner
+  worker failed/preempted and the row is `todo`.
 - `Antigravity` completed `L12-VERIFY-LEARN-001` via
   `antigravity1-1-20260729T071100Z-af38b1e4`, but its PR #4358 was rejected as
   fake proof, so the task is blocked rather than accepted.
-- `Antigravity` completed `L12-VERIFY-OBS-001` via
-  `antigravity1-1-20260729T071802Z-723cf5e9`, but its PR #4360 was rejected as
-  synthetic proof, so the task is blocked rather than accepted.
+- `Antigravity` completed prior `L12-VERIFY-OBS-001` attempts, but PR #4360
+  and subsequent anchors `65aa15358` and `ac87dc46a` were rejected as
+  synthetic/self-attesting proof, so the task remains in implementation repair.
 - `L12-FE-TRUTH-001` has no confirmed live worker at the latest check.
+- A Codex chair review and a Codex reviewer for
+  `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` were also live; those are
+  supervisor auto-workers, not Codex collaboration subagents, but they must not
+  be counted as Claude/Antigravity-first L12 delivery.
 
 The supervisor repeatedly helper-claimed the two guard tasks to Codex/Codex2 while
 Claude2/Antigravity capacity was unavailable. Those helper-claims were

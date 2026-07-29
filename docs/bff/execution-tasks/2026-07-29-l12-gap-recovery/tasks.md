@@ -6,6 +6,8 @@ Live-rescue update: `2026-07-29T08:30Z`
 
 Review correction: `2026-07-29T08:35Z`
 
+Fleet correction: `2026-07-29T08:40Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
 
@@ -36,9 +38,9 @@ coordination lanes only.
 
 - Owner: `Claude2`
 - Reviewer: `Antigravity`
-- Current state: `todo`; latest observed Claude2 workers failed before the
-  08:20Z runtime rescue. It remains waiting for the single `Claude2` account
-  slot to free after `L12-VERIFY-KNOW-001`.
+- Current state: live supervisor dispatched `Claude2` owner run
+  `claude2-20260729T083911Z-b350d04f` at `2026-07-29T08:39:11Z`.
+  This supersedes the earlier `todo_waiting_for_claude2_quota` note.
 - Scope: `scripts/verify_twelve_loop_runtime.py` and
   `docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001`.
 - Required delivery:
@@ -53,10 +55,12 @@ coordination lanes only.
 
 - Owner: `Claude2`
 - Reviewer: `Antigravity`
-- Current state: `in_progress` after real supervisor/auto-worker dispatch to
-  `Claude2` run `claude2-20260729T082322Z-0b3d4613`.
-- Dispatch rule: do not start a duplicate while this worker is live. If it
-  fails, redispatch only after preserving its log and fixing the exact blocker.
+- Current state: `todo` after the latest `Claude2` owner run
+  `claude2-20260729T083251Z-33cfa39f` failed and the supervisor preempted the
+  row to free `Claude2` for higher-priority review/runtime work.
+- Dispatch rule: do not count the failed/preempted run as delivery. Redispatch
+  only after preserving the log and ensuring worker bootstrap dependencies and
+  task-brief context are stable.
 - Required delivery:
   - real Persona requirement to durable `SourceRecord`;
   - one mutable `StrategySpec` draft;
@@ -87,10 +91,12 @@ coordination lanes only.
 
 - Owner: `Antigravity`
 - Reviewer: `Claude2`
-- Current state: `in_progress` after `Claude2` rejected the
-  `65aa15358` evidence refresh at `2026-07-29T08:31:49Z`; the task was
-  redispatched to `Antigravity` run
-  `antigravity1-1-20260729T083305Z-e86d7488`.
+- Current state: `in_progress` after two `Claude2` rejections. The
+  `65aa15358` evidence refresh was rejected at `2026-07-29T08:31:49Z`; the
+  follow-up anchor `ac87dc46a` was rejected at `2026-07-29T08:38:37Z` because
+  it still used the same self-attesting verifier and only regenerated UUIDs and
+  timestamps. The supervisor then redispatched owner work to `Antigravity` run
+  `antigravity1-1-20260729T083928Z-4bc23525`.
 - Rejected heads:
   - #4355 `8ba6792a2f00010ad1c401fd4cf526bde65269b8`
   - #4360 `f10a6015a48947adbd51a2b2fc12a8a78f426d1e`
@@ -102,7 +108,8 @@ coordination lanes only.
   - BFF downstream stop and recovery telemetry;
   - no locally fabricated UUID proof.
 - Required repair:
-  - replace the byte-identical synthetic verifier rejected at head `65aa15358`;
+  - replace the byte-identical synthetic verifier rejected at heads
+    `65aa15358` and `ac87dc46a`;
   - drive real telemetry, incident, postmortem, governance/evolution,
     downstream-health, and loop-health service boundaries;
   - read persisted records back by id with distinct boundary timestamps;
@@ -258,8 +265,12 @@ progress.
 
 ## Dispatch order
 
-1. Keep current KNOW on `Claude2` running; do not duplicate it.
-2. Dispatch RUNTIME as soon as the real `Claude2` worker slot is available.
+1. Do not count the failed/preempted KNOW runs as delivery; preserve their logs
+   and redispatch KNOW only when `Claude2` can run it without another
+   higher-priority preemption.
+2. Monitor current RUNTIME owner run
+   `claude2-20260729T083911Z-b350d04f`; if it fails, preserve the log and
+   reopen the exact bootstrap/product blocker instead of marking the loop done.
 3. Keep LEARN blocked until a new implementation proves real service-boundary
    evidence rather than pass literals.
 4. Keep OBS with `Antigravity` for implementation rework after the `Claude2`
@@ -275,15 +286,22 @@ progress.
 
 ## Current fleet health checkpoint
 
-Observed after the 08:20Z rescue:
+Observed after the 08:20Z rescue and updated at 08:40Z:
 
-- `Claude2` can launch and run a governed auto worker (`L12-VERIFY-KNOW-001`).
+- `Claude2` can launch governed auto workers, but `L12-VERIFY-KNOW-001` failed
+  as `claude2-20260729T083251Z-33cfa39f` and returned to `todo`; current
+  `Claude2` capacity is on `L12-VERIFY-RUNTIME-001`
+  (`claude2-20260729T083911Z-b350d04f`).
 - `Antigravity` can launch and move governed tasks, but the OBS attempt was
-  correctly rejected by `Claude2` as still synthetic and is back in
-  implementation repair.
+  correctly rejected by `Claude2` twice as still synthetic and is back in
+  implementation repair on `antigravity1-1-20260729T083928Z-4bc23525`.
 - `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` proved Antigravity owner
-  dispatch by reaching `review`.
-- `Claude2` account quota is effectively `1/1`, so RUNTIME waits for KNOW.
+  dispatch by reaching `review`, but the reviewer was auto-reassigned from
+  `Codex2` to `Codex` after repeated Codex2 terminal failures. This is an
+  observed provider-first violation until #4362 merges and is validated in the
+  live command root.
+- `Claude2` account quota is effectively `1/1`; RUNTIME is currently occupying
+  it, and KNOW is waiting.
 - `Antigravity` account quota is effectively `1/1`, so OBS/guard work must be
   serialized unless the account policy changes.
 - Runtime deps were temporarily rescued in `/tmp/l12-alpha-pydeps`; this is
