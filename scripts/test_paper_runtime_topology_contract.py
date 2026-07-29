@@ -14,6 +14,16 @@ def test_default_root_stack_uses_binding_scoped_paper_fleet() -> None:
 
     assert "profiles" not in services["paper-fleet-reconciler"]
     assert "profiles" not in services["paper-signal-producer"]
+    producer = services["paper-signal-producer"]
+    assert producer["healthcheck"]["test"] == [
+        "CMD",
+        "python",
+        "-m",
+        "services.execution.lean_runtime.paper_signal_producer",
+        "healthcheck",
+    ]
+    assert producer["environment"]["PANTHEON_LIVE_BROKER_ENABLED"] == "false"
+    assert producer["environment"]["PANTHEON_CANARY_EXECUTION_ENABLED"] == "false"
     assert services["pantheon-paper-runtime"]["profiles"] == [
         "static-paper-runtime"
     ]
