@@ -3,14 +3,13 @@
 Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
-- Title: SUP-L12-REVIEW-PRIORITY-GATE-20260729: prioritize L12 review dispatch
+- Title: SUP-L12-REVIEW-PRIORITY-GATE-20260729: bound exact-head review ready for integration
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Antigravity approved the implementation observed at PR #4365 head
-  `cbcb4574da48e353e3e33673f81dce5dc13e790d`; owner closeout must preserve
-  that reviewed tree, publish the task-scoped finalization commit, obtain the
-  required exact-head PR binding, merge to `dev`, and only then run `done`.
+- Next: Publish this closeout receipt through the task PR flow, preserve the
+  independently reviewed implementation, then run governed `done` only after
+  the closeout head is reviewed and merged into `dev`.
 
 ## Summary
 修復 supervisor priority gate，避免 Claude2/Antigravity review slot 被非 L12 review 佔用，讓 L12/SUP-L12 review 在同 tier 內優先。
@@ -23,6 +22,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 - Reviewer: Antigravity
 - Approval recorded: `2026-07-29T09:50:05Z`
+- Exact-head GitHub review bridge recorded: `2026-07-29T10:04:14Z`
 - Reviewed implementation head:
   `cbcb4574da48e353e3e33673f81dce5dc13e790d`
 - Reviewed behavior: ready-dispatcher priority rank, same-tier preemption order,
@@ -33,15 +33,26 @@ Generated in the worker workspace because the supervisor root did not have a tas
   `Error: timeout waiting for response` was worker/CLI closeout noise after
   approval, not a failed review.
 
+## Delivery Receipt
+
+- Implementation PR:
+  `https://github.com/ajoe734/pantheon/pull/4365`
+- Reviewed PR head:
+  `cbcb4574da48e353e3e33673f81dce5dc13e790d`
+- Merged to `dev`: `2026-07-29T10:06:25Z`
+- Squash merge commit:
+  `18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d`
+- Visible GitHub gates passed: commit trailers, runtime mirror guard, smoke
+  acceptance, canonical review gate, root merge freeze, and orchestrator sync.
+
 ## Owner Closeout Boundary
 
 - Preserve `.orchestrator/supervisor.py` and
   `.orchestrator/test_supervisor.py` exactly as reviewed.
-- Remove the supervisor worktree-lease auto-anchor's empty queue lock files and
-  derived dashboard refresh from the task delivery; they are not task
-  artifacts and were created after independent review.
+- Do not include empty queue lock files or derived dashboard refreshes in the
+  task delivery.
 - Do not edit `.orchestrator/config.json`.
-- Because the canonical approval row does not record PR/head/base binding,
-  integration remains fail-closed until Antigravity binds the exact final PR
-  head. The owner must not substitute an unbound approval or mark the task
-  `done` before merge.
+- The closeout follow-up may change only this task-scoped receipt. Because that
+  creates a new PR head, the assigned reviewer must bind that exact head before
+  integration; the owner must not reuse the implementation-head approval for
+  the receipt commit.
