@@ -25,7 +25,8 @@
       "L12-VERIFY-LEARN-001",
       "L12-VERIFY-RUNTIME-001"
     ],
-    "anchor_commit": "683c43f4dceb2a0c5b6a9b6abee2642499f05228"
+    "integration_base_sha": "d9cbbbfa2b0d4076f939a6d0fcc921406993d7af",
+    "anchor_commit": "f3e55652b7d118b68a364860c0d43b77eab2abd0"
   },
   "implementation": {
     "shared_health_contract": {
