@@ -66,6 +66,9 @@ disposition are now recorded above.
 - Delivery head: `54cd77cebcee1da2e76c8862231e0da4893d0e80`
 - Delivery merged into `dev` as `22fb0b6ba2c1beccfd55a32b3e48bca250375192`
 - Delivery merged at: `2026-07-29T04:54:52Z`
+- Correction PR: #4349
+- Correction anchor: `1cde13fe51cbf5b39ee439bf7ae39c5315317f20`
+- Canonical task archived done at: `2026-07-29T04:59:07Z`
 - Review file: `.orchestrator/task-briefs/sup_l12_open_pr_drain_20260729.md`
 - Validation:
   - Branch CI Gate passed at delivery head: Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance.
