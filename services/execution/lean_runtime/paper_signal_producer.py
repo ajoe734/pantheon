@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+from services.worker_health import healthcheck as check_worker_health
+from services.worker_health import write_health
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     mint_trade_envelope,
@@ -29,6 +32,7 @@ from services.trade_journey.correlation_envelope import (
 log = logging.getLogger(__name__)
 
 SIGNAL_SCHEMA_VERSION = "1.0"
+_WORKER_NAME = "paper-signal-producer"
 
 
 @dataclass(frozen=True)
@@ -381,6 +385,8 @@ class PaperSignalProducer:
 def fetch_eligible_paper_bindings(
     runtime_manager_url: str,
     token: str | None = None,
+    *,
+    raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch active paper bindings from runtime-manager desired state."""
     import urllib.request
@@ -403,6 +409,8 @@ def fetch_eligible_paper_bindings(
         return [b for b in bindings if b.get("status") == "active"]
     except Exception as e:
         log.warning("Failed to fetch active bindings from runtime-manager: %s", e)
+        if raise_on_error:
+            raise
         return []
 
 
@@ -453,12 +461,53 @@ def _redis_store_factory(signal_store_url: str):
     return store_for
 
 
-def main() -> None:  # pragma: no cover
-    import os
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_paper_only_configuration() -> None:
+    unsafe = [
+        name
+        for name in (
+            "PANTHEON_LIVE_BROKER_ENABLED",
+            "PANTHEON_CANARY_EXECUTION_ENABLED",
+        )
+        if _env_flag(name)
+    ]
+    if unsafe:
+        raise RuntimeError(
+            "paper-signal-producer refuses live/canary execution flags: "
+            + ", ".join(unsafe)
+        )
+
+
+def healthcheck() -> int:
+    """Validate a recent successful paper-only producer tick."""
+
+    return check_worker_health(
+        health_file=os.getenv("PAPER_PRODUCER_HEALTH_FILE", ""),
+        interval_seconds=max(
+            1,
+            int(float(os.getenv("PAPER_PRODUCER_INTERVAL_SECONDS", "60"))),
+        ),
+        worker_name=_WORKER_NAME,
+        expected={
+            "execution_mode": "paper",
+            "live_capital_enabled": False,
+            "live_order_submission_enabled": False,
+        },
+    )
+
+
+def main() -> int:  # pragma: no cover
     import time
     from datetime import datetime, timezone
 
     logging.basicConfig(level=logging.INFO)
+    _require_paper_only_configuration()
     signal_store_url = os.getenv("SIGNAL_STORE_URL", "").strip()
     if not signal_store_url:
         raise SystemExit("SIGNAL_STORE_URL is required (redis://signal-store:6379)")
@@ -467,32 +516,89 @@ def main() -> None:  # pragma: no cover
     runtime_manager_token = os.getenv("PANTHEON_RUNTIME_MANAGER_TOKEN", "").strip()
 
     interval = float(os.getenv("PAPER_PRODUCER_INTERVAL_SECONDS", "60"))
+    max_ticks = int(os.getenv("PAPER_PRODUCER_MAX_TICKS", "0"))
+    if interval <= 0:
+        raise ValueError("PAPER_PRODUCER_INTERVAL_SECONDS must be > 0")
+    if max_ticks < 0:
+        raise ValueError("PAPER_PRODUCER_MAX_TICKS must be >= 0")
+    health_file = os.getenv("PAPER_PRODUCER_HEALTH_FILE", "").strip()
     producer = PaperSignalProducer(
         store_for=_redis_store_factory(signal_store_url), strategy=BoundedPaperStrategy()
     )
     log.info("paper_signal_producer started; interval=%.0fs", interval)
+    health: dict[str, Any] = {
+        "worker_name": _WORKER_NAME,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "active_binding_count": 0,
+        "enqueued_signal_count": 0,
+        "execution_mode": "paper",
+        "live_capital_enabled": False,
+        "live_order_submission_enabled": False,
+    }
+    write_health(health_file, health)
 
+    tick = 0
     while True:
+        tick += 1
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            # Dynamic active binding resolution
+            bindings = []
+            if runtime_manager_url:
+                bindings = fetch_eligible_paper_bindings(
+                    runtime_manager_url,
+                    runtime_manager_token,
+                    raise_on_error=True,
+                )
+                log.info(
+                    "Discovered %d active paper bindings from runtime-manager",
+                    len(bindings),
+                )
+            else:
+                raw_bindings = os.getenv("PANTHEON_PAPER_PRODUCER_BINDINGS", "")
+                if raw_bindings:
+                    bindings = parse_bindings_env(raw_bindings)
+                    log.info(
+                        "Discovered %d bindings from "
+                        "PANTHEON_PAPER_PRODUCER_BINDINGS env",
+                        len(bindings),
+                    )
 
-        # Dynamic active binding resolution
-        bindings = []
-        if runtime_manager_url:
-            bindings = fetch_eligible_paper_bindings(runtime_manager_url, runtime_manager_token)
-            log.info("Discovered %d active paper bindings from runtime-manager", len(bindings))
-        else:
-            raw_bindings = os.getenv("PANTHEON_PAPER_PRODUCER_BINDINGS", "")
-            if raw_bindings:
-                bindings = parse_bindings_env(raw_bindings)
-                log.info("Discovered %d bindings from PANTHEON_PAPER_PRODUCER_BINDINGS env", len(bindings))
+            counts = producer.tick(bindings, now_iso) if bindings else {}
+            health["status"] = "ok"
+            health["last_success_at"] = now_iso
+            health["last_failure_reason"] = None
+            health["active_binding_count"] = len(bindings)
+            health["enqueued_signal_count"] = sum(counts.values())
+        except Exception as exc:
+            log.warning("paper_signal_producer tick failed: %s", exc)
+            health["status"] = "degraded"
+            health["last_failure_at"] = now_iso
+            health["last_failure_reason"] = str(exc)
+            health["active_binding_count"] = 0
+            health["enqueued_signal_count"] = 0
+        health["ticks"] = tick
+        health["last_tick_at"] = now_iso
+        write_health(health_file, health)
 
-        if bindings:
-            producer.tick(bindings, now_iso)
-        else:
-            log.debug("No active paper bindings discovered; skipping tick")
-
+        if max_ticks and tick >= max_ticks:
+            return 0
         time.sleep(interval)
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
+    if sys.argv[1:]:
+        print(
+            "usage: python -m services.execution.lean_runtime."
+            "paper_signal_producer [healthcheck]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    raise SystemExit(main())

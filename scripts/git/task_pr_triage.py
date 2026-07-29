@@ -624,6 +624,7 @@ def _resolved_replacements(
 def classify_pr(
     pr: dict[str, Any],
     *,
+    triage_task_id: str,
     repository: str,
     dev_reachable: bool,
     trailers: dict[str, str],
@@ -784,7 +785,7 @@ def classify_pr(
             "branch deletion is out of scope; the branch remains governed by the dry-run retention manifest"
         )
         result["closure_comment"] = (
-            "OPS-TASK-PR-TRIAGE-001 evidence-based disposition: **superseded**.\n\n"
+            f"{triage_task_id} evidence-based disposition: **superseded**.\n\n"
             + "\n".join(f"- {line}" for line in evidence_lines)
         )
     return result
@@ -885,6 +886,7 @@ def classify_branch(
 
 def build_report(
     *,
+    task_id: str,
     repository: str,
     remote: str,
     base_ref: str,
@@ -939,6 +941,7 @@ def build_report(
         cohort.append(
             classify_pr(
                 pr,
+                triage_task_id=task_id,
                 repository=repository,
                 dev_reachable=dev_reachable,
                 trailers=trailers,
@@ -993,7 +996,7 @@ def build_report(
     ]
     deletion_manifest = {
         "schema_version": 1,
-        "task_id": "OPS-TASK-PR-TRIAGE-001",
+        "task_id": task_id,
         "mode": "dry-run-only",
         "repository": repository,
         "remote": remote,
@@ -1013,7 +1016,7 @@ def build_report(
     closure_candidates = [item for item in cohort if item["close_authorized"]]
     report = {
         "schema_version": 1,
-        "task_id": "OPS-TASK-PR-TRIAGE-001",
+        "task_id": task_id,
         "repository": repository,
         "remote": remote,
         "base_ref": base_ref,
@@ -1092,6 +1095,8 @@ def validate_report(
     for field in ("repository", "remote", "base_ref", "base_sha", "as_of"):
         if deletion_manifest.get(field) != report.get(field):
             raise TriageError(f"branch manifest {field} does not match report")
+    if deletion_manifest.get("task_id") != report.get("task_id"):
+        raise TriageError("branch manifest task_id does not match report")
     if deletion_manifest.get("mode") != "dry-run-only":
         raise TriageError("branch manifest must remain dry-run-only")
     candidates = deletion_manifest.get("candidates") or []
@@ -1139,7 +1144,7 @@ def render_markdown(
 ) -> str:
     summary = report["summary"]
     lines = [
-        "# OPS-TASK-PR-TRIAGE-001 evidence report",
+        f"# {report['task_id']} evidence report",
         "",
         f"Generated from live GitHub and git evidence at `{report['as_of']}`.",
         f"Base proof: `{report['base_ref']}` = `{report['base_sha']}`.",
@@ -1267,6 +1272,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         number: collect_pr_detail(args.repository, number) for number in args.include_pr
     }
     report, manifest = build_report(
+        task_id=args.task_id,
         repository=args.repository,
         remote=args.remote,
         base_ref=args.base_ref,
@@ -1383,6 +1389,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     generate = sub.add_parser("generate", help="collect live evidence and write reports")
+    generate.add_argument("--task-id", default="OPS-TASK-PR-TRIAGE-001")
     generate.add_argument("--repository", default=DEFAULT_REPOSITORY)
     generate.add_argument("--remote", default="origin")
     generate.add_argument("--base-ref", default="origin/dev")

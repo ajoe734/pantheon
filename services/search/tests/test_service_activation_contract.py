@@ -36,7 +36,10 @@ def test_compose_wires_search_service_and_bff_normal_path() -> None:
     assert scheduler["command"] == ["python", "-m", "services.search.scheduler_worker"]
     assert scheduler["environment"]["SEARCH_API_URL"] == "http://search-svc:8098"
     assert scheduler["environment"]["SEARCH_INDEX_SCHEDULER_MATERIALIZE"] == "${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}"
+    assert scheduler["environment"]["SEARCH_INDEX_SCHEDULER_ALIVE_PATH"] == "${SEARCH_INDEX_SCHEDULER_ALIVE_PATH:-/data/search/search_scheduler_alive}"
+    assert "search-data:/data/search" in scheduler["volumes"]
     assert scheduler["depends_on"]["search-svc"]["condition"] == "service_healthy"
+    assert "healthcheck" in scheduler
 
 
 def test_honest_stack_smoke_waits_for_and_queries_search_service() -> None:
