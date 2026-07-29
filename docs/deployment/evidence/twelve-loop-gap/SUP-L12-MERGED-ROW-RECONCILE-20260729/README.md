@@ -150,9 +150,37 @@ returning exit 1 with a distinct gate message:
 | Control | Gate message |
 |---|---|
 | evidence path that does not exist | `RECONCILE_EVIDENCE_FILE is not a regular file: …/DOES-NOT-EXIST.md` |
-| delivery commit not merged to `dev` | `Cannot reconcile task: delivery commit 7e2d0ed06… is not merged into origin/dev.` |
+| delivery commit not merged to `dev` | `Cannot reconcile task: delivery commit <this branch's anchor commit> is not merged into origin/dev.` |
 | same evidence pointed at the wrong task row | `Cannot reconcile task: merged evidence does not bind the canonical task, owner metadata.` |
 | evidence commit predating the file | `Cannot reconcile task: evidence file is absent from the supplied evidence commit.` |
+
+The second control feeds this branch's own anchor commit as the delivery commit.
+That SHA is rewritten by every rebase, so it is described by role rather than
+transcribed as an identity; the value observed in the run recorded in
+`evidence.json` is `a9b17076201e460f7b3619fe78c9318e92a9bbd6`. Any commit that is
+not an ancestor of `origin/dev` reproduces the control.
+
+### Rebase record
+
+The branch was `BEHIND` and was rebased onto `origin/dev`
+`715308c381a73b80cfe974689f00b4a42877255f`. Per the binding rule below, the
+rebase rewrote both branch SHAs and left the artifact tree byte-identical:
+
+```bash
+git rebase origin/dev
+git diff --stat 3116d2ecad81f91ba460e9b9cce7c7007e8a8a82 0d3544d4cedb7420b0f350b2c4b1e101989c0f82 \
+  -- docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729
+# empty output = same tree
+sha256sum -c evidence.sha256   # 4/4 OK
+```
+
+The positive preflight run and all four negative controls were re-executed
+against the rebased head; results are unchanged and recorded in `evidence.json`.
+The `evidence.json` and `README.md` digests below were regenerated after this
+section was written. `reconcile/L12-MANIFEST-REVIEW-GAP-TASKS-20260729.md` was
+**not** touched — it is the byte-identity-gated file and its digest
+`fe45cc31cdc4ceb0887e07255d6c22c49139950e900d6d1494157e3545ad0bbb` is unchanged
+from the anchor commit.
 
 ## Operator recipe (`Human/Ops` only)
 

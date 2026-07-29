@@ -149,7 +149,8 @@
       {
         "control": "delivery commit not merged to dev",
         "exit_code": 1,
-        "gate_error": "Cannot reconcile task: delivery commit 7e2d0ed06c7c16fdd4b14f1316d3e02fabccfcd0 is not merged into origin/dev."
+        "gate_error": "Cannot reconcile task: delivery commit a9b17076201e460f7b3619fe78c9318e92a9bbd6 is not merged into origin/dev.",
+        "input_is_role_not_identity": "the fed commit is this branch's own anchor commit, whose SHA is rewritten by every rebase; any commit that is not an ancestor of origin/dev reproduces the control"
       },
       {
         "control": "same evidence pointed at the wrong task row",
@@ -205,10 +206,26 @@
     "digest_algorithm": "sha256",
     "binding_rule": "artifacts are bound by content digest, not by branch commit SHA: auto_integrator rebases task branches onto the dev tip and rewrites every branch SHA while leaving artifact trees byte-identical, which silently orphans any SHA recorded here",
     "source_artifact_sha256": {
-      "README.md": "46822af5a87356767e5cef6afe99f6c8275f4863d4dd237a94e09070724acff9",
+      "README.md": "63eea50f64d75199b71941349f9e057ebdc56aeda6d9ec893c3d92f9a4897bdc",
       "verify_reconcile_evidence.py": "c1009e962f53643701e7707101b79af3292abcde768bc1a482ea8855caf2bcae",
       "reconcile/L12-MANIFEST-REVIEW-GAP-TASKS-20260729.md": "fe45cc31cdc4ceb0887e07255d6c22c49139950e900d6d1494157e3545ad0bbb"
     },
+    "rebase_record": [
+      {
+        "reason": "PR #4379 was OPEN and MERGEABLE with all required checks SUCCESS, but mergeStateStatus was BEHIND",
+        "onto": "715308c381a73b80cfe974689f00b4a42877255f",
+        "pre_rebase_head": "3116d2ecad81f91ba460e9b9cce7c7007e8a8a82",
+        "post_rebase_head": "0d3544d4cedb7420b0f350b2c4b1e101989c0f82",
+        "content_preserved": true,
+        "content_preserved_proof": "git diff --stat 3116d2ecad81f91ba460e9b9cce7c7007e8a8a82 0d3544d4cedb7420b0f350b2c4b1e101989c0f82 -- docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729 produced empty output; sha256sum -c evidence.sha256 returned 4/4 OK against the pre-rebase digests",
+        "revalidation": "the positive preflight run and all four negative controls were re-executed against the rebased head; result and per-control gate errors are unchanged apart from the rebased anchor SHA fed to control 2",
+        "post_rebase_edits": [
+          "README.md gained a rebase record section",
+          "evidence.json gained this block and the control-2 role note"
+        ],
+        "not_touched": "reconcile/L12-MANIFEST-REVIEW-GAP-TASKS-20260729.md, whose digest fe45cc31cdc4ceb0887e07255d6c22c49139950e900d6d1494157e3545ad0bbb is unchanged from the anchor commit and is the file the byte-identity gate reads"
+      }
+    ],
     "externally_verifiable_facts": [
       "the reconcile evidence blob digest above is what Human/Ops must see on dev before running the recovery",
       "GitHub commit status 51263870393 on 7b68b423590855ea8d39ea718103b29a612a948a",
