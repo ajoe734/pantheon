@@ -16,7 +16,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
   therefore requires Antigravity to approve the final exact head; ownership
   and reviewer assignment must not change during closeout.
 - Base refresh: merged current `origin/dev`
-  `31d7eaebc49f027e1c9935915c875e8a0b4c6846` into the task branch as
+  `31d7eaebcb012a9beb5f5f0057db401d378b5beb` into the task branch as
   `ef804fe6dc9bc33ea3b848f1fcabd496b6322667`.
 - Next: Antigravity independently reviews and approves the final exact head;
   the owner then merges PR #4328 and runs governed `done`.
