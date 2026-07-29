@@ -230,7 +230,7 @@
       },
       {
         "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
-        "result": "168 passed, 31 subtests passed in 27.82s after isolating the local test subprocesses from the auto worker's external command-runtime lease"
+        "result": "168 passed, 31 subtests passed in 26.65s at the refreshed PR head after merging current origin/dev; local test subprocesses were isolated from the auto worker's external command-runtime lease"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'dashboard_flags_merged_delivery_that_still_needs_closeout or dashboard_uses_structured_delivery_evidence_for_closeout_drift or derived_views_skip_a_stale_projection or authoritative_load_ignores_divergent_file_and_save_advances_journal'",
@@ -238,7 +238,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py -k 'authoritative_bridge_dispatch_survives_next_projection_cycle'",
-        "result": "1 passed, 26 deselected in 1.24s"
+        "result": "1 passed, 26 deselected in 1.05s at the refreshed PR head"
       },
       {
         "command": "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev && git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
