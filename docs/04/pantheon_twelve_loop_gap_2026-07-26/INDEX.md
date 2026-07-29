@@ -50,10 +50,11 @@ The reconciled source of truth is:
 - `docs/bff/execution-tasks/2026-07-29-l12-gap-recovery/tasks.json`
 
 The 2026-07-29T07:10Z audit file includes a live-rescue addendum captured at
-`2026-07-29T08:30Z`. That addendum records restored supervisor/auto-worker
-dispatch to `Claude2` and `Antigravity`, stale chair/failure-streak cleanup,
-task-brief drift, missing worker Python dependencies, and the remaining
-durability gaps.
+`2026-07-29T08:30Z` and a review correction at `2026-07-29T08:35Z`. Those
+updates record restored supervisor/auto-worker dispatch to `Claude2` and
+`Antigravity`, stale chair/failure-streak cleanup, task-brief drift, missing
+worker Python dependencies, the `Claude2` rejection of still-synthetic OBS
+evidence, and the remaining durability gaps.
 
 ## Baseline verdict
 
@@ -109,8 +110,9 @@ Live supervisor dispatch is no longer treated as hypothetical:
 
 - `L12-VERIFY-KNOW-001` is running on `Claude2`
   (`claude2-20260729T082322Z-0b3d4613`).
-- `L12-VERIFY-OBS-001` was dispatched to `Antigravity` and is in `review`
-  after anchor commit `65aa15358`.
+- `L12-VERIFY-OBS-001` was dispatched to `Antigravity`, reached `review`, was
+  rejected by `Claude2` as still synthetic, and is back in `in_progress` on
+  Antigravity.
 - `L12-VERIFY-RUNTIME-001` is still `todo` because the single `Claude2` quota
   slot is occupied by KNOW.
 - `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` reached `review` after

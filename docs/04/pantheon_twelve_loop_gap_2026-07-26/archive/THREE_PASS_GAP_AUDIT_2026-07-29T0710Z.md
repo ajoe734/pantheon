@@ -4,6 +4,8 @@ Captured at: `2026-07-29T07:23Z`
 
 Live-rescue addendum captured at: `2026-07-29T08:30Z`
 
+Review correction captured at: `2026-07-29T08:35Z`
+
 Program: `pantheon-twelve-loop-gap-2026-07-26`
 
 This is a current-state audit, not a completion claim. The purpose is to keep
@@ -219,6 +221,12 @@ Verified supervisor/auto-worker dispatches, not Codex subagents:
   `review` at `2026-07-29T08:28:16Z` with next evidence pointing at
   `docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001/evidence.json`
   and anchor commit `65aa15358` on `task/L12-VERIFY-OBS-001`.
+- At `2026-07-29T08:31:49Z`, `Claude2` rejected that OBS review: the diff from
+  rejected head `f10a6015a..65aa15358` changed only evidence JSON timestamps
+  and UUIDs, while `scripts/verify_twelve_loop_observability.py` remained
+  byte-identical to the already rejected self-attesting generator. OBS returned
+  to `in_progress` and was redispatched to `Antigravity` as
+  `antigravity1-1-20260729T083305Z-e86d7488`.
 - `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` was handled by `Antigravity`
   and moved to `review` at `2026-07-29T08:26:02Z`; a `Codex2` reviewer worker
   was then dispatched because the task row names `Codex2` as reviewer.
@@ -232,7 +240,7 @@ Current loop proof state after this rescue:
 | KNOW (`source_ingestion`, `strategy_distillation`, `alpha_replication`) | `in_progress` on real `Claude2` auto worker | Still no terminal evidence, PR, review approval, or merged manifest. |
 | LEARN (`persona_teaching`, `agora`, `imitation`, `consultation`) | `blocked` by rejected fake verifier heads | Needs full service-boundary rewrite; no current valid worker result. |
 | RUNTIME (`promotion_deployment`, `capital_pool_execution`) | `todo`, waiting for `Claude2` quota | Still lacks governed-paper runtime proof and restart/DLQ evidence. |
-| OBS (`telemetry_reconciliation`, `evolution`, `bff_health_monitoring`) | `review` after real `Antigravity` auto worker | Needs independent `Claude2` review and closeout replay before it can count. |
+| OBS (`telemetry_reconciliation`, `evolution`, `bff_health_monitoring`) | Rejected by `Claude2`; redispatched to `Antigravity` | Must replace byte-identical synthetic verifier with service-backed telemetry/incident/postmortem/evolution/BFF readbacks. |
 | FE/HOSTED/CLOSE | Not proven | Still dependent on accepted verifier and hosted identity evidence. |
 
 ### Addendum pass 2 — newly confirmed development gaps
@@ -296,6 +304,29 @@ Addendum verdict: the supervisor/fleet dispatch path is functioning again for
 at least `Claude2` and `Antigravity`, but the twelve-loop product goal remains
 incomplete and the newly exposed runtime-control gaps must be closed through
 PRs, not live-only repair.
+
+### Review correction — OBS remained fake after redispatch
+
+The `Claude2` review at `2026-07-29T08:31:49Z` is decisive evidence that the
+OBS lane is still not repaired:
+
+- `generate_observability_proof_record()` constructs the whole chain with
+  `uuid.uuid4()` and one shared timestamp.
+- `verify_observability_chain()` asserts that same in-memory record against
+  itself.
+- Grep for real boundary mechanisms (`requests`, `httpx`, `urllib`,
+  `psycopg`, `sqlalchemy`, `subprocess`, `socket`, `aiohttp`) across the
+  verifier found zero matches.
+- Manifest records shared a single timestamp, proving one-process construction
+  rather than durable boundary readback.
+- No open PR or merged evidence exists: PRs #4355 and #4360 are both closed
+  with `mergedAt=null`.
+
+Required OBS repair is therefore implementation work, not reviewer paperwork:
+drive the telemetry, incident, postmortem, governance/evolution, downstream
+health, and loop-health services; read back persisted records by id; prove
+duplicate rejection and restart/replay idempotency against the store; remove
+the false `governed_by=Claude2` claim; then open a fresh task PR to `dev`.
 
 ## Pass 3 — dispatch, fleet, and guardrail audit
 

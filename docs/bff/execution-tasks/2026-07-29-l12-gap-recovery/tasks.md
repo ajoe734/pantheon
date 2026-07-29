@@ -4,6 +4,8 @@ Generated at: `2026-07-29T07:23Z`
 
 Live-rescue update: `2026-07-29T08:30Z`
 
+Review correction: `2026-07-29T08:35Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
 
@@ -85,8 +87,10 @@ coordination lanes only.
 
 - Owner: `Antigravity`
 - Reviewer: `Claude2`
-- Current state: `review` after real supervisor/auto-worker dispatch to
-  `Antigravity` run `antigravity1-1-20260729T082732Z-560e0361`.
+- Current state: `in_progress` after `Claude2` rejected the
+  `65aa15358` evidence refresh at `2026-07-29T08:31:49Z`; the task was
+  redispatched to `Antigravity` run
+  `antigravity1-1-20260729T083305Z-e86d7488`.
 - Rejected heads:
   - #4355 `8ba6792a2f00010ad1c401fd4cf526bde65269b8`
   - #4360 `f10a6015a48947adbd51a2b2fc12a8a78f426d1e`
@@ -97,11 +101,15 @@ coordination lanes only.
   - approved action terminal downstream receipt with retry/compensation;
   - BFF downstream stop and recovery telemetry;
   - no locally fabricated UUID proof.
-- Required review:
-  - `Claude2` must independently validate the refreshed evidence manifest,
-    service-boundary readbacks, and anchor commit `65aa15358`;
-  - if the evidence still depends on synthetic UUIDs, reopen to `Antigravity`
-    with exact rejected proof paths.
+- Required repair:
+  - replace the byte-identical synthetic verifier rejected at head `65aa15358`;
+  - drive real telemetry, incident, postmortem, governance/evolution,
+    downstream-health, and loop-health service boundaries;
+  - read persisted records back by id with distinct boundary timestamps;
+  - prove duplicate rejection and restart/replay idempotency against a store;
+  - remove false reviewer/governance claims such as `governed_by=Claude2`
+    unless an actual governed approval exists;
+  - open a fresh task PR to `dev`.
 
 ## Dependent product lanes
 
@@ -254,8 +262,9 @@ progress.
 2. Dispatch RUNTIME as soon as the real `Claude2` worker slot is available.
 3. Keep LEARN blocked until a new implementation proves real service-boundary
    evidence rather than pass literals.
-4. Review OBS with `Claude2`; only accept if the refreshed evidence is
-   service-backed and not synthetic.
+4. Keep OBS with `Antigravity` for implementation rework after the `Claude2`
+   rejection; only request review again after a fresh PR proves service-backed
+   readbacks.
 5. Keep legacy `SUP-L12-FAKE-VERIFIER-GATE-20260729` and
    `SUP-L12-LIVE-WORKER-RECON-20260729` out of the active board unless they can
    run on Claude2/Antigravity, never on Codex/Codex2.
@@ -269,9 +278,11 @@ progress.
 Observed after the 08:20Z rescue:
 
 - `Claude2` can launch and run a governed auto worker (`L12-VERIFY-KNOW-001`).
-- `Antigravity` can launch and move a governed task to `review`
-  (`L12-VERIFY-OBS-001` and
-  `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`).
+- `Antigravity` can launch and move governed tasks, but the OBS attempt was
+  correctly rejected by `Claude2` as still synthetic and is back in
+  implementation repair.
+- `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` proved Antigravity owner
+  dispatch by reaching `review`.
 - `Claude2` account quota is effectively `1/1`, so RUNTIME waits for KNOW.
 - `Antigravity` account quota is effectively `1/1`, so OBS/guard work must be
   serialized unless the account policy changes.

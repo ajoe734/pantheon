@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T08:30:00Z",
+  "updated_at": "2026-07-29T08:35:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
@@ -29,11 +29,11 @@
     "antigravity": {
       "quota": "1/1",
       "latest_owner_task": "L12-VERIFY-OBS-001",
-      "latest_owner_run_id": "antigravity1-1-20260729T082732Z-560e0361"
+      "latest_owner_run_id": "antigravity1-1-20260729T083305Z-e86d7488"
     },
     "not_complete": [
       "L12-VERIFY-RUNTIME-001 still waits for Claude2 quota",
-      "L12-VERIFY-OBS-001 still requires independent Claude2 review",
+      "L12-VERIFY-OBS-001 was rejected by Claude2 and requires real implementation repair",
       "L12-VERIFY-KNOW-001 still requires terminal evidence, PR, review, and merge"
     ]
   },
@@ -71,18 +71,19 @@
           "target_repo": "pantheon",
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2"],
-          "status_at_packet_update": "review",
-          "live_run_id": "antigravity1-1-20260729T082732Z-560e0361",
+          "status_at_packet_update": "in_progress_after_claude2_rejection",
+          "live_run_id": "antigravity1-1-20260729T083305Z-e86d7488",
           "depends_on": ["L12-REC-001", "L12-EVO-001", "L12-BFF-001", "L12-TRUTH-001"],
           "scope": [
             "scripts/verify_twelve_loop_observability.py",
             "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001"
           ],
           "acceptance": [
-            "Claude2 independently reviews the evidence manifest and anchor commit 65aa15358",
+            "Replace the byte-identical synthetic verifier rejected at anchor commit 65aa15358",
             "Telemetry, drift, incident, postmortem, EvolutionDecision, downstream action, and BFF health proof are service-backed readbacks",
-            "Synthetic UUID proof is rejected",
-            "Review uses governed approve/reopen status command with review evidence"
+            "Duplicate rejection and restart/replay idempotency are proven against the store",
+            "False reviewer/governance claims such as governed_by=Claude2 are removed unless an actual governed approval exists",
+            "A fresh task PR to dev exists before review is requested"
           ]
         },
         {
