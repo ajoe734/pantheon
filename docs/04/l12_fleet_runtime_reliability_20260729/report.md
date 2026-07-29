@@ -2,142 +2,249 @@
 
 Date: 2026-07-29
 Task ID: `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`
-Owner: `Antigravity`
-Reviewer: `Codex`
+Owner: `Codex`
+Reviewer: `Codex2`
 
-## Executive Summary
+## Scope and cutoffs
 
-- **Configuration Integrity**: No edits were made to `.orchestrator/config.json`.
-- **Command Root & Live Supervisor Distinctions**:
-  - **Live Supervisor Root** (`PANTHEON_STATUS_ROOT` / supervisor execution host): `/home/lupin/pantheon` (HEAD: `f1d8c708ae7e113db3bfaae26330dbdecbc61b54`).
-  - **Governed Command Root** (`PANTHEON_COMMAND_ROOT`): `/home/lupin/pantheon-ci-deploy/dev-root` (HEAD: `a6d56c366f7436574e6d2d241b47564558beac74`, matching `status_command_runtime.source_sha`).
-  - Verified current worker runtime metadata separates the governed command root from the live supervisor/status root. Historical status files may cite earlier versioned command roots or relative wrapper binaries, so this report does not claim a single all-time command binary path.
-- **Provider Readiness & Models (`provider_capabilities.json`)**:
-  - `antigravity` / `antigravity1-1` .. `1-4`: `auth_ready: true`, `selected_model: gemini-3.6-flash-low`, `supported_models: ["gemini-3.6-flash-low"]`.
-  - `claude2`: `auth_ready: true`, `selected_model: null`, `supported_models: []`.
-  - `claude`, `claude1-1` .. `1-4`: `auth_ready: false`, `selected_model: null`, `supported_models: []`.
-  - `codex`, `codex2`, `codex1-1` .. `1-4`, `codex2-1` .. `2-4`: `auth_ready: true`, `selected_model: null`, `supported_models: []`.
-  - `gemini`: `auth_ready: false`, `selected_model: null`, `supported_models: []`.
-- **Provider Slot Breakdown & SIGTERM Loop Analysis**:
-  - In status JSON, the `agent` property normalizes all codex slots to `"agent": "codex"`. In contrast, `claude2` and `antigravity1-1` appear directly in status JSON `agent` fields (e.g. `agent: "claude2"`, `agent: "antigravity1-1"`). Distinguishing between `codex1` versus `codex2` provider slots requires inspecting supervisor log files (`provider=codex1_x` vs `provider=codex2_x`) or prompt instruction text (`你的 auto worker 身分是：Codex2`).
-  - **Fleet Snapshot as-of Cutoff `2026-07-29T03:03:26Z`**:
-    - Snapshot Cutoff: `2026-07-29T03:03:26Z` (exact timestamp of initial report generation).
-    - Scope: All 77 status files created on `2026-07-29` up to `2026-07-29T03:03:26Z`.
-    - **`antigravity1-1`**: 12 runs (6 completed exit 0, 5 failed exit 143/sig 15, 1 running as of cutoff).
-    - **`claude2`**: 11 runs (5 completed exit 0, 5 failed exit 143/sig 15, 1 running as of cutoff).
-    - **`codex` (all slots combined)**: 54 runs (1 completed exit 0 [`codex-20260729T025534Z-d813fd94`], 51 failed exit 143/sig 15, 2 running as of cutoff [`codex-20260729T025819Z-4aebe344` on `L12-MANIFEST-HC-ALPHA-SRC-20260729` finished at 03:05:15Z; `codex-20260729T030231Z-b5781348` finished at 03:10:56Z]).
-    - **Attributable Codex Slots (via supervisor log correlation)**:
-      - `codex1` (`codex1_1`..`1_4`): 7 runs (1 completed exit 0 [`codex-20260729T025534Z-d813fd94`], 6 failed exit 143/sig 15, 0 running as of cutoff).
-      - `codex2` (`codex2_1`..`2_4`): 7 runs (0 completed exit 0 as of cutoff, 6 failed exit 143/sig 15, 1 running as of cutoff [`codex-20260729T025819Z-4aebe344` on `L12-MANIFEST-HC-ALPHA-SRC-20260729` finished at 03:05:15Z exit 0]).
-      - `unattributed codex` (no matching log line found in current log files): 40 runs (0 completed exit 0, 39 failed exit 143/sig 15, 1 running as of cutoff).
-  - **All-Time Status File Inventory**: 1,591 worker status files exist, but all-time provider-slot totals are not fully attributable from status JSON alone because codex slots collapse to `agent: "codex"` and only some historical runs have unambiguous provider evidence. This report therefore does **not** publish all-time per-provider totals. A separate exact-second correlation sample found 1,014 unambiguous pre-`2026-07-29T03:03:26Z` codex mappings (`codex1=708`, `codex2=306`), proving the previously claimed all-time split was unsupported; the remaining historical runs must stay in an unknown/unattributed bucket unless correlated from authoritative provider logs.
-- **Supersede -> SIGTERM Mechanism Audit**:
-  - Empirically traced via supervisor log (`.orchestrator/logs/supervisor-watchdog-restart-20260728T130615Z.log`).
-  - Worker runs receive SIGTERM (exit code 143, signal 15) when the supervisor supersedes an active run (e.g. priority escalation or re-dispatch).
-  - **Positive Wall-Clock Sequence Evidence**:
-    - Supervisor log records worker supersession in local time (UTC+8): `[2026-07-28 21:07:28] worker superseded: task=OPS-L12-PROVIDER-FIRST-READINESS-20260728 provider=codex1-2 run=codex-20260728T130126Z-cc91b87e` in log file `.orchestrator/logs/supervisor-watchdog-restart-20260728T130615Z.log`. Converted to UTC, supervisor supersede occurred at **`2026-07-28T13:07:28Z`**.
-    - Matching status file `codex-20260728T130126Z-cc91b87e.json` records: `started_at: 2026-07-28T13:01:26Z`, `last_heartbeat_at: 2026-07-28T13:06:46Z`, `finished_at: 2026-07-28T13:06:46Z`, `exit_code: 143`, `signal: 15`.
-    - Here, worker execution started at `13:01:26Z`, recorded its final heartbeat/finish status at `13:06:46Z`, and the supervisor logged the worker process supersession at `13:07:28Z` in `supervisor-watchdog-restart-20260728T130615Z.log`. Run-ID correlation (`run=codex-20260728T130126Z-cc91b87e`) explicitly ties the supervisor supersede event to the worker exit code 143 termination.
-- **Search Audit for Context-Canceled / No-Op / Missing-PID**:
-  - Searched all supervisor logs (`.orchestrator/logs/*.log`) and status files.
-  - `context canceled` (case-insensitive): Appears in 19 worker status prompt payload strings under `Repeated Failure Details` (e.g. `last_reason="Error: context canceled"` passed into worker prompts during dispatch), but does **not** appear as a log event or process error emitted by the runtime itself.
-  - `no-op` / `noop` and `missing-pid` / `missing pid`: Zero occurrences found across all supervisor log files and status payload outputs.
+This is a read-only runtime inventory. It does not change
+`.orchestrator/config.json`, supervisor code, provider settings, or runtime
+state.
 
----
+The fleet outcome table is frozen at `2026-07-29T09:46:32Z`. Supervisor
+liveness was checked again at `2026-07-29T09:47:25Z`. Dynamic files were read
+from:
 
-## Detailed Inventory & Empirical Run Evidence
+- status and canonical-state root: `/home/lupin/pantheon`
+- governed command and supervisor code root:
+  `/home/lupin/pantheon-ci-deploy/dev-root`
+- worker outcomes:
+  `/home/lupin/pantheon/.orchestrator/worker-runtime/status`
+- watchdog decisions:
+  `/home/lupin/pantheon/.orchestrator/metrics/supervisor-watchdog.jsonl`
+- watchdog contention decisions:
+  `/home/lupin/pantheon/.orchestrator/metrics/supervisor-watchdog-contention.jsonl`
 
-### 1. Provider Capabilities Matrix (`provider_capabilities.json`)
+## Readback decision
 
-Data sourced strictly from live `/home/lupin/pantheon/.orchestrator/provider_capabilities.json`:
+The supervisor and all four requested provider lanes have positive execution
+evidence, but the fleet was not reliable during this window.
 
-| Provider Group | Instance Name(s) | Auth Ready | Selected Model | Supported Models |
-| :--- | :--- | :--- | :--- | :--- |
-| **Antigravity** | `antigravity`, `antigravity1-1`..`1-4` | `true` | `gemini-3.6-flash-low` | `["gemini-3.6-flash-low"]` |
-| **Antigravity2** | `antigravity2` | `false` | `null` | `[]` |
-| **Gemini** | `gemini` | `false` | `null` | `[]` |
-| **Claude** | `claude`, `claude1-1`..`1-4` | `false` | `null` | `[]` |
-| **Claude2** | `claude2` | `true` | `null` | `[]` |
-| **Codex** | `codex`, `codex1-1`..`1-4` | `true` | `null` | `[]` |
-| **Codex2** | `codex2`, `codex2-1`..`2-4` | `true` | `null` | `[]` |
-| **Copilot / Grok**| `copilot`, `grok` | `true` | `null` | `["claude"]` (copilot) |
+- The supervisor was healthy at the final liveness check, with PID `3330999`,
+  a successful heartbeat, and one live worker.
+- Antigravity, Claude2, Codex, and Codex2 all completed at least one run on
+  2026-07-29.
+- The same day also contains 223 worker outcomes with `exit_code=143` and
+  `signal=15`.
+- Antigravity emitted direct `Error: context canceled` failures.
+- The retained supervisor state contains repeated missing-process
+  reconciliation failures, most heavily in Codex2.
+- No explicit supervisor or worker-runtime `no-op`/`noop` failure event was
+  found. The watchdog's non-mutating decisions are instead named
+  `observe_only` and `skip`.
 
----
+Provider readiness is therefore necessary but not sufficient. A readiness
+probe must not be reported as proof that a dispatched worker will complete.
 
-### 2. Fleet Run Breakdown as of Cutoff (2026-07-29T03:03:26Z)
+## 1. Governed command root and live supervisor identity
 
-Total status files created on 2026-07-29 up to cutoff `2026-07-29T03:03:26Z`: **77 runs**.
+The current worker inherited:
 
-| Provider / Slot Group | Total Runs | Completed as of Cutoff (exit 0) | SIGTERM Failed as of Cutoff (exit 143 / sig 15) | Running as of Cutoff |
-| :--- | :--- | :--- | :--- | :--- |
-| **`antigravity1-1`** | 12 | 6 | 5 | 1 |
-| **`claude2`** | 11 | 5 | 5 | 1 |
-| **`codex` (all slots combined)** | 54 | 1 | 51 | 2 |
-| └─ `codex1` (log-correlated) | 7 | 1 | 6 | 0 |
-| └─ `codex2` (log-correlated) | 7 | 0 | 6 | 1 |
-| └─ `unattributed codex` | 40 | 0 | 39 | 1 |
+| Field | Verified value |
+| --- | --- |
+| `PANTHEON_STATUS_ROOT` | `/home/lupin/pantheon` |
+| `PANTHEON_COMMAND_ROOT` | `/home/lupin/pantheon-ci-deploy/dev-root` |
+| `PANTHEON_COMMAND_RUNTIME_SHA` | `a6d56c366f7436574e6d2d241b47564558beac74` |
+| command-root `git rev-parse HEAD` | `a6d56c366f7436574e6d2d241b47564558beac74` |
+| status-root `git rev-parse HEAD` | `f1d8c708ae7e113db3bfaae26330dbdecbc61b54` |
 
-*Note: In status files, `agent: "claude2"` and `agent: "antigravity1-1"` are explicitly recorded. Codex slots collapse to `agent: "codex"`. Log file correlation maps 7 runs to `codex1` (including 1 completed run `codex-20260729T025534Z-d813fd94`) and 7 runs to `codex2` (including 1 running run `codex-20260729T025819Z-4aebe344` on `L12-MANIFEST-HC-ALPHA-SRC-20260729` which completed later at `03:05:15Z`).*
+The current run
+`codex-20260729T094257Z-c271606a` records the same command root and source SHA
+in `status_command_runtime`. The watchdog's `supervisor_root` readback at
+`2026-07-29T09:47:25Z` also reports:
 
----
+- `expected_root=/home/lupin/pantheon-ci-deploy/dev-root`
+- `active_root=/home/lupin/pantheon-ci-deploy/dev-root`
+- `split_from_expected=false`
+- worker-runner root `/home/lupin/pantheon-ci-deploy/dev-root`
 
-### 3. All-Time Status File Inventory and Attribution Limits
+`/home/lupin/pantheon` is the status/canonical-state root, not the active
+supervisor code root. Historical versioned command roots in old worker records
+do not override this current identity.
 
-All-time inventory count: **1,591 worker status files**.
+## 2. Provider readiness and positive run evidence
 
-The all-time count is useful for scope, but it is **not** a reliable all-time provider-slot breakdown by itself. Status JSON normalizes codex slots to `agent: "codex"` and does not consistently retain `codex1-x` versus `codex2-x` as a structured field. A review correlation of status-file start times against command-root log filenames produced **1,014 unambiguous pre-`2026-07-29T03:03:26Z` codex mappings**:
+`.orchestrator/provider_capabilities.json` was generated at
+`2026-07-28T19:29:22Z`. Its last probes report:
 
-| Correlated Codex Slot | Unambiguous Mappings |
-| :--- | ---: |
-| `codex1` | 708 |
-| `codex2` | 306 |
+| Lane | Auth ready | Local worker supported | Selected model |
+| --- | --- | --- | --- |
+| Antigravity / `antigravity1-1` | yes | yes | `gemini-3.6-flash-low` |
+| Claude2 | yes | yes | provider default |
+| Codex / `codex1-1` | yes | yes | provider default |
+| Codex2 / `codex2-1` | yes | yes | provider default |
 
-Example checked mapping: `codex-20260720T032505Z-92cd07c6` maps to `20260720T032505299080Z-codex-codex1_1-11e5b4.log`.
+The generic `claude` lane was not auth-ready. That does not negate Claude2's
+separate positive evidence.
 
-Because the unambiguous sample already contradicts the earlier all-time `codex1=286` claim, this report removes the unsupported all-time provider table. Any future all-time table must include an explicit snapshot cutoff, an attribution method, and an unknown/unattributed bucket so totals reconcile.
+Representative successful runs after the readiness file was generated:
 
----
+| Lane | Run | Task | Finished UTC |
+| --- | --- | --- | --- |
+| Antigravity | `antigravity1-1-20260729T090839Z-b3f63931` | `OPS-PROMOTE-PR-CI-TRIGGER-001` | `09:09:14Z` |
+| Claude2 | `claude2-20260729T083653Z-31131607` | `L12-VERIFY-OBS-001` | `08:39:01Z` |
+| Codex | `codex-20260729T090948Z-3c8eb2b3` | `OPS-PROMOTE-PR-CI-TRIGGER-001` | `09:17:38Z` |
+| Codex2 | `codex-20260729T082714Z-849e9984` | this task | `08:35:32Z` |
 
-### 4. Per-Slot SIGTERM & Supersede Cycle Evidence
+Codex versus Codex2 attribution in this table comes from the matching command
+log filenames: `codex1_1` for the Codex row and `codex2_1` for the Codex2 row.
 
-#### A. Codex SIGTERM Cycle (51 SIGTERM runs as of cutoff)
-- Representative `codex1` completed run:
-  - `codex-20260729T025534Z-d813fd94` (Provider: `codex1_3`, Task: `L12-MANIFEST-HC-REC-20260729`, finished: `2026-07-29T03:03:22Z`, exit: 0)
-- Representative `codex2` run (running as of cutoff, finished post-cutoff):
-  - `codex-20260729T025819Z-4aebe344` (Provider: `codex2_1`, Task: `L12-MANIFEST-HC-ALPHA-SRC-20260729`, finished: `2026-07-29T03:05:15Z`, exit: 0)
-- Representative `codex` SIGTERM runs:
-  - `codex-20260729T023942Z-c48d0202` (Provider: `codex2_1`, Task: `L12-MANIFEST-HC-REC-20260729`, exit: 143, signal: 15)
-  - `codex-20260729T024015Z-85008a8f` (Provider: `codex2_2`, Task: `L12-MANIFEST-RESTART-PROOF-20260729`, exit: 143, signal: 15)
-  - `codex-20260729T010920Z-ae3c0786` (Provider: `codex1_1`, Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
-  - `codex-20260729T012156Z-e80dcd9b` (Provider: `codex2_2`, Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
+## 3. Fleet outcomes at the frozen cutoff
 
-#### B. Claude2 SIGTERM Runs (5 failed runs as of cutoff out of 11)
-- `claude2-20260729T002959Z-16dfccc1` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
-- `claude2-20260729T010922Z-561642e1` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
-- `claude2-20260729T014614Z-90eb8435` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
-- `claude2-20260729T024210Z-b4144cf6` (Task: `L12-MANIFEST-HC-ALPHA-SRC-20260729`, exit: 143, signal: 15)
-- `claude2-20260729T024759Z-c3de2e63` (Task: `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`, exit: 143, signal: 15)
+All 308 status JSON files started on 2026-07-29 and present by
+`2026-07-29T09:46:32Z` were grouped by their structured outcome fields.
 
-#### C. Antigravity1-1 SIGTERM Runs (5 failed runs as of cutoff out of 12)
-- `antigravity1-1-20260729T005032Z-2b895b41` (Task: `L12-MANIFEST-001`, exit: 143, signal: 15)
-- `antigravity1-1-20260729T010630Z-3ff0066c` (Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
-- `antigravity1-1-20260729T010745Z-1a61ab8e` (Task: `SUP-L12-FLEET-DISPATCH-HEALTH-20260729`, exit: 143, signal: 15)
-- `antigravity1-1-20260729T024223Z-d269c18d` (Task: `L12-MANIFEST-REVIEW-GAP-TASKS-20260729`, exit: 143, signal: 15)
-- `antigravity1-1-20260729T024812Z-9d0007f7` (Task: `L12-MANIFEST-HC-ALPHA-SRC-20260729`, exit: 143, signal: 15)
+| Status `agent` | Total | Exit 0 | Exit 143 / signal 15 | Other failed | Running |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `antigravity1-1` | 70 | 44 | 25 | 1 (`exit_code=1`) | 0 |
+| `claude2` | 52 | 19 | 33 | 0 | 0 |
+| `codex` | 186 | 20 | 165 | 0 | 1 |
+| **Total** | **308** | **83** | **223** | **1** | **1** |
 
----
+The status schema deliberately collapses Codex and Codex2 slots into
+`agent: "codex"`. It does not support an exact all-day Codex-versus-Codex2
+split. Command-log correlation is valid for individual examples, but an exact
+per-account total must retain an unknown bucket unless every run is
+unambiguously correlated. This report does not publish an unsupported split.
 
-## 5. Explicit Search Findings for Context-Canceled / No-Op / Missing-PID
+## 4. Failure-loop readback
 
-A comprehensive scan was conducted across `.orchestrator/logs/*.log` and all 1591 status files under `/home/lupin/pantheon/.orchestrator/worker-runtime/status/`:
-1. **`context canceled`**: 0 occurrences in supervisor runtime log files. 19 occurrences in worker status files where `last_reason="Error: context canceled"` was embedded inside prompt strings generated by the supervisor when describing past task failure context to newly dispatched workers.
-2. **`no-op` / `noop`**: 0 occurrences across all logs and status files.
-3. **`missing-pid` / `missing pid`**: 0 occurrences across all logs and status files.
+### SIGTERM and supersession
 
----
+`exit_code=143` with `signal=15` is the dominant structured outcome: 223 of
+308 runs at the frozen cutoff.
 
-## Process Gaps & Closeout Compliance Audit
+Run-ID correlation confirms supervisor supersession for individual cases. For
+example, the supervisor log records:
 
-1. **PR State**: Earlier PR #4333 merged into `dev` as `5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a`. Current active PR is PR #4363 for `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`.
-2. **Review Evidence Manifest**: This operational reliability task does not use a ProductEvidenceManifest review file; task dry-run review reported no loop-done guardrail gap for the absence of `review_file`.
-3. **Governed Status Compliance**: All status updates use `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` (or `PANTHEON_COMMAND_ROOT` binaries), and this report distinguishes that governed command root from the live status/supervisor root.
+```text
+[2026-07-29 17:22:00] worker superseded:
+task=SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729
+provider=codex1-3 run=codex-20260729T091154Z-1c566ce2
+```
+
+The matching status JSON is a failed `exit_code=143`, `signal=15` run. This
+proves the lifecycle correlation for that run. It does not prove that all 223
+SIGTERM outcomes had the same cause; intentional deploy restarts and boot
+reconciliation also terminate workers.
+
+### Direct `context canceled`
+
+Eight 2026-07-29 Antigravity command logs contain the direct one-line runtime
+error `Error: context canceled`. This is distinct from the same text being
+quoted later in a prompt or review log.
+
+The two latest direct examples are both for this task:
+
+| Run | Started UTC | Finished UTC | Outcome |
+| --- | --- | --- | --- |
+| `antigravity1-1-20260729T094021Z-c4b19802` | `09:40:21Z` | `09:40:24Z` | exit 143 / signal 15 |
+| `antigravity1-1-20260729T094136Z-efe4deae` | `09:41:36Z` | `09:41:39Z` | exit 143 / signal 15 |
+
+The supervisor then reassigned this task from Antigravity to Codex2 at
+`09:42:32Z` and helper-claimed it for Codex at `09:42:41Z`. That sequence is a
+concrete repeated-failure/fallback loop, not a provider-readiness failure.
+
+### Missing process and missing PID
+
+The earlier conclusion that missing-process evidence was absent was wrong.
+Current retained supervisor state contains:
+
+- 107 worker records whose `last_error` is
+  `Worker process missing during supervisor boot reconciliation.`
+  - 97 `codex2-1`
+  - 9 `codex1-1`
+  - 1 `claude2`
+- 33 active task/provider failure-streak rows whose `last_reason` is the same
+  missing-process message:
+  - 13 Codex
+  - 11 Codex2
+  - 7 Claude2
+  - 1 Antigravity
+  - 1 generic Claude
+
+These are retained-state counts, not unique all-day run totals. They show the
+provider concentration and repeated-task streaks without pretending every row
+is a new incident.
+
+The watchdog has a separate supervisor-PID layer. On 2026-07-29 its metrics
+record seven `restart_supervisor/pid_not_alive` decisions. Six were later
+reclassified as Human/Ops repair restarts, while one remains a normal
+`pid_not_alive` restart at `08:07:36Z`. Five additional restarts were explicitly
+classified `intentional_deploy_restart`.
+
+### No-op hypothesis
+
+No direct runtime failure named `no-op` or `noop` was found in:
+
+- 308 day-of worker status files
+- 110 status-root supervisor logs
+- current task failure-streak reasons
+
+Raw command-log text is not suitable evidence here: its `no-op` matches are
+worker prompts, source/test content, and CLI help such as `--no-open-unblock`.
+
+The watchdog's actual no-action vocabulary on 2026-07-29 is:
+
+| Decision | Reason | Count |
+| --- | --- | ---: |
+| `observe_only` | `supervisor_healthy` | 369 |
+| `skip` | `lock_contention` | 112 |
+| `suppress_restart` | `restart_budget_window_exhausted` | 1 |
+| `suppress_restart` | `watchdog_circuit_open` | 2 |
+
+`observe_only` is healthy no-action. `skip/lock_contention` is fail-closed
+contention handling. Neither should be relabeled as a worker `no-op` failure
+without a structured event saying so.
+
+## 5. Current state and residual risk
+
+At `2026-07-29T09:47:25Z`, the watchdog reported:
+
+- `decision=observe_only`
+- `reason=supervisor_healthy`
+- supervisor PID `3330999`
+- one live worker and one runtime-state worker
+- expected, active, and worker-runner roots aligned
+- restart counters for the current window/hour at zero
+
+The live supervisor is therefore healthy at readback time. Residual risk
+remains high because readiness probes coexist with:
+
+- a 72.4% SIGTERM-class outcome rate in the frozen day-of snapshot
+  (`223 / 308`)
+- direct Antigravity `context canceled` repeats
+- concentrated Codex2 missing-process reconciliation records
+- repeated intentional runtime restarts during active work
+
+This task records those facts only. Configuration and runtime repair remain
+outside scope.
+
+## 6. Verification commands
+
+The readback was assembled with read-only commands:
+
+```text
+git -C "$PANTHEON_COMMAND_ROOT" rev-parse HEAD
+git -C "$PANTHEON_STATUS_ROOT" rev-parse HEAD
+jq ... "$PANTHEON_STATUS_ROOT/.orchestrator/state.json"
+jq ... "$PANTHEON_STATUS_ROOT/.orchestrator/provider_capabilities.json"
+jq -s ... "$PANTHEON_STATUS_ROOT"/.orchestrator/worker-runtime/status/*20260729T*.json
+rg ... "$PANTHEON_STATUS_ROOT/.orchestrator/logs"
+rg ... "$PANTHEON_COMMAND_ROOT/.orchestrator/logs"
+jq -s ... "$PANTHEON_STATUS_ROOT/.orchestrator/metrics/supervisor-watchdog.jsonl"
+jq -s ... "$PANTHEON_STATUS_ROOT/.orchestrator/metrics/supervisor-watchdog-contention.jsonl"
+```
+
+Repository scope check: no `.orchestrator/config.json` change is present in
+this task branch diff.
