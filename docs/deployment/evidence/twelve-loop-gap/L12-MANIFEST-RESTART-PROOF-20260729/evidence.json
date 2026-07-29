@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0.0",
+  "record_type": "pantheon.task-evidence-manifest.v1",
+  "task": {
+    "id": "L12-MANIFEST-RESTART-PROOF-20260729",
+    "title": "L12 manifest isolated restart proof workstream",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "owner_proof_complete_pending_independent_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "base_sha": "6fe626252d10af27eed0aba79530506d192857ca",
+    "task_branch": "task/L12-MANIFEST-RESTART-PROOF-20260729",
+    "parent_task": "L12-MANIFEST-001",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Isolated, non-shared daemon restart proof for one required L12 worker image.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      "docker-compose.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+      "the shared pantheon Compose project"
+    ],
+    "composes_with": [
+      "L12-MANIFEST-001 residual risk auto_restart_policy_not_proven_end_to_end",
+      "L12-MANIFEST-001 AC2 independent review"
+    ],
+    "evidence_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/fixture.compose.yml",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/run-proof.sh",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/proof-run.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.sha256"
+    ]
+  },
+  "proof": {
+    "result": "pass",
+    "run_started_at": "2026-07-29T02:49:56Z",
+    "run_finished_at": "2026-07-29T02:50:30Z",
+    "raw_artifact": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/proof-run.json",
+    "docker_server_version": "29.1.3",
+    "worker_image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+    "assertions": {
+      "isolated_project": "l12-manifest-restart-proof-20260729",
+      "internal_network_only": true,
+      "host_port_bindings": 0,
+      "shared_volumes": 0,
+      "docker_stop_or_kill_api_used": false,
+      "docker_start_or_up_used_after_signal": false,
+      "same_container_id_before_after": true,
+      "pid_changed": true,
+      "restart_count_before": 0,
+      "restart_count_after": 1,
+      "restart_count_delta": 1,
+      "worker_running_after_restart": true,
+      "startup_recovery_log_count": 2,
+      "shared_stack_snapshot_unchanged": true,
+      "isolated_container_count_after_cleanup": 0,
+      "isolated_network_count_after_cleanup": 0
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "isolated worker restart proof shows RestartCount increment or waiver exists",
+      "status": "pass",
+      "evidence": [
+        "proof-run.json#/observed/worker_before/restart_count",
+        "proof-run.json#/observed/worker_after/restart_count"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "proof distinguishes daemon restart from operator restart",
+      "status": "pass",
+      "evidence": [
+        "proof-run.json#/unsolicited_pid1_crash",
+        "proof-run.json#/observed/same_container_id",
+        "proof-run.json#/observed/restart_count_delta"
+      ],
+      "note": "The operator injects a process-level SIGKILL into the isolated PID 1. Docker receives no stop/kill request, and no start/up command follows; RestartCount increments while the same container ID returns with a new PID."
+    },
+    {
+      "id": "AC3",
+      "statement": "shared dev stack is not destructively tested",
+      "status": "pass",
+      "evidence": [
+        "proof-run.json#/scope",
+        "proof-run.json#/shared_stack_guard"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "output is integrable by L12-MANIFEST-001 owner",
+      "status": "pass",
+      "evidence": [
+        "README.md#parent-integration",
+        "proof-run.json"
+      ]
+    }
+  ],
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.sha256",
+    "checksum_coverage": [
+      "README.md",
+      "fixture.compose.yml",
+      "run-proof.sh",
+      "proof-run.json",
+      "evidence.json"
+    ]
+  },
+  "review": {
+    "status": "pending",
+    "reviewer": "Claude2",
+    "required_checks": [
+      "re-run or inspect the isolated proof",
+      "confirm RestartCount increments on the same container ID",
+      "confirm the shared pantheon worker snapshot is unchanged",
+      "confirm cleanup removes only the isolated project"
+    ]
+  }
+}
