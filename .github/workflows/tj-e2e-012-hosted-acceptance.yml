@@ -98,7 +98,7 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
         run: |
           set -euo pipefail
@@ -144,7 +144,7 @@ jobs:
             exit "${seed_status}"
           fi
 
-      - name: Verify exact hosted pair and all twelve source scenarios
+      - name: Verify exact pair, twelve-row ledger, and hosted acceptance axes
         run: python3 scripts/verify_hosted_scenarios.py
 
       - name: Upload immutable redacted acceptance evidence
@@ -154,4 +154,4 @@ jobs:
           name: tj-e2e-012-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
           path: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90

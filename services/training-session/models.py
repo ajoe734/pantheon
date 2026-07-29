@@ -155,6 +155,7 @@ def _optional_datetime(value: Any, field_name: str) -> str | None:
 class TeachingEvent:
     event_id: str
     session_id: str
+    tenant_id: str
     event_type: TeachingEventType | str
     actor_type: TeachingActorType | str
     payload: Mapping[str, Any]
@@ -176,6 +177,7 @@ class TeachingEvent:
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_id", _require_text(self.event_id, "event_id"))
         object.__setattr__(self, "session_id", _require_text(self.session_id, "session_id"))
+        object.__setattr__(self, "tenant_id", _require_text(self.tenant_id, "tenant_id"))
         object.__setattr__(self, "event_type", _coerce_enum(TeachingEventType, self.event_type, "event_type"))
         object.__setattr__(self, "actor_type", _coerce_enum(TeachingActorType, self.actor_type, "actor_type"))
         object.__setattr__(self, "payload", dict(_as_mapping(self.payload, "payload")))
@@ -207,6 +209,7 @@ class TeachingEvent:
         payload: dict[str, Any] = {
             "event_id": self.event_id,
             "session_id": self.session_id,
+            "tenant_id": self.tenant_id,
             "event_type": self.event_type,
             "actor_type": self.actor_type,
             "payload": dict(self.payload),
@@ -242,6 +245,7 @@ class TeachingEvent:
         return cls(
             event_id=mapping.get("event_id", ""),
             session_id=mapping.get("session_id", ""),
+            tenant_id=mapping.get("tenant_id", ""),
             event_type=mapping.get("event_type", ""),
             actor_type=mapping.get("actor_type", ""),
             payload=mapping.get("payload", {}),
@@ -266,6 +270,7 @@ class TeachingEvent:
 class TeachingSession:
     session_id: str
     persona_id: str
+    tenant_id: str
     opened_by: str
     mode: TeachingSessionMode | str
     status: TeachingSessionStatus | str
@@ -288,6 +293,7 @@ class TeachingSession:
     def __post_init__(self) -> None:
         object.__setattr__(self, "session_id", _require_text(self.session_id, "session_id"))
         object.__setattr__(self, "persona_id", _require_text(self.persona_id, "persona_id"))
+        object.__setattr__(self, "tenant_id", _require_text(self.tenant_id, "tenant_id"))
         object.__setattr__(self, "opened_by", _require_text(self.opened_by, "opened_by"))
         object.__setattr__(self, "mode", _coerce_enum(TeachingSessionMode, self.mode, "mode"))
         object.__setattr__(self, "status", _coerce_enum(TeachingSessionStatus, self.status, "status"))
@@ -323,6 +329,7 @@ class TeachingSession:
         payload: dict[str, Any] = {
             "session_id": self.session_id,
             "persona_id": self.persona_id,
+            "tenant_id": self.tenant_id,
             "opened_by": self.opened_by,
             "mode": self.mode,
             "session_type": self.session_type,
@@ -353,6 +360,7 @@ class TeachingSession:
             id=mapping.get("id"),
             session_id=mapping.get("session_id", ""),
             persona_id=mapping.get("persona_id", ""),
+            tenant_id=mapping.get("tenant_id", ""),
             opened_by=mapping.get("opened_by", ""),
             mode=mapping.get("mode", ""),
             session_type=mapping.get("session_type", "trainer"),
@@ -404,6 +412,12 @@ def validate_teaching_session(session: TeachingSession) -> list[str]:
     ]
     if len(set(event_ids)) != len(event_ids):
         errors.append("TeachingSession events must not contain duplicate event_id values")
+    if any(
+        str(event.get("tenant_id") or "").strip() != session.tenant_id
+        for event in session.events
+        if isinstance(event, Mapping)
+    ):
+        errors.append("TeachingSession events must match session.tenant_id")
     return errors
 
 
@@ -411,6 +425,8 @@ def validate_teaching_event_against_session(event: TeachingEvent, session: Teach
     errors: list[str] = []
     if event.session_id != session.session_id:
         errors.append("event.session_id must match session.session_id")
+    if event.tenant_id != session.tenant_id:
+        errors.append("event.tenant_id must match session.tenant_id")
     return errors
 
 

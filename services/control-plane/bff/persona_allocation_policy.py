@@ -29,6 +29,7 @@ _PM12_FORMULA_VERSION = "pm12-default-v1"
 _PM12_ALLOCATION_INPUT_SCHEMA_VERSION = "persona-allocation-policy-input/v1"
 _PM12_ALLOCATION_ADAPTER_VERSION = "pm12-quarterly-overall-tier-v1"
 _ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
+_PAPER_SIMULATION_POLICY_VERSION = "persona-paper-allocation-simulation-v1"
 _PM12_TIER_CROSSWALK = {
     "tier-1": "s",
     "tier-2": "a",
@@ -47,7 +48,11 @@ def stage_recommendation(stage: str, *, hard_risk_breach: bool = False) -> str:
     }.get(stage, "no_positive_action")
 
 
-def build_pm12_allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any]:
+def build_pm12_allocation_policy_input(
+    row: Dict[str, Any],
+    *,
+    policy_version: str = _ALLOCATION_POLICY_VERSION,
+) -> Dict[str, Any]:
     """Adapt one PM-12 row into the governed allocation-policy input schema.
 
     PM-12 publishes one composite ``overall_score`` and tier-1..4.  The
@@ -85,7 +90,7 @@ def build_pm12_allocation_policy_input(row: Dict[str, Any]) -> Dict[str, Any]:
     expected = {
         "schema_version": _PM12_ALLOCATION_INPUT_SCHEMA_VERSION,
         "adapter_version": _PM12_ALLOCATION_ADAPTER_VERSION,
-        "policy_version": _ALLOCATION_POLICY_VERSION,
+        "policy_version": policy_version,
         "source_formula_version": formula_version,
         "rank_score_source": "overall_score",
         "rank_score": rank_score,
@@ -214,6 +219,113 @@ def calculate_target_allocations(rows: Iterable[Dict[str, Any]]) -> List[Dict[st
             "requires_human_approval": target > current,
         })
     return result
+
+
+def calculate_paper_simulation_allocations(
+    rows: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return positive targets inside isolated paper ledgers only.
+
+    This is deliberately separate from ``calculate_target_allocations``:
+    paper-stage rows remain ineligible for real capital and the real allocation
+    policy is never parameterized into admitting them.  Callers must already
+    have joined each authoritative ranking row to its governed promotion review,
+    internal paper pool, and unique paper-owner binding.
+    """
+
+    prepared: List[Dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        stage = str(row.get("stage") or "").strip().lower()
+        capital_scope = str(row.get("capital_scope") or "").strip().lower()
+        if stage != "paper_running":
+            raise ValueError("paper simulation requires stage=paper_running")
+        if capital_scope != "paper_ledger":
+            raise ValueError("paper simulation requires capital_scope=paper_ledger")
+        if not str(row.get("paper_ledger_id") or "").strip():
+            raise ValueError("paper simulation requires paper_ledger_id")
+        if not str(row.get("capital_pool_id") or "").strip():
+            raise ValueError("paper simulation requires an internal capital_pool_id")
+        if not str(row.get("binding_id") or "").strip():
+            raise ValueError("paper simulation requires a paper-owner binding_id")
+        if row.get("capital_sleeve_id") not in (None, ""):
+            raise ValueError("paper simulation cannot target a capital sleeve")
+        if row.get("eligible") is not True:
+            raise ValueError("paper simulation requires an eligible ranking row")
+
+        exclusions = [
+            flag for flag in _EXCLUSION_FLAGS if bool(row.get(flag))
+        ]
+        exclusions.extend(
+            str(value)
+            for value in row.get("exclusion_codes") or []
+            if str(value) and str(value) not in exclusions
+        )
+        if exclusions:
+            raise ValueError(
+                "paper simulation ranking row has exclusion codes: "
+                + ", ".join(exclusions)
+            )
+
+        # Ranking snapshots may carry the real-policy adapter projection.  The
+        # paper evaluator owns a distinct policy version, so rebuild the adapter
+        # from the authoritative PM-12 score/tier rather than reusing that claim.
+        row.pop("allocation_policy_input", None)
+        policy_input = build_pm12_allocation_policy_input(
+            row,
+            policy_version=_PAPER_SIMULATION_POLICY_VERSION,
+        )
+        rank_score = float(policy_input["rank_score"])
+        if rank_score <= 0:
+            raise ValueError("paper simulation requires a positive PM-12 rank score")
+        current = float(row.get("current_weight") or 0.0)
+        if not math.isfinite(current) or not 0.0 <= current <= 1.0:
+            raise ValueError("paper simulation current_weight must be between 0 and 1")
+        prepared.append(
+            {
+                **row,
+                "allocation_policy_input": policy_input,
+                "rank_score": rank_score,
+                "current_weight": current,
+            }
+        )
+
+    if len(prepared) != 1:
+        raise ValueError(
+            "paper simulation requires exactly one isolated Persona allocation row"
+        )
+
+    row = prepared[0]
+    current = round(float(row["current_weight"]), 8)
+    target = 1.0
+    return [
+        {
+            "ranking_snapshot_id": row.get("ranking_snapshot_id"),
+            "persona_id": row.get("persona_id"),
+            "stage": "paper_running",
+            "capital_scope": "paper_ledger",
+            "paper_ledger_id": row.get("paper_ledger_id"),
+            "capital_pool_id": row.get("capital_pool_id"),
+            "capital_sleeve_id": None,
+            "binding_id": row.get("binding_id"),
+            "current_weight": current,
+            "target_weight": target,
+            "delta": round(target - current, 8),
+            "rank_score": round(float(row["rank_score"]), 8),
+            "capacity_adjusted_score": round(float(row["rank_score"]), 8),
+            "allocation_policy_input": row.get("allocation_policy_input"),
+            "recommendation": "governed_paper_allocation_simulation",
+            "cap_reasons": ["paper_simulation_isolated_ledger_cap"],
+            "exclusions": [],
+            "evidence_refs": list(row.get("evidence_refs") or []),
+            "eligible": True,
+            "paper_allocation_eligible": True,
+            "exclusion_reasons": [],
+            "exclusion_codes": [],
+            "requires_human_approval": True,
+            "live_capital_side_effects": False,
+        }
+    ]
 
 
 def validate_emergency_lines(lines: Iterable[Dict[str, Any]]) -> None:

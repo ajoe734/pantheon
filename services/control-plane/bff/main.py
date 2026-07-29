@@ -18,6 +18,7 @@ from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
@@ -75,7 +76,12 @@ from services.foundation import (  # noqa: E402
     foundation_id,
     sha256_checksum,
 )
-from services.foundation.health import register_fastapi_health_routes  # noqa: E402
+from services.foundation.health import (  # noqa: E402
+    health_payload,
+    readiness_status_code,
+    register_fastapi_health_routes,
+)
+from services.trade_journey.lifecycle_projector import projector_readiness  # noqa: E402
 from services.source_ingestion.replication_bridge import (  # noqa: E402
     StrategySeedReplicationBridge,
     StrategySeedReplicationBridgeError,
@@ -156,8 +162,17 @@ from command_executor import (
 )
 from persona_allocation_policy import (
     build_pm12_allocation_policy_input,
+    calculate_paper_simulation_allocations,
     calculate_target_allocations,
     validate_emergency_lines,
+)
+from paper_eligibility_proof import (
+    BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+    EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
+    PaperEligibilityObservationStore,
+    RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+    TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+    build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
 )
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
@@ -678,10 +693,60 @@ async def _bff_session_rbac_contract(request: Request, call_next):
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
-register_fastapi_health_routes(
-    app,
-    "operator-bff",
-    dependencies=lambda: {
+
+
+def _lifecycle_projector_dependency() -> Dict[str, Any]:
+    state_path = Path(
+        os.getenv(
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "health_state.json"),
+        )
+    )
+    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
+    dependency = projector_readiness(state_path=state_path, bundle_root=root)
+
+    expected_stores = {
+        "trade_journey_events": root / "current" / "trade_journey_events.json",
+        "loop_runs": root / "current" / "loop_runs.json",
+    }
+    configured_stores = {
+        "trade_journey_events": Path(
+            os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
+                str(expected_stores["trade_journey_events"]),
+            )
+        ),
+        "loop_runs": Path(
+            os.getenv(
+                "PANTHEON_BFF_LOOP_RUN_STORE",
+                str(expected_stores["loop_runs"]),
+            )
+        ),
+    }
+    store_status: Dict[str, Dict[str, Any]] = {}
+    mismatches: List[str] = []
+    for name, expected_path in expected_stores.items():
+        configured_path = configured_stores[name]
+        aligned = configured_path.absolute() == expected_path.absolute()
+        store_status[name] = {
+            "configured_path": str(configured_path),
+            "expected_path": str(expected_path),
+            "aligned": aligned,
+        }
+        if not aligned:
+            mismatches.append(name)
+    dependency["read_surface_stores"] = store_status
+    if mismatches:
+        reason = f"read_surface_store_mismatch:{','.join(mismatches)}"
+        dependency["ready"] = False
+        dependency["status"] = "degraded"
+        dependency["reasons"] = [*dependency.get("reasons", []), reason]
+        dependency["error_reason"] = dependency.get("error_reason") or reason
+    return dependency
+
+
+def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
+    return {
         "runtime_manager": {
             "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
             "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
@@ -694,7 +759,14 @@ register_fastapi_health_routes(
             "status": "ok" if os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip() else "degraded",
             "url": os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip(),
         },
-    },
+        "lifecycle_projector": _lifecycle_projector_dependency(),
+    }
+
+
+register_fastapi_health_routes(
+    app,
+    "operator-bff",
+    dependencies=_bff_readiness_dependencies,
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
 
@@ -1035,9 +1107,14 @@ read_store = ReadSurfaceStore(
     ),
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
+_ppl_alloc_009_eligibility_observation_store = PaperEligibilityObservationStore(
+    os.path.join(BFF_DATA_DIR, "ppl_alloc_009_proof_observations.sqlite3")
+)
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 
-downstream_health_monitor = DownstreamHealthMonitor()
+downstream_health_monitor = DownstreamHealthMonitor(
+    state_path=os.path.join(BFF_DATA_DIR, "downstream_health.sqlite3"),
+)
 
 
 _RETRYABLE_CAPITAL_COMMAND_TYPES = {
@@ -1133,6 +1210,7 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_ROLE_MAP_MODE - passthrough (default) or strict
 #   PANTHEON_BFF_MFA_CLAIMS    - comma-separated MFA claim paths (e.g. amr,acr)
 #   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
+#   PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED - require email_verified=true in JWT
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
@@ -1568,6 +1646,10 @@ def _extract_identity_jwt(
         "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", ""),
         "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_BFF_MFA_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_BFF_MFA_VALUES", ""),
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": os.getenv(
+            "PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED",
+            "false",
+        ),
     }
     # External browser JWTs use the configured OIDC/JWKS verifier, while the
     # server-side dev-login exchange deliberately issues a short-lived HS256
@@ -1591,6 +1673,10 @@ def _extract_identity_jwt(
         bff_env["PANTHEON_RUNTIME_ROLE_CLAIMS"] = "roles,role"
         bff_env["PANTHEON_RUNTIME_ROLE_MAP"] = ""
         bff_env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] = "passthrough"
+        # Server-issued dev-login tokens are not browser identity tokens and do
+        # not carry an email address. Keep the browser-only verification policy
+        # on the asymmetric GCP Identity Platform path.
+        bff_env["PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED"] = "false"
 
     mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
@@ -3612,7 +3698,20 @@ def _require_final_command_preconditions(
         evidence["confirm_token_id"] = token_id
 
     params = dict(cmd.params)
+    paper_simulation_authority = _ppl_alloc_009_paper_rebalance_authority(cmd)
+    if paper_simulation_authority and not identity.mfa_verified:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=403,
+            code=ErrorCode.FORBIDDEN,
+            message="Paper allocation apply requires MFA",
+            reason="PAPER_SIMULATION_MFA_REQUIRED",
+            kind="mfa",
+            correlation_id=correlation_id,
+            suggestion="Retry with the strict dev operator identity and verified MFA",
+        )
 
+    approval_decision: Optional[Dict[str, Any]] = None
     if getattr(entry, "requires_approval", False):
         approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
         if not approval_decision_id:
@@ -3680,6 +3779,30 @@ def _require_final_command_preconditions(
                 details_extra={"approvalDecisionId": approval_decision_id},
             )
         evidence["approval_decision_id"] = approval_decision_id
+        if paper_simulation_authority:
+            approval_actor = str(
+                approval_decision.get("decided_by")
+                or approval_decision.get("actor_id")
+                or approval_decision.get("operator_id")
+                or ""
+            ).strip()
+            if not approval_actor or approval_actor == identity.operator_id:
+                raise _final_precondition_error(
+                    cmd=cmd,
+                    status_code=409,
+                    code=ErrorCode.HUMAN_GATE_PENDING,
+                    message="Paper allocation approval and apply must be distinct",
+                    reason="PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT",
+                    kind="approval",
+                    correlation_id=correlation_id,
+                    suggestion=(
+                        "Use an approver identity distinct from the authenticated "
+                        "operator applying the paper allocation"
+                    ),
+                )
+            evidence["paper_simulation_authority"] = (
+                _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+            )
 
     if cmd.command in _HUMAN_GATE_DECISIONS_BY_COMMAND:
         evidence.update(
@@ -3692,7 +3815,7 @@ def _require_final_command_preconditions(
         )
         return evidence
 
-    if getattr(entry, "requires_two_man", False):
+    if getattr(entry, "requires_two_man", False) and not paper_simulation_authority:
         signature_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
         evidence["two_man_signature_id"] = _require_two_man_signature_evidence(
             cmd=cmd,
@@ -5803,7 +5926,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
     quarter = str(params.get("quarter") or "").strip().upper()
     if not recommendation_id or not snapshot_id or not quarter:
         return dict(params)
-    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
+    snapshot = _pm12_recommendation_snapshot_record(snapshot_id)
     snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
     if snapshot_quarter != quarter:
         raise _bff_error(
@@ -5836,6 +5959,24 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
             "The recommendation id/action/persona tuple was not materialized by the snapshot.",
             precondition_failed="recommendation_id",
         )
+    review_revision_id = _promotion_review_revision_id(
+        recommendation_id,
+        snapshot_id,
+    )
+    for field in ("review_id", "promotion_review_id"):
+        asserted_review_id = str(params.get(field) or "").strip()
+        if (
+            asserted_review_id
+            and _promotion_review_clean_id(asserted_review_id)
+            != review_revision_id
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "promotion review revision assertion mismatch",
+                f"{field} does not match the admitted recommendation snapshot.",
+                precondition_failed=field,
+            )
 
     asserted_action_id = str(
         params.get("recommendation_action_id")
@@ -5895,7 +6036,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         asserted_value = params.get(field)
         if field == "evidence_ref_ids":
             asserted_value = sorted(asserted_value or [])
-        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
             raise _bff_error(
                 422,
                 ErrorCode.VALIDATION_FAILED,
@@ -5924,6 +6065,8 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         nested_assertions = {
             "id": recommendation_id,
             "recommendation_id": recommendation_id,
+            "review_id": review_revision_id,
+            "promotion_review_id": review_revision_id,
             "ranking_snapshot_id": snapshot_id,
             "quarter": quarter,
             "persona_id": item.get("persona_id"),
@@ -5948,9 +6091,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
             asserted_value = asserted_source.get(field)
             if field == "evidence_ref_ids":
                 asserted_value = sorted(asserted_value or [])
-            if _stable_json_hash(asserted_value) != _stable_json_hash(
-                authoritative_value
-            ):
+            if not _pm12_semantic_values_match(asserted_value, authoritative_value):
                 raise _bff_error(
                     422,
                     ErrorCode.VALIDATION_FAILED,
@@ -5971,6 +6112,8 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         "quarter": quarter,
         "recommendation_id": recommendation_id,
         "recommendationId": recommendation_id,
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
         "recommendation_action_id": matched_action_id,
         "recommendationActionId": matched_action_id,
         "ranking_snapshot_id": snapshot_id,
@@ -15926,15 +16069,24 @@ async def create_binding(
         idempotency_key=resolved_key,
         requested_id=payload.get("binding_id") or payload.get("id"),
     )
-    capital_sleeve_id = str(
-        payload.get("capital_sleeve_id")
-        or payload.get("sleeve_id")
-        or binding_id
-    ).strip()
     role = str(payload.get("role") or "live_owner").strip()
     allowed_scope = str(
         payload.get("allowed_deployment_scope") or "live"
     ).strip()
+    if "capital_sleeve_id" in payload:
+        capital_sleeve_id = (
+            str(payload.get("capital_sleeve_id") or "").strip() or None
+        )
+    elif "sleeve_id" in payload:
+        capital_sleeve_id = (
+            str(payload.get("sleeve_id") or "").strip() or None
+        )
+    elif role == "paper_owner" and allowed_scope == "paper":
+        capital_sleeve_id = None
+    else:
+        # Legacy live-binding callers omitted the sleeve and relied on a stable
+        # binding-scoped default. Paper authority must stay sleeve-less.
+        capital_sleeve_id = binding_id
     metadata = {
         **(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
         "capital_sleeve_id": capital_sleeve_id,
@@ -25817,6 +25969,10 @@ async def bff_ranking_formula_action(
 # -- Rebalances BFF ----------------------------------------------------------
 
 _PM12_ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
+_PPL_ALLOC_009_PAPER_POLICY_VERSION = "persona-paper-allocation-simulation-v1"
+_PPL_ALLOC_009_PAPER_AUTHORITY_MODE = "governed_paper_simulation"
+_PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 24 * 60 * 60
+_PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 _PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
     "ranking_snapshot_id",
     "allocation_evaluation_id",
@@ -25866,6 +26022,66 @@ def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
     return _stable_json_hash(basis)
 
 
+def _pm12_semantic_json_value(value: Any) -> Any:
+    """Canonicalize JSON values without treating booleans as numbers."""
+    if value is None:
+        return ["null"]
+    if isinstance(value, bool):
+        return ["boolean", value]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            numeric = (
+                value
+                if isinstance(value, Decimal)
+                else Decimal(str(value))
+            )
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("allocation line contains an invalid number") from exc
+        if not numeric.is_finite():
+            raise ValueError("allocation line contains a non-finite number")
+        if numeric == 0:
+            numeric = Decimal(0)
+        return ["number", format(numeric.normalize(), "f")]
+    if isinstance(value, list):
+        return ["array", [_pm12_semantic_json_value(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("allocation line contains a non-string object key")
+        return [
+            "object",
+            [
+                [key, _pm12_semantic_json_value(value[key])]
+                for key in sorted(value)
+            ],
+        ]
+    raise ValueError(
+        f"allocation line contains unsupported JSON value {type(value).__name__}"
+    )
+
+
+def _pm12_allocation_line_assertion_hash(line: Dict[str, Any]) -> str:
+    return _stable_json_hash({
+        "semantic_json": _pm12_semantic_json_value(line),
+    })
+
+
+def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
+    """Compare an asserted value against its admitted authoritative value using the
+    numeric/bool/order-safe semantic canonical form so benign browser JSON
+    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
+    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
+    returning False, preserving the strict-by-default posture for malformed input."""
+    try:
+        return (
+            _pm12_semantic_json_value(asserted)
+            == _pm12_semantic_json_value(authoritative)
+        )
+    except ValueError:
+        return False
+
+
 def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
     snapshot = read_store.get_ranking_snapshot(snapshot_id)
     if not isinstance(snapshot, dict):
@@ -25900,6 +26116,45 @@ def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
             ErrorCode.VALIDATION_FAILED,
             "ranking snapshot is not allocation eligible",
             "Only admitted PM-12 quarterly snapshots can feed allocation evaluation.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    return snapshot
+
+
+def _pm12_ranking_snapshot_ttl_seconds() -> int:
+    raw = os.getenv(
+        "PANTHEON_PM12_RANKING_SNAPSHOT_TTL_SECONDS",
+        str(_PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS),
+    ).strip()
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    if configured <= 0 or configured > _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS:
+        return 0
+    return configured
+
+
+def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
+    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
+    created_at = _audit_datetime(snapshot.get("created_at"))
+    now = _audit_datetime(utc_now())
+    ttl_seconds = _pm12_ranking_snapshot_ttl_seconds()
+    if created_at is None or now is None or ttl_seconds <= 0:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot admission window is invalid",
+            "Recommendation submission requires a timestamped snapshot and a valid bounded TTL.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    age_seconds = (now - created_at).total_seconds()
+    if age_seconds < -300 or age_seconds > ttl_seconds:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "ranking snapshot admission window expired",
+            "Fetch a current recommendation and submit its immutable admitted snapshot.",
             precondition_failed="ranking_snapshot_id",
         )
     return snapshot
@@ -25942,12 +26197,16 @@ def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
                 f"The durable allocation line at index {index} no longer matches its digest.",
                 precondition_failed="allocation_line_digest",
             )
-    expected_content_digest = _stable_json_hash({
+    content_basis = {
         "ranking_snapshot_id": evaluation.get("ranking_snapshot_id"),
         "allocation_evaluation_id": evaluation.get("allocation_evaluation_id"),
         "allocation_policy_version": evaluation.get("allocation_policy_version"),
         "lines": lines,
-    })
+    }
+    for optional_field in ("authority_mode", "promotion_review_id"):
+        if evaluation.get(optional_field) not in (None, ""):
+            content_basis[optional_field] = evaluation.get(optional_field)
+    expected_content_digest = _stable_json_hash(content_basis)
     if str(evaluation.get("content_digest") or "") != expected_content_digest:
         raise _bff_error(
             422,
@@ -25974,7 +26233,7 @@ def _pm12_assert_allocation_row(
         if field in {"exclusion_codes", "exclusion_reasons", "evidence_ref_ids"}:
             asserted_value = sorted(asserted_value or [])
             authoritative_value = sorted(authoritative_value or [])
-        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
             raise _bff_error(
                 422,
                 ErrorCode.VALIDATION_FAILED,
@@ -26118,14 +26377,1066 @@ def _pm12_materialize_allocation_evaluation(
         "applied": False,
     })
 
+
+def _ppl_alloc_009_paper_environment_guard() -> None:
+    env_name = str(os.getenv("PANTHEON_ENV") or "").strip().lower()
+    if (
+        env_name != "dev"
+        or _bff_auth_mode() != "strict"
+        or _bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
+        or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+        or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
+    ):
+        raise _bff_error(
+            403,
+            ErrorCode.PRECONDITION_FAILED,
+            "Governed paper allocation simulation is unavailable",
+            (
+                "The paper-only authority requires strict dev auth with both "
+                "live broker and canary execution disabled."
+            ),
+            precondition_failed="paper_simulation_environment",
+            suggestion=(
+                "Use the accepted strict dev BFF with "
+                "PANTHEON_LIVE_BROKER_ENABLED=false and "
+                "PANTHEON_CANARY_EXECUTION_ENABLED=false"
+            ),
+        )
+
+
+def _ppl_alloc_009_eligibility_error(
+    message: str,
+    detail: str,
+    *,
+    precondition: str,
+    status_code: int = 422,
+) -> HTTPException:
+    return _bff_error(
+        status_code,
+        ErrorCode.PRECONDITION_FAILED,
+        message,
+        detail,
+        precondition_failed=precondition,
+    )
+
+
+def _ppl_alloc_009_paper_eligibility_context(
+    *,
+    persona_id: str,
+    identity: OperatorIdentity,
+    observed_at: str,
+) -> Dict[str, Any]:
+    raw = read_store.get_persona(persona_id)
+    caller_tenant = str(
+        _bff_me_tenant_payload(identity, requested_tenant=None)["id"]
+    )
+    metadata = (
+        raw.get("metadata")
+        if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict)
+        else {}
+    )
+    if (
+        not isinstance(raw, dict)
+        or _persona_record_tenant_id(raw) != caller_tenant
+        or caller_tenant != "tenant-dev"
+        or str(raw.get("name") or "").strip()
+        != f"PPL ALLOC 009 {_PPL_ALLOC_009_ELIGIBILITY_RUN_KEY}"
+        or str(metadata.get("provisioning_idempotency_key") or "").strip()
+        != "ppl-alloc-009-30095677466-persona-create"
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Persona is outside the PPL-ALLOC-009 proof scope",
+            (
+                "The eligibility producer accepts only the exact tenant-dev "
+                "Persona reserved by the canonical acceptance run."
+            ),
+            precondition="task_scoped_persona",
+            status_code=404,
+        )
+    if (
+        _persona_record_projected_state(raw) != "paper_running"
+        or str(metadata.get("capital_mode") or "").strip().lower() != "paper"
+        or str(metadata.get("deployment_stage") or "").strip().lower() != "paper"
+        or metadata.get("live_capital_enabled") is not False
+        or metadata.get("live_write_enabled") is not False
+        or metadata.get("order_side_effects_allowed") is not False
+        or metadata.get("capital_side_effects_allowed") is not False
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Persona is not in authoritative paper-only state",
+            (
+                "The exact Persona must remain paper_running with every "
+                "live/order/capital side-effect authority disabled."
+            ),
+            precondition="paper_only_persona",
+        )
+
+    league_rows = _pm12_persona_league_rows(q=persona_id)
+    matches = [
+        row
+        for row in league_rows
+        if str(row.get("persona_id") or row.get("id") or "").strip() == persona_id
+    ]
+    if len(matches) != 1:
+        raise _ppl_alloc_009_eligibility_error(
+            "Persona ranking identity is not authoritative",
+            "The task Persona must resolve to exactly one canonical league row.",
+            precondition="persona_league_identity",
+        )
+    ranking_item = _pm12_persona_league_ranking_item(matches[0])
+    runtime_ids = [
+        str(value or "").strip()
+        for value in ranking_item.get("runtime_ids") or []
+        if str(value or "").strip()
+    ]
+    if (
+        str(ranking_item.get("stage") or "").strip().lower() != "paper_running"
+        or str(ranking_item.get("capital_scope") or "").strip().lower()
+        != "paper_ledger"
+        or str(ranking_item.get("runtime_resolution") or "").strip().lower()
+        != "active"
+        or str(ranking_item.get("session_resolution") or "").strip().lower()
+        != "active"
+        or not str(ranking_item.get("session_id") or "").strip()
+        or len(runtime_ids) != 1
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper runtime authority is incomplete",
+            (
+                "The task Persona must have one active paper runtime, one active "
+                "owner monitoring session, and one isolated paper ledger."
+            ),
+            precondition="paper_runtime_authority",
+        )
+
+    capital = _ppl_alloc_009_paper_capital_context(
+        persona_id=persona_id,
+        ranking_item=ranking_item,
+    )
+    runtime_id = runtime_ids[0]
+    declared_runtime_binding_id = str(
+        metadata.get("runtime_binding_id") or ""
+    ).strip()
+    runtime_matches = []
+    for runtime in read_store.list_runtime_bindings():
+        if not isinstance(runtime, dict):
+            continue
+        runtime_binding_id = str(
+            runtime.get("runtime_binding_id")
+            or runtime.get("binding_id")
+            or runtime.get("id")
+            or ""
+        ).strip()
+        runtime_stage = str(
+            runtime.get("deployment_stage")
+            or runtime.get("deployment_mode")
+            or runtime.get("execution_mode")
+            or runtime.get("runtime_kind")
+            or ""
+        ).strip().lower()
+        runtime_status = str(
+            runtime.get("status") or runtime.get("state") or ""
+        ).strip().lower()
+        if (
+            str(runtime.get("runtime_id") or "").strip() == runtime_id
+            and runtime_binding_id == declared_runtime_binding_id
+            and str(runtime.get("persona_id") or "").strip() == persona_id
+            and runtime_stage == "paper"
+            and runtime_status in {"active", "running", "idle"}
+        ):
+            runtime_matches.append(dict(runtime))
+    if len(runtime_matches) != 1:
+        raise _ppl_alloc_009_eligibility_error(
+            "RuntimeBinding is not authoritative",
+            "The task Persona must resolve to exactly one active paper RuntimeBinding.",
+            precondition="paper_runtime_binding",
+        )
+    runtime_binding = runtime_matches[0]
+    if (
+        str(runtime_binding.get("capital_pool_id") or "").strip()
+        != capital["capital_pool_id"]
+        or str(runtime_binding.get("persona_capital_binding_id") or "").strip()
+        != capital["binding_id"]
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "RuntimeBinding capital lineage does not match",
+            (
+                "RuntimeBinding must join the same internal paper pool and "
+                "PersonaCapitalBinding as the canonical ranking row."
+            ),
+            precondition="paper_runtime_capital_lineage",
+        )
+
+    required_runtime_fields = (
+        "runtime_id",
+        "capital_pool_id",
+        "artifact_id",
+        "artifact_version",
+        "persona_capital_binding_id",
+    )
+    missing = [
+        field
+        for field in required_runtime_fields
+        if not str(runtime_binding.get(field) or "").strip()
+    ]
+    plan_id = str(
+        runtime_binding.get("plan_id")
+        or runtime_binding.get("deployment_plan_id")
+        or ""
+    ).strip()
+    if not plan_id:
+        missing.append("plan_id")
+    plan = read_store.get_deployment_plan(plan_id) if plan_id else None
+    if not isinstance(plan, dict):
+        missing.append("deployment_plan")
+    strategy_id = str(
+        (plan or {}).get("strategy_id")
+        or runtime_binding.get("strategy_id")
+        or ""
+    ).strip()
+    if not strategy_id:
+        missing.append("strategy_id")
+    if missing:
+        raise _ppl_alloc_009_eligibility_error(
+            "RuntimeBinding telemetry identity is incomplete",
+            f"Missing canonical telemetry fields: {', '.join(sorted(set(missing)))}.",
+            precondition="telemetry_binding_identity",
+        )
+
+    effective_at = _audit_datetime(runtime_binding.get("effective_at"))
+    observed_at_value = _audit_datetime(observed_at)
+    retired_at = _audit_datetime(runtime_binding.get("retired_at"))
+    if (
+        observed_at_value is None
+        or (effective_at is not None and observed_at_value < effective_at)
+        or (retired_at is not None and observed_at_value > retired_at)
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper benchmark timestamp is outside RuntimeBinding authority",
+            "The immutable proof observation must fall within the binding window.",
+            precondition="telemetry_binding_window",
+        )
+    return {
+        "ranking_item": ranking_item,
+        "runtime_binding": runtime_binding,
+        "strategy_id": strategy_id,
+        "paper_session_id": str(ranking_item.get("session_id") or "").strip(),
+        "paper_ledger_id": str(ranking_item.get("paper_ledger_id") or "").strip(),
+        "capital": capital,
+    }
+
+
+def _ppl_alloc_009_telemetry_url(path: str) -> str:
+    base = str(
+        os.getenv("PANTHEON_TELEMETRY_API_URL")
+        or os.getenv("PANTHEON_TELEMETRY_URL")
+        or ""
+    ).strip().rstrip("/")
+    if not base:
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner is unavailable",
+            "PANTHEON_TELEMETRY_API_URL is required for the governed producer.",
+            precondition="telemetry_owner",
+            status_code=503,
+        )
+    return f"{base}{path}"
+
+
+def _ppl_alloc_009_dev_proof_enabled() -> bool:
+    return _bool_from_env(
+        "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED",
+        default=False,
+    )
+
+
+def _ppl_alloc_009_readback_timeout_seconds() -> float:
+    raw = str(
+        os.getenv("PANTHEON_PPL_ALLOC_009_READBACK_TIMEOUT_SECONDS") or "10"
+    ).strip()
+    try:
+        return max(0.0, min(float(raw), 30.0))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _ppl_alloc_009_readback_poll_seconds() -> float:
+    raw = str(
+        os.getenv("PANTHEON_PPL_ALLOC_009_READBACK_POLL_SECONDS") or "0.25"
+    ).strip()
+    try:
+        return max(0.01, min(float(raw), 2.0))
+    except (TypeError, ValueError):
+        return 0.25
+
+
+def _ppl_alloc_009_accepted_event_mismatches(
+    *,
+    telemetry_readback: Mapping[str, Any],
+    expected_event: Mapping[str, Any],
+) -> List[str]:
+    mismatches: List[str] = []
+    for field in sorted(set(expected_event) | set(telemetry_readback)):
+        expected = expected_event.get(field)
+        actual = telemetry_readback.get(field)
+        if actual != expected:
+            mismatches.append(f"{field} does not match the immutable event")
+    return mismatches
+
+
+def _ppl_alloc_009_wait_for_telemetry_readback(
+    *,
+    expected_event: Mapping[str, Any],
+) -> tuple[Dict[str, Any], int]:
+    timeout_seconds = _ppl_alloc_009_readback_timeout_seconds()
+    poll_seconds = _ppl_alloc_009_readback_poll_seconds()
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    last_error = "summary unavailable"
+    while True:
+        attempts += 1
+        try:
+            candidate = _get_json(
+                _ppl_alloc_009_telemetry_url(
+                    "/api/telemetry/events/"
+                    + quote(str(expected_event.get("event_id") or ""), safe="")
+                )
+            )
+            if not isinstance(candidate, dict):
+                last_error = "telemetry event response was not an object"
+            else:
+                mismatches = _ppl_alloc_009_accepted_event_mismatches(
+                    telemetry_readback=candidate,
+                    expected_event=expected_event,
+                )
+                if not mismatches:
+                    return dict(candidate), attempts
+                last_error = "; ".join(mismatches)
+        except Exception as exc:  # noqa: BLE001 - bounded owner readback
+            last_error = str(exc) or exc.__class__.__name__
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_seconds, remaining))
+    raise RuntimeError(
+        f"telemetry owner readback timed out after {attempts} attempts: {last_error}"
+    )
+
+
+@app.post(
+    "/bff/management/personas/{persona_id}/ppl-alloc-009-paper-eligibility-proof",
+    status_code=202,
+)
+async def bff_ppl_alloc_009_paper_eligibility_proof(
+    persona_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Run the exact dev-only paper positive control through telemetry owner."""
+
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    _require_operator_role(identity)
+    if not identity.mfa_verified:
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper eligibility proof requires MFA",
+            "The authenticated operator identity has no verified MFA claim.",
+            precondition="mfa",
+            status_code=403,
+        )
+    _ppl_alloc_009_paper_environment_guard()
+    if not _ppl_alloc_009_dev_proof_enabled():
+        raise _ppl_alloc_009_eligibility_error(
+            "PPL-ALLOC-009 dev proof is disabled",
+            (
+                "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED must be explicitly "
+                "enabled for the one bounded acceptance run."
+            ),
+            precondition="dev_proof_feature_flag",
+            status_code=403,
+        )
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    if resolved_key != _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY:
+        raise _ppl_alloc_009_eligibility_error(
+            "Idempotency key is outside the task scope",
+            "Use the exact PPL-ALLOC-009 acceptance retry key.",
+            precondition="task_idempotency_key",
+        )
+    expected_payload = {
+        "task_id": _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+        "run_key": _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+        "benchmark_version": _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+    }
+    if payload != expected_payload:
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper benchmark request is outside the task scope",
+            (
+                "The route accepts only the immutable PPL-ALLOC-009 task, run, "
+                "and benchmark identities; clients cannot submit metrics."
+            ),
+            precondition="paper_benchmark_identity",
+        )
+
+    try:
+        observed_at = await asyncio.to_thread(
+            _ppl_alloc_009_eligibility_observation_store.reserve,
+            idempotency_key=resolved_key,
+            proposed_at=utc_now(),
+        )
+    except Exception as exc:
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper benchmark observation could not be reserved",
+            str(exc) or exc.__class__.__name__,
+            precondition="paper_benchmark_observation",
+            status_code=503,
+        ) from exc
+    context = await asyncio.to_thread(
+        _ppl_alloc_009_paper_eligibility_context,
+        persona_id=persona_id,
+        identity=identity,
+        observed_at=observed_at,
+    )
+    event, benchmark = _ppl_alloc_009_build_telemetry_event(
+        persona_id=persona_id,
+        actor_id=identity.operator_id,
+        idempotency_key=resolved_key,
+        observed_at=observed_at,
+        runtime_binding=context["runtime_binding"],
+        strategy_id=context["strategy_id"],
+    )
+    expected_metrics = benchmark["metrics"]
+    write_reconciliation = "accepted"
+    try:
+        owner_receipt = await asyncio.to_thread(
+            _post_json,
+            _ppl_alloc_009_telemetry_url("/api/telemetry/ingest"),
+            event,
+        )
+    except urllib_error.HTTPError as exc:
+        if exc.code != 409:
+            raise _ppl_alloc_009_eligibility_error(
+                "Telemetry owner rejected the paper benchmark",
+                f"HTTP {exc.code}",
+                precondition="telemetry_owner_receipt",
+                status_code=502,
+            ) from exc
+        owner_receipt = {"status": "idempotent_replay", "http_status": 409}
+        write_reconciliation = "http_409_readback"
+    except (urllib_error.URLError, TimeoutError, OSError) as exc:
+        owner_receipt = {
+            "status": "write_outcome_uncertain",
+            "error_type": exc.__class__.__name__,
+        }
+        write_reconciliation = "uncertain_write_readback"
+    except Exception as exc:
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner rejected the paper benchmark",
+            str(exc) or exc.__class__.__name__,
+            precondition="telemetry_owner_receipt",
+            status_code=502,
+        ) from exc
+    if (
+        not isinstance(owner_receipt, dict)
+        or owner_receipt.get("status")
+        not in {"accepted", "idempotent_replay", "write_outcome_uncertain"}
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner returned an invalid receipt",
+            "The ingest response must carry an accepted or reconcilable status.",
+            precondition="telemetry_owner_receipt_schema",
+            status_code=502,
+        )
+    try:
+        telemetry_readback, readback_attempts = await asyncio.to_thread(
+            _ppl_alloc_009_wait_for_telemetry_readback,
+            expected_event=event,
+        )
+    except Exception as exc:
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner readback did not prove the paper benchmark",
+            str(exc) or exc.__class__.__name__,
+            precondition="telemetry_owner_readback",
+            status_code=502,
+        ) from exc
+
+    refreshed_rows = _pm12_persona_league_rows(q=persona_id)
+    refreshed_matches = [
+        _pm12_persona_league_ranking_item(row)
+        for row in refreshed_rows
+        if str(row.get("persona_id") or row.get("id") or "").strip() == persona_id
+    ]
+    refreshed = refreshed_matches[0] if len(refreshed_matches) == 1 else {}
+    actions = _pm12_recommendation_action_ids(refreshed) if refreshed else []
+    if (
+        refreshed.get("eligible") is not True
+        or "promote_to_canary_candidate" not in actions
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Canonical ranking did not admit the positive control",
+            (
+                "Telemetry was accepted, but the authoritative ranking did not "
+                "produce the required promotion-review recommendation."
+            ),
+            precondition="canonical_promotion_eligibility",
+            status_code=502,
+        )
+
+    return {
+        "data": {
+            "task_id": _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+            "run_key": _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+            "benchmark_version": _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+            "observed_at": observed_at,
+            "scenario_digest": benchmark["scenario_digest"],
+            "event_id": event["event_id"],
+            "trace_id": event["trace_id"],
+            "persona_id": persona_id,
+            "runtime_id": event["runtime_id"],
+            "runtime_binding_id": event["binding_id"],
+            "persona_capital_binding_id": event["persona_capital_binding_id"],
+            "capital_pool_id": event["capital_pool_id"],
+            "paper_session_id": context["paper_session_id"],
+            "paper_ledger_id": context["paper_ledger_id"],
+            "metrics": expected_metrics,
+            "ranking": {
+                "eligible": refreshed["eligible"],
+                "overall_score": refreshed["overall_score"],
+                "components": refreshed["components"],
+                "recommendation_action_ids": actions,
+            },
+            "owner_receipt": {
+                "service": "telemetry",
+                "status": owner_receipt["status"],
+                "accepted_event_id": event["event_id"],
+                "reconciliation": write_reconciliation,
+                "readback_attempts": readback_attempts,
+                "readback_event_id": telemetry_readback.get("event_id"),
+                "readback_created_at": telemetry_readback.get("created_at"),
+            },
+            "safety": {
+                "paper_only": True,
+                "real_capital_side_effects": False,
+                "real_order_side_effects": False,
+                "canary_execution_enabled": False,
+                "live_execution_enabled": False,
+            },
+        },
+        "meta": {
+            "snapshot_at": utc_now(),
+            "source": "telemetry_owner_positive_control_readback",
+            "idempotency_key": resolved_key,
+        },
+    }
+
+
+def _ppl_alloc_009_paper_capital_context(
+    *,
+    persona_id: str,
+    ranking_item: Dict[str, Any],
+) -> Dict[str, Any]:
+    binding_ids = {
+        str(value or "").strip()
+        for value in ranking_item.get("binding_ids") or []
+        if str(value or "").strip()
+    }
+    bindings = [
+        binding
+        for binding in read_store.list_bindings(
+            persona_id=persona_id,
+            role="paper_owner",
+        )
+        if str(binding.get("status") or binding.get("validity") or "").strip().lower()
+        in {"active", "ready", "bound"}
+        and str(binding.get("allowed_deployment_scope") or "").strip().lower()
+        == "paper"
+        and not str(binding.get("capital_sleeve_id") or "").strip()
+        and (
+            not binding_ids
+            or str(binding.get("binding_id") or binding.get("id") or "").strip()
+            in binding_ids
+        )
+    ]
+    if len(bindings) != 1:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper allocation binding is not authoritative",
+            (
+                "The ranked Persona must resolve to exactly one active "
+                "paper_owner binding with no capital sleeve."
+            ),
+            precondition_failed="paper_owner_binding",
+        )
+    binding = bindings[0]
+    binding_id = str(binding.get("binding_id") or binding.get("id") or "").strip()
+    pool_id = str(binding.get("capital_pool_id") or "").strip()
+    pool = read_store.get_capital_pool(pool_id)
+    metadata = (
+        pool.get("metadata")
+        if isinstance(pool, dict) and isinstance(pool.get("metadata"), dict)
+        else {}
+    )
+    if (
+        not isinstance(pool, dict)
+        or str(pool.get("status") or "").strip().lower() != "active"
+        or metadata.get("internal") is not True
+        or str(metadata.get("execution_context") or "").strip().lower() != "paper"
+        or str(metadata.get("persona_id") or "").strip() != persona_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper allocation pool is not authoritative",
+            (
+                "The paper_owner binding must resolve to the active internal "
+                "paper pool provisioned for the same Persona."
+            ),
+            precondition_failed="paper_capital_pool",
+        )
+
+    allocations = read_store.list_capital_allocations(
+        capital_pool_id=pool_id,
+        persona_id=persona_id,
+    )
+    if len(allocations) > 1:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Paper allocation identity is ambiguous",
+            "More than one authoritative Capital allocation matched the paper identity.",
+            precondition_failed="paper_allocation_identity",
+        )
+    current_weight = 0.0
+    if allocations:
+        allocation = allocations[0]
+        if (
+            str(allocation.get("capital_scope") or "").strip().lower()
+            != "paper_ledger"
+            or str(allocation.get("binding_id") or "").strip() != binding_id
+            or str(allocation.get("capital_sleeve_id") or "").strip()
+        ):
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Paper allocation identity is inconsistent",
+                "The existing Capital allocation does not match the governed paper binding.",
+                precondition_failed="paper_allocation_identity",
+            )
+        try:
+            current_weight = float(allocation.get("current_weight") or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Paper allocation baseline is invalid",
+                "Capital returned a non-numeric paper allocation weight.",
+                precondition_failed="paper_allocation_baseline",
+            ) from exc
+
+    return {
+        "capital_pool_id": pool_id,
+        "binding_id": binding_id,
+        "current_weight": current_weight,
+    }
+
+
+def _ppl_alloc_009_paper_governance_context(
+    *,
+    snapshot_id: str,
+    persona_id: str,
+    ranking_item: Dict[str, Any],
+    promotion_review_id: str,
+) -> Dict[str, Any]:
+    requested_review_id = _promotion_review_clean_id(promotion_review_id)
+    recommendation_id = _promotion_review_revision_recommendation_id(
+        requested_review_id
+    )
+    review_revision_id = _promotion_review_revision_id(
+        recommendation_id,
+        snapshot_id,
+    )
+    if (
+        requested_review_id != recommendation_id
+        and requested_review_id != review_revision_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Promotion review revision does not match the ranking snapshot",
+            "Paper allocation requires the exact snapshot-bound promotion review.",
+            precondition_failed="promotion_review_id",
+        )
+    submission = _promotion_review_submission_projection(
+        review_revision_id,
+        include_source_recommendation=True,
+    )
+    decision = _promotion_review_decision_projection(review_revision_id)
+    source = (
+        submission.get("source_recommendation")
+        if isinstance(submission, dict)
+        and isinstance(submission.get("source_recommendation"), dict)
+        else {}
+    )
+    if (
+        not isinstance(submission, dict)
+        or str(submission.get("ranking_snapshot_id") or "") != snapshot_id
+        or str(submission.get("persona_id") or "") != persona_id
+        or str(source.get("ranking_snapshot_id") or "") != snapshot_id
+        or str(source.get("persona_id") or "") != persona_id
+        or str(source.get("stage") or "").strip().lower() != "paper_running"
+        or str(source.get("action_id") or "").strip()
+        != "promote_to_canary_candidate"
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Promotion review lineage is incomplete",
+            (
+                "Paper allocation requires the immutable submitted "
+                "promote_to_canary_candidate recommendation for this exact "
+                "Persona and ranking snapshot."
+            ),
+            precondition_failed="promotion_review_id",
+        )
+    if (
+        not isinstance(decision, dict)
+        or str(decision.get("decision_status") or "").strip().lower() != "accepted"
+        or str(decision.get("decision") or "").strip().lower()
+        not in {"approve", "approve_with_conditions"}
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.HUMAN_GATE_PENDING,
+            "Positive promotion decision is required",
+            "The exact promotion review has no accepted positive human decision.",
+            precondition_failed="promotion_review_decision",
+        )
+    submitted_by = str(submission.get("submitted_by") or "").strip()
+    decided_by = str(decision.get("decided_by") or "").strip()
+    if not submitted_by or not decided_by or submitted_by == decided_by:
+        raise _bff_error(
+            409,
+            ErrorCode.HUMAN_GATE_PENDING,
+            "Promotion review requires distinct human authority",
+            "The recommendation submitter and promotion decision actor must be distinct.",
+            precondition_failed="promotion_review_separation",
+        )
+    paper_ledger_id = str(ranking_item.get("paper_ledger_id") or "").strip()
+    if not paper_ledger_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper ledger identity is missing",
+            "The authoritative paper ranking row has no paper_ledger_id.",
+            precondition_failed="paper_ledger_id",
+        )
+    return {
+        "paper_ledger_id": paper_ledger_id,
+        "submitted_by": submitted_by,
+        "decided_by": decided_by,
+        "submission_command_id": str(submission.get("command_id") or "").strip(),
+        "decision_command_id": str(decision.get("command_id") or "").strip(),
+    }
+
+
+def _pm12_materialize_paper_simulation_evaluation(
+    snapshot: Dict[str, Any],
+    asserted_rows: List[Dict[str, Any]],
+    *,
+    promotion_review_id: str,
+) -> Dict[str, Any]:
+    snapshot_id = str(snapshot.get("ranking_snapshot_id") or "")
+    if len(asserted_rows) != 1 or not isinstance(asserted_rows[0], dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper simulation requires one ranking row",
+            "Exactly one authoritative Persona may occupy the isolated paper ledger.",
+            precondition_failed="rows",
+        )
+    asserted = asserted_rows[0]
+    if str(asserted.get("ranking_snapshot_id") or "").strip() != snapshot_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Ranking snapshot mismatch",
+            "The paper allocation row must belong to the admitted snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    persona_id = str(asserted.get("persona_id") or "").strip()
+    matches = [
+        item
+        for item in snapshot.get("items") or []
+        if isinstance(item, dict)
+        and str(item.get("persona_id") or "").strip() == persona_id
+    ]
+    if len(matches) != 1:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Ranking row is not authoritative",
+            "The Persona must occur exactly once in the admitted ranking snapshot.",
+            precondition_failed="persona_id",
+        )
+    ranking_item = matches[0]
+    _pm12_assert_allocation_row(
+        asserted=asserted,
+        authoritative=ranking_item,
+        snapshot=snapshot,
+        index=0,
+    )
+    if (
+        str(ranking_item.get("stage") or "").strip().lower() != "paper_running"
+        or str(ranking_item.get("capital_scope") or "").strip().lower()
+        != "paper_ledger"
+        or ranking_item.get("eligible") is not True
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Ranking row is not paper-allocation eligible",
+            (
+                "Paper simulation requires an eligible paper_running row backed "
+                "by an authoritative paper ledger."
+            ),
+            precondition_failed="paper_ranking_eligibility",
+        )
+
+    governance = _ppl_alloc_009_paper_governance_context(
+        snapshot_id=snapshot_id,
+        persona_id=persona_id,
+        ranking_item=ranking_item,
+        promotion_review_id=promotion_review_id,
+    )
+    capital = _ppl_alloc_009_paper_capital_context(
+        persona_id=persona_id,
+        ranking_item=ranking_item,
+    )
+    evidence_refs = list(ranking_item.get("evidence_ref_ids") or [])
+    evidence_refs.extend(
+        [
+            f"ranking_snapshot:{snapshot_id}",
+            f"promotion_review:{promotion_review_id}",
+            f"promotion_submission:{governance['submission_command_id']}",
+            f"promotion_decision:{governance['decision_command_id']}",
+            f"paper_ledger:{governance['paper_ledger_id']}",
+            f"capital_pool:{capital['capital_pool_id']}",
+            f"persona_capital_binding:{capital['binding_id']}",
+        ]
+    )
+    canonical_row = {
+        **json.loads(json.dumps(ranking_item)),
+        "ranking_snapshot_id": snapshot_id,
+        "paper_ledger_id": governance["paper_ledger_id"],
+        "capital_pool_id": capital["capital_pool_id"],
+        "capital_sleeve_id": None,
+        "binding_id": capital["binding_id"],
+        "current_weight": capital["current_weight"],
+        "evidence_refs": list(dict.fromkeys(evidence_refs)),
+    }
+    try:
+        raw_lines = calculate_paper_simulation_allocations([canonical_row])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper ranking snapshot cannot be evaluated",
+            str(exc),
+            precondition_failed="paper_allocation_policy_input",
+        ) from exc
+
+    basis = {
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_policy_version": _PPL_ALLOC_009_PAPER_POLICY_VERSION,
+        "authority_mode": _PPL_ALLOC_009_PAPER_AUTHORITY_MODE,
+        "promotion_review_id": promotion_review_id,
+        "lines": raw_lines,
+    }
+    evaluation_id = (
+        "paper-allocation-evaluation-"
+        + _stable_json_hash(basis)[:24]
+    )
+    lines: List[Dict[str, Any]] = []
+    for line in raw_lines:
+        normalized = {
+            **line,
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": evaluation_id,
+            "allocation_policy_version": _PPL_ALLOC_009_PAPER_POLICY_VERSION,
+            "authority_mode": _PPL_ALLOC_009_PAPER_AUTHORITY_MODE,
+            "promotion_review_id": promotion_review_id,
+        }
+        normalized["allocation_line_digest"] = _pm12_allocation_line_digest(
+            normalized
+        )
+        lines.append(normalized)
+    content_basis = {
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_evaluation_id": evaluation_id,
+        "allocation_policy_version": _PPL_ALLOC_009_PAPER_POLICY_VERSION,
+        "authority_mode": _PPL_ALLOC_009_PAPER_AUTHORITY_MODE,
+        "promotion_review_id": promotion_review_id,
+        "lines": lines,
+    }
+    return read_store.put_allocation_evaluation({
+        **content_basis,
+        "content_digest": _stable_json_hash(content_basis),
+        "created_at": utc_now(),
+        "applied": False,
+    })
+
+
+def _ppl_alloc_009_paper_rebalance_authority(
+    cmd: OperatorCommand,
+) -> bool:
+    if cmd.command != CommandType.APPROVED_APPLY:
+        return False
+    rebalance = read_store.get_rebalance(cmd.target.id)
+    if not isinstance(rebalance, dict):
+        return False
+    policy_version = str(
+        rebalance.get("allocation_policy_version") or ""
+    ).strip()
+    if policy_version != _PPL_ALLOC_009_PAPER_POLICY_VERSION:
+        return False
+
+    _ppl_alloc_009_paper_environment_guard()
+    lines = [
+        line
+        for line in rebalance.get("lines") or []
+        if isinstance(line, dict)
+    ]
+    evaluation_id = str(
+        rebalance.get("allocation_evaluation_id") or ""
+    ).strip()
+    evaluation = _pm12_allocation_evaluation_record(evaluation_id)
+    expected_digests = {
+        str(line.get("allocation_line_digest") or "").strip()
+        for line in evaluation.get("lines") or []
+        if isinstance(line, dict)
+    }
+    actual_digests = {
+        str(line.get("allocation_line_digest") or "").strip()
+        for line in lines
+    }
+    if (
+        len(lines) != 1
+        or len(expected_digests) != 1
+        or actual_digests != expected_digests
+        or str(evaluation.get("allocation_policy_version") or "")
+        != _PPL_ALLOC_009_PAPER_POLICY_VERSION
+        or str(evaluation.get("authority_mode") or "")
+        != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+        or not str(evaluation.get("promotion_review_id") or "").strip()
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Paper rebalance authority is invalid",
+            "The persisted rebalance no longer matches its admitted paper evaluation.",
+            precondition_failed="paper_simulation_lineage",
+        )
+    line = lines[0]
+    pool_id = str(rebalance.get("capital_pool_id") or "").strip()
+    binding_id = str(line.get("binding_id") or "").strip()
+    if (
+        str(line.get("stage") or "").strip().lower() != "paper_running"
+        or str(line.get("capital_scope") or "").strip().lower()
+        != "paper_ledger"
+        or str(line.get("capital_pool_id") or "").strip() != pool_id
+        or str(line.get("capital_sleeve_id") or "").strip()
+        or not str(line.get("paper_ledger_id") or "").strip()
+        or not binding_id
+        or line.get("paper_allocation_eligible") is not True
+        or line.get("live_capital_side_effects") is not False
+        or str(line.get("authority_mode") or "")
+        != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+        or str(line.get("promotion_review_id") or "")
+        != str(evaluation.get("promotion_review_id") or "")
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Paper rebalance scope is invalid",
+            "The admitted paper rebalance contains a non-paper or unbound allocation line.",
+            precondition_failed="paper_simulation_scope",
+        )
+
+    pool = read_store.get_capital_pool(pool_id)
+    metadata = (
+        pool.get("metadata")
+        if isinstance(pool, dict) and isinstance(pool.get("metadata"), dict)
+        else {}
+    )
+    bindings = [
+        binding
+        for binding in read_store.list_bindings(
+            persona_id=str(line.get("persona_id") or "").strip(),
+            capital_pool_id=pool_id,
+            role="paper_owner",
+        )
+        if str(binding.get("binding_id") or binding.get("id") or "").strip()
+        == binding_id
+        and str(binding.get("status") or binding.get("validity") or "")
+        .strip()
+        .lower()
+        in {"active", "ready", "bound"}
+        and str(binding.get("allowed_deployment_scope") or "").strip().lower()
+        == "paper"
+        and not str(binding.get("capital_sleeve_id") or "").strip()
+    ]
+    if (
+        not isinstance(pool, dict)
+        or str(pool.get("status") or "").strip().lower() != "active"
+        or metadata.get("internal") is not True
+        or str(metadata.get("execution_context") or "").strip().lower()
+        != "paper"
+        or len(bindings) != 1
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Paper rebalance authority is no longer active",
+            "The internal paper pool or its unique paper_owner binding changed.",
+            precondition_failed="paper_simulation_binding",
+        )
+    return True
+
 @app.post("/bff/management/allocation-policy/evaluate")
 async def bff_evaluate_persona_allocation_policy(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
 ):
     """Calculate stage-aware targets without changing any capital binding."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    authority_mode = str(payload.get("authority_mode") or "").strip().lower()
+    if authority_mode:
+        if authority_mode != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Unknown allocation authority mode",
+                f"Unsupported authority_mode={authority_mode!r}.",
+                precondition_failed="authority_mode",
+            )
+        _require_operator_role(identity)
+        if not identity.mfa_verified:
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Paper allocation simulation requires MFA",
+                "The authenticated operator identity has no verified MFA claim.",
+                precondition_failed="mfa",
+            )
+        _ppl_alloc_009_paper_environment_guard()
+    else:
+        _require_read_role(identity)
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "rows is required", "Allocation evaluation requires a rows array")
@@ -26147,13 +27458,33 @@ async def bff_evaluate_persona_allocation_policy(
             precondition_failed="rows",
         )
     snapshot = _pm12_allocation_snapshot_record(ranking_snapshot_id)
-    evaluation = _pm12_materialize_allocation_evaluation(snapshot, rows)
+    if authority_mode == _PPL_ALLOC_009_PAPER_AUTHORITY_MODE:
+        promotion_review_id = str(
+            payload.get("promotion_review_id") or ""
+        ).strip()
+        if not promotion_review_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "promotion_review_id is required",
+                "Paper simulation must join to the governed promotion review.",
+                precondition_failed="promotion_review_id",
+            )
+        evaluation = _pm12_materialize_paper_simulation_evaluation(
+            snapshot,
+            rows,
+            promotion_review_id=promotion_review_id,
+        )
+    else:
+        evaluation = _pm12_materialize_allocation_evaluation(snapshot, rows)
     return {
         "data": {
             "ranking_snapshot_id": ranking_snapshot_id,
             "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
             "allocation_policy_version": evaluation["allocation_policy_version"],
             "lines": evaluation["lines"],
+            "authority_mode": evaluation.get("authority_mode"),
+            "promotion_review_id": evaluation.get("promotion_review_id"),
             "applied": False,
         },
         "meta": {
@@ -26287,7 +27618,14 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
                     f"lines[{index}] is not a unique line from the admitted evaluation.",
                     precondition_failed="allocation_line_digest",
                 )
-            if _stable_json_hash(line) != _stable_json_hash(expected):
+            try:
+                assertion_matches = (
+                    _pm12_allocation_line_assertion_hash(line)
+                    == _pm12_allocation_line_assertion_hash(expected)
+                )
+            except ValueError:
+                assertion_matches = False
+            if not assertion_matches:
                 raise _bff_error(
                     422,
                     ErrorCode.VALIDATION_FAILED,
@@ -26903,6 +28241,16 @@ async def bff_apply_rebalance_proposal(
         > float(line.get("current_weight") or 0)
         for line in rebalance.get("lines") or []
     )
+    authority_probe = OperatorCommand(
+        command=CommandType.APPROVED_APPLY,
+        target=TargetObject(type=ObjectType.REBALANCE, id=rebalance_id),
+        params={},
+        audit_context=AuditContext(reason="Validate paper allocation authority"),
+    )
+    paper_simulation_authority = _ppl_alloc_009_paper_rebalance_authority(
+        authority_probe
+    )
+    approval_required = increases_live or paper_simulation_authority
     approval_ref = str(
         payload.get("approval_decision_id")
         or payload.get("approvalDecisionId")
@@ -26910,8 +28258,17 @@ async def bff_apply_rebalance_proposal(
         or rebalance.get("approval_ref")
         or ""
     ).strip()
-    if increases_live and not approval_ref:
-        raise _bff_error(409, ErrorCode.PRECONDITION_FAILED, "human approval required", "A human approval reference is required before applying a live capital increase", precondition_failed="approval_ref")
+    if approval_required and not approval_ref:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "human approval required",
+            (
+                "A human approval reference is required before applying this "
+                "governed allocation."
+            ),
+            precondition_failed="approval_ref",
+        )
     signature_id = str(
         payload.get("two_man_signature_id")
         or payload.get("twoManSignatureId")
@@ -26925,11 +28282,16 @@ async def bff_apply_rebalance_proposal(
             "rebalance_id": rebalance_id,
             "approval_ref": approval_ref or None,
             "approval_decision_id": approval_ref or None,
-            "approval_required": increases_live,
+            "approval_required": approval_required,
             "capital_pool_id": rebalance.get("capital_pool_id"),
             "proposal_version": rebalance.get("version") or rebalance.get("proposal_version"),
             "rollback_target": rebalance.get("rollback_target"),
             "two_man_signature_id": signature_id or None,
+            "paper_simulation_authority": (
+                _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+                if paper_simulation_authority
+                else None
+            ),
         },
         "approvalDecisionId": approval_ref or None,
         "twoManSignatureId": signature_id or None,
@@ -35501,10 +36863,13 @@ def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
     recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    review_revision_id = _promotion_review_record_revision_id(command)
+    target_id = str(target.get("id") or "").strip()
     if (
         not recommendation_id
         or target.get("type") != ObjectType.RANKING.value
-        or str(target.get("id") or "").strip() != recommendation_id
+        or not review_revision_id
+        or target_id not in {recommendation_id, review_revision_id}
     ):
         return False
     expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
@@ -35518,6 +36883,12 @@ def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
     if not expected_quarter or quarter != expected_quarter or not persona_id:
         return False
     if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
+        return False
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    if ranking_snapshot_id and review_revision_id != _promotion_review_revision_id(
+        recommendation_id,
+        ranking_snapshot_id,
+    ):
         return False
     for flag in (
         "direct_live_capital_mutation",
@@ -35633,6 +37004,11 @@ def _human_inbox_sanitize_promotion_snapshot(
     )
     if params_snapshot_id:
         sanitized["ranking_snapshot_id"] = params_snapshot_id
+    review_revision_id = _promotion_review_record_revision_id(command)
+    if not review_revision_id:
+        return None
+    sanitized["review_id"] = review_revision_id
+    sanitized["promotion_review_id"] = review_revision_id
     stage_from = str(params.get("stage_from") or sanitized.get("stage") or sanitized.get("state") or "").strip()
     if stage_from:
         sanitized.setdefault("stage", stage_from)
@@ -35655,6 +37031,7 @@ def _human_inbox_submission_projection_from_record(
 ) -> Dict[str, Any]:
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    review_revision_id = _promotion_review_record_revision_id(command)
     return {
         "submitted": True,
         "submit_status": command.get("status"),
@@ -35664,6 +37041,8 @@ def _human_inbox_submission_projection_from_record(
         "submitted_at": command.get("submitted_at"),
         "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "recommendation_id": recommendation_id,
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
         "recommendation_action_id": params.get("recommendation_action_id")
         or params.get("recommendationActionId"),
         "ranking_snapshot_id": params.get("ranking_snapshot_id"),
@@ -35672,7 +37051,7 @@ def _human_inbox_submission_projection_from_record(
         "stage_from": params.get("stage_from"),
         "stage_to": params.get("stage_to"),
         "review_kind": params.get("review_kind"),
-        "human_inbox_id": _promotion_review_target_id(recommendation_id),
+        "human_inbox_id": _promotion_review_target_id(review_revision_id),
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
@@ -35690,10 +37069,21 @@ def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
         return ""
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     raw_target_id = str(target.get("id") or "").strip()
-    recommendation_id = _promotion_review_clean_id(raw_target_id)
+    review_revision_id = _promotion_review_clean_id(raw_target_id)
+    if (
+        not review_revision_id
+        or raw_target_id != _promotion_review_target_id(review_revision_id)
+    ):
+        return ""
+    recommendation_id = str(
+        params.get("recommendation_id")
+        or params.get("recommendationId")
+        or _promotion_review_revision_recommendation_id(review_revision_id)
+    ).strip()
     if (
         not recommendation_id
-        or raw_target_id != _promotion_review_target_id(recommendation_id)
+        or _promotion_review_revision_recommendation_id(review_revision_id)
+        != recommendation_id
     ):
         return ""
     for key in (
@@ -35703,19 +37093,35 @@ def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
         "reviewId",
         "promotion_review_id",
         "promotionReviewId",
-        "recommendation_id",
-        "recommendationId",
     ):
         alias = params.get(key)
-        if alias not in (None, "") and _promotion_review_clean_id(alias) != recommendation_id:
+        if (
+            alias not in (None, "")
+            and _promotion_review_clean_id(alias) != review_revision_id
+        ):
             return ""
-    return recommendation_id
+    for key in ("recommendation_id", "recommendationId"):
+        alias = params.get(key)
+        if alias not in (None, "") and str(alias).strip() != recommendation_id:
+            return ""
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    if ranking_snapshot_id:
+        if review_revision_id != _promotion_review_revision_id(
+            recommendation_id,
+            ranking_snapshot_id,
+        ):
+            return ""
+    elif review_revision_id != recommendation_id:
+        # A revision-aware decision without its snapshot lineage is unsafe.
+        return ""
+    return review_revision_id
 
 
 def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
         return None
-    if not _human_inbox_decision_recommendation_id(command):
+    review_revision_id = _human_inbox_decision_recommendation_id(command)
+    if not review_revision_id:
         return None
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     decision = str(params.get("decision") or "").strip().lower()
@@ -35740,6 +37146,14 @@ def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Opt
         "decided_at": command.get("submitted_at"),
         "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "command_status": command.get("status"),
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
+        "recommendation_id": params.get("recommendation_id")
+        or params.get("recommendationId")
+        or _promotion_review_revision_recommendation_id(
+            review_revision_id
+        ),
+        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
@@ -35757,7 +37171,19 @@ def _human_inbox_promotion_review_from_projection(
     submission: Dict[str, Any],
     decision: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    recommendation_id = str(
+        recommendation.get("recommendation_id")
+        or recommendation.get("id")
+        or ""
+    )
+    review_id = str(
+        recommendation.get("promotion_review_id")
+        or recommendation.get("review_id")
+        or _promotion_review_revision_id(
+            recommendation_id,
+            recommendation.get("ranking_snapshot_id"),
+        )
+    )
     stage_path = _promotion_review_stage_path(recommendation)
     decision_status = "accepted" if decision else "pending"
     item: Dict[str, Any] = {
@@ -35769,7 +37195,7 @@ def _human_inbox_promotion_review_from_projection(
         "id": review_id,
         "review_id": review_id,
         "promotion_review_id": review_id,
-        "recommendation_id": review_id,
+        "recommendation_id": recommendation_id,
         "status": "decision_accepted" if decision else "pending_human_gate",
         "decision_status": decision_status,
         "submitted": True,
@@ -35820,6 +37246,9 @@ def _submitted_promotion_review_record_from_command(
     if recommendation is None:
         return None
     recommendation_id = str(recommendation["recommendation_id"])
+    review_id = _promotion_review_record_revision_id(command)
+    if not review_id:
+        return None
     return _human_inbox_promotion_review_from_projection(
         recommendation,
         submission=_human_inbox_submission_projection_from_record(command, recommendation_id),
@@ -35840,18 +37269,20 @@ def _submitted_promotion_review_records(
         if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
             recommendation = _human_inbox_sanitize_promotion_snapshot(command)
             if recommendation is not None:
-                submissions[str(recommendation["recommendation_id"])] = command
+                review_id = _promotion_review_record_revision_id(command)
+                if review_id:
+                    submissions[review_id] = command
             continue
-        recommendation_id = _human_inbox_decision_recommendation_id(command)
+        review_id = _human_inbox_decision_recommendation_id(command)
         decision = _human_inbox_decision_projection_from_record(command)
-        if recommendation_id and decision is not None:
-            decisions[recommendation_id] = decision
+        if review_id and decision is not None:
+            decisions[review_id] = decision
 
     records: List[Dict[str, Any]] = []
-    for recommendation_id, command in submissions.items():
+    for review_id, command in submissions.items():
         review = _submitted_promotion_review_record_from_command(
             command,
-            decision=decisions.get(recommendation_id),
+            decision=decisions.get(review_id),
         )
         if review is not None:
             records.append(review)
@@ -35907,6 +37338,7 @@ def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[
             "target_stage": stage_path.get("target_stage"),
             "review_kind": review.get("review_kind") or stage_path.get("review_kind"),
             "action_id": review.get("action_id"),
+            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
             "live_capital_mutation": False,
         },
         "allowedActions": _management_json_clone(review.get("allowedActions") or {
@@ -47325,18 +48757,90 @@ def _pm12_session_runtime_aliases(session: Dict[str, Any]) -> Set[str]:
     }
 
 
+def _pm12_runtime_deployment_mode(runtime: Dict[str, Any]) -> str:
+    mode = str(
+        runtime.get("deployment_mode")
+        or runtime.get("deployment_stage")
+        or runtime.get("runtime_kind")
+        or ""
+    ).strip().lower()
+    return {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(mode, mode)
+
+
+def _pm12_authoritative_paper_monitoring_sessions(
+    runtime_aliases: Set[str],
+    *,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    sessions: List[Dict[str, Any]] = []
+    for raw_session in (
+        authoritative_sessions
+        if authoritative_sessions is not None
+        else (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            or []
+        )
+    ):
+        if not isinstance(raw_session, dict):
+            continue
+        if (
+            str(raw_session.get("session_type") or "").strip().lower()
+            != "paper_runtime_monitoring"
+        ):
+            continue
+        if (
+            str(raw_session.get("deployment_stage") or "").strip().lower()
+            != "paper"
+        ):
+            continue
+        if not _pm12_session_runtime_aliases(raw_session).intersection(
+            runtime_aliases
+        ):
+            continue
+        session = dict(raw_session)
+        session["session_authority"] = "runtime_manager.paper_fleet_monitoring"
+        session["source_dataset"] = "paper_runtime_monitoring_sessions"
+        sessions.append(session)
+    return sessions
+
+
 def _pm12_runtime_session_resolution(
     persona_id: str,
     runtime: Dict[str, Any],
 ) -> tuple[Optional[Dict[str, Any]], str]:
     if not runtime:
         return None, "missing_runtime"
-    sessions = [
-        session
-        for session in (read_store.get_sessions_for_persona(persona_id) or [])
-        if isinstance(session, dict)
-    ]
     runtime_aliases = _pm12_runtime_identity_aliases(runtime)
+    if _pm12_runtime_deployment_mode(runtime) == "paper":
+        # Runtime Manager's paper-fleet monitoring store is the lifecycle owner
+        # for paper runtimes. A local/persona session may be useful for display,
+        # but it cannot prove that the canonical paper worker joined this exact
+        # RuntimeBinding.
+        authoritative_sessions = (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions() or []
+        )
+        sessions = _pm12_authoritative_paper_monitoring_sessions(
+            runtime_aliases,
+            authoritative_sessions=authoritative_sessions,
+        )
+        if not sessions and any(
+            isinstance(session, dict)
+            and _pm12_session_runtime_aliases(session)
+            for session in authoritative_sessions
+        ):
+            return None, "identity_mismatch"
+    else:
+        sessions = []
+        for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+            if not isinstance(raw_session, dict):
+                continue
+            session = dict(raw_session)
+            session.setdefault("session_authority", "persona_session_store")
+            sessions.append(session)
     matching = [
         session
         for session in sessions
@@ -47376,12 +48880,54 @@ def _pm12_runtime_session_resolution(
 
 
 def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
-    sessions = read_store.get_sessions_for_persona(persona_id) or []
+    sessions = [
+        dict(session)
+        for session in (read_store.get_sessions_for_persona(persona_id) or [])
+        if isinstance(session, dict)
+    ]
+    for session in sessions:
+        session.setdefault("session_authority", "persona_session_store")
+    persona_binding_ids = set(
+        _pm12_compact_ids(
+            read_store.get_bindings_for_persona(persona_id) or [],
+            ("persona_capital_binding_id", "binding_id", "id"),
+        )
+    )
+    paper_runtimes = [
+        runtime
+        for runtime in (read_store.list_runtime_bindings() or [])
+        if _pm12_runtime_deployment_mode(runtime) == "paper"
+        and (
+            str(runtime.get("persona_id") or "").strip() == persona_id
+            or str(runtime.get("persona_capital_binding_id") or "").strip()
+            in persona_binding_ids
+        )
+    ]
+    paper_runtime_aliases = {
+        alias
+        for runtime in paper_runtimes
+        for alias in _pm12_runtime_identity_aliases(runtime)
+    }
+    if paper_runtime_aliases:
+        sessions = [
+            session
+            for session in sessions
+            if not _pm12_session_runtime_aliases(session).intersection(
+                paper_runtime_aliases
+            )
+        ]
+        sessions.extend(
+            _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        )
     active = [
         session
         for session in sessions
-        if str(session.get("status") or "").lower() == "active"
+        if str(
+            session.get("status") or session.get("state") or ""
+        ).strip().lower()
+        in {"active", "running"}
         and session.get("ended_at") in (None, "")
+        and session.get("active") is not False
         and _pm12_record_freshness_issue(session) is None
     ]
     return {
@@ -48767,6 +50313,8 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "binding_resolution",
     "runtime_resolution",
     "session_resolution",
+    "session_id",
+    "session_authority",
     "telemetry_resolution",
     "binding_ids",
     "runtime_ids",
@@ -49112,7 +50660,10 @@ def _enrich_persona_item_with_bindings(
         runtime_resolution = "identity_mismatch"
     else:
         runtime_resolution = "missing"
-    _, session_resolution = _pm12_runtime_session_resolution(persona_id, runtime)
+    runtime_session, session_resolution = _pm12_runtime_session_resolution(
+        persona_id,
+        runtime,
+    )
     matching_runtimes = [runtime] if runtime else []
 
     strategy_ids = []
@@ -49412,6 +50963,16 @@ def _enrich_persona_item_with_bindings(
         "binding_resolution": binding_resolution,
         "runtime_resolution": runtime_resolution,
         "session_resolution": session_resolution,
+        "session_id": (
+            runtime_session.get("session_id") or runtime_session.get("id")
+            if runtime_session
+            else None
+        ),
+        "session_authority": (
+            runtime_session.get("session_authority")
+            if runtime_session
+            else None
+        ),
         "capital_binding": capital_projection.get("capital_binding"),
         "current_weight_source": current_weight_source,
     })
@@ -49436,8 +50997,12 @@ def _pm12_quarterly_recommendation_item(
         if ref.get("refId") or ref.get("ref_id") or ref.get("id")
     ]
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
-    submission = _promotion_review_submission_projection(recommendation_id)
-    decision = _promotion_review_decision_projection(recommendation_id)
+    review_id = _promotion_review_revision_id(
+        recommendation_id,
+        item.get("ranking_snapshot_id"),
+    )
+    submission = _promotion_review_submission_projection(review_id)
+    decision = _promotion_review_decision_projection(review_id)
 
     if decision:
         review_status = "decision_accepted"
@@ -49470,6 +51035,8 @@ def _pm12_quarterly_recommendation_item(
     return {
         "id": recommendation_id,
         "recommendation_id": recommendation_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
@@ -49587,6 +51154,10 @@ _PROMOTION_REVIEW_PROMOTION_ACTION_IDS: Set[str] = {"promote_to_canary_candidate
 _PROMOTION_REVIEW_DECISIONS: Set[str] = {"approve", "approve_with_conditions", "reject"}
 _PROMOTION_REVIEW_ID_PREFIX = "promotion-review:"
 _PROMOTION_REVIEW_TARGET_PREFIX = "promotion_review:"
+_PROMOTION_REVIEW_REVISION_MARKER = "--snapshot-"
+_PROMOTION_REVIEW_REVISION_RE = re.compile(
+    r"^(?P<recommendation_id>.+)--snapshot-(?P<digest>[0-9a-f]{32})$"
+)
 _PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
 
 
@@ -49601,6 +51172,77 @@ def _promotion_review_clean_id(review_id: Any) -> str:
 
 def _promotion_review_target_id(review_id: Any) -> str:
     return f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}"
+
+
+def _promotion_review_revision_id(
+    recommendation_id: Any,
+    ranking_snapshot_id: Any,
+) -> str:
+    clean_recommendation_id = _promotion_review_clean_id(recommendation_id)
+    clean_snapshot_id = str(ranking_snapshot_id or "").strip()
+    if not clean_recommendation_id or not clean_snapshot_id:
+        return clean_recommendation_id
+    digest = hashlib.sha256(
+        f"{clean_recommendation_id}\x00{clean_snapshot_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    return (
+        f"{clean_recommendation_id}"
+        f"{_PROMOTION_REVIEW_REVISION_MARKER}{digest}"
+    )
+
+
+def _promotion_review_revision_recommendation_id(review_id: Any) -> str:
+    clean_id = _promotion_review_clean_id(review_id)
+    match = _PROMOTION_REVIEW_REVISION_RE.fullmatch(clean_id)
+    if match is None:
+        return clean_id
+    return match.group("recommendation_id")
+
+
+def _promotion_review_record_revision_id(command: Dict[str, Any]) -> str:
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    expected_revision_id = _promotion_review_revision_id(
+        recommendation_id,
+        ranking_snapshot_id,
+    )
+    asserted_ids = [
+        str(params.get(key) or "").strip()
+        for key in ("review_id", "promotion_review_id")
+        if str(params.get(key) or "").strip()
+    ]
+    if ranking_snapshot_id:
+        if asserted_ids and any(
+            _promotion_review_clean_id(asserted_id) != expected_revision_id
+            for asserted_id in asserted_ids
+        ):
+            return ""
+        return expected_revision_id
+    # Snapshotless legacy records predate revision identities. They remain
+    # readable under the stable recommendation id but cannot authorize a
+    # snapshot-bound decision or allocation.
+    if asserted_ids and any(
+        _promotion_review_clean_id(asserted_id) != recommendation_id
+        for asserted_id in asserted_ids
+    ):
+        return ""
+    return recommendation_id
+
+
+def _promotion_review_scoped_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+    review_revision_id: str,
+) -> str:
+    client_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    revision_digest = hashlib.sha256(
+        _promotion_review_clean_id(review_revision_id).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"{client_key}:promotion-review:{revision_digest}"
 
 
 def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
@@ -49656,13 +51298,7 @@ def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, An
     for record in reversed(command_store._get_all_commands()):
         if not _human_inbox_trusted_promotion_submission(record):
             continue
-        target = record.get("target") if isinstance(record.get("target"), dict) else {}
-        params = record.get("params") if isinstance(record.get("params"), dict) else {}
-        if target.get("id") == clean_id:
-            return record
-        if str(params.get("recommendation_id") or params.get("recommendationId") or "").strip() == clean_id:
-            return record
-        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
+        if _promotion_review_record_revision_id(record) == clean_id:
             return record
     return None
 
@@ -49677,6 +51313,7 @@ def _promotion_review_submission_projection(
         return None
     params = record.get("params") if isinstance(record.get("params"), dict) else {}
     audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    review_revision_id = _promotion_review_record_revision_id(record)
     projection = {
         "submitted": True,
         "submit_status": record.get("status"),
@@ -49686,6 +51323,8 @@ def _promotion_review_submission_projection(
         "submitted_at": record.get("submitted_at"),
         "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
         "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
         "ranking_snapshot_id": params.get("ranking_snapshot_id"),
         "quarter": params.get("quarter"),
@@ -49693,7 +51332,7 @@ def _promotion_review_submission_projection(
         "stage_from": params.get("stage_from"),
         "stage_to": params.get("stage_to"),
         "review_kind": params.get("review_kind"),
-        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
+        "human_inbox_id": _promotion_review_target_id(review_revision_id),
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
@@ -49725,7 +51364,15 @@ def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, 
 def _promotion_review_item_from_recommendation(
     recommendation: Dict[str, Any],
 ) -> Dict[str, Any]:
-    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    recommendation_id = str(
+        recommendation.get("recommendation_id")
+        or recommendation.get("id")
+        or ""
+    )
+    review_id = _promotion_review_revision_id(
+        recommendation_id,
+        recommendation.get("ranking_snapshot_id"),
+    )
     private_submission = _promotion_review_submission_projection(
         review_id,
         include_source_recommendation=True,
@@ -49769,7 +51416,7 @@ def _promotion_review_item_from_recommendation(
         "id": review_id,
         "review_id": review_id,
         "promotion_review_id": review_id,
-        "recommendation_id": recommendation.get("recommendation_id") or recommendation.get("id"),
+        "recommendation_id": recommendation_id,
         "ranking_snapshot_id": recommendation.get("ranking_snapshot_id"),
         "quarter": recommendation.get("quarter"),
         "quarter_window": recommendation.get("quarter_window"),
@@ -49824,7 +51471,7 @@ def _promotion_review_item_from_recommendation(
         "links": {
             "persona": f"/bff/personas/{recommendation.get('persona_id')}",
             "recommendation": "/bff/management/quarterly-ranking/recommendations",
-            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(review_id, safe='')}/submit",
+            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(recommendation_id, safe='')}/submit",
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
             "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
             "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
@@ -49935,6 +51582,7 @@ def _promotion_review_find(
     *,
     snapshot_at: str,
     quarter: Optional[str] = None,
+    include_historical: bool = True,
 ) -> tuple[Optional[Dict[str, Any]], Dict[str, Any], int, bool]:
     clean_id = _promotion_review_clean_id(review_id)
     resolved_quarter = quarter or _promotion_review_quarter_from_id(clean_id)
@@ -49952,6 +51600,23 @@ def _promotion_review_find(
         }
         if clean_id in identifiers:
             return item, quarter_window, redacted_count, evidence_dataset_available
+    if include_historical:
+        for item in _submitted_promotion_review_records(
+            identity,
+            snapshot_at=snapshot_at,
+        ):
+            identifiers = {
+                str(item.get("id") or ""),
+                str(item.get("review_id") or ""),
+                str(item.get("promotion_review_id") or ""),
+            }
+            if clean_id in identifiers:
+                return (
+                    item,
+                    quarter_window,
+                    redacted_count,
+                    evidence_dataset_available,
+                )
     return None, quarter_window, redacted_count, evidence_dataset_available
 
 
@@ -49999,6 +51664,7 @@ def _promotion_review_decision_payload(
         "review_id": review["review_id"],
         "promotion_review_id": review["promotion_review_id"],
         "recommendation_id": review["recommendation_id"],
+        "ranking_snapshot_id": review.get("ranking_snapshot_id"),
         "persona_id": review.get("persona_id"),
         "action_id": review.get("action_id"),
         "promotion_stage_from": "paper",
@@ -50030,6 +51696,7 @@ def _promotion_review_decision_response(
     review: Dict[str, Any],
     decision: str,
     command_payload: Dict[str, Any],
+    client_idempotency_key: Optional[str] = None,
 ) -> JSONResponse:
     content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
     data = content.setdefault("data", {})
@@ -50040,6 +51707,7 @@ def _promotion_review_decision_response(
             "recommendation_id": review["recommendation_id"],
             "persona_id": review.get("persona_id"),
             "action_id": review.get("action_id"),
+            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
             "decision": decision,
             "decision_status": "accepted",
             "requires_human_gate_decision": True,
@@ -50058,6 +51726,16 @@ def _promotion_review_decision_response(
     if "conditions" in command_payload:
         data["conditions"] = json.loads(json.dumps(command_payload.get("conditions")))
     meta = content.setdefault("meta", {})
+    if client_idempotency_key:
+        meta["idempotency"] = {
+            **(
+                meta.get("idempotency")
+                if isinstance(meta.get("idempotency"), dict)
+                else {}
+            ),
+            "key": client_idempotency_key,
+            "idempotencyKey": client_idempotency_key,
+        }
     meta.update(
         {
             "live_capital_mutation": False,
@@ -50078,6 +51756,7 @@ def _promotion_review_submit_response(
     command_response: JSONResponse,
     *,
     review: Dict[str, Any],
+    client_idempotency_key: Optional[str] = None,
 ) -> JSONResponse:
     content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
     refreshed = _promotion_review_item_from_recommendation(review["source_recommendation"])
@@ -50103,6 +51782,16 @@ def _promotion_review_submit_response(
         }
     )
     meta = content.setdefault("meta", {})
+    if client_idempotency_key:
+        meta["idempotency"] = {
+            **(
+                meta.get("idempotency")
+                if isinstance(meta.get("idempotency"), dict)
+                else {}
+            ),
+            "key": client_idempotency_key,
+            "idempotencyKey": client_idempotency_key,
+        }
     meta.update(
         {
             "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
@@ -50137,6 +51826,10 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: submit a PM-12 recommendation into Human Gate review without live mutation."""
+    route_review_id = _promotion_review_clean_id(recommendation_id)
+    recommendation_id = _promotion_review_revision_recommendation_id(
+        route_review_id
+    )
     identity = _extract_identity(authorization)
     if not {"operator", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
@@ -50164,79 +51857,122 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     requested_ranking_snapshot_id = str(
         payload.get("ranking_snapshot_id") or ""
     ).strip()
-    existing_submission = _promotion_review_submission_projection(
-        recommendation_id,
-        include_source_recommendation=True,
-    )
-    if existing_submission:
-        stored_ranking_snapshot_id = str(
-            existing_submission.get("ranking_snapshot_id") or ""
-        ).strip()
-        if not stored_ranking_snapshot_id:
-            raise _bff_error(
-                409,
-                ErrorCode.PRECONDITION_FAILED,
-                "submitted recommendation has no immutable ranking snapshot",
-                "A legacy submission cannot adopt a caller-provided snapshot during replay.",
-                precondition_failed="ranking_snapshot_id",
-                suggestion="Create a new governed recommendation submission from a current ranking snapshot.",
-            )
-        if (
-            requested_ranking_snapshot_id
-            and requested_ranking_snapshot_id != stored_ranking_snapshot_id
-        ):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "ranking_snapshot_id does not match the submitted recommendation",
-                "Replay the immutable ranking snapshot stored with the original submission.",
-                precondition_failed="ranking_snapshot_id",
-            )
-        replay_assertions = {
+    command_payload: Optional[Dict[str, Any]] = None
+    if requested_ranking_snapshot_id:
+        command_payload = {
             **payload,
             "quarter": (
                 payload.get("quarter")
-                or existing_submission.get("quarter")
                 or _promotion_review_quarter_from_id(recommendation_id)
             ),
             "recommendation_id": recommendation_id,
-            "ranking_snapshot_id": stored_ranking_snapshot_id,
+            "ranking_snapshot_id": requested_ranking_snapshot_id,
         }
+        # Validate caller assertions against the durable snapshot before
+        # resolving the dynamic current alias. Forged IDs and snapshots remain
+        # validation failures rather than being masked as a missing current row.
         _validate_quarterly_ranking_recommendation_submit(
-            replay_assertions,
+            command_payload,
             identity,
         )
+    current_review: Optional[Dict[str, Any]] = None
+    if not requested_ranking_snapshot_id:
+        # A snapshotless request deliberately follows the mutable stable alias.
+        # A caller that supplied an admitted snapshot has already been resolved
+        # from the durable snapshot store above and must not be rebound to this
+        # current-only projection after a lifecycle/session rotation.
+        current_review, _, _, _ = _promotion_review_find(
+            identity,
+            recommendation_id,
+            snapshot_at=snapshot_at,
+            quarter=str(payload.get("quarter") or "").strip() or None,
+            include_historical=False,
+        )
+        if current_review is None:
+            if route_review_id == recommendation_id:
+                raise _bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Quarterly ranking recommendation not found",
+                    f"Recommendation {recommendation_id} does not exist",
+                    precondition_failed="recommendation_id",
+                )
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "historical promotion review requires its immutable snapshot",
+                "Refresh the historical review and replay it with ranking_snapshot_id.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        requested_ranking_snapshot_id = str(
+            current_review.get("ranking_snapshot_id") or ""
+        ).strip()
+        command_payload = {
+            **payload,
+            "quarter": (
+                payload.get("quarter")
+                or _promotion_review_quarter_from_id(recommendation_id)
+            ),
+            "recommendation_id": recommendation_id,
+            "ranking_snapshot_id": requested_ranking_snapshot_id,
+        }
+        _validate_quarterly_ranking_recommendation_submit(
+            command_payload,
+            identity,
+        )
+    assert command_payload is not None
+    review_revision_id = str(
+        command_payload.get("promotion_review_id")
+        or command_payload.get("review_id")
+        or ""
+    ).strip()
+    if not review_revision_id:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "admitted ranking snapshot has no promotion review revision",
+            "The server could not bind the recommendation to its immutable snapshot.",
+            precondition_failed="promotion_review_id",
+        )
+    if (
+        route_review_id != recommendation_id
+        and route_review_id != review_revision_id
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "promotion review revision is stale",
+            "The route revision does not identify the admitted ranking snapshot.",
+            precondition_failed="promotion_review_id",
+            suggestion="Refresh the current recommendation before submitting.",
+        )
+
+    existing_submission = _promotion_review_submission_projection(
+        review_revision_id,
+        include_source_recommendation=True,
+    )
+    if existing_submission:
         stored_source = existing_submission.get("source_recommendation")
         if not isinstance(stored_source, dict):
-            stored_source = {
-                "id": existing_submission.get("recommendation_id") or recommendation_id,
-                "recommendation_id": existing_submission.get("recommendation_id") or recommendation_id,
-                "ranking_snapshot_id": stored_ranking_snapshot_id,
-                "quarter": existing_submission.get("quarter"),
-                "persona_id": existing_submission.get("persona_id"),
-                "action_id": existing_submission.get("recommendation_action_id"),
-                "stage": existing_submission.get("stage_from"),
-                "evidence_refs": [],
-                "evidence_ref_ids": [],
-            }
-        else:
-            stored_source = json.loads(json.dumps(stored_source))
-            stored_source["ranking_snapshot_id"] = (
-                stored_ranking_snapshot_id
-                or str(stored_source.get("ranking_snapshot_id") or "").strip()
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "submitted recommendation has no immutable source snapshot",
+                "The legacy submission is audit-readable but cannot be replayed as a snapshot-bound revision.",
+                precondition_failed="source_recommendation",
+                suggestion="Submit the current governed recommendation revision.",
             )
-        # The stored recommendation may have been submitted by a more privileged
-        # actor. Snapshot replay is identity-stable, but evidence visibility is
-        # request-scoped, so never replay stored evidence bodies across roles.
+        stored_source = json.loads(json.dumps(stored_source))
+        # Evidence visibility is request-scoped. Never replay stored evidence
+        # bodies across identities or roles.
         stored_source["evidence_refs"] = []
         stored_source["evidence_ref_ids"] = []
         already = _promotion_review_item_from_recommendation(stored_source)
         replay_snapshot_id = str(
-            stored_ranking_snapshot_id
+            existing_submission.get("ranking_snapshot_id")
             or already.get("ranking_snapshot_id")
             or ""
         ).strip()
-        already["ranking_snapshot_id"] = replay_snapshot_id
         return JSONResponse(
             status_code=200,
             content=jsonable_encoder(
@@ -50260,7 +51996,10 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                     "meta": {
                         **_snapshot_meta(snapshot_at),
                         "ranking_snapshot_id": replay_snapshot_id,
-                        "idempotency": {"replayed": True, "source": "existing_submission"},
+                        "idempotency": {
+                            "replayed": True,
+                            "source": "existing_submission",
+                        },
                         "live_capital_mutation": False,
                         "direct_live_capital_mutation": False,
                         "requires_human_gate_decision": True,
@@ -50269,55 +52008,63 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                 }
             ),
         )
+    if route_review_id != recommendation_id:
+        if current_review is None:
+            current_review, _, _, _ = _promotion_review_find(
+                identity,
+                recommendation_id,
+                snapshot_at=snapshot_at,
+                quarter=str(payload.get("quarter") or "").strip() or None,
+                include_historical=False,
+            )
+        current_revision_id = str(
+            (current_review or {}).get("promotion_review_id")
+            or (current_review or {}).get("review_id")
+            or ""
+        ).strip()
+        if route_review_id != current_revision_id:
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "historical promotion review cannot create a new submission",
+                "Only the current admitted recommendation revision may create a Human Gate submission.",
+                precondition_failed="promotion_review_id",
+                suggestion="Refresh the current recommendation before submitting.",
+            )
 
-    review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
-        identity,
-        recommendation_id,
-        snapshot_at=snapshot_at,
-        quarter=str(payload.get("quarter") or "").strip() or None,
-    )
-    if review is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Quarterly ranking recommendation not found",
-            f"Recommendation {recommendation_id} does not exist",
-            precondition_failed="recommendation_id",
-        )
-
-    authoritative_ranking_snapshot_id = str(
-        review.get("ranking_snapshot_id") or ""
-    ).strip()
-    if (
-        requested_ranking_snapshot_id
-        and requested_ranking_snapshot_id != authoritative_ranking_snapshot_id
-    ):
+    source_recommendation = command_payload.get("source_recommendation")
+    if not isinstance(source_recommendation, dict):
         raise _bff_error(
             422,
             ErrorCode.VALIDATION_FAILED,
-            "ranking_snapshot_id does not match the recommendation",
-            "Submit the immutable ranking snapshot attached to the recommendation.",
-            precondition_failed="ranking_snapshot_id",
+            "admitted ranking snapshot has no recommendation",
+            "The durable snapshot could not materialize the requested recommendation.",
+            precondition_failed="recommendation_id",
         )
-
-    command_payload = {
-        **payload,
-        "quarter": payload.get("quarter") or review.get("quarter"),
-        "recommendation_id": review["recommendation_id"],
-        "ranking_snapshot_id": authoritative_ranking_snapshot_id,
-    }
-    _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
+    review = _promotion_review_item_from_recommendation(source_recommendation)
+    client_idempotency_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
+        client_idempotency_key,
+        None,
+        review["review_id"],
+    )
     command_response = _sem_command_response(
         command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
         target_type=ObjectType.RANKING,
-        target_id=review["recommendation_id"],
+        target_id=review["review_id"],
         payload=command_payload,
         identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
+        idempotency_key=scoped_idempotency_key,
         trusted_evidence_producer=_HUMAN_INBOX_PROMOTION_PRODUCER,
     )
-    return _promotion_review_submit_response(command_response, review=review)
+    return _promotion_review_submit_response(
+        command_response,
+        review=review,
+        client_idempotency_key=client_idempotency_key,
+    )
 
 
 @app.get("/bff/management/promotion-reviews")
@@ -50493,11 +52240,20 @@ async def bff_management_promotion_review_decision(
         )
 
     snapshot_at = utc_now()
+    clean_review_id = _promotion_review_clean_id(review_id)
+    exact_revision_requested = (
+        clean_review_id
+        != _promotion_review_revision_recommendation_id(clean_review_id)
+    )
     review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
         identity,
         review_id,
         snapshot_at=snapshot_at,
         quarter=str(payload.get("quarter") or "").strip() or None,
+        # Stable aliases remain current-only. An exact immutable revision may
+        # still receive its one pending decision after a newer ranking snapshot
+        # becomes current; the revision id keeps that authority isolated.
+        include_historical=exact_revision_requested,
     )
     if review is None:
         raise _bff_error(
@@ -50507,6 +52263,33 @@ async def bff_management_promotion_review_decision(
             f"Promotion review {review_id} does not exist",
             precondition_failed="review_id",
         )
+    if exact_revision_requested and str(
+        review.get("decision_status") or "pending"
+    ).strip().lower() != "pending":
+        current_review, _, _, _ = _promotion_review_find(
+            identity,
+            _promotion_review_revision_recommendation_id(clean_review_id),
+            snapshot_at=snapshot_at,
+            quarter=str(payload.get("quarter") or "").strip() or None,
+            include_historical=False,
+        )
+        current_revision_id = str(
+            (current_review or {}).get("promotion_review_id")
+            or (current_review or {}).get("review_id")
+            or ""
+        ).strip()
+        if clean_review_id != current_revision_id:
+            # Resolved historical revisions remain read-only; in particular an
+            # old approval must never be reused as authority for a newer
+            # revision. The current exact revision still reaches the durable
+            # idempotency layer so its original decision receipt can replay.
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Promotion review not found",
+                f"Promotion review {review_id} does not exist",
+                precondition_failed="review_id",
+            )
     if not bool(review.get("submitted")):
         raise _bff_error(
             409,
@@ -50533,20 +52316,29 @@ async def bff_management_promotion_review_decision(
         rationale=rationale,
         identity=identity,
     )
+    client_idempotency_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
+        client_idempotency_key,
+        None,
+        review["review_id"],
+    )
     command_response = _sem_command_response(
         command_type=command_type,
         target_type=ObjectType.HUMAN_GATE_ITEM,
         target_id=_promotion_review_target_id(review["review_id"]),
         payload=command_payload,
         identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
+        idempotency_key=scoped_idempotency_key,
     )
     return _promotion_review_decision_response(
         command_response,
         review=review,
         decision=raw_decision,
         command_payload=command_payload,
+        client_idempotency_key=client_idempotency_key,
     )
 
 
@@ -50903,6 +52695,8 @@ def _pm12_persona_league_ranking_item(
         "binding_resolution": row.get("binding_resolution"),
         "runtime_resolution": runtime_resolution,
         "session_resolution": session_resolution,
+        "session_id": row.get("session_id"),
+        "session_authority": row.get("session_authority"),
         "telemetry_resolution": telemetry_resolution,
         "current_weight_source": row.get("current_weight_source"),
         "binding_ids": list(row.get("binding_ids") or []),
@@ -61196,10 +62990,108 @@ def _loop_inventory_response_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _loop_health_store_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+def _loop_health_store_records(
+    tenant_id: str,
+    environment: str,
+) -> Tuple[bool, List[Dict[str, Any]], str]:
     available, records = read_store.list_loop_health_records()
     source = read_store.dataset_source("loop_health") if available else "missing"
-    return available, records if available else [], source
+    scoped_records = [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and str(record.get("tenant_id") or "").strip() == tenant_id
+        and str(record.get("environment") or "").strip() == environment
+    ]
+    return bool(available and scoped_records), scoped_records, source
+
+
+def _authenticated_loop_truth_scope(
+    identity: OperatorIdentity,
+    *,
+    requested_tenant: Optional[str],
+    requested_environment: Optional[str],
+) -> Tuple[str, str]:
+    """Resolve a fail-closed tenant/environment key for controller truth."""
+
+    tenant_defaults = _identity_claim_strings(
+        identity,
+        ["tenant_id", "tenantId", "tenant.id", "tid", "org_id"],
+    )
+    allowed_tenants = _dedupe_nonblank_strings(
+        [
+            *_identity_claim_strings(
+                identity,
+                [
+                    "allowed_tenants",
+                    "allowedTenants",
+                    "tenant_ids",
+                    "tenantIds",
+                    "tenants",
+                ],
+            ),
+            *tenant_defaults,
+        ]
+    )
+    clean_requested_tenant = str(
+        _resolve_param(requested_tenant) or ""
+    ).strip()
+    default_tenant = next(
+        (tenant for tenant in tenant_defaults if tenant != "*"),
+        next((tenant for tenant in allowed_tenants if tenant != "*"), ""),
+    )
+    effective_tenant = clean_requested_tenant or default_tenant
+    if not effective_tenant:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Controller truth requires an authenticated tenant scope",
+            "Authenticated identity does not declare a concrete tenant",
+            precondition_failed="tenant_scope",
+        )
+    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Tenant access denied",
+            "Requested controller truth tenant is outside the authenticated scope",
+            precondition_failed="tenant_scope",
+            details_extra={
+                "tenantId": effective_tenant,
+                "allowedTenantIds": allowed_tenants,
+            },
+        )
+
+    deployed_environment = str(os.environ.get("PANTHEON_ENV", "dev")).strip()
+    clean_requested_environment = str(
+        _resolve_param(requested_environment) or ""
+    ).strip()
+    effective_environment = clean_requested_environment or deployed_environment
+    allowed_environments = _identity_claim_strings(
+        identity,
+        ["environment", "environments", "allowed_environments", "allowedEnvironments"],
+    )
+    if allowed_environments:
+        environment_allowed = (
+            "*" in allowed_environments
+            or effective_environment in allowed_environments
+        )
+    else:
+        environment_allowed = effective_environment == deployed_environment
+    if not effective_environment or not environment_allowed:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Environment access denied",
+            "Requested controller truth environment is outside the authenticated deployment scope",
+            precondition_failed="environment_scope",
+            details_extra={
+                "environment": effective_environment,
+                "allowedEnvironments": allowed_environments
+                or [deployed_environment],
+            },
+        )
+    return effective_tenant, effective_environment
 
 
 def _loop_health_response_meta(
@@ -61209,6 +63101,8 @@ def _loop_health_response_meta(
     health_record_count: int,
     accepted_controller_health_record_count: int,
     health_source: str,
+    tenant_id: str,
+    environment: str,
 ) -> Dict[str, Any]:
     meta = dict(payload.get("meta") or {})
     snapshot_at = meta.get("snapshot_at") or utc_now()
@@ -61272,6 +63166,11 @@ def _loop_health_response_meta(
             accepted_controller_health_record_count
         ),
     }
+    meta["scope"] = {
+        "tenant_id": tenant_id,
+        "environment": environment,
+        "source": "authenticated_identity_and_deployment_scope",
+    }
     payload["meta"] = meta
     return payload
 
@@ -61293,8 +63192,15 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
-async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]:
-    fs_available, fs_records, fs_source = _loop_health_store_records()
+async def _async_loop_health_records(
+    *,
+    tenant_id: str,
+    environment: str,
+) -> Tuple[bool, List[Dict[str, Any]], str]:
+    fs_available, fs_records, fs_source = _loop_health_store_records(
+        tenant_id,
+        environment,
+    )
     for r in fs_records:
         if isinstance(r, dict):
             r["_health_source"] = fs_source
@@ -61309,9 +63215,13 @@ async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]
             LoopControllerStore = loop_control.LoopControllerStore
             project_controller_record_to_bff = loop_control.project_controller_record_to_bff
             store = LoopControllerStore(dsn)
-            tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
-            environment = os.environ.get("PANTHEON_ENV", "dev")
             records = await store.list_records(tenant_id, environment)
+            records = [
+                record
+                for record in records
+                if str(record.get("tenant_id") or "").strip() == tenant_id
+                and str(record.get("environment") or "").strip() == environment
+            ]
             if records:
                 db_records = [project_controller_record_to_bff(r) for r in records]
                 for r in db_records:
@@ -61345,11 +63255,21 @@ async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    environment: Optional[str] = Query(default=None),
 ):
     """List operator loop health truth without promoting registry metadata to liveness."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = await _async_loop_health_records()
+    tenant_id, effective_environment = _authenticated_loop_truth_scope(
+        identity,
+        requested_tenant=x_tenant_id,
+        requested_environment=environment,
+    )
+    health_available, health_records, health_source = await _async_loop_health_records(
+        tenant_id=tenant_id,
+        environment=effective_environment,
+    )
     records = list_loop_health_entries(
         health_records,
         health_source=health_source,
@@ -61370,6 +63290,8 @@ async def bff_v5_loop_health(
             if (record.get("controller_health") or {}).get("current_record_accepted")
         ),
         health_source=health_source,
+        tenant_id=tenant_id,
+        environment=effective_environment,
     )
 
 
@@ -61377,11 +63299,21 @@ async def bff_v5_loop_health(
 async def bff_v5_loop_health_detail(
     loop_id: str,
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    environment: Optional[str] = Query(default=None),
 ):
     """Get one operator loop health truth record."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = await _async_loop_health_records()
+    tenant_id, effective_environment = _authenticated_loop_truth_scope(
+        identity,
+        requested_tenant=x_tenant_id,
+        requested_environment=environment,
+    )
+    health_available, health_records, health_source = await _async_loop_health_records(
+        tenant_id=tenant_id,
+        environment=effective_environment,
+    )
     payload = _sem_final_registry_detail(
         get_loop_health_entry(
             loop_id,
@@ -61404,6 +63336,8 @@ async def bff_v5_loop_health_detail(
             else 0
         ),
         health_source=health_source,
+        tenant_id=tenant_id,
+        environment=effective_environment,
     )
 
 
@@ -61448,6 +63382,65 @@ async def bff_v5_downstream_health(
                 "Live probe results from the BFF continuous downstream health monitor. "
                 "Degraded targets have their last failure reason and consecutive failure count."
             ),
+        },
+    }
+
+
+@app.post("/bff/v5/downstream-health/dlq/replay")
+async def bff_v5_downstream_health_dlq_replay(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Redrive durable infrastructure-health delivery dead letters.
+
+    This changes only BFF delivery intent.  It does not bypass telemetry
+    admission, incident authority, governance, or active-runtime controls.
+    """
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    if not identity.mfa_verified:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Downstream health replay requires MFA",
+            "A verified second factor is required to redrive delivery side effects.",
+            precondition_failed="mfa_verified",
+        )
+    event_id = str(payload.get("event_id") or "").strip() or None
+    channel = str(payload.get("channel") or "").strip() or None
+    approval_ref = str(payload.get("approval_ref") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+    if not approval_ref or not reason:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Replay approval evidence is required",
+            "approval_ref and reason are required for an audited DLQ replay.",
+            precondition_failed="approval_ref",
+        )
+    allowed_channels = {"telemetry", "incident_open", "incident_resolve"}
+    if channel is not None and channel not in allowed_channels:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Unknown downstream health delivery channel",
+            f"channel must be one of {sorted(allowed_channels)}",
+            precondition_failed="channel",
+        )
+    result = await asyncio.to_thread(
+        downstream_health_monitor.replay_dead_letters,
+        actor_id=identity.operator_id,
+        approval_ref=approval_ref,
+        reason=reason,
+        event_id=event_id,
+        channel=channel,
+    )
+    return {
+        "read_model": "downstream_health_delivery_replay",
+        "data": result,
+        "meta": {
+            "source": "bff_downstream_health_monitor",
+            "authority": "operator",
         },
     }
 
@@ -62167,17 +64160,32 @@ async def sem_bff_version():
     }
 
 
-@app.get("/bff/healthz")
-@app.get("/bff/readyz")
-async def sem_bff_health_alias():
+def _sem_bff_health_payload() -> Dict[str, Any]:
     commit = _bff_source_commit()
-    return {
-        "status": "ok",
-        "service": "operator-bff",
-        "version": "0.2.0",
-        "commit": commit,
-        "source_commit_sha": commit,
-    }
+    payload = health_payload(
+        "operator-bff",
+        dependencies=_bff_readiness_dependencies,
+        details={"version": "0.2.0", "data_dir": BFF_DATA_DIR},
+    )
+    payload.update(
+        {
+            "version": "0.2.0",
+            "commit": commit,
+            "source_commit_sha": commit,
+        }
+    )
+    return payload
+
+
+@app.get("/bff/healthz")
+async def sem_bff_health_alias():
+    return _sem_bff_health_payload()
+
+
+@app.get("/bff/readyz")
+async def sem_bff_readiness_alias():
+    payload = _sem_bff_health_payload()
+    return JSONResponse(payload, status_code=readiness_status_code(payload))
 
 
 @app.get("/bff/capabilities")
@@ -62642,12 +64650,10 @@ def _management_fleet_autonomy(
     return "manual"
 
 
-def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
-    raw_val = metrics.get("training_improvement_pct")
-    if raw_val is None:
-        return None
-    val = _as_float(raw_val)
-    return val / 100.0
+def _trading_performance_delta() -> Optional[float]:
+    """Return no delta until telemetry defines a canonical trading-return field."""
+
+    return None
 
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
@@ -63253,6 +65259,7 @@ def _build_persona_health_items(
     )
     incidents_list = list(read_store.list_incidents() or [])
     all_decisions = list(read_store.list_evolution_decisions() or [])
+    all_telemetry = list(read_store.list_telemetry_summaries() or [])
     items: List[Dict[str, Any]] = []
     for persona in read_store.list_personas(
         include_market_persona_defaults=include_market_persona_defaults,
@@ -63469,6 +65476,43 @@ def _build_persona_health_items(
             if str(incident.get("incident_id") or incident.get("id") or "").strip()
         }
 
+        telemetry_summaries = [
+            t for t in all_telemetry
+            if t.get("persona_id") == persona_id or t.get("runtime_id") == runtime_id
+        ]
+        telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
+        telemetry_sharpe_values = [
+            value
+            for value in (
+                _management_first_float(
+                    summary,
+                    "sharpe",
+                    "sharpe_ratio",
+                    "summary.sharpe",
+                    "summary.sharpe_ratio",
+                )
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_trade_values = [
+            value
+            for value in (
+                _management_first_float(summary, "total_trades", "summary.total_trades")
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_metrics = {
+            "pnl": telemetry_rollup.get("total_pnl"),
+            "max_drawdown": telemetry_rollup.get("max_drawdown"),
+            "fill_rate": telemetry_rollup.get("average_fill_rate"),
+            "total_trades": int(sum(telemetry_trade_values)) if telemetry_trade_values else None,
+            "sharpe": _management_avg(telemetry_sharpe_values),
+        }
+        telemetry_has_performance = any(value is not None for value in telemetry_metrics.values())
+        is_seed_row = bool(metadata.get("is_market_persona_default") or metadata.get("seed_row"))
+
         mutation_projection = _persona_fleet_mutation_projection(
             persona_id=persona_id,
             updated_at=updated_at,
@@ -63498,8 +65542,14 @@ def _build_persona_health_items(
                 governance_required=governance_required,
                 human_needed=human_needed,
             ),
-            "perf_delta": _training_improvement_delta(metrics),
-            "perfDelta": _training_improvement_delta(metrics),
+            "perf_delta": _trading_performance_delta(),
+            "perfDelta": _trading_performance_delta(),
+            "has_trading_telemetry": telemetry_has_performance,
+            "hasTradingTelemetry": telemetry_has_performance,
+            "is_market_persona_default": is_seed_row,
+            "isMarketPersonaDefault": is_seed_row,
+            "seed_row": is_seed_row,
+            "seedRow": is_seed_row,
             "human_needed": human_needed,
             "humanNeeded": human_needed,
             "last_mutation": str(updated_at)[:10],
@@ -64461,7 +66511,14 @@ def _project_persona_fleet_list_row(
             governance_required=governance_required,
             human_needed=human_needed,
         ),
-        "perf_delta": _training_improvement_delta(metrics),
+        "perf_delta": _trading_performance_delta(),
+        "perfDelta": _trading_performance_delta(),
+        "has_trading_telemetry": telemetry_has_performance,
+        "hasTradingTelemetry": telemetry_has_performance,
+        "is_market_persona_default": bool(raw_metadata.get("is_market_persona_default") or raw_metadata.get("seed_row")),
+        "isMarketPersonaDefault": bool(raw_metadata.get("is_market_persona_default") or raw_metadata.get("seed_row")),
+        "seed_row": bool(raw_metadata.get("seed_row")),
+        "seedRow": bool(raw_metadata.get("seed_row")),
         "human_needed": human_needed,
         "last_mutation": str(updated_at)[:10],
         "state": normalized_state,
@@ -66980,6 +69037,7 @@ app.include_router(_create_trade_journal_router(
 
 
 # TJ-E2E-005: canonical Trade Journey read API via isolated module
+import trade_journeys as _trade_journeys  # noqa: E402
 from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
@@ -67178,6 +69236,7 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,
+        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
         sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
         canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     )

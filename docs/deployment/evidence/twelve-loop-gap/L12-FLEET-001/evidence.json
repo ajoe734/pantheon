@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-FLEET-001",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "ready_for_review",
+  "generated_at": "2026-07-26T08:42:52Z",
+  "scope": {
+    "target_repo": "pantheon",
+    "merge_target": "dev",
+    "status_root": "/home/lupin/pantheon",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "live_config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "source_commit": "09159159fbac9b43d3e97011a12a224699677620",
+    "anchor_commit": "e5fe75bcc9c5e8dcdeed7a7603385301bcfadcac"
+  },
+  "lease_gate": {
+    "pre_sync_checked_at": "2026-07-26T08:34:29Z",
+    "active_nonprod_runs": 0,
+    "github_authoritative_time": "2026-07-26T08:34:29Z",
+    "last_observed_lease": {
+      "lease_id": "509bb81b-1cd2-4a48-9f08-7f042bbbaab6",
+      "owner": "pantheon:ajoe734/pantheon:30193954071:1",
+      "heartbeat_at": "2026-07-26T08:26:02Z",
+      "expires_at": "2026-07-26T08:31:02Z",
+      "run_id": 30193954071,
+      "run_conclusion": "failure"
+    },
+    "pre_lease_failure_run": {
+      "run_id": 30194698291,
+      "completed_at": "2026-07-26T08:32:05Z",
+      "conclusion": "failure",
+      "failed_step": "Resolve and validate dev payload"
+    },
+    "post_sync_run": {
+      "run_id": 30194930965,
+      "created_at": "2026-07-26T08:36:36Z",
+      "lease_id": "390601ee-2c69-47cc-b815-1d731fb9fb71",
+      "lease_acquired_at": "2026-07-26T08:37:52Z",
+      "lease_released_at": "2026-07-26T08:40:35Z",
+      "conclusion": "success"
+    },
+    "restart_overlapped_active_lease": false,
+    "remote_lease_at_final_readback": "absent_released"
+  },
+  "installation": {
+    "before_sha": "be956c07aca889043ef301389412b6744452f20b",
+    "before_behind_origin_dev": 22,
+    "after_sha": "09159159fbac9b43d3e97011a12a224699677620",
+    "after_behind_origin_dev": 0,
+    "sync_started_at": "2026-07-26T08:34:29Z",
+    "restart_intent_created_at": "2026-07-26T08:34:31Z",
+    "supervisor_stop_requested_at": "2026-07-26T08:36:25Z",
+    "old_supervisor_pid": 829000,
+    "new_supervisor_pid": 1579402,
+    "watchdog_restart_at": "2026-07-26T08:37:05Z",
+    "watchdog_restart_reason": "intentional_deploy_restart",
+    "target_sha": "09159159fbac9b43d3e97011a12a224699677620"
+  },
+  "state_preservation": {
+    "pre_snapshot_at": "2026-07-26T08:33:56Z",
+    "post_snapshot_at": "2026-07-26T08:38:16Z",
+    "task_count_before": 25,
+    "task_count_after": 25,
+    "sorted_task_id_sha256_before": "8c29a93200389b3eed95d1b5958ce332475baaeb59f346c05b8ca1233fa214ae",
+    "sorted_task_id_sha256_after": "8c29a93200389b3eed95d1b5958ce332475baaeb59f346c05b8ca1233fa214ae",
+    "duplicate_task_ids_before": [],
+    "duplicate_task_ids_after": [],
+    "queue_count_before": 2,
+    "queue_count_after": 2,
+    "sorted_queue_id_sha256_before": "724b8d222c784c85e73d101479e3130670cfd9512ba6bb640d9cf0c9df8a35f9",
+    "sorted_queue_id_sha256_after": "724b8d222c784c85e73d101479e3130670cfd9512ba6bb640d9cf0c9df8a35f9",
+    "pending_approval_count_before": 0,
+    "pending_approval_count_after": 0,
+    "pending_approval_id_sha256_before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pending_approval_id_sha256_after": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "journal_rows_before": 1203,
+    "journal_rows_after": 1203,
+    "journal_sha256_before": "d86ae20c7f5ab546e6cca5d70388fd6d1d5c839db8da58c6f9a4d3c586052be0",
+    "journal_sha256_after": "d86ae20c7f5ab546e6cca5d70388fd6d1d5c839db8da58c6f9a4d3c586052be0",
+    "journal_projection_sha256_before": "1131bc03bfa8e00ffdb79bd7d6d0b171cbb1f58e865e1907ac483dcb525206e1",
+    "journal_projection_sha256_after": "1131bc03bfa8e00ffdb79bd7d6d0b171cbb1f58e865e1907ac483dcb525206e1",
+    "ppl_alloc_009_preserved": {
+      "status": "blocked",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "waiting_for": "Human/Ops"
+    }
+  },
+  "policy": {
+    "repo_ready_dispatcher_sha256": "83ad5b2125497853b5250dc737f257427ddccf2cf5f7a86e7ba36ec3e7eb9373",
+    "live_ready_dispatcher_sha256": "83ad5b2125497853b5250dc737f257427ddccf2cf5f7a86e7ba36ec3e7eb9373",
+    "drift": [],
+    "dev_root_behind": 0,
+    "max_tasks_per_agent": {
+      "Codex": 4,
+      "Codex2": 4
+    },
+    "max_concurrent_per_account": {
+      "codex1": 4,
+      "codex2": 4
+    },
+    "max_dispatches_per_tick": 10,
+    "max_concurrent_workers": 13,
+    "provider_dispatch_pauses": {}
+  },
+  "provider_slots": {
+    "generated_at": "2026-07-26T08:39:51Z",
+    "required": [
+      "codex1-1",
+      "codex1-2",
+      "codex1-3",
+      "codex1-4",
+      "codex2-1",
+      "codex2-2",
+      "codex2-3",
+      "codex2-4"
+    ],
+    "ready_count": 8,
+    "all_auth_ready": true,
+    "all_verified": true,
+    "all_local_cli_worker_supported": true
+  },
+  "runtime_health": {
+    "checked_at": "2026-07-26T08:42:51Z",
+    "healthy": true,
+    "lifecycle": "running",
+    "last_heartbeat_at": "2026-07-26T08:42:27Z",
+    "last_loop_error": null,
+    "supervisor_pid": 1579402,
+    "supervisor_lock_held": true,
+    "watchdog_timer_active": true,
+    "watchdog_timer_enabled": true,
+    "watchdog_probe_fresh": true,
+    "task_state_projection_ok": true,
+    "direct_process_identity_diagnostic": {
+      "process_alive": false,
+      "pid_matches": false,
+      "independent_ps_identity_verified": true
+    }
+  },
+  "catalog": {
+    "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+    "validate_only_status": "valid",
+    "task_count": 25,
+    "dry_run_status": "dry_run",
+    "exact_count": 21,
+    "create": [
+      "L12-VERIFY-RUNTIME-001",
+      "L12-VERIFY-OBS-001",
+      "L12-HOSTED-001",
+      "L12-CLOSE-001"
+    ],
+    "external_dependencies": {
+      "PPL-ALLOC-009": {
+        "source": "active",
+        "status": "blocked",
+        "satisfied": false
+      }
+    },
+    "applied": false,
+    "mutation_free_hashes": {
+      "ai-status.json": "8c74b1ab8640ca68d1f8484962f1492d6ade723a1b5fcf880d69ee64cb124981",
+      "ai-activity-log.jsonl": "a02805527ab3908a3f0deeffe4518b3d63bdf91416e86250c40bae09acf703b4",
+      "current-work.md": "d1e800ada045dbe841b71e1a133d2434ac6eda08d45fc7c700ff156cb7471523",
+      ".orchestrator/event-queue.jsonl": "807d14888705847aa27306dc80f15d0cc1dcd63f85187cfefb123105cf7be6d8",
+      ".orchestrator/approval-queue.json": "e512ae0b0db03b1cb6fe1c7c29bc0f444ce6774aa270be418fa78f7398559646",
+      "task-state-events.jsonl": "2b8e1340300448904d93dd6840b0b73a6e43e2be1cd830177541390dc6fcf100"
+    }
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_dispatch_policy.py",
+      "result": "82 passed in 7.26s"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider .orchestrator/test_supervisor.py::RuntimeConfigTests::test_codex_accounts_allow_four_concurrent_slots .orchestrator/test_supervisor.py::RuntimeConfigTests::test_live_provider_account_schema_is_strict_and_complete",
+      "result": "2 passed in 0.43s"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile scripts/provision_live_supervisor_config.py scripts/check_config_drift.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/supervisor.py",
+      "result": "exit 0"
+    }
+  ],
+  "acceptance": {
+    "repo_live_policy_agree": true,
+    "governed_restart_without_state_loss": true,
+    "eight_slots_and_guarded_dry_run": true,
+    "no_lease_approval_queue_or_task_loss_or_duplication": true,
+    "overall": "passed"
+  },
+  "residuals": [
+    "PPL-ALLOC-009 remains blocked on Human/Ops exactly as required.",
+    "Four catalog create candidates were reported but deliberately not applied.",
+    "The health helper direct process identity diagnostic is false while lock-held liveness, ps identity, lifecycle, heartbeat, and overall health are true."
+  ]
+}

@@ -1,0 +1,275 @@
+{
+  "schema_version": "supervisor_runtime_repair_evidence.v2",
+  "task": {
+    "id": "SUP-TASK-STATE-LOCK-LATENCY-001",
+    "title": "Bound supervisor task-state lock latency and projection truth",
+    "phase": "Supervisor Runtime Repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-TASK-STATE-LOCK-LATENCY-001",
+    "candidate_commit": "2abc735b024917d0cd1e03784ca1e27040540341",
+    "review_status": "review_approved",
+    "prior_merged_prs_with_failed_followup_review": [
+      4239,
+      4250,
+      4253
+    ]
+  },
+  "scope": {
+    "owned_layer": "Authoritative task-state snapshot and transaction cost; supervisor runtime-admission boundaries around provider/network/projection/archive/termination work; governed status-command derived views; real command/full-cycle evidence.",
+    "not_changing": "No production config, task ownership, provider routing, dispatch priority, event schema, hash-chain fields, nonterminal-drop policy, product service, or hosted deployment.",
+    "implementation_files": [
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/worker_lifecycle.py",
+      ".orchestrator/runtime_state.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/common.py",
+      "scripts/ai_status.py",
+      "scripts/verify_task_state_store.py",
+      "scripts/git/task_start.sh",
+      "scripts/git/task_finalize.sh",
+      "scripts/git/safe_pr.sh"
+    ],
+    "second_pass_anchors": [
+      "62470884c",
+      "7229978d9",
+      "611b2a480"
+    ]
+  },
+  "delivery": {
+    "implementation_pr": 4263,
+    "implementation_pr_url": "https://github.com/ajoe734/pantheon/pull/4263",
+    "head_commit": "891f8f74b7f10838ec3884ce461be0d2ae80d260",
+    "merge_commit": "52aa8a623e68336e1965d7241950cb3c22f0c827",
+    "merged_at": "2026-07-27T16:51:47Z",
+    "base_branch": "dev",
+    "checks": {
+      "Commit trailers": "success",
+      "Runtime mirror guard": "success",
+      "Python packaging provision": "success",
+      "Smoke acceptance": "success"
+    },
+    "evidence_pr": 4264,
+    "evidence_pr_url": "https://github.com/ajoe734/pantheon/pull/4264",
+    "evidence_merge_commit": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
+    "independent_review": {
+      "status": "review_approved",
+      "reviewer": "Codex2",
+      "candidate_commit": "2abc735b024917d0cd1e03784ca1e27040540341",
+      "implementation_pr": 4263,
+      "evidence_pr": 4264,
+      "full_suite": "685 passed plus 82 subtests",
+      "benchmark": {
+        "fixture_events": 2050,
+        "fixture_bytes": 141402624,
+        "fixture_mib": 134.852,
+        "workers": 4,
+        "commands_succeeded": 8,
+        "commands_total": 8,
+        "full_run_once_cycles": 16,
+        "current_p95_seconds": 1.84,
+        "current_max_seconds": 1.84,
+        "exact_projection": true,
+        "final_event_count": 2066
+      },
+      "verified_boundaries": [
+        "required checks",
+        "runtime-admission and task-state lock boundaries",
+        "caught_up and repaired projection semantics",
+        "worker termination process-identity safety"
+      ]
+    }
+  },
+  "incident": {
+    "supervisor_pid": 901543,
+    "runtime_admission_inode": 807896,
+    "exclusive_hold_seconds": [
+      517,
+      771
+    ],
+    "reviewer_reopen_wait_seconds": 508,
+    "live_journal_events": 2050,
+    "live_journal_bytes_approx": 157000000,
+    "live_note_seconds": [
+      55,
+      90
+    ],
+    "root_cause": "Repeated full journal replay/validation plus network, archive, projection, and termination waits reachable from exclusive runtime/task critical sections."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "status": "pass",
+      "statement": "No runtime-admission or task-state lock is held across provider/network subprocesses or poll sleeps.",
+      "delivered": "Provider probes, GitHub bus, worker-base fetch, ownerless merged-PR lookup, task-state projection reconciliation, auto-archive subprocess work, and termination confirmation execute outside exclusive runtime admission. Auto-archive and PR snapshots have freshness gates.",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_prefetches_ownerless_pr_metadata_before_runtime_lock",
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_auto_commit_archive_subprocess_runs_after_runtime_admission",
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_auto_commit_archive_result_rejects_a_stale_token",
+        ".orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests::test_prefetched_squash_metadata_never_falls_back_to_locked_gh",
+        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_run_once_reconciles_task_state_before_runtime_admission"
+      ]
+    },
+    {
+      "id": "AC2",
+      "status": "pass",
+      "statement": "Authoritative reconciliation uses one stable journal generation without duplicate full replay.",
+      "delivered": "A validated generation is process-cached only while dev/inode/size/mtime-ns/ctime-ns remain exact. Governed mutations hold one journal writer lock and extend one rolling snapshot across durable outbox saves. Forced full replay remains available.",
+      "evidence": [
+        ".orchestrator/rewrite/test_task_state_store.py::test_unchanged_generation_reuses_the_process_snapshot_cache",
+        ".orchestrator/rewrite/test_task_state_store.py::test_snapshot_transaction_reuses_one_validation_across_durable_saves",
+        ".orchestrator/rewrite/test_task_state_store.py::test_checkpointed_snapshot_matches_a_forced_full_replay"
+      ]
+    },
+    {
+      "id": "AC3",
+      "status": "pass",
+      "statement": "Approve, assign, note, and reviewer commands remain below two seconds p95 during full supervisor cycles on a roughly 2000-event / 134 MiB fixture.",
+      "measured": {
+        "candidate_sha": "2abc735b024917d0cd1e03784ca1e27040540341",
+        "fixture_events": 2050,
+        "fixture_bytes": 141402624,
+        "fixture_mib": 134.852,
+        "workers": 4,
+        "commands": 8,
+        "command_mix": {
+          "approve": 2,
+          "assign": 2,
+          "note": 2,
+          "reopen": 2
+        },
+        "full_run_once_cycles": 17,
+        "legacy_p95_seconds": 59.327,
+        "current_p50_seconds": 0.959,
+        "current_p95_seconds": 1.296,
+        "current_max_seconds": 1.296,
+        "all_commands_succeeded": true,
+        "exact_projection": true,
+        "final_event_count": 2066
+      },
+      "evidence": [
+        "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json",
+        "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py::measure_governed_contention"
+      ]
+    },
+    {
+      "id": "AC4",
+      "status": "pass",
+      "statement": "caught_up reports post-reconciliation parity and repaired separately reports a write.",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_caught_up_reports_parity_and_repaired_reports_the_write",
+        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_shadow_mode_reports_parity_and_repair_separately",
+        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_repair_that_never_lands_is_not_reported_as_caught_up"
+      ]
+    },
+    {
+      "id": "AC5",
+      "status": "pass",
+      "statement": "Concurrent append and reconciliation preserve sequence, SHA, leases, and task state.",
+      "delivered": "The transaction test proves monotonic sequences and previous-event hashes across multiple saves from one stable head. The full benchmark proves exact final journal/projection SHA after all eight real mutations. Existing lease validation remains active for six worker-bound commands.",
+      "evidence": [
+        ".orchestrator/rewrite/test_task_state_store.py::test_snapshot_transaction_reuses_one_validation_across_durable_saves",
+        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_reconciliation_report_describes_one_journal_generation",
+        "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json"
+      ]
+    },
+    {
+      "id": "AC6",
+      "status": "pass",
+      "statement": "The regression reproduces the live multi-minute shape and proves governed reviewer/status commands no longer stall.",
+      "delivered": "The same 2050-event fixture reports legacy p95 59.327s and real governed/full-cycle current p95/max 1.296s. The harness exits nonzero unless p95 is below 2s, all commands succeed, supervisor overlap occurs, and final projection is exact."
+    },
+    {
+      "id": "AC7",
+      "status": "pass",
+      "statement": "No live config/manual-kill/task-file mutation; branch, PR checks, independent review, merge, and closeout evidence complete.",
+      "delivered": "No config edit, live worker signal, or manual status/activity/current-work edit. Candidate implementation, owner validation, PR #4263 checks and merge, PR #4264 evidence merge, and fresh Codex2 independent review are complete.",
+      "remaining": "Owner must merge this review-approved evidence update and perform governed done closeout."
+    }
+  ],
+  "termination_safety": {
+    "status": "pass",
+    "properties": [
+      "Missing worker_pid_start_ticks sends no signal.",
+      "PID reuse sends no signal to the replacement process.",
+      "SIGTERM/grace/escalation execute after runtime lock release.",
+      "Worker remains nonterminal until disappearance is observed."
+    ],
+    "evidence": [
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_confirms_worker_termination_after_runtime_lock_release",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_does_not_signal_a_reused_pid",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_without_start_ticks_fails_closed",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_worker_remains_nonterminal_until_deferred_confirmation"
+    ]
+  },
+  "negative_tests": [
+    "Edited history invalidates the accelerated generation and raises.",
+    "Truncation cannot be served from a stale checkpoint.",
+    "Corrupt checkpoint degrades to full replay and repairs itself.",
+    "Forced full replay matches accelerated event count, head, state, and SHA.",
+    "Short append readback raises instead of accepting partial state.",
+    "Stale ownerless PR identity and locked network fallback fail closed.",
+    "Stale derived projections cannot overwrite current views.",
+    "Missing PID start ticks and reused PIDs receive no signal."
+  ],
+  "validation": {
+    "pytest": {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_worker_lifecycle.py scripts/test_ai_status.py",
+      "result": "pass",
+      "conclusion": "685 passed, 82 subtests passed in 144.67s"
+    },
+    "benchmark": {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py --events 2050 --task-rows 30 --samples 8 --contention-workers 4 --contention-commands 2 --contention-seconds 45 --json docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json",
+      "result": "pass",
+      "conclusion": "meets_target=true; candidate 2abc735b0249; legacy p95 59.327s; real governed/full-cycle current p95/max 1.296s; 8/8 commands; 17 run_once cycles; exact projection at event 2066"
+    },
+    "static": {
+      "result": "pass",
+      "checks": [
+        "python3 -m py_compile",
+        "git diff --check"
+      ]
+    },
+    "github": {
+      "result": "pass",
+      "pr": 4263,
+      "merge_commit": "52aa8a623e68336e1965d7241950cb3c22f0c827",
+      "checks": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Python packaging provision",
+        "Smoke acceptance"
+      ]
+    },
+    "independent_review": {
+      "result": "pass",
+      "reviewer": "Codex2",
+      "candidate_commit": "2abc735b024917d0cd1e03784ca1e27040540341",
+      "conclusion": "PRs #4263 and #4264 merged; 685 tests plus 82 subtests passed; fresh 2050-event / 134.852 MiB governed benchmark completed 8/8 commands across four workers and 16 full run_once cycles at 1.840s p95/max with exact event-2066 projection; required checks and lock, projection, and termination boundaries verified."
+    }
+  },
+  "non_interference": {
+    "config_mutation": "none",
+    "live_worker_signal": "none",
+    "manual_task_state_edit": "none",
+    "benchmark_state": "scratch only",
+    "generated_test_artifacts": "restored/removed before staging",
+    "event_schema": "unchanged",
+    "hash_chain_fields": "unchanged",
+    "nonterminal_drop_guard": "unchanged"
+  },
+  "residual_risks": [
+    {
+      "risk": "A first read in a new command process still validates the full journal generation.",
+      "severity": "low",
+      "containment": "The formal 134.852 MiB, four-worker benchmark remains below 2s p95. Same-process supervisor phases reuse an exact generation; mutation outbox saves reuse one writer-locked rolling snapshot."
+    },
+    {
+      "risk": "Exclusive status-writer latency grows with simultaneous writers and journal size.",
+      "severity": "low",
+      "containment": "Re-run the committed harness if routine concurrency exceeds four workers or the journal grows materially beyond the measured fixture; consider governed compaction as a separate task."
+    }
+  ]
+}

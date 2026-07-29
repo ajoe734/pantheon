@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+  "archived_at": "2026-07-24T03:26:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Governance exposes one canonical Workshop approval target through schema producer and BFF projection",
+      "Workshop research and conclude accept only a decided approval with matching tenant owner target id and version",
+      "Workshop creation derives strategy_id from the referenced Registry entry while retaining the Registry id separately",
+      "Distinct strategy and Registry ids pass the public create version select consult research and conclude path",
+      "Integration tests use real public Registry Workshop and Governance APIs and prove restart-persistent readback",
+      "Contract handoff compatibility gate PR merge independent review strict exact-pair deploy and hosted probe all pass"
+    ],
+    "artifacts": [
+      "services/control-plane/governance/approval_decision.py",
+      "services/control-plane/governance/approval_decision.schema.json",
+      "services/control-plane/governance/test_approval_decision.py",
+      "services/control-plane/bff/agora/strategy_workshop/router.py",
+      "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+      "docs/deployment/evidence/agora"
+    ],
+    "auto_created_by": "operator-continuation-20260724",
+    "declared_scope": [
+      "services/control-plane/governance/approval_decision.py",
+      "services/control-plane/governance/approval_decision.schema.json",
+      "services/control-plane/governance/test_approval_decision.py",
+      "services/governance/models.py",
+      "services/governance/main.py",
+      "services/governance/test_governance_api.py",
+      "services/control-plane/bff/agora/strategy_workshop/router.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_read_store_service_clients.py",
+      "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
+      "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+      "services/control-plane/bff/tests/test_agora_workshop_live_operations.py",
+      "docs/deployment/evidence/agora"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [],
+    "fleet_lane": "agora-contract-repair",
+    "id": "AG-GOV-WORKSHOP-CONTRACT-001",
+    "last_update": "2026-07-24T03:26:14Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized Codex-approved contract delivery: PR #4036 and fail-closed follow-up #4037 are merged; closeout evidence PR #4038 merged to dev as f71c1f8ba889ba64956006ef0f9159840be6d065. Owner reran py_compile and focused public Governance/Workshop suites (180 passed, 5 skipped); both delivery diffs are clean. Hosted exact-pair requalification remains downstream AG-GOV-WORKSHOP-COMPAT-DEPLOY-001 / AG-HOSTED-CLOSE-001 and is not claimed here.",
+    "owner": "Codex2",
+    "phase": "Agora completion / P0 public contract repair",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "reviewer": "Codex",
+    "source_ref": {
+      "blocked_task": "AG-HOSTED-CLOSE-001",
+      "evidence_commit": "ce7ba393e",
+      "merge_target": "dev",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "修正 Governance approval 與 Strategy Workshop 的空集合 target-type 合約，以及 Registry entry ID 被誤當 strategy ID 的語意錯置；補齊真實 public API、restart persistence 與 exact-pair hosted regression。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Repair Governance–Workshop approval and Registry identity contracts",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T03:26:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gov-workshop-contract-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GOV-WORKSHOP-CONTRACT-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "be3cf913091279fc893846244c422cd50609505e",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-gov-workshop-contract-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "3e07115150caed9a080ee9912c5a8867c1f117c1",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-GOV-WORKSHOP-CONTRACT-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T02:39:12Z",
+      "from": "Codex2",
+      "message": "Ready for independent review at pushed commit f59200906. Canonical strategy_workshop target is accepted by schema and Governance public API; BFF projection preserves it; Workshop create derives strategy_id from authoritative Registry readback while retaining registry id; research/conclude now require exact tenant, owner, target type, workshop id, and version plus a distinct approver. Public Registry+Governance+Workshop regression covers create/version/select/consult/research/conclude across Governance store and BFF router restarts with distinct IDs. Verification after rebase: 174 passed, 5 skipped. Evidence: docs/deployment/evidence/agora/ag-gov-workshop-contract-001/README.md. Hosted exact-pair requalification remains post-merge work and is not claimed here.",
+      "resolved_at": "2026-07-24T02:47:00Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T02:47:00Z",
+      "from": "Codex",
+      "message": "Review failed at pushed f59200906 / merged PR #4036 (merge 0346b28790d9534cfff76625caeadee8d5ea13b8): acceptance requires Workshop research/conclude to accept only a decided approval, but _require_approval uses 'if state and ...' and therefore accepts a missing state, and it also accepts noncanonical state/outcome aliases. Reviewer reproduction against the existing public router harness: approval with state removed returned HTTP 202 and a completed research dispatch; outcome='accepted' also returned HTTP 202/completed. Make the gate fail closed on exact canonical decision_state/state='decided' and canonical outcome in {'approved','approved_with_conditions'}, add negative coverage for both research and conclude proving no downstream dispatch/conclusion for missing/non-decided state and noncanonical outcome, and update the task evidence. Other verification passed: py_compile; focused suite 174 passed, 5 skipped; git diff --check; PR CI green.",
+      "resolved_at": "2026-07-24T02:47:00Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T02:58:28Z",
+      "from": "Codex2",
+      "message": "Follow-up PR #4037 at 054342aee fails closed on exact decided state and approved/approved_with_conditions outcome; public research/conclude negative cases prove no dispatch, Registry readback, receipt, session mutation, or event. py_compile and focused suite 180 passed, 5 skipped; ready for independent re-review.",
+      "resolved_at": "2026-07-24T02:59:09Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T02:59:09Z",
+      "from": "Codex",
+      "message": "Delivery re-review cannot proceed: follow-up PR #4037 head 054342aee is OPEN but GitHub reports mergeable=CONFLICTING and mergeStateStatus=DIRTY against dev. Rebase the task branch onto current origin/dev, resolve the task-brief conflict without losing the fail-closed router/tests/evidence commit, rerun focused validation, push the rebased head, and only then hand off for independent re-review. Existing local evidence remains 180 passed, 5 skipped; quick CI checks are green and Smoke acceptance is still running.",
+      "resolved_at": "2026-07-24T02:59:09Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T03:04:20Z",
+      "from": "Codex2",
+      "message": "PR #4037 head ae6119811 now contains origin/dev ancestry and GitHub reports MERGEABLE; no force push. Post-sync py_compile passed, focused suite 180 passed/5 skipped, git diff --check clean. Please re-review exact decided plus approved/approved_with_conditions fail-closed gate and public no-side-effect negatives.",
+      "resolved_at": "2026-07-24T03:15:10Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T03:15:10Z",
+      "from": "Codex",
+      "message": "Independent review approved: PR #4036 head f592009061c4f0ad8741d03656a0823bc35ffe1c merged as 0346b28790d9534cfff76625caeadee8d5ea13b8; follow-up PR #4037 head ae6119811ec4299688ac6860a7c38292d539f33e merged as 49cb982da66ccea5c117a1abc07cb3cb2d345f52, both on dev with Commit trailers, Runtime mirror guard, and Smoke acceptance green. Diff review confirms canonical strategy_workshop schema/API, Registry-vs-strategy identity separation, and exact decided plus approved/approved_with_conditions gating before command admission. Public negative cases prove zero research dispatch, Registry readback, command receipt, session mutation, or event. Independent verification: py_compile passed; focused suite 180 passed/5 skipped with 185 tests collected; direct approved_with_conditions route probe returned research 202 and conclude 200; both PR ranges git diff --check clean. Hosted exact-pair deployment remains the explicitly documented downstream AG-GOV-WORKSHOP-COMPAT-DEPLOY-001 / AG-HOSTED-CLOSE-001 requalification and is not claimed by this contract review.",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-24T03:26:15Z"
+    }
+  ],
+  "blockers": []
+}

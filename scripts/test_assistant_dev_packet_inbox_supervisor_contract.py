@@ -16,8 +16,14 @@ def test_supervisor_drains_assistant_dev_inbox_before_watch_scan() -> None:
     assert "from assistant.dev_bridge_inbox import drain_task_packet_inbox" in source
     assert "assistant_dev_packet_inbox_drained" in source
 
-    drain_pos = source.index("changed = drain_assistant_dev_packet_inbox(config, state) or changed")
-    scan_pos = source.index("changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report)")
+    drain_pos = source.index(
+        'changed = _safe_phase("drain_assistant_dev_packet_inbox", '
+        "drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed"
+    )
+    scan_pos = source.index(
+        'changed = _safe_phase("run_scan", run_scan, config, state, '
+        "replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed"
+    )
     assert drain_pos < scan_pos
 
 

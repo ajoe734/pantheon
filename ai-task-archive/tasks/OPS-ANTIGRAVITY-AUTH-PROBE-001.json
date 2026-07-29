@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+  "archived_at": "2026-07-24T05:53:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Antigravity probe timeout accommodates observed OAuth CLI startup",
+      "Transient timeout is retried within one minute",
+      "No credentials or quota values are committed",
+      "Provider config validation and targeted tests pass",
+      "Change is delivered through PR checks and merge to dev"
+    ],
+    "artifacts": [
+      ".orchestrator/config.json"
+    ],
+    "auto_created_by": "operator-continuation-20260724",
+    "declared_scope": [
+      ".orchestrator/config.json"
+    ],
+    "delivery_layer": "orchestrator",
+    "depends_on": [],
+    "fleet_lane": "provider-auth-reliability",
+    "id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+    "last_update": "2026-07-24T05:53:09Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Closeout: Antigravity auth_probe fit to CLI latency (probe_timeout_seconds=120, failed_probe_interval_seconds=60) merged to dev via PR #4045 (task 7e2ddb5d, merge 5b9c1041a); closeout brief merged via PR #4049 (commit db3dd6e76, ancestor of origin/dev). Verified on dev-tip: config values 120/60, config.json valid JSON, python3 .orchestrator/test_provider_permissions.py 73 passed. Worktree clean; discarded a stray brief edit that would have downgraded recorded review evidence.",
+    "owner": "Claude2",
+    "phase": "Fleet reliability",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "manual_probe_elapsed_seconds": 9,
+      "observed_probe_timeout_seconds": 45,
+      "stale_failure_cache_seconds": 3600
+    },
+    "status": "done",
+    "summary_zh": "把 Antigravity auth probe 的 timeout 與失敗重試窗口調成符合實際 CLI 延遲，避免一次 45 秒 timeout 被快取一小時而讓有 quota 的 fleet 長時間閒置。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Fit Antigravity auth probe to CLI latency",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T05:53:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-antigravity-auth-probe-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-antigravity-auth-probe-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "db3dd6e768a9797f0b775fc8df201c95101aa6f1",
+      "commit_subject": "OPS-ANTIGRAVITY-AUTH-PROBE-001: record auth probe closeout brief",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/ops_antigravity_auth_probe_001.md",
+        "Not changing": ".orchestrator/config.json (already merged), any provider settings",
+        "Composes with": "task closeout finalize for OPS-ANTIGRAVITY-AUTH-PROBE-001",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+        "Reviewer": "Antigravity",
+        "Verified": "python3 -m unittest test_provider_permissions (73 passed); config JSON valid; dev-tip antigravity.auth_probe confirms 120s/60s"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "76f0a290ca1d99d7df83735abb14949dd4b57008",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T04:51:22Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned OPS-ANTIGRAVITY-AUTH-PROBE-001 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude2.",
+      "resolved_at": "2026-07-24T04:57:13Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-24T05:05:13Z",
+      "from": "Claude2",
+      "message": "Ready for review. Config-only change in .orchestrator/config.json providers.antigravity.auth_probe (probe_timeout_seconds:120, failed_probe_interval_seconds:60). Acceptance mapping: (1) probe timeout now accommodates OAuth CLI startup by exceeding the 90s CLI print-timeout; (2) transient failure retried within one minute (verified _auth_probe_due True at 65s, False at 30s); (3) no credential/quota values committed; (4) test_provider_permissions 73 passed + json validation OK; (5) delivered via PR #4045 auto-merge into dev. antigravity2 shares the same agy CLI and inherits the global 45s/90s mismatch but is disabled (workload 0) and out of this task's declared scope — flagging in case you want a follow-up.",
+      "resolved_at": "2026-07-24T05:18:57Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T05:18:57Z",
+      "from": "Antigravity",
+      "message": "Reviewer route recovered after Codex2 usage-limit failure. Re-hand the already merged PR #4045 evidence from Claude2 to the available Antigravity reviewer; no implementation change requested.",
+      "resolved_at": "2026-07-24T05:18:57Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-24T05:37:14Z",
+      "from": "Claude2",
+      "message": "Re-hand to recovered reviewer (prior Codex2 review route hit usage-limit). No implementation change. Config-only change in .orchestrator/config.json providers.antigravity.auth_probe: probe_timeout_seconds=120, failed_probe_interval_seconds=60. Acceptance: (1) probe timeout now exceeds the 90s CLI print-timeout so OAuth CLI startup is accommodated; (2) transient failure retried within one minute (_auth_probe_due True at 65s, False at 30s); (3) no credential/quota values committed; (4) test_provider_permissions 73 passed + json.load parse OK; (5) delivered via PR #4045, MERGED into dev at 2026-07-24T05:09:54Z, merge commit 5b9c1041adc10774339ab029d321cae2f352b29c, task commit 7e2ddb5d9. Note: antigravity2 shares the same agy CLI and inherits the global 45s/90s mismatch but is disabled (workload 0) and out of this task's declared scope — flagged for a possible follow-up.",
+      "resolved_at": "2026-07-24T05:40:16Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T05:40:16Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4045, merge commit 5b9c1041adc10774339ab029d321cae2f352b29c, task commit 7e2ddb5d95b7a5c5f39c3ca9c17f489606325c8b. Confirmed .orchestrator/config.json probe_timeout_seconds=120, failed_probe_interval_seconds=60, python3 .orchestrator/test_provider_permissions.py (73 passed), and json syntax valid.",
+      "resolved_at": "2026-07-24T05:49:03Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-24T05:49:03Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-07-24T05:50:01Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-24T05:50:01Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY-AUTH-PROBE-001",
+      "to": "Claude2",
+      "resolved_at": "2026-07-24T05:53:10Z"
+    }
+  ],
+  "blockers": []
+}

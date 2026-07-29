@@ -1,0 +1,1811 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "generated_at": "2026-07-26T14:05:00Z",
+  "source_plan": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/TWELVE_LOOP_GAP_INVENTORY_2026-07-26.md",
+  "planning_addenda": [
+    "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ROUND1_SPEC_RUNTIME_AUDIT.md",
+    "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ROUND2_IMPLEMENTATION_FAILURE_AUDIT.md",
+    "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ROUND3_ACCEPTANCE_EVIDENCE_AUDIT.md",
+    "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/PARALLEL_FLEET_EXECUTION_PLAN_2026-07-26.md"
+  ],
+  "task_doc_contract_source": "tasks.json",
+  "external_dependencies": [
+    {
+      "id": "PPL-ALLOC-009",
+      "required_terminal_status": "done",
+      "reason": "The active Human-Ops-gated allocation closeout owns the broad BFF and execute-plans src scopes; overlapping twelve-loop tasks must remain dependency-blocked until it is terminal.",
+      "overlap_artifacts": [
+        "services/control-plane/bff",
+        "execute-plans:src"
+      ]
+    }
+  ],
+  "completion_authority": {
+    "schema_version": 1,
+    "final_task_id": "L12-CLOSE-001",
+    "guard_install_task_id": "L12-SIGNOFF-001",
+    "guard_direct_dependency_ids": [
+      "L12-FLEET-001",
+      "PPL-ALLOC-009"
+    ],
+    "final_direct_dependency_ids": [
+      "L12-HOSTED-001",
+      "L12-TRUTH-001",
+      "L12-SIGNOFF-001"
+    ],
+    "required_human_ops_signoff_task_ids": [
+      "L12-CLOSE-001"
+    ],
+    "requires_protected_human_ops_verdict": true,
+    "verdict_binding_fields": [
+      "program_id",
+      "catalog_sha256",
+      "task_id",
+      "closeout_manifest_sha256",
+      "target_environment",
+      "frontend_sha",
+      "bff_sha",
+      "verdict_id",
+      "verifier_capability_sha256",
+      "signature_algorithm",
+      "key_id",
+      "policy_version",
+      "signature",
+      "revocation_checked_at",
+      "ledger_entry_id",
+      "actor_id",
+      "actor_role",
+      "decision",
+      "issued_at",
+      "expires_at",
+      "nonce"
+    ]
+  },
+  "execution_task_counts": {
+    "wave_0": 1,
+    "wave_1": 8,
+    "wave_2": 7,
+    "wave_3": 3,
+    "wave_4": 4,
+    "wave_5": 2,
+    "total": 25
+  },
+  "tasks": [
+    {
+      "id": "L12-FLEET-001",
+      "title": "Restore and prove the eight-slot Codex fleet frontier",
+      "summary_zh": "讓受審查的 repo fleet policy 覆蓋陳舊 live overlay，安全重載 supervisor，證明 Codex/Codex2 各四個 slot 可派工且 watchdog、queue、approval 維持健康。",
+      "phase": "Twelve Loop Remediation / Fleet Bootstrap",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "scripts/provision_live_supervisor_config.py",
+        "scripts/check_config_drift.py",
+        "scripts/test_provision_live_supervisor_config.py",
+        "scripts/test_check_config_drift.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001"
+      ],
+      "acceptance": [
+        "Repository and live ready-dispatcher capacity policies agree after provisioning",
+        "Supervisor and watchdog restart under the governed intent path without losing task state",
+        "Codex and Codex2 expose four eligible slots each and a guarded catalog dry-run succeeds",
+        "No active deploy lease, approval, queue item, or existing task is lost or duplicated"
+      ],
+      "next": "Recheck terminal nonprod lease state, then reconcile and verify fleet capacity",
+      "wave": 0,
+      "fleet_lane": "fleet-capacity",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "contract",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        ".orchestrator/config.json ready_dispatcher policy"
+      ],
+      "actual_state_sources": [
+        "live supervisor config",
+        "supervisor runtime state",
+        "watchdog health and provider readiness"
+      ],
+      "proof_required": [
+        "config drift unit tests",
+        "governed supervisor restart evidence",
+        "provider and slot readiness readback",
+        "mutation-free dispatcher dry-run"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "Do not restart while a dev deployment lease is active",
+        "Do not hand-edit the live config",
+        "Preserve the blocked PPL-ALLOC-009 task and all runtime journals"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-FLEET-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CTRL-001",
+      "title": "Harden canonical loop controller truth",
+      "summary_zh": "修正 loop controller lost-update、lease、desired/actual projection 與 authenticated-tenant BFF 查詢，提供 12 條循環共同使用的 conformance contract。",
+      "phase": "Twelve Loop Remediation / Controller Foundation",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifacts": [
+        "services/loop-control",
+        "schemas/loop-controller-record.schema.json",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001"
+      ],
+      "acceptance": [
+        "Concurrent success failure heartbeat and backlog updates cannot lose newer fields",
+        "Normal writes renew fenced leases and stale writers are rejected",
+        "BFF projects desired-state presence and authoritative downstream actual state",
+        "Controller truth lookup is scoped by authenticated tenant and environment",
+        "A reusable conformance suite covers all required controller fields"
+      ],
+      "next": "Implement transactional writer and tenant-safe truth projection",
+      "wave": 1,
+      "fleet_lane": "loop-controller",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "contract",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "loop catalog controller contract",
+        "domain desired-state query"
+      ],
+      "actual_state_sources": [
+        "loop_controller_records",
+        "domain terminal actual-state query"
+      ],
+      "proof_required": [
+        "Postgres concurrency tests",
+        "lease and stale-writer tests",
+        "tenant isolation tests",
+        "BFF truth contract tests"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No catalog maturity promotion before domain proof"
+      ],
+      "dispatch_rules": [
+        "Do not change domain business behavior",
+        "Preserve fail-closed catalog admission",
+        "Use authenticated tenant rather than environment defaults"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CTRL-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-TEL-001",
+      "title": "Make telemetry acknowledgement durable and preserve lifecycle identity",
+      "summary_zh": "移除 202-before-durable-write 遺失窗，修復 heartbeat 抹除 trace identity，加入 auth/tenant 與可重播 durable buffer。",
+      "phase": "Twelve Loop Remediation / Telemetry",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/telemetry",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001"
+      ],
+      "acceptance": [
+        "HTTP success is returned only after durable tenant-scoped ingest",
+        "A later heartbeat cannot erase authoritative lifecycle trace identity",
+        "Ingest read and DLQ replay enforce service or operator authority and tenant scope",
+        "Process death before batch flush loses no accepted event",
+        "Existing six runtime summaries expose consumer-compatible identity"
+      ],
+      "next": "Implement durable ingest and lifecycle identity regression repair",
+      "wave": 1,
+      "fleet_lane": "telemetry",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "TelemetryEvent ingest contract",
+        "active RuntimeBinding identity"
+      ],
+      "actual_state_sources": [
+        "durable telemetry rows",
+        "runtime summaries",
+        "telemetry DLQ"
+      ],
+      "proof_required": [
+        "crash-before-flush recovery",
+        "lifecycle then heartbeat regression",
+        "auth and tenant negative tests",
+        "current-runtime summary readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "Preserve append-only telemetry identity",
+        "Do not fabricate missing correlation",
+        "Fail closed on unauthorised replay"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TEL-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-REC-001",
+      "title": "Harden reconciliation scheduling, storage, and recovery",
+      "summary_zh": "修正 scheduled-reconcile timeout，將 record/report 與 worker state 轉為 durable authority，加入 scheduler/consumer lease、corruption fail-closed 與 tenant auth。",
+      "phase": "Twelve Loop Remediation / Reconciliation",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/reconciliation-drift",
+        "docs/deployment/evidence/twelve-loop-gap/L12-REC-001"
+      ],
+      "acceptance": [
+        "Scheduled reconciliation completes within a measured configurable SLA",
+        "Two schedulers or consumers cannot duplicate one logical window",
+        "Records and DriftReports are authoritative durable tenant-scoped state",
+        "Corrupt worker state fails closed and cannot be silently overwritten",
+        "Retry DLQ replay and dependency restart recover without duplicate incidents"
+      ],
+      "next": "Implement durable leased reconciliation and remove timeout failure",
+      "wave": 1,
+      "fleet_lane": "reconciliation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "reconciliation policy",
+        "incident trigger",
+        "scheduled observation window"
+      ],
+      "actual_state_sources": [
+        "telemetry runtime summaries",
+        "DriftReport",
+        "IncidentCase"
+      ],
+      "proof_required": [
+        "two-worker lease tests",
+        "scheduler latency and timeout recovery",
+        "corrupt-state and restart tests",
+        "tenant auth and incident correlation tests"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No runtime mutation from reconciliation"
+      ],
+      "dispatch_rules": [
+        "Do not fabricate identity or metrics",
+        "Use deterministic window idempotency",
+        "Keep reconciliation advisory"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-REC-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-SRC-001",
+      "title": "Implement safe supervised source due-state reconciliation",
+      "summary_zh": "讓 Persona required_data_sources 自動形成 connector/schedule desired state；排程常駐但外部 pull 仍受 allowlist、rate limit 與 egress policy 限制。",
+      "phase": "Twelve Loop Remediation / Source",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001"
+      ],
+      "acceptance": [
+        "Persona source requirement creates or updates connector and schedule without manual calls",
+        "Scheduled reconciliation remains supervised while provider pulls remain bounded and allowlisted",
+        "Duplicate ticks and two workers create no duplicate schedule or SourceRecord",
+        "Missed ticks recover after restart and connector failures remain isolated",
+        "SourceHealth reports policy denial credentials provider failure and success truthfully"
+      ],
+      "next": "Separate safe schedule reconciliation from governed provider egress",
+      "wave": 1,
+      "fleet_lane": "source",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "Persona.required_data_sources",
+        "connector and egress policy"
+      ],
+      "actual_state_sources": [
+        "connector registry",
+        "source schedules",
+        "SourceRecord and SourceHealth"
+      ],
+      "proof_required": [
+        "duplicate and two-worker tests",
+        "missed-tick restart test",
+        "provider failure matrix",
+        "bounded real-provider dev proof"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No uncontrolled continuous external crawl"
+      ],
+      "dispatch_rules": [
+        "External egress remains deny-by-default",
+        "Do not turn one failed connector into global failure",
+        "Persist intent before side effects"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SRC-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-ALPHA-001",
+      "title": "Dispatch approved Alpha replication into authoritative ExperimentRuns",
+      "summary_zh": "統一 StrategySpec identifier，限制 approved review 才能進 queue，補 tenant、lease、DLQ/replay，將結果寫入真實 research authority 而非 stub/local run。",
+      "phase": "Twelve Loop Remediation / Alpha",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/research/alpha_replication",
+        "services/research/experiment_orchestrator",
+        "services/research/experiments",
+        "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001"
+      ],
+      "acceptance": [
+        "Only an approved reviewed immutable StrategySpec enters replication",
+        "Discovery uses the canonical StrategySpec identifier and tenant-scoped keys",
+        "Claims expire and stale work can be safely reclaimed or replayed",
+        "Research authority stores a non-stub ExperimentTask and ExperimentRun",
+        "Duplicate review restart failure and DLQ replay are deterministic"
+      ],
+      "next": "Replace stub handoff with governed authoritative research execution",
+      "wave": 1,
+      "fleet_lane": "alpha",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "alpha_replication"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "approved StrategySpec review decision",
+        "revalidation due policy"
+      ],
+      "actual_state_sources": [
+        "research ExperimentTask",
+        "research ExperimentRun",
+        "replication queue and DLQ"
+      ],
+      "proof_required": [
+        "approved and unapproved gate tests",
+        "tenant collision tests",
+        "claim expiry and crash recovery",
+        "real research service-boundary readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No automatic replication of every draft"
+      ],
+      "dispatch_rules": [
+        "Do not label stub output authoritative",
+        "Keep production activation disabled unless separately approved",
+        "Tenant must participate in every key"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-ALPHA-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-AGORA-001",
+      "title": "Make Agora extraction governed, tenant-safe, and leased",
+      "summary_zh": "修正真實 OperatorIdentity 路徑、RBAC/tenant IDOR、Idempotency-Key conflict，建立可多 worker 安全 claim 的 dataset extraction owner 與 downstream ack。",
+      "phase": "Twelve Loop Remediation / Agora",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/dataset_extraction",
+        "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001"
+      ],
+      "acceptance": [
+        "Real OperatorIdentity submit process read and replay paths succeed with typed access",
+        "Every read mutation claim and replay is tenant and user scoped",
+        "Mutation requires write capability and stable idempotency digest conflict handling",
+        "Concurrent processors use bounded SKIP-LOCKED or equivalent leased claims",
+        "DatasetVersion and handoff are acknowledged once and cannot mutate runtime authority"
+      ],
+      "next": "Repair identity and tenant boundaries, then implement leased extraction",
+      "wave": 1,
+      "fleet_lane": "agora",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "agora_interaction_evidence"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "authenticated Agora interaction evidence",
+        "dataset extraction policy"
+      ],
+      "actual_state_sources": [
+        "Agora evidence inbox",
+        "DatasetVersion",
+        "learning handoff and DLQ"
+      ],
+      "proof_required": [
+        "real identity integration test",
+        "RBAC and tenant IDOR negatives",
+        "idempotency conflict test",
+        "multi-worker crash and replay proof"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No direct promotion deployment or runtime mutation"
+      ],
+      "dispatch_rules": [
+        "Observe and Learn only",
+        "Do not synchronously drain other tenants from a caller request",
+        "Ack only after durable downstream completion"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-AGORA-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONS-001",
+      "title": "Deploy a real durable Consultation workflow executor",
+      "summary_zh": "讓 committee/red-team executor 真正取得 provider/participant contribution，加入 auth/tenant、claim lease、bounded blocked/DLQ、unique handoff，並成為受監督 worker。",
+      "phase": "Twelve Loop Remediation / Consultation",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/consultation",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001"
+      ],
+      "acceptance": [
+        "Executor obtains real qualified committee or red-team contributions",
+        "API and worker enforce service/operator identity and tenant scope",
+        "Pending work uses durable claim lease and bounded blocked attempts",
+        "Participant memo publish and handoff uniqueness survive concurrent workers",
+        "Crash retry DLQ replay and downstream acknowledgement are proved"
+      ],
+      "next": "Replace synthetic wait workflow with a real supervised executor",
+      "wave": 1,
+      "fleet_lane": "consultation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "consultation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "ConsultRequest",
+        "committee and red-team workflow policy"
+      ],
+      "actual_state_sources": [
+        "qualified participant contributions",
+        "ConsultMemo",
+        "governance handoff"
+      ],
+      "proof_required": [
+        "real provider service-boundary test",
+        "multi-executor race test",
+        "phase-by-phase crash recovery",
+        "auth tenant and DLQ proof"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No direct deployment from consultation"
+      ],
+      "dispatch_rules": [
+        "Consultation remains advisory or review-bound",
+        "Do not synthesize a successful participant",
+        "Blocked work must terminate visibly"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CONS-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-DEP-001",
+      "title": "Lease and authenticate the Deployment saga dispatcher",
+      "summary_zh": "為 Deployment mutation 與 consumer 加 service/operator auth、tenant partition、transactional outbox claim/ack、idle health recovery及 crash-after-side-effect compensation。",
+      "phase": "Twelve Loop Remediation / Deployment",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/deployment",
+        "services/promotion",
+        "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001"
+      ],
+      "acceptance": [
+        "Deployment mutations authenticate authoritative actor and tenant",
+        "Two consumers cannot concurrently own the same outbox event",
+        "Crash after RuntimeBinding side effect and before ack does not duplicate binding",
+        "Retry DLQ replay compensation and idle health recovery are visible",
+        "Approval plan saga binding and runtime stages retain shared correlation"
+      ],
+      "next": "Implement authenticated transactional outbox ownership and recovery",
+      "wave": 1,
+      "fleet_lane": "deployment",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "immutable approved artifact",
+        "ApprovalDecision and DeploymentPlan"
+      ],
+      "actual_state_sources": [
+        "deployment saga",
+        "RuntimeBinding",
+        "outbox DLQ and compensation receipt"
+      ],
+      "proof_required": [
+        "two-consumer claim test",
+        "side-effect-before-ack crash test",
+        "auth and tenant negatives",
+        "current downstream terminal readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "Consume immutable approved artifacts only",
+        "Kill switch retains priority",
+        "Do not treat submitted receipt as terminal success"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DEP-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-DIST-001",
+      "title": "Make source-to-draft distillation transactional and replayable",
+      "summary_zh": "用 versioned source digest、durable outbox/inbox、lease、retry/DLQ 取代 non-thread-safe JSONL，Registry 失敗必須 truthful degraded，不可仍記成功。",
+      "phase": "Twelve Loop Remediation / Distillation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-SRC-001"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001"
+      ],
+      "acceptance": [
+        "Committed normalized SourceRecord transactionally enqueues one versioned distillation job",
+        "Concurrent workers claim with lease and duplicate revised content is handled by digest",
+        "Registry failure records controller failure and durable retry or DLQ",
+        "Approved immutable artifacts remain unchanged",
+        "Crash before or after Registry write replays to one terminal draft"
+      ],
+      "next": "Replace polling JSONL ownership with durable versioned event processing",
+      "wave": 2,
+      "fleet_lane": "source",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "strategy_distillation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "normalized versioned SourceRecord"
+      ],
+      "actual_state_sources": [
+        "StrategySpec mutable draft",
+        "Registry terminal readback",
+        "distillation DLQ"
+      ],
+      "proof_required": [
+        "real source-to-registry service test",
+        "two-worker and revised-content test",
+        "Registry outage and replay",
+        "approved-artifact immutability"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No write to immutable approved artifact"
+      ],
+      "dispatch_rules": [
+        "Ack only after Registry terminal write",
+        "Do not mark sync failure successful",
+        "Preserve source and draft lineage"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DIST-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-TEACH-001",
+      "title": "Make Persona Teaching authenticated, tenant-safe, and HA",
+      "summary_zh": "為 teaching API/worker 加 inbound authority 與 tenant，將 session/job/replay 移入 authoritative store，讓 functional health 與真正 eval/commit 結果一致。",
+      "phase": "Twelve Loop Remediation / Teaching",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "services/training-session",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001"
+      ],
+      "acceptance": [
+        "Teaching mutations authenticate actor service and tenant",
+        "Session job replay and persona target state are authoritative HA storage",
+        "Health is degraded when evaluation or commit cannot complete",
+        "Evaluation failure performs no persona mutation",
+        "Two workers and process restart produce one terminal persona commit"
+      ],
+      "next": "Harden authority persistence and functional health around the existing worker",
+      "wave": 2,
+      "fleet_lane": "teaching",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching"
+      ],
+      "current_maturity": "integrated",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "authenticated TeachingSession",
+        "evaluation and persona mutation policy"
+      ],
+      "actual_state_sources": [
+        "TeachingEvent and evaluation result",
+        "persona before and after controller record"
+      ],
+      "proof_required": [
+        "auth tenant and MFA negatives",
+        "two-worker and restart tests",
+        "eval-fail no-mutation proof",
+        "hosted persona terminal readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No direct execution-plane mutation"
+      ],
+      "dispatch_rules": [
+        "Preserve existing evaluation gate",
+        "Do not use alive marker as functional success",
+        "Commit once after durable evaluation"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TEACH-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-IMIT-001",
+      "title": "Schedule real-dataset imitation and shadow evaluation",
+      "summary_zh": "讓 scheduler 從 tenant-scoped Agora DatasetVersion 取數，product mode 禁止 seed fallback，加入 backlog claim/lease並產生具 lineage 的 authoritative candidate。",
+      "phase": "Twelve Loop Remediation / Imitation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-AGORA-001",
+        "L12-TEL-001"
+      ],
+      "artifacts": [
+        "services/policy-learning",
+        "services/research/imitation",
+        "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001"
+      ],
+      "acceptance": [
+        "Default product path discovers tenant-scoped Agora DatasetVersions regardless of policy-store backend",
+        "Dataset lookup failure is degraded and never substitutes seed data",
+        "Scheduler and worker use claim lease and survive duplicate ticks and restart",
+        "Authoritative training evaluation and candidate artifacts retain dataset lineage",
+        "Candidate cannot affect runtime before experiment approval and deployment gates"
+      ],
+      "next": "Connect supervised scheduling to real governed datasets and execution",
+      "wave": 2,
+      "fleet_lane": "imitation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "human_imitation_shadow_evaluation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "Agora DatasetVersion",
+        "shadow evaluation schedule and policy"
+      ],
+      "actual_state_sources": [
+        "training evaluation run",
+        "ShadowImitationCandidate",
+        "candidate backlog and DLQ"
+      ],
+      "proof_required": [
+        "default-compose real dataset test",
+        "tenant isolation and no-seed negative",
+        "two-worker restart and replay",
+        "candidate governance gate proof"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No direct running-artifact mutation"
+      ],
+      "dispatch_rules": [
+        "Fail closed when dataset authority is unavailable",
+        "Do not train synchronously per Agora message",
+        "Keep candidates non-runtime-affecting"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-IMIT-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CAP-001",
+      "title": "Make governed-paper signal execution lossless and strictly isolated",
+      "summary_zh": "把 Redis LPOP 改為 claim/ack visibility 模型，execution error 必須 requeue/DLQ；governed paper 嚴格拒絕 unscoped signal，並為 fleet reconciler 加 leader lease。",
+      "phase": "Twelve Loop Remediation / Capital",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-DEP-001",
+        "L12-TEL-001"
+      ],
+      "artifacts": [
+        "services/execution/lean_runtime",
+        "services/capital",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001"
+      ],
+      "acceptance": [
+        "Accepted signal remains recoverable until execution acknowledgement",
+        "Crash validation failure and execution exception requeue or durable-DLQ the signal",
+        "Missing or mismatched binding runtime and capital-pool scope is rejected in governed paper mode",
+        "Only one fleet reconciler leader owns each active binding worker set",
+        "Capital mutations authenticate actor and tenant and live capital remains disabled"
+      ],
+      "next": "Implement claim-ack signal durability and strict fleet isolation",
+      "wave": 2,
+      "fleet_lane": "capital",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "manual",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "active governed-paper RuntimeBinding",
+        "binding-scoped signal queue"
+      ],
+      "actual_state_sources": [
+        "paper runtime worker",
+        "orders fills positions and heartbeat",
+        "signal DLQ"
+      ],
+      "proof_required": [
+        "Redis crash-before-ack test",
+        "execution-error requeue and DLQ",
+        "two-reconciler leader lease",
+        "six-binding restart isolation drill"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "Governed paper signal scope is fail-closed",
+        "Do not acknowledge before durable execution outcome",
+        "Preserve kill pause retire semantics"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CAP-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVO-001",
+      "title": "Complete Evolution inputs and durable approved-action dispatch",
+      "summary_zh": "補齊 drawdown/approved baseline，將 actor/tenant 與 single-active constraint 權威化，所有 supported action 經 durable outbox 到真實 downstream receipt，不再 synthetic executed/stub。",
+      "phase": "Twelve Loop Remediation / Evolution",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-TEL-001",
+        "L12-REC-001"
+      ],
+      "artifacts": [
+        "services/evolution",
+        "services/incidents",
+        "services/postmortems",
+        "services/control-plane/governance/evolution_decision.py",
+        "services/control-plane/governance/evolution_controller_contract.md",
+        "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001"
+      ],
+      "acceptance": [
+        "All monitored artifacts have numeric drawdown and approved expected baselines",
+        "Evolution actor tenant and active-decision uniqueness are authoritative and tenant-scoped",
+        "Every supported approved action writes a durable dispatch outbox",
+        "Decision becomes executed only after real downstream terminal receipt",
+        "Retry DLQ replay cooldown and compensation survive restart and duplicate triggers"
+      ],
+      "next": "Remove zero-candidate and synthetic-dispatch gaps",
+      "wave": 2,
+      "fleet_lane": "evolution",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "resolved IncidentCase and published Postmortem",
+        "threshold and daily sweep policy",
+        "approved EvolutionDecision"
+      ],
+      "actual_state_sources": [
+        "EvolutionDecision",
+        "durable action outbox",
+        "research deployment or runtime terminal receipt"
+      ],
+      "proof_required": [
+        "positive threshold candidate",
+        "tenant cooldown and active-lock race",
+        "crash-after-approval dispatch recovery",
+        "real downstream and compensation readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No direct unapproved production mutation"
+      ],
+      "dispatch_rules": [
+        "Do not mark submitted or stub action executed",
+        "Preserve cooldown and one-active decision",
+        "Use governance gates for runtime-affecting actions"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-EVO-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-BFF-001",
+      "title": "Implement durable infrastructure health telemetry and incident recovery",
+      "summary_zh": "建立非交易 infrastructure telemetry authority，補 error-rate spike、完整 downstream registry、durable probe state、delivery retry/DLQ及 incident resolve，移除會被 binding validation 拒絕的 sentinel。",
+      "phase": "Twelve Loop Remediation / BFF Health",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-CTRL-001",
+        "L12-TEL-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/downstream_health_monitor.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001"
+      ],
+      "acceptance": [
+        "Health telemetry is admitted by an authoritative infrastructure schema without fake RuntimeBinding",
+        "Interval probes and error-rate spikes cover the complete configured downstream registry",
+        "Probe failures delivery backlog and incident mapping survive BFF restart and replicas",
+        "Telemetry and incident delivery retry DLQ and replay with shared event IDs",
+        "Recovery updates or resolves the incident without affecting active runtimes"
+      ],
+      "next": "Replace fake binding sentinel with durable infrastructure monitoring",
+      "wave": 2,
+      "fleet_lane": "bff-health",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "BFF downstream target registry",
+        "health and error-rate policy"
+      ],
+      "actual_state_sources": [
+        "infrastructure health telemetry",
+        "IncidentCase",
+        "durable probe/controller state"
+      ],
+      "proof_required": [
+        "real telemetry admission",
+        "error-rate spike trigger",
+        "BFF restart and two-replica dedupe",
+        "target stop and recovery incident proof"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No impact to active runtime workers"
+      ],
+      "dispatch_rules": [
+        "Do not use fake trading binding identity",
+        "Do not swallow delivery failure as success",
+        "Keep control-plane degradation isolated"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-BFF-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-SIGNOFF-001",
+      "title": "Install protected Human-Ops closeout verdict enforcement",
+      "summary_zh": "在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。",
+      "phase": "Twelve Loop Remediation / Protected Closeout Authority",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "L12-FLEET-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifacts": [
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/governance/product_closeout_verdict.schema.json",
+        "services/control-plane/governance/test_product_closeout_verdict.py",
+        "services/control-plane/bff/product_closeout_verdict.py",
+        "services/control-plane/bff/test_product_closeout_verdict.py",
+        "scripts/loop_done_guardrail.py",
+        "scripts/test_loop_done_guardrail.py",
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001"
+      ],
+      "acceptance": [
+        "Only an authenticated authorized Human or Ops actor can issue the final verdict",
+        "The verdict binds the exact program catalog task closeout manifest target FE and BFF identities",
+        "Review-approved and done transitions fail closed for missing rejected revoked replayed stale or mismatched verdicts",
+        "Fleet workers and candidate-controlled files cannot self-sign or bypass the protected verdict",
+        "Tamper replay wrong-role wrong-task wrong-SHA expiry revocation and concurrent-decision negatives pass"
+      ],
+      "next": "Implement and prove the protected transition-time Human-Ops authority",
+      "wave": 2,
+      "fleet_lane": "protected-human-ops-signoff",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "contract",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "catalog-bound completion authority",
+        "authorized Human-Ops verdict request"
+      ],
+      "actual_state_sources": [
+        "protected verdict ledger",
+        "transition-time guard decision",
+        "revocation and nonce state"
+      ],
+      "proof_required": [
+        "authorization signature binding expiry revocation and concurrency tests",
+        "candidate self-sign and direct-state-edit negatives",
+        "review-approved and done transition enforcement",
+        "formal reviewed evidence manifest"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No fleet-issued Human-Ops verdict"
+      ],
+      "dispatch_rules": [
+        "Fleet may assemble a verdict request but cannot issue or approve it",
+        "Never derive authority from mutable task metadata alone",
+        "Closeout remains blocked until this guard is merged and active"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-MANIFEST-001",
+      "title": "Activate all required loop workers under one safe runtime manifest",
+      "summary_zh": "由單一 owner 整合 Compose：預設啟動必要 worker、restart/health/volume/auth，保留 source external egress 與 no-live-capital 安全預設。",
+      "phase": "Twelve Loop Remediation / Runtime Integration",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-SRC-001",
+        "L12-DIST-001",
+        "L12-ALPHA-001",
+        "L12-TEACH-001",
+        "L12-AGORA-001",
+        "L12-IMIT-001",
+        "L12-CONS-001",
+        "L12-DEP-001",
+        "L12-CAP-001",
+        "L12-REC-001",
+        "L12-EVO-001",
+        "L12-BFF-001"
+      ],
+      "artifacts": [
+        "docker-compose.yml",
+        "scripts/deploy_nonprod_vm.sh",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001"
+      ],
+      "acceptance": [
+        "Every required scheduled or async worker is represented and started by the intended default",
+        "Workers have restart health heartbeat durable volumes auth and graceful-stop configuration",
+        "Source egress remains bounded and deny-by-default",
+        "Paper execution remains isolated and live writes remain disabled",
+        "Compose config and local stack health pass with no duplicate legacy workers"
+      ],
+      "next": "Integrate domain workers without parallel Compose conflicts",
+      "wave": 3,
+      "fleet_lane": "runtime-manifest",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "integrated",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "merged domain worker contracts",
+        "safe dev runtime policy"
+      ],
+      "actual_state_sources": [
+        "Docker Compose service state",
+        "worker health and heartbeat",
+        "deployment manifest"
+      ],
+      "proof_required": [
+        "docker compose config",
+        "local stack smoke",
+        "kill-one worker restart",
+        "full service inventory and safety readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "This task is the only domain integration owner of docker-compose.yml",
+        "Do not revive legacy frontend or old dev host",
+        "Preserve bounded external egress"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-MANIFEST-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-TRUTH-001",
+      "title": "Integrate twelve-loop controller records and operator truth",
+      "summary_zh": "讓每條 loop 寫 canonical record，BFF 顯示 desired/controller/last success/failure/actual/provenance；catalog 僅標 implemented，不先冒稱 proven-live。",
+      "phase": "Twelve Loop Remediation / Operator Truth",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-CTRL-001",
+        "L12-MANIFEST-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifacts": [
+        "docs/deployment/loop-catalog.registry.json",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001"
+      ],
+      "acceptance": [
+        "All twelve loops emit current tenant-scoped canonical controller records",
+        "BFF shows desired presence health last success failure actual state and provenance",
+        "Stale absent or contradicted records remain unaccepted and visibly degraded",
+        "Catalog controller names queries restart and liveness fields match implementation",
+        "Maturity is no higher than implemented until hosted evidence is admitted"
+      ],
+      "next": "Wire all domain records and truthful BFF/catalog projection",
+      "wave": 3,
+      "fleet_lane": "operator-truth",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "contract",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "domain desired-state queries",
+        "loop catalog controller contracts"
+      ],
+      "actual_state_sources": [
+        "twelve canonical controller records",
+        "domain terminal actual state",
+        "BFF loop inventory"
+      ],
+      "proof_required": [
+        "all-loop record conformance test",
+        "stale and contradictory record negatives",
+        "tenant-scoped BFF readback",
+        "catalog-to-runtime exactness validation"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No premature proven-live promotion"
+      ],
+      "dispatch_rules": [
+        "Do not invent liveness in BFF",
+        "Keep not-yet-proved maturity fail-closed",
+        "Bind controller evidence to exact deployment"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TRUTH-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-FE-TRUTH-001",
+      "title": "Render twelve-loop authoritative truth in the hosted frontend",
+      "summary_zh": "在 execute-plans dev 前端呈現 12 loop 的 desired/controller/failure/actual/provenance，不把 seed、registry-only或 stale record 顯示成 live。",
+      "phase": "Twelve Loop Remediation / Frontend Truth",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-TRUTH-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifacts": [
+        "execute-plans/src",
+        "execute-plans/tests",
+        "execute-plans/docs/deployment/evidence/twelve-loop-gap/L12-FE-TRUTH-001"
+      ],
+      "acceptance": [
+        "Hosted operator view lists all twelve loops and every required truth field",
+        "Seed fixture snapshot registry scheduled and live provenance are visually distinct",
+        "Stale unobserved degraded and failed states never render green",
+        "Desktop mobile keyboard axe and strict live-BFF network evidence pass",
+        "Hosted bundle identifies the exact execute-plans and BFF deployment"
+      ],
+      "next": "Implement and host the operator truth contract in execute-plans",
+      "wave": 3,
+      "fleet_lane": "frontend-truth",
+      "target_repo": "execute-plans",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "contract",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "live Pantheon BFF loop truth contract"
+      ],
+      "actual_state_sources": [
+        "hosted execute-plans DOM",
+        "browser network responses",
+        "deployment manifest"
+      ],
+      "proof_required": [
+        "frontend contract and component tests",
+        "1440px and 390px hosted evidence",
+        "axe keyboard focus and reduced-motion checks",
+        "strict live-BFF network and identity proof"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No Lovable or legacy frontend delivery"
+      ],
+      "dispatch_rules": [
+        "Use ajoe734/execute-plans dev only",
+        "Build with live strict BFF and safe write defaults",
+        "Do not mix Pantheon backend files into the frontend repo"
+      ],
+      "product_level_required": true,
+      "evidence_root": "execute-plans/docs/deployment/evidence/twelve-loop-gap/L12-FE-TRUTH-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-FE-TRUTH-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-VERIFY-KNOW-001",
+      "title": "Prove Source, Distillation, and Alpha product flows",
+      "summary_zh": "在真實 service boundaries 驗證 Persona source→SourceRecord→StrategySpec draft，以及 approved StrategySpec→ExperimentRun，包含 duplicate、failure、restart與安全 gate。",
+      "phase": "Twelve Loop Remediation / Product Drills",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-DIST-001",
+        "L12-ALPHA-001",
+        "L12-TRUTH-001"
+      ],
+      "artifacts": [
+        "scripts/verify_twelve_loop_knowledge.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001"
+      ],
+      "acceptance": [
+        "Real Persona requirement produces SourceRecord and one mutable StrategySpec draft",
+        "Approved StrategySpec produces authoritative ExperimentRun",
+        "Unapproved spec and immutable approved artifact negative gates pass",
+        "Duplicate concurrency provider Registry research failure and restart cases pass",
+        "BFF and controller terminal truth match every authority"
+      ],
+      "next": "Run and archive the loops one through three product drill",
+      "wave": 4,
+      "fleet_lane": "verify-knowledge",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "real Persona source requirement",
+        "approved StrategySpec"
+      ],
+      "actual_state_sources": [
+        "SourceRecord",
+        "StrategySpec draft",
+        "ExperimentRun and BFF truth"
+      ],
+      "proof_required": [
+        "EP3 real service-boundary drill",
+        "duplicate concurrency and restart",
+        "failure DLQ replay",
+        "formal reviewed evidence manifest"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No uncontrolled external crawl"
+      ],
+      "dispatch_rules": [
+        "Use bounded allowed provider input",
+        "Do not mutate approved artifact",
+        "Archive exact correlation and deployment identity"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-VERIFY-KNOW-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-VERIFY-LEARN-001",
+      "title": "Prove Teaching, Agora, Imitation, and Consultation product flows",
+      "summary_zh": "驗證 teaching eval/commit、Agora dataset、imitation candidate與 consultation memo/handoff 全部真實跨服務、tenant-safe、可重啟且不碰 runtime。",
+      "phase": "Twelve Loop Remediation / Product Drills",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-TEACH-001",
+        "L12-IMIT-001",
+        "L12-CONS-001",
+        "L12-TRUTH-001"
+      ],
+      "artifacts": [
+        "scripts/verify_twelve_loop_learning.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-001"
+      ],
+      "acceptance": [
+        "Teaching eval gates one persona commit with before and after readback",
+        "Agora evidence creates tenant-scoped DatasetVersion and acknowledged handoff",
+        "Real dataset creates a gated imitation candidate without seed fallback",
+        "Real consultation workflow creates one memo and one governance handoff",
+        "Auth tenant duplicate multi-worker restart DLQ and no-runtime-mutation cases pass"
+      ],
+      "next": "Run and archive the loops four through seven product drill",
+      "wave": 4,
+      "fleet_lane": "verify-learning",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "authenticated teaching and Agora commands",
+        "real DatasetVersion and ConsultRequest"
+      ],
+      "actual_state_sources": [
+        "persona commit",
+        "ShadowImitationCandidate",
+        "ConsultMemo and governance handoff"
+      ],
+      "proof_required": [
+        "EP3 real service-boundary drill",
+        "tenant and RBAC matrix",
+        "multi-worker restart and DLQ",
+        "formal reviewed evidence manifest"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No direct runtime mutation"
+      ],
+      "dispatch_rules": [
+        "Keep learning outputs review-gated",
+        "No synthetic participant or dataset",
+        "Archive terminal downstream readback"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-VERIFY-LEARN-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-VERIFY-RUNTIME-001",
+      "title": "Prove Deployment and governed-paper Capital recovery",
+      "summary_zh": "驗證 immutable approval→DeploymentPlan→RuntimeBinding→exactly-one worker→signal/order/fill/heartbeat，含 kill、pause、retire、full restart、scope isolation與 compensation。",
+      "phase": "Twelve Loop Remediation / Product Drills",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-CAP-001",
+        "L12-MANIFEST-001",
+        "L12-TRUTH-001"
+      ],
+      "artifacts": [
+        "scripts/verify_twelve_loop_runtime.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001"
+      ],
+      "acceptance": [
+        "Immutable approved artifact reaches one RuntimeBinding and one paper worker",
+        "Duplicate and crash-after-side-effect paths create no duplicate binding or order",
+        "Kill one pause retire and full restart converge correctly",
+        "Missing or mismatched signal scope is rejected and durable-DLQ'd",
+        "Order fill position heartbeat and BFF stage truth share authoritative correlation"
+      ],
+      "next": "Run and archive the loops eight and nine governed-paper drill",
+      "wave": 4,
+      "fleet_lane": "verify-runtime",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment",
+        "capital_pool_execution"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "immutable approved deployment command",
+        "active governed-paper RuntimeBinding"
+      ],
+      "actual_state_sources": [
+        "deployment saga and RuntimeBinding",
+        "paper worker order fill position and heartbeat"
+      ],
+      "proof_required": [
+        "EP4 governed-paper drill",
+        "kill pause retire and full restart",
+        "signal isolation and lossless retry",
+        "formal reviewed evidence manifest"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "Paper only",
+        "Kill switch has priority",
+        "Archive exact before receipt and terminal state"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-VERIFY-RUNTIME-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-VERIFY-OBS-001",
+      "title": "Prove Telemetry, Reconciliation, Evolution, and BFF Health chains",
+      "summary_zh": "驗證 runtime anomaly→telemetry→drift→incident→postmortem→EvolutionDecision→approved action，以及 downstream failure→infrastructure telemetry→incident→recovery。",
+      "phase": "Twelve Loop Remediation / Product Drills",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-REC-001",
+        "L12-EVO-001",
+        "L12-BFF-001",
+        "L12-TRUTH-001"
+      ],
+      "artifacts": [
+        "scripts/verify_twelve_loop_observability.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001"
+      ],
+      "acceptance": [
+        "All current runtime summaries reconcile without fabricated identity",
+        "Heartbeat loss order rejection and drawdown open one correlated incident",
+        "Resolved incident produces one postmortem and one governed EvolutionDecision",
+        "Approved action reaches real downstream terminal state with retry and compensation",
+        "BFF downstream stop and recovery emits accepted infrastructure telemetry and resolves one incident"
+      ],
+      "next": "Run and archive the loops ten through twelve product drill",
+      "wave": 4,
+      "fleet_lane": "verify-observability",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "real runtime and infrastructure anomalies",
+        "approved EvolutionDecision"
+      ],
+      "actual_state_sources": [
+        "TelemetryEvent DriftReport IncidentCase",
+        "Postmortem EvolutionDecision downstream receipt",
+        "BFF health truth"
+      ],
+      "proof_required": [
+        "EP3 and EP4 real service drill",
+        "duplicate concurrency restart and replay",
+        "downstream stop and recovery",
+        "formal reviewed evidence manifest"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No unapproved runtime mutation"
+      ],
+      "dispatch_rules": [
+        "Do not fabricate telemetry correlation",
+        "Keep reconciliation advisory",
+        "Archive each durable boundary"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-OBS-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-VERIFY-OBS-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-HOSTED-001",
+      "title": "Deploy and restart-drill the complete twelve-loop candidate",
+      "summary_zh": "把精確 merge 部署到 replacement dev，核對 FE/BFF manifest，執行全 stack restart、source-to-health與runtime-to-incident-to-evolution兩條跨 loop drill。",
+      "phase": "Twelve Loop Remediation / Hosted Acceptance",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "L12-FE-TRUTH-001",
+        "L12-VERIFY-KNOW-001",
+        "L12-VERIFY-LEARN-001",
+        "L12-VERIFY-RUNTIME-001",
+        "L12-VERIFY-OBS-001"
+      ],
+      "artifacts": [
+        "scripts/verify_twelve_loop_hosted.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-001"
+      ],
+      "acceptance": [
+        "Hosted manifest identifies exact merged Pantheon and execute-plans commits and images",
+        "All required workers are healthy with twelve current accepted controller records",
+        "Full stack restart preserves or recovers in-flight work without duplicate effects",
+        "Source-to-health and runtime-to-incident-to-evolution drills pass on replacement dev",
+        "Hosted desktop mobile auth tenant safety and no-live-capital evidence pass"
+      ],
+      "next": "Run the serialized replacement-dev global restart and cross-loop drill",
+      "wave": 5,
+      "fleet_lane": "hosted-drill",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "merged twelve-loop candidate",
+        "hosted deployment manifest"
+      ],
+      "actual_state_sources": [
+        "replacement dev services and controllers",
+        "hosted FE/BFF truth",
+        "cross-loop terminal drill state"
+      ],
+      "proof_required": [
+        "exact deployment identity",
+        "full-stack restart and RPO proof",
+        "two positive cross-loop drills",
+        "hosted security and browser evidence"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation"
+      ],
+      "dispatch_rules": [
+        "Run under the dev deployment lease",
+        "Gate before hosted symlink switch and retain rollback",
+        "Do not use the suspended project or old host"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-HOSTED-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CLOSE-001",
+      "title": "Admit evidence and close the twelve-loop program",
+      "summary_zh": "重跑所有 evidence schema/checksum/guardrail，逐 loop 確認 current controller/terminal truth，取得正式 reviewer 與 Human/Ops verdict，只提升實際證明的 maturity。",
+      "phase": "Twelve Loop Remediation / Closeout",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "L12-HOSTED-001",
+        "L12-TRUTH-001",
+        "L12-SIGNOFF-001"
+      ],
+      "artifacts": [
+        "docs/deployment/loop-catalog.registry.json",
+        "docs/04/pantheon_twelve_loop_gap_2026-07-26",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001"
+      ],
+      "acceptance": [
+        "Every predecessor is done with merged reviewed current evidence",
+        "Every evidence manifest passes schema checksum and closeout truth replay",
+        "All twelve controller records and terminal actual-state readbacks are current and accepted",
+        "No blocking residual risk stale deployment contradiction or missing security proof remains",
+        "Catalog maturity exactly matches proved scope and formal Human-Ops verdict is archived"
+      ],
+      "next": "Fail closed until the complete evidence and Human-Ops verdict are available",
+      "wave": 5,
+      "fleet_lane": "program-closeout",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "complete task DAG",
+        "current hosted deployment and evidence policy"
+      ],
+      "actual_state_sources": [
+        "task archives and reviewed evidence manifests",
+        "current controller and BFF truth",
+        "formal Human-Ops verdict"
+      ],
+      "proof_required": [
+        "all evidence schema and checksum validation",
+        "zero-failure loop closeout guardrail",
+        "current deployment/controller readback",
+        "formal reviewer and Human-Ops verdict"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No maturity claim above evidence"
+      ],
+      "dispatch_rules": [
+        "This is the unique program sink",
+        "Do not waive blocking risk",
+        "Do not close from local tests or queued receipts"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CLOSE-001.md",
+      "requires_human_ops_signoff": true
+    }
+  ]
+}

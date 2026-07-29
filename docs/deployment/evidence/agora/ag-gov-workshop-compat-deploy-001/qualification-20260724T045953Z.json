@@ -1,0 +1,208 @@
+{
+  "schema_version": "pantheon.agora.governance-workshop-compat-deployment-evidence.v1",
+  "task_id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+  "recorded_at": "2026-07-24T04:59:53.653598Z",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "environment": "dev",
+  "accepted": true,
+  "expected_pair": {
+    "backend_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+    "frontend_sha": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+    "contract_commit": "9e909de182f9f2379d23e8e6b81eefec29ffbce7",
+    "compatibility_manifest_sha256": "d61e11cf2cead97d4a66ab153a2081ef4d633671ee4f962d271a7b3feeb86867"
+  },
+  "contract_integrity": {
+    "bundle_index_sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870",
+    "openapi_sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86",
+    "capability_manifest_sha256": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1",
+    "backend_handoff_sha256": "8510946b40ec2adc11788dc40be7cd8db9fc824184c8b1faabe3e0f62f29312b",
+    "frontend_handoff_sha256": "5fa6c75ae6e8c044c038570a7765522fa145c1b603cc66e4db72bdf6898b3f2b",
+    "backend_tree": "963dbd087ebf608cf5533c4047f6b5fb908fd6fd",
+    "frontend_tree": "064ffbae400918aaa359902a3472e74cc4f752fa"
+  },
+  "workflows": {
+    "backend_initial_deploy": {
+      "repository": "ajoe734/pantheon",
+      "run_id": 30065241892,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/30065241892",
+      "status": "completed",
+      "conclusion": "success",
+      "component": "bff",
+      "target_ref": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+      "auth_profile": "strict"
+    },
+    "frontend_integration_gate": {
+      "repository": "ajoe734/execute-plans",
+      "run_id": 30003411349,
+      "url": "https://github.com/ajoe734/execute-plans/actions/runs/30003411349",
+      "status": "completed",
+      "conclusion": "success",
+      "candidate_sha": "e4399e3ec68f882ace35d0349e6597cdd101525f"
+    },
+    "frontend_deploy": {
+      "repository": "ajoe734/execute-plans",
+      "run_id": 30067684910,
+      "url": "https://github.com/ajoe734/execute-plans/actions/runs/30067684910",
+      "status": "completed",
+      "conclusion": "success",
+      "profile": "read-only",
+      "candidate_sha": "e4399e3ec68f882ace35d0349e6597cdd101525f"
+    },
+    "backend_restart": {
+      "repository": "ajoe734/pantheon",
+      "run_id": 30068077516,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/30068077516",
+      "status": "completed",
+      "conclusion": "success",
+      "component": "bff",
+      "target_ref": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+      "auth_profile": "strict",
+      "public_version_proof": "passed",
+      "generic_agora_restart_persistence": "passed",
+      "lease_release": "passed"
+    }
+  },
+  "public_deployment": {
+    "pair_id": "ec91a4aaaee16719f6db6a3d7b6edba048c08e676d789bfb9301df92913c3de2",
+    "release_name": "20260724T045319Z-e4399e3ec68f-gate-30003411349-30067684910-1-3592355",
+    "deployed_at": "20260724T045319Z",
+    "deployment_state": "accepted",
+    "profile": "read-only",
+    "frontend_sha": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+    "bff_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+    "artifact_digest_sha256": "21ca02943702cd89f902be53595db56fa2b4fbb24378f8029973c9b557ed1750",
+    "github_artifact_digest": "sha256:20bd72963da7c997a88dcf33f6c35b86f16ffc8b682ff5cc1835ed956fa1c8fe",
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    }
+  },
+  "probe": {
+    "schema_version": "pantheon.agora.governance-workshop-repair-proof.v1",
+    "seed": {
+      "started_at": "2026-07-24T04:56:02.214831Z",
+      "completed_at": "2026-07-24T04:56:03.619275Z",
+      "accepted": true,
+      "identities": {
+        "owner": {
+          "subject": "pantheon-dev-operator-a",
+          "tenant_id": "tenant-dev",
+          "role": "operator",
+          "mfa_verified": true
+        },
+        "approver": {
+          "subject": "pantheon-dev-approver",
+          "tenant_id": "tenant-dev",
+          "role": "approver",
+          "mfa_verified": true
+        }
+      },
+      "resources": {
+        "strategy_id": "strategy-ag-gov-workshop-20260724T045602Z-633423",
+        "initial_registry_id": "registry-ag-gov-workshop-20260724T045602Z-633423",
+        "active_registry_id": "reg-ws-557d2e781d7c06e8cebb",
+        "workshop_id": "fdf40067-8fa6-45b4-8d55-f78f07b8bde5",
+        "workshop_version_id": "wsv-557d2e781d7c06e8cebb",
+        "approval_id": "approval-ag-gov-workshop-20260724T045602Z-633423"
+      },
+      "checks": [
+        "public_bff_version",
+        "exact_strict_bff_identity",
+        "two_person_identity",
+        "registry_strategy_ids_distinct",
+        "registry_strategy_spec_created",
+        "workshop_created",
+        "workshop_preserves_distinct_registry_strategy_ids",
+        "workshop_owner_read",
+        "workshop_version_created",
+        "version_preserves_distinct_registry_strategy_ids",
+        "workshop_version_selected",
+        "canonical_strategy_workshop_approval_created",
+        "approval_reviewed_by_distinct_actor",
+        "approval_decided_by_distinct_actor",
+        "canonical_approval_binding",
+        "workshop_research_handoff_created",
+        "workshop_concluded",
+        "conclusion_preserves_repaired_identity"
+      ]
+    },
+    "verify_after_restart": {
+      "started_at": "2026-07-24T04:59:53.341568Z",
+      "completed_at": "2026-07-24T04:59:53.653598Z",
+      "accepted": true,
+      "checks": [
+        "public_bff_version",
+        "exact_strict_bff_identity",
+        "public_frontend_deployment_manifest",
+        "public_manifest_exact_safe_pair",
+        "initial_registry_readback_after_restart",
+        "initial_registry_identity_after_restart",
+        "active_version_registry_readback_after_restart",
+        "active_version_registry_identity_after_restart",
+        "approval_readback_after_restart",
+        "canonical_approval_after_restart",
+        "workshop_readback_after_restart",
+        "concluded_repaired_workshop_after_restart"
+      ],
+      "observed": {
+        "approval_target_type": "strategy_workshop",
+        "approval_decision_state": "decided",
+        "approval_decision": "approved",
+        "workshop_status": "concluded",
+        "strategy_id": "strategy-ag-gov-workshop-20260724T045602Z-633423",
+        "active_registry_id": "reg-ws-557d2e781d7c06e8cebb",
+        "final_workshop_version_id": "wsv-557d2e781d7c06e8cebb"
+      }
+    },
+    "safety": {
+      "backing_stores_edited_directly": false,
+      "credentials_or_tokens_emitted": false,
+      "execution_authority": "none",
+      "no_live_capital": true,
+      "research_mode": "handoff_only",
+      "called_deployment_order_broker_allocation_or_capital_api": false
+    }
+  },
+  "fail_closed_runs": [
+    {
+      "run_id": 30065717086,
+      "repository": "ajoe734/pantheon",
+      "accepted_as_evidence": false,
+      "reason": "root attempt one exceeded the BFF readiness window; attempt two was externally cancelled during image export"
+    },
+    {
+      "run_id": 30066014879,
+      "repository": "ajoe734/execute-plans",
+      "accepted_as_evidence": false,
+      "reason": "pre-switch probes rejected an overlapping BFF restart and then stale lifecycle-projector readiness; the previous symlink stayed served"
+    }
+  ],
+  "operational_recovery": {
+    "initial_bounded_action": {
+      "action": "restart loop-run-projector-scheduler",
+      "code_or_configuration_changed": false,
+      "backing_store_edited": false,
+      "observed_result": "recovery transitioned to live mode, generation advanced, backlog remained zero"
+    },
+    "persistent_managed_dev_fix": {
+      "pull_request": 4043,
+      "url": "https://github.com/ajoe734/pantheon/pull/4043",
+      "merge_commit": "406abcad90421bc262961adb6cb3b6ab89c04962",
+      "public_freshness_max_age_seconds": 300,
+      "observed_result": "strict exact-SHA operator-bff stayed ready through the accepted frontend switch and governed BFF restart"
+    }
+  },
+  "validation": {
+    "manifest_and_isolation_tests": "19 passed",
+    "governance_and_workshop_tests": "180 passed, 5 skipped",
+    "full_agora_suite": "466 passed, 8 skipped",
+    "contract_bundle_check": "passed",
+    "frontend_handoff_verify": "passed",
+    "deployment_manifest_gate": "passed",
+    "probe_compile_and_lint": "passed"
+  }
+}

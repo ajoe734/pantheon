@@ -148,6 +148,33 @@ def test_propose_returns_proposed_state():
     assert body["decision"]       is None
 
 
+def test_propose_accepts_strategy_workshop_target():
+    did = uid()
+    r = client.post("/api/governance/approvals", json={
+        "decision_id": did,
+        "target_type": "strategy_workshop",
+        "target_id": "workshop-public-api",
+        "target_version": "workshop-version-public-api",
+        "risk_level": "low",
+        "tenant_id": "tenant-public-api",
+        "owner_user_id": "user-public-api",
+    })
+
+    assert r.status_code == 201, r.text
+    assert r.json()["target_type"] == "strategy_workshop"
+
+
+def test_propose_rejects_noncanonical_workshop_alias():
+    r = client.post("/api/governance/approvals", json={
+        "decision_id": uid(),
+        "target_type": "workshop",
+        "target_id": "workshop-alias",
+        "target_version": "workshop-version-alias",
+    })
+
+    assert r.status_code == 422
+
+
 def test_propose_autogenerates_decision_id():
     r = client.post("/api/governance/approvals", json={
         "target_type":    "strategy_spec",

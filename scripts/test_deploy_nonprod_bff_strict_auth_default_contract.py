@@ -339,6 +339,20 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}"
         in workflow
     )
+    auth_floor = workflow[
+        workflow.index("- name: Enforce dev auth deployment floor") :
+        workflow.index(
+            "- name: Authenticate to Google Cloud via Workload Identity Federation"
+        )
+    ]
+    deploy_step = workflow[
+        workflow.index("- name: Deploy dev VM stack under lease") :
+        workflow.index("- name: Ensure governed dev paper baseline under lease")
+    ]
+    hosted_probe = workflow[
+        workflow.index("- name: Dev canonical paper lifecycle hosted probe") :
+        workflow.index("- name: Upload canonical paper lifecycle hosted evidence")
+    ]
 
     for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
         client_id = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_ID"
@@ -347,7 +361,20 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         assert f'{client_secret}="${{{client_secret}:-}}"' in script
         assert f"PANTHEON_{client_id}" in script
         assert script.count(f"{compose_client_id}=") == 2
-        assert workflow.count(f"secrets.{client_secret}") == 2
+        secret_ref = f"secrets.{client_secret}"
+        assert auth_floor.count(secret_ref) == 1
+        assert deploy_step.count(secret_ref) == 1
+        if identity == "OPERATOR_A":
+            assert hosted_probe.count(secret_ref) == 1
+            assert (
+                "DEV_BFF_OIDC_CLIENT_SECRET: "
+                "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
+                in hosted_probe
+            )
+            assert workflow.count(secret_ref) == 4
+        else:
+            assert secret_ref not in hosted_probe
+            assert workflow.count(secret_ref) == 3
 
 
 def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
@@ -365,16 +392,23 @@ def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
         "DEV_BFF_ROLE_MAP",
         "DEV_BFF_ROLE_MAP_MODE",
         "DEV_BFF_DEFAULT_ROLE",
+        "DEV_BFF_MFA_CLAIMS",
+        "DEV_BFF_REQUIRE_EMAIL_VERIFIED",
     ):
         assert name in script
         assert name in workflow
 
     assert 'DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"' in script
-    assert "app_metadata.roles,roles" in workflow
+    assert "DEV_BFF_ROLE_CLAIMS || 'roles,role'" in workflow
     assert "pantheon-operator=operator" in workflow
     assert "DEV_BFF_ROLE_MAP_MODE || 'strict'" in workflow
     assert "DEV_BFF_DEFAULT_ROLE || 'viewer'" in workflow
-    assert "kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration" in workflow
+    assert "https://securetoken.google.com/pantheon-lupin-dev-20260719" in workflow
+    assert "pantheon-lupin-dev-20260719" in workflow
+    assert "securetoken@system.gserviceaccount.com" in workflow
+    assert "firebase.sign_in_second_factor" in workflow
+    assert "DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true'" in workflow
+    assert "supabase.co/auth/v1" not in workflow
     assert "user_metadata.roles" not in workflow
 
 

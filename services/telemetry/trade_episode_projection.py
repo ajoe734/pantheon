@@ -87,6 +87,19 @@ class TradeEpisodeProjectionStore:
         with self._lock:
             # 1. Idempotent check
             existing_events = self._events[trade_episode_id]
+            existing_tenants = {
+                str(ev.get("tenant_id") or "").strip()
+                for ev in existing_events
+                if str(ev.get("tenant_id") or "").strip()
+            }
+            incoming_tenant = str(event.get("tenant_id") or "").strip()
+            if existing_tenants and incoming_tenant not in existing_tenants:
+                log.warning(
+                    "Rejected cross-tenant trade episode projection event %s for %s",
+                    event_id,
+                    trade_episode_id,
+                )
+                return None
             if any(ev.get("event_id") == event_id for ev in existing_events):
                 log.debug("Event %s already exists for episode %s; skipping ingest", event_id, trade_episode_id)
                 return self._projections.get(trade_episode_id)
@@ -109,6 +122,7 @@ class TradeEpisodeProjectionStore:
         *,
         as_of: Optional[str] = None,
         as_of_sequence: Optional[int] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """
         Get a projection for a trade episode.
@@ -117,9 +131,22 @@ class TradeEpisodeProjectionStore:
         """
         with self._lock:
             if as_of or as_of_sequence is not None:
-                return self._rebuild_projection(trade_episode_id, as_of=as_of, as_of_sequence=as_of_sequence)
+                summary = self._rebuild_projection(
+                    trade_episode_id,
+                    as_of=as_of,
+                    as_of_sequence=as_of_sequence,
+                )
+                if (
+                    summary is not None
+                    and tenant_id is not None
+                    and summary.get("tenant_id") != tenant_id
+                ):
+                    return None
+                return summary
             summary = self._projections.get(trade_episode_id)
-            if summary:
+            if summary and (
+                tenant_id is None or summary.get("tenant_id") == tenant_id
+            ):
                 return json.loads(json.dumps(summary))
             return None
 
@@ -139,6 +166,7 @@ class TradeEpisodeProjectionStore:
         coverage_state: Optional[str] = None,
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         List projections with filters, sorting, and cursor pagination.
@@ -151,6 +179,8 @@ class TradeEpisodeProjectionStore:
         # Apply filters
         filtered: list[dict[str, Any]] = []
         for proj in results:
+            if tenant_id is not None and proj.get("tenant_id") != tenant_id:
+                continue
             if persona_id and proj.get("persona_id") != persona_id:
                 continue
             if environment and proj.get("environment") != environment:
@@ -238,6 +268,7 @@ class TradeEpisodeProjectionStore:
 
         return {
             "trade_episode_id": trade_episode_id,
+            "tenant_id": ev.get("tenant_id"),
             "environment": ev.get("environment") or ev.get("deployment_stage") or "paper",
             "persona_id": ev.get("persona_id") or "unknown",
             "strategy_id": ev.get("strategy_id") or "unknown",
@@ -354,6 +385,7 @@ class TradeEpisodeProjectionStore:
             if event_type == "trade_episode.opened":
                 proj = {
                     "trade_episode_id": ev.get("trade_episode_id"),
+                    "tenant_id": ev.get("tenant_id"),
                     "environment": ev.get("environment") or ev.get("deployment_stage"),
                     "persona_id": ev.get("persona_id"),
                     "strategy_id": payload.get("strategy_id") or ev.get("strategy_id") or ev.get("persona_id") or "unknown",

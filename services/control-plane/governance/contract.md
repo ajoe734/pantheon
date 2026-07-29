@@ -60,6 +60,7 @@ Conflict rule: this document is the single source of truth for approval authorit
 |---|---|
 | `registry_entry` | 一般 registry artifact（strategy_spec、model_artifact 等） |
 | `strategy_spec` | OC-003 StrategySpec |
+| `strategy_workshop` | Strategy Workshop 的指定 workshop version；research 與 conclude 共用此唯一 canonical target |
 | `model_artifact` | 訓練/優化後的模型 artifact |
 | `allocation_policy` | 資金分配策略 |
 | `persona_capital_binding` | PersonaCapitalBinding（binding 建立/修改批准） |

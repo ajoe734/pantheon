@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from io import StringIO
 from typing import Any, Mapping, Sequence
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 from .base import (
     AuthPolicy,
@@ -189,13 +189,17 @@ def _date_from_finra(value: Any) -> str:
 
 def _request_json(url: str, *, user_agent: str, timeout_seconds: float = 20.0) -> Mapping[str, Any]:
     request = urllib.request.Request(
-        guard_external_url(url, caller="source_ingest.us_public"),
+        url,
         headers={
             "Accept": "application/json",
             "User-Agent": user_agent,
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with open_external_url(
+        request,
+        caller="source_ingest.us_public",
+        timeout=timeout_seconds,
+    ) as response:
         payload = json.loads(response.read().decode("utf-8"))
     if not isinstance(payload, Mapping):
         raise SourceEvidenceError("provider response must be a JSON object")
@@ -209,10 +213,14 @@ def _request_text(
     timeout_seconds: float = 20.0,
 ) -> str:
     request = urllib.request.Request(
-        guard_external_url(url, caller="source_ingest.us_public"),
+        url,
         headers={"Accept": "text/csv,text/plain,*/*", "User-Agent": user_agent},
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with open_external_url(
+        request,
+        caller="source_ingest.us_public",
+        timeout=timeout_seconds,
+    ) as response:
         return response.read().decode("utf-8", errors="replace")
 
 

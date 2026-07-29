@@ -1,0 +1,369 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/v13/candidate_member_truth_projection",
+  "title": "CandidateMemberTruthProjectionBundle",
+  "description": "AG-CAND-TRUTH-001-BE additive contract: every candidate field rendered by Trading Room is either linked to a durable record of the same candidate (with provenance and as-of) or explicitly typed unavailable. The BFF never fabricates rationale, concerns, next-event, or evidence narrative and never presents a Sharpe-derived value as a generic confidence score.",
+  "type": "object",
+  "definitions": {
+    "FieldProvenance": {
+      "type": "object",
+      "required": ["source_type", "source_ref", "as_of"],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "candidate_pool_member",
+            "candidate_score_result",
+            "candidate_review",
+            "candidate_monitoring"
+          ]
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Durable record reference. Always embeds the pool_id and the requested candidate artifact_id so the value is traceable to the same real candidate."
+        },
+        "as_of": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Source-record timestamp the value was projected from."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UnavailableField": {
+      "type": "object",
+      "required": ["availability", "reason"],
+      "properties": {
+        "availability": {"const": "unavailable"},
+        "reason": {
+          "type": "string",
+          "enum": ["score_not_run", "no_governed_source", "not_recorded"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ComponentDigest": {
+      "type": "object",
+      "required": ["component_id", "label", "contribution", "explanation"],
+      "properties": {
+        "component_id": {"type": "string", "minLength": 1},
+        "label": {"type": ["string", "null"]},
+        "contribution": {"type": ["number", "null"]},
+        "explanation": {
+          "type": ["string", "null"],
+          "description": "Verbatim explanation stored on the candidate's own score result for operator-grade detail reads; null in every list response and viewer-only detail read. Never synthesized by the BFF."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CandidateRationaleValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "decision", "rationale", "reviewed_by", "reviewed_at"],
+          "properties": {
+            "kind": {"const": "operator_review_rationale"},
+            "decision": {"type": ["string", "null"]},
+            "rationale": {"type": "string", "minLength": 1},
+            "reviewed_by": {"type": ["string", "null"]},
+            "reviewed_at": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "band", "effective_score", "top_components"],
+          "properties": {
+            "kind": {"const": "score_component_attribution"},
+            "band": {"type": ["string", "null"]},
+            "effective_score": {"type": ["number", "null"]},
+            "top_components": {
+              "type": "array",
+              "items": {"$ref": "#/definitions/ComponentDigest"}
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "CandidateConcernsValue": {
+      "type": "object",
+      "required": ["kind", "blockers", "penalty_components"],
+      "properties": {
+        "kind": {"const": "score_risk_attribution"},
+        "blockers": {"type": "array", "items": {"type": "string"}},
+        "penalty_components": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/ComponentDigest"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "CandidateNextEventValue": {
+      "type": "object",
+      "required": ["kind", "monitoring_state", "review_due_at", "trigger_conditions"],
+      "properties": {
+        "kind": {"const": "monitoring_schedule"},
+        "monitoring_state": {"type": "string", "enum": ["active", "paused"]},
+        "review_due_at": {"type": ["string", "null"]},
+        "trigger_conditions": {"type": "array", "items": {"type": "object"}},
+        "added_by": {"type": ["string", "null"]},
+        "added_at": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "CandidateEvidenceItem": {
+      "type": "object",
+      "required": ["component_id", "evidence_refs", "summary", "summary_redacted"],
+      "properties": {
+        "component_id": {"type": "string", "minLength": 1},
+        "label": {"type": ["string", "null"]},
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "description": "Present only in detail responses for operator-grade roles. List responses and viewer-only callers always receive null with summary_redacted=true; raw private content never appears in list responses."
+        },
+        "summary_redacted": {"type": "boolean"},
+        "redaction_reason": {
+          "type": "string",
+          "enum": ["list_response", "viewer_role"]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {"summary_redacted": {"const": true}},
+            "required": ["summary_redacted"]
+          },
+          "then": {
+            "properties": {"summary": {"type": "null"}},
+            "required": ["redaction_reason"]
+          },
+          "else": {
+            "properties": {"summary": {"type": "string", "minLength": 1}},
+            "not": {"required": ["redaction_reason"]}
+          }
+        }
+      ]
+    },
+    "CandidateEvidenceValue": {
+      "type": "object",
+      "required": ["kind", "items", "total_refs"],
+      "properties": {
+        "kind": {"const": "score_evidence_refs"},
+        "items": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/CandidateEvidenceItem"},
+          "minItems": 1
+        },
+        "total_refs": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "CandidateDetailsValue": {
+      "type": "object",
+      "required": ["kind", "strategy_ref", "lifecycle_state", "created_at"],
+      "properties": {
+        "kind": {"const": "candidate_identity"},
+        "title": {"type": ["string", "null"]},
+        "strategy_ref": {"type": ["string", "null"]},
+        "run_ref": {"type": ["string", "null"]},
+        "producing_persona_id": {"type": ["string", "null"]},
+        "lifecycle_state": {"type": ["string", "null"]},
+        "created_at": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "CandidateRationaleAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateRationaleValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateConcernsAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateConcernsValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateNextEventAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateNextEventValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateEvidenceAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateEvidenceValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateDetailsAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateDetailsValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateRationaleAvailableField"},
+        {"$ref": "#/definitions/CandidateConcernsAvailableField"},
+        {"$ref": "#/definitions/CandidateNextEventAvailableField"},
+        {"$ref": "#/definitions/CandidateEvidenceAvailableField"},
+        {"$ref": "#/definitions/CandidateDetailsAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateRationaleFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateRationaleAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateConcernsFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateConcernsAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateNextEventFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateNextEventAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateEvidenceFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateEvidenceAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateDetailsFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateDetailsAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateTruthFields": {
+      "type": "object",
+      "required": ["rationale", "concerns", "next_event", "evidence", "details"],
+      "properties": {
+        "rationale": {"$ref": "#/definitions/CandidateRationaleFieldState"},
+        "concerns": {"$ref": "#/definitions/CandidateConcernsFieldState"},
+        "next_event": {"$ref": "#/definitions/CandidateNextEventFieldState"},
+        "evidence": {"$ref": "#/definitions/CandidateEvidenceFieldState"},
+        "details": {"$ref": "#/definitions/CandidateDetailsFieldState"}
+      },
+      "additionalProperties": false
+    },
+    "ScoreSemanticsEntry": {
+      "type": "object",
+      "required": ["kind", "availability", "is_confidence_score"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["recipe_weighted_score", "sharpe_ratio"]
+        },
+        "availability": {"type": "string", "enum": ["available", "unavailable"]},
+        "is_confidence_score": {
+          "const": false,
+          "description": "Neither the recipe-weighted score nor the Sharpe-derived summary may be presented as a generic confidence score."
+        },
+        "scale_min": {"type": "number"},
+        "scale_max": {"type": "number"},
+        "recipe_id": {"type": ["string", "null"]},
+        "recipe_version": {"type": ["integer", "null"]},
+        "transformation": {
+          "type": "string",
+          "enum": ["sharpe_ratio_from_producing_research_run"]
+        },
+        "source_ref": {"type": ["string", "null"]},
+        "as_of": {"type": ["string", "null"]},
+        "reason": {
+          "type": "string",
+          "enum": ["score_not_run", "no_governed_source", "not_recorded"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "CandidateScoreSemantics": {
+      "type": "object",
+      "required": ["effective_score", "sharpe_summary"],
+      "properties": {
+        "effective_score": {"$ref": "#/definitions/ScoreSemanticsEntry"},
+        "sharpe_summary": {"$ref": "#/definitions/ScoreSemanticsEntry"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateMemberTruthProjection": {
+      "type": "object",
+      "required": ["artifact_id", "fields", "as_of", "score_semantics"],
+      "properties": {
+        "artifact_id": {"type": "string", "minLength": 1},
+        "fields": {"$ref": "#/definitions/CandidateTruthFields"},
+        "as_of": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Maximum source as-of across the member's available fields; falls back to the pool snapshot time."
+        },
+        "score_semantics": {"$ref": "#/definitions/CandidateScoreSemantics"}
+      },
+      "description": "Additive projection keys carried by every candidate pool member list item and member detail response. Base member keys (strategy_ref, title, lifecycle_state, sharpe_summary, run_ref, created_at, current_score, band, rank, effective_score) remain governed by the frozen v1.4 contract."
+    },
+    "CandidateMemberPageInfo": {
+      "type": "object",
+      "required": ["next_page_token", "page_size", "has_more", "total", "order_by"],
+      "properties": {
+        "next_page_token": {"type": ["string", "null"]},
+        "page_size": {"type": "integer", "minimum": 0},
+        "has_more": {"type": "boolean"},
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total members after lifecycle_state/band filters, before pagination."
+        },
+        "order_by": {"const": "created_at,artifact_id"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateMemberListFreshness": {
+      "type": "object",
+      "required": ["pool_snapshot_at", "data_cutoff", "last_score_run_at"],
+      "properties": {
+        "pool_snapshot_at": {"type": ["string", "null"]},
+        "data_cutoff": {"type": ["string", "null"]},
+        "last_score_run_at": {
+          "type": ["string", "null"],
+          "description": "Null until the first score run; observably distinguishes never-scored pools from fresh ones."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

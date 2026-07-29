@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "AG-CAND-TRUTH-001-BE",
+  "archived_at": "2026-07-22T21:20:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-CAND-TRUTH-001-BE.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-CAND-TRUTH-001-BE.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/control-plane/bff",
+      "services/research",
+      "services/control-plane/specs/agora"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "agora-candidate-backend",
+    "id": "AG-CAND-TRUTH-001-BE",
+    "last_update": "2026-07-22T21:20:29Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized candidate provenance projection: PR #3980 merged to dev as 5004450c5493aa8aef284cf42439c9b27ef54235; post-compose truth/pool/bundle 21 passed and Agora store/router/projection regression 26 passed, 2 skipped with AGORA_RESEARCH_TEST_POSTGRES_DSN unset; all required GitHub checks passed.",
+    "owner": "Codex",
+    "phase": "Agora Truth / Wave 0 candidate backend",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "review_file": "docs/04/pantheon_agora_remaining_work_2026-07-22/archive/AG-CAND-TRUTH-001-BE-review-2026-07-22.md",
+    "review_notes_zh": [
+      "五項 acceptance 全數以程式碼+契約+測試核驗：每個 non-null 欄位以 provenance.source_ref 綁定同一 candidate、缺欄位為 typed unavailable、cross-tenant/viewer redaction 測試綠、pagination/order 穩定且 freshness 可觀測、Sharpe/effective score 語義明確且 schema 以 const 鎖定 is_confidence_score=false",
+      "Reviewer 於 HEAD 7c0beb1df 重跑驗證：candidate truth/pool/bundle 21 passed；agora regression 26 passed 2 skipped",
+      "v1.12 bundle 為 additive，v1.10/v1.11 已發布位元組未變；Codex2 前輪 review-fix 項目（synthetic evidence refs 移除、_updated_at as_of、score list 隱私 explanation 剝除）皆已落地",
+      "非阻斷觀察記於 review file：_score_source_ref 直接索引 scored_at、detail 回傳 raw reviews/monitoring（沿用既有行為）、offset page token 非 cursor-safe"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-CAND-TRUTH-001-BE.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "讓 candidate DTO 的理由、疑慮、事件、證據與細節都屬於同一真實 candidate 並帶 provenance/as-of；缺欄位明確 unavailable。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Complete Agora candidate provenance projection",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T21:20:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-cand-truth-001-be",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-CAND-TRUTH-001-BE",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "3f71ed3859bd29651a7313c2aae653cbcf4ca766",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-cand-truth-001-be",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "804e5f6550c6d07bf69d2c5a64700fb8c7cc074b",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-CAND-TRUTH-001-BE",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5004450c5493aa8aef284cf42439c9b27ef54235",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:55:39Z",
+      "from": "Codex",
+      "message": "Please review pushed commit ccd63689ea2773d22f34816fde4f724e697ad033 (plus recovered Claude anchor 44025075a). Verify same-candidate provenance, typed unavailable states, cross-tenant/user denial, role-redacted evidence, stable pagination/freshness, explicit non-confidence score semantics, v1.10 OpenAPI/schema hashes, and current replacement-dev BFF host. Validation: 57 passed, 2 skipped only because AGORA_RESEARCH_TEST_POSTGRES_DSN is unset; git diff --check passed.",
+      "resolved_at": "2026-07-22T18:40:18Z",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-BE",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T18:40:18Z",
+      "from": "Codex2",
+      "message": "Review changes required for ccd63689e/44025075a. Passing evidence: focused suite 57 passed, 2 skipped only without AGORA_RESEARCH_TEST_POSTGRES_DSN; v1.10 hashes and replacement BFF host 35.201.204.12 are correct. Blockers: (1) v11 CandidateFieldState uses AvailableField.value={} and does not bind CandidateRationale/Concerns/NextEvent/Evidence/Details value schemas, so value:null validates; CandidateEvidenceItem also validates raw summary with summary_redacted=true. Add field-specific state schemas/conditionals and negative tests. (2) list redaction is bypassed: the exact component explanation hidden at evidence.summary still appears in rationale/concerns ComponentDigest and full current_score.components; return a list-safe score/digest and add tests covering every list path plus viewer detail. (3) generated fallback evidence:// refs from _component_evidence_refs are surfaced as available durable evidence although no source artifact is verified; mark unavailable unless a persisted governed evidence ref exists and test the no-ref path. (4) details provenance uses the pool creation snapshot even after lifecycle mutations; persist/use the member mutation timestamp so per-field as_of remains truthful. Re-run focused suite and refresh v1.10 schema/manifest/OpenAPI hashes.",
+      "resolved_at": "2026-07-22T18:40:18Z",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-BE",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T19:17:59Z",
+      "from": "Codex",
+      "message": "Please re-review pushed HEAD 7c0beb1df4935b13f541ba1fc26f8cc5c8e754fa. The four requested corrections are covered: field-specific states reject null/cross-field values and redacted raw summaries; member and score lists plus viewer detail omit private explanations while operator detail retains them; synthetic evidence fallbacks are removed and no-ref evidence is unavailable; review mutations persist and project member _updated_at in list/detail. Dev v1.10/v1.11 were preserved and candidate truth now publishes additive v1.12/v13 over exact v1.11 hash. Validation: 21 candidate contract tests passed; broader research suite 47 passed/2 Postgres-DSN skips; parent bundle suites 17 passed/2 integration-backend skips; git diff --check passed.",
+      "resolved_at": "2026-07-22T21:07:15Z",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-BE",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T21:07:15Z",
+      "from": "Codex2",
+      "message": "Chair reassigned review from Codex2 to Claude: Codex2 has two consecutive reviewer failures on this review task, including runs codex-20260722T183332Z-7494e3c0 and codex-20260722T194834Z-0dbcbc64; Claude is auth-ready, not dispatch-paused, and distinct from owner Codex.",
+      "resolved_at": "2026-07-22T21:12:00Z",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-BE",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T21:12:00Z",
+      "from": "Claude",
+      "message": "Review approved at task branch HEAD 7c0beb1df (+review record e40580a9a): all five acceptance criteria verified with reviewer-run tests (21 passed truth/pool/bundle; 26 passed agora regression). Returned to owner Codex for finalization: open per-task PR to dev, merge, then done.",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-BE",
+      "to": "Codex",
+      "resolved_at": "2026-07-22T21:20:30Z"
+    }
+  ],
+  "blockers": []
+}

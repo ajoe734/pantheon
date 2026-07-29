@@ -1,0 +1,199 @@
+{
+  "schema_version": "pantheon.ops.claude_dispatch_smoke_evidence.v1",
+  "task": {
+    "id": "OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+    "title": "Read-only Claude supervisor dispatch smoke",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "in_progress_pending_fresh_exact_head_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.json",
+    "evidence_cut_at": "2026-07-28T15:48:29Z"
+  },
+  "scope": {
+    "owned_layer": "Read-only supervisor-to-Claude dispatch and provider/runtime result evidence.",
+    "not_changing": "Supervisor configuration, provider credentials, dispatch policy, task ownership or reviewer assignment, product services, hosted deployment, and twelve-loop product maturity.",
+    "changed_files": [
+      ".orchestrator/task-briefs/ops_l12_claude_dispatch_smoke_20260728.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728/evidence.sha256"
+    ]
+  },
+  "runtime_binding": {
+    "status_root": "/home/lupin/pantheon",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "061408b09aa06943813c97334054bfa29b79e236",
+    "remote": "ajoe734/pantheon",
+    "base_ref": "origin/dev",
+    "config": {
+      "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "modified_at": "2026-07-28T13:05:53.240462671Z",
+      "sha256_at_owner_closeout": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+      "claude_adapter": "claude_cli",
+      "claude_delivery_mode": "claude_cli",
+      "predates_worker_start": true,
+      "edited_by_smoke": false
+    }
+  },
+  "dispatch_proof": {
+    "supervisor_running_observation": {
+      "artifact": "/home/lupin/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260728T132125Z.log",
+      "line": 19,
+      "observed_at": "2026-07-28T13:25:22Z",
+      "observation": "claude1_1:OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728(running)",
+      "sha256_at_owner_closeout": "a9ba032de91af6d5e51454fdf7fd7ab60f15f148d5ea987d8e147f6a0728c583"
+    },
+    "runner_status": {
+      "artifact": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude1-1-20260728T132440Z-0ed52b7d.json",
+      "sha256": "98b3163d9a53307635a6529243eb58acde4dad1b11bb8ceb0b30b9fe087793f7",
+      "run_id": "claude1-1-20260728T132440Z-0ed52b7d",
+      "provider_slot": "claude1-1",
+      "command": ".orchestrator/bin/claude",
+      "started_at": "2026-07-28T13:24:41Z",
+      "finished_at": "2026-07-28T13:25:24Z",
+      "exit_code": 143,
+      "signal": 15,
+      "command_runtime_sha": "061408b09aa06943813c97334054bfa29b79e236"
+    },
+    "activity_events": [
+      {
+        "recorded_at": "2026-07-28T13:24:40Z",
+        "type": "worker_started",
+        "actor": "Orchestrator",
+        "message": "Worker started via claude_cli: owned_ready_dispatch",
+        "run_id": "claude1-1-20260728T132440Z-0ed52b7d"
+      },
+      {
+        "recorded_at": "2026-07-28T13:25:34Z",
+        "type": "start",
+        "actor": "Claude",
+        "attribution": "Emitted by supervisor dispatch-sync with AI_NAME=Claude after the worker run had already ended."
+      },
+      {
+        "recorded_at": "2026-07-28T13:26:33Z",
+        "type": "task_preempted_synced",
+        "actor": "Orchestrator",
+        "attribution": "Post-run reconciliation and preemption; not the cause of the 13:25:24Z termination."
+      },
+      {
+        "recorded_at": "2026-07-28T13:26:39Z",
+        "type": "worker_superseded",
+        "actor": "Orchestrator",
+        "attribution": "Post-run priority supersede; not the cause of the 13:25:24Z termination."
+      }
+    ]
+  },
+  "claude_stream_proof": {
+    "artifact": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T132440798151Z-claude1-1-claude1_1-30630e.log",
+    "sha256": "ba00200586cfa4c19279f9494021547f90a2dae1f9d0759eff9419cdf6cc34be",
+    "claude_code_version": "2.1.220",
+    "model": "claude-opus-5[1m]",
+    "session_id": "6964721c-0447-4925-9d88-39036582a893",
+    "rate_limit": {
+      "status": "allowed_warning",
+      "type": "seven_day",
+      "utilization": 0.53
+    },
+    "tool_calls": [
+      "Bash",
+      "Read",
+      "Bash",
+      "Read",
+      "Read",
+      "Bash",
+      "Read"
+    ],
+    "tool_result_error_count": 0,
+    "permission_denials": [],
+    "interrupt_event_at": "2026-07-28T13:25:22.696Z",
+    "terminal_reason": "aborted_streaming",
+    "terminal_result_is_error": true,
+    "interpretation": "The terminal result is_error flag describes the explicit stream interruption; it does not contradict the zero tool-result error count."
+  },
+  "repository_proof": {
+    "smoke_head": "061408b09aa06943813c97334054bfa29b79e236",
+    "smoke_head_is_ancestor_of_owner_closeout_origin_dev": true,
+    "refreshed_base_ref": "origin/dev",
+    "refreshed_base_sha": "9f7f95e1a10a46248a81b26159e373f75525222f",
+    "refreshed_base_is_ancestor_of_task_head": true,
+    "task_pr": 4300,
+    "prior_reviewed_head": "607df32e1dc658080a282858aa1441967c3df700",
+    "prior_review_is_merge_authority_for_refreshed_head": false,
+    "tracked_diff_during_smoke": [],
+    "cached_diff_during_smoke": [],
+    "remote_task_branch_during_review": null,
+    "task_pr_during_review": null,
+    "only_untracked_artifact_during_smoke": ".orchestrator/task-briefs/ops_l12_claude_dispatch_smoke_20260728.md",
+    "runtime_or_product_files_changed_by_smoke": false
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "A real supervisor-managed Claude worker reaches running.",
+      "status": "pass",
+      "proof": "The supervisor log records the task running; runner status binds run claude1-1-20260728T132440Z-0ed52b7d to .orchestrator/bin/claude, provider slot claude1-1, and runtime SHA 061408b09aa06943813c97334054bfa29b79e236."
+    },
+    {
+      "id": "AC2",
+      "criterion": "The worker makes no repository or configuration changes.",
+      "status": "pass",
+      "proof": "The independently reviewed smoke worktree had no tracked or staged diff, the runtime config predated the run, and the only untracked file was the supervisor-materialized task brief."
+    },
+    {
+      "id": "AC3",
+      "criterion": "The provider/runtime result is reported truthfully and handed off or closed with evidence.",
+      "status": "pass",
+      "proof": "The corrected Codex handoff at 13:44:24Z reports the CLI/model/session/rate-limit/tool/terminal facts and distinguishes the explicit run interruption from later supervisor reconciliation. Codex2 independently approved that evidence at 13:52:59Z."
+    }
+  ],
+  "verification": {
+    "validated_at": "2026-07-28T15:48:29Z",
+    "commands": [
+      {
+        "command": "AI_NAME=Codex \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728",
+        "result": "pass",
+        "conclusion": "Canonical task row is in_progress with owner Codex and reviewer Codex2; its prior review binding names old PR head 607df32e1dc658080a282858aa1441967c3df700."
+      },
+      {
+        "command": "jq '{run_id, task_id, agent, owner, reviewer, status, status_command_runtime, started_at, finished_at, exit_code, signal, command0: .command[0]}' /home/lupin/pantheon/.orchestrator/worker-runtime/status/claude1-1-20260728T132440Z-0ed52b7d.json",
+        "result": "pass",
+        "conclusion": "Runner identity, command, timing, nested status_command_runtime.source_sha, exit 143, and signal 15 match the evidence."
+      },
+      {
+        "command": "jq -R -s 'split(\"\\n\") | map(try fromjson catch empty) | <init, rate-limit, tool-call, tool-result-error, and terminal-result projection>' <claude-stream-log>",
+        "result": "pass",
+        "conclusion": "Seven Bash/Read tool calls, zero tool-result errors, no permission denials, and terminal_reason aborted_streaming."
+      },
+      {
+        "command": "sha256sum /home/lupin/pantheon/.orchestrator/worker-runtime/status/claude1-1-20260728T132440Z-0ed52b7d.json /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T132440798151Z-claude1-1-claude1_1-30630e.log",
+        "result": "pass",
+        "conclusion": "External runner and Claude stream artifacts remain byte-identical to the hashes recorded in this manifest."
+      },
+      {
+        "command": "git merge-base --is-ancestor 061408b09aa06943813c97334054bfa29b79e236 origin/dev && git merge-base --is-ancestor 9f7f95e1a10a46248a81b26159e373f75525222f HEAD && git diff --check",
+        "result": "pass",
+        "conclusion": "Runtime SHA remains on dev ancestry, refreshed dev SHA is composed into the task branch, and the task-owned evidence diff has no whitespace errors."
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "initial_independent_decision": "pass",
+    "initial_reviewed_at": "2026-07-28T13:52:59Z",
+    "initial_reviewed_runtime_head": "061408b09aa06943813c97334054bfa29b79e236",
+    "initial_review_event_id": "ai-status-event-f41cb05955d75ebc3b1ff4d99efbfc9e5b14ab09327d7205e276675d172a6c3f",
+    "prior_exact_task_pr_head": "607df32e1dc658080a282858aa1441967c3df700",
+    "prior_exact_head_approval_reusable": false,
+    "fresh_exact_task_pr_head_binding": "pending",
+    "note": "The independent runtime review passed before owner closeout materialized this manifest. After dev advanced and the task head changed, the task was reopened. The merge gate must receive a fresh Codex2 approval bound to the refreshed exact PR head before merge."
+  },
+  "known_limitations": [
+    "The Claude run was intentionally interrupted before it could complete task work; this smoke proves dispatch-to-running and provider/runtime reporting only.",
+    "The supervisor watchdog log is append-only operational state. Its recorded hash is the owner-closeout observation hash, while the cited line and timestamp are the durable claim.",
+    "External runtime artifacts remain under the validated Pantheon supervisor roots and are not copied into this repository.",
+    "This evidence does not claim hosted frontend/BFF acceptance or twelve-loop product completion."
+  ]
+}

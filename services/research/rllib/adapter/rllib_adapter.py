@@ -19,10 +19,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
+try:
+    from ..security import require_secure_ray_runtime
+except ImportError:
+    from security import require_secure_ray_runtime  # type: ignore
+
 RLLIB_PACKAGE = "ray[rllib]"
-RLLIB_VERSION_PIN = "==2.9.3"
+RLLIB_VERSION_PIN = "==2.55.1"
 RAY_TUNE_PACKAGE = "ray[tune]"
-RAY_TUNE_VERSION_PIN = "==2.9.3"
+RAY_TUNE_VERSION_PIN = "==2.55.1"
 PRIMARY_BACKEND = "rllib_ppo"
 STUB_BACKEND = "stub_rllib"
 DEFAULT_ACTION_LABELS = (
@@ -611,6 +616,7 @@ class RLlibPPOBackend:
     def train_and_evaluate(
         self, dataset: PreparedRLlibDataset, config: RLlibTrainingConfig
     ) -> RLlibTrainEvalResult:
+        require_secure_ray_runtime()
         try:
             ray = importlib.import_module("ray")
             importlib.import_module("ray.rllib")

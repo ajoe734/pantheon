@@ -7,6 +7,9 @@ The contracts intentionally stop at the research plane:
 
 - `ExperimentTask` binds one `strategy_id` plus one `strategy_spec_version` to
   pinned `dataset_version_id` and `code_version` inputs.
+- Tenant-aware paths additionally bind the immutable registry
+  `strategy_spec_id` together with `tenant_id`; the two fields must be present
+  together and are preserved on every child run.
 - `ExperimentRun` preserves the task, strategy, StrategySpec version, dataset,
   code, input manifest, output manifest, backend, and trace refs needed for
   later CandidateArtifact packaging.

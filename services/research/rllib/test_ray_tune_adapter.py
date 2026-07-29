@@ -29,6 +29,12 @@ from ray_tune_smoke_test import main as ray_tune_smoke_main
 from ray_tune_worker import main as ray_tune_worker_main
 
 
+TEST_RAY_SECURITY_ENV = {
+    "RAY_AUTH_MODE": "token",
+    "RAY_AUTH_TOKEN": "test-only-ray-auth-token-00000000000000000000",
+}
+
+
 def load_dataset() -> dict:
     sample_path = SERVICE_DIR / "examples" / "train_eval_input_sample.json"
     return json.loads(sample_path.read_text(encoding="utf-8"))
@@ -83,10 +89,11 @@ class TestStubRayTuneBackend(unittest.TestCase):
 class TestRayTuneImportBackend(unittest.TestCase):
     def test_real_backend_uses_ray_tune_import_path(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.9.3"
+        fake_ray.__version__ = "2.55.1"
         fake_tune = types.ModuleType("ray.tune")
-        with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):
-            result = run_ray_tune_workflow(SAMPLE_DATASET, backend=RayTuneImportBackend())
+        with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
+            with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):
+                result = run_ray_tune_workflow(SAMPLE_DATASET, backend=RayTuneImportBackend())
         self.assertEqual(result.search_result.backend, "ray_tune_search")
         self.assertTrue(result.search_result.summary["framework_import_ready"])
         self.assertEqual(result.search_result.search_space_schema["framework_import"], "ray.tune")
@@ -95,15 +102,16 @@ class TestRayTuneImportBackend(unittest.TestCase):
 
     def test_real_backend_does_not_delegate_to_stub(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.9.3"
+        fake_ray.__version__ = "2.55.1"
         fake_tune = types.ModuleType("ray.tune")
-        with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):
-            with patch.object(
-                StubRayTuneBackend,
-                "run_search",
-                side_effect=AssertionError("stub called"),
-            ):
-                result = run_ray_tune_workflow(SAMPLE_DATASET, backend=RayTuneImportBackend())
+        with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
+            with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):
+                with patch.object(
+                    StubRayTuneBackend,
+                    "run_search",
+                    side_effect=AssertionError("stub called"),
+                ):
+                    result = run_ray_tune_workflow(SAMPLE_DATASET, backend=RayTuneImportBackend())
         self.assertEqual(result.search_result.backend, "ray_tune_search")
 
 

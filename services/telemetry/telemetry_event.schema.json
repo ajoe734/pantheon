@@ -453,6 +453,161 @@
   },
   "additionalProperties": false,
 
+  "definitions": {
+    "InfrastructureHealthEvent": {
+      "$comment": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001. Selected by event_type=infrastructure_health and validated as a standalone schema by TelemetryIngestService.ingest_infrastructure_health(). It is deliberately NOT reachable from the TelemetryEvent envelope above: infrastructure health is not trading telemetry, is never attributed to a RuntimeBinding, and is admitted only through the strict service-JWT infrastructure health route.",
+      "title": "InfrastructureHealthEvent",
+      "description": "Authoritative non-trading infrastructure health telemetry. Carries control-plane and downstream-dependency observations (interval probes, error-rate windows, dependency checks, recovery) without any RuntimeBinding identity. RuntimeBinding evidence fields (binding_id, runtime_id, capital_pool_id, artifact_id, artifact_version, deployment_stage, execution_mode, plan_id, persona_capital_binding_id, rollback_parent, rollback_action_type) are rejected anywhere in the event so an infrastructure producer can never present, invent, or spoof trading binding evidence.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "event_id",
+        "event_type",
+        "created_at",
+        "tenant_id",
+        "producer",
+        "component",
+        "health_status",
+        "observation"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "pantheon.infrastructure-health/1",
+          "description": "Pinned contract version. Producers must be re-admitted for any future version."
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Stable producer-owned idempotency key. It MUST be derived from the observation identity (producer, component, probe window), not randomly generated per attempt or per replica, so retries and replicas admit exactly once."
+        },
+        "event_type": {
+          "const": "infrastructure_health"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC3339 timestamp when the producer emitted this observation."
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tenant scope. MUST equal the authenticated request tenant bound by the telemetry authority."
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical producer identity (e.g. control-plane-bff). MUST be inside both the deployment producer allowlist and the presented service JWT producer scope."
+        },
+        "component": {
+          "type": "object",
+          "description": "The observed infrastructure component. This is a downstream dependency of the control plane, never a trading runtime.",
+          "required": ["service_name"],
+          "properties": {
+            "service_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "component_kind": {
+              "type": "string",
+              "enum": [
+                "http_service",
+                "queue",
+                "database",
+                "cache",
+                "scheduler",
+                "external_api"
+              ]
+            },
+            "endpoint": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instance_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "health_status": {
+          "type": "string",
+          "enum": ["ok", "degraded", "unavailable"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "critical"]
+        },
+        "observation": {
+          "type": "object",
+          "required": ["probe_kind", "observed_at"],
+          "properties": {
+            "probe_kind": {
+              "type": "string",
+              "enum": [
+                "interval_probe",
+                "error_rate",
+                "dependency_check",
+                "recovery"
+              ]
+            },
+            "observed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "window_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "sample_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failure_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "consecutive_failures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "error_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "latency_ms": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status_code": {
+              "type": "integer"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "incident_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional reference to an incident case owned by the incidents service. Telemetry does not create, mutate, or resolve incidents."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Optional producer context. Never interpreted as binding, lineage, or governance evidence.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+
   "allOf": [
     {
       "description": "Evidence E-5: If rollback_parent is set, rollback_action_type MUST also be set.",

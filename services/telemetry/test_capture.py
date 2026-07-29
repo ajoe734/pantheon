@@ -11,7 +11,13 @@ import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
-from capture import TelemetryCapture, ExecutionMode, EventType, DeploymentStage, RollbackActionType
+from services.telemetry.capture import (
+    TelemetryCapture,
+    ExecutionMode,
+    EventType,
+    DeploymentStage,
+    RollbackActionType,
+)
 
 # Canonical schema path (resolved relative to this test file)
 CANONICAL_SCHEMA = str(Path(__file__).parent / "telemetry_event.schema.json")

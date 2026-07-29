@@ -1,0 +1,533 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-TEL-001 product-level review-file admission gate.",
+    "note": "Schema-normalized owner remediation over the merged telemetry implementation and existing proofs. The formal Codex reviewer verdict is intentionally absent until independent approval occurs.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T12:44:40Z",
+    "evidence_cut_semantics": "Owner schema remediation over merged PRs #4148, #4155, and #4170. Implementation and owner acceptance evidence are complete; independent reviewer approval is not asserted by this cut.",
+    "id": "L12-TEL-001",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Telemetry",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev integration and bounded local nonprod telemetry",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-TEL-001",
+    "title": "Make telemetry acknowledgement durable and preserve lifecycle identity"
+  },
+  "authorities": {
+    "actual_state": [
+      "durable telemetry rows",
+      "runtime summaries",
+      "telemetry DLQ"
+    ],
+    "desired_state": [
+      "TelemetryEvent ingest contract",
+      "active RuntimeBinding identity"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TEL-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Telemetry service for durable ingest receipts, canonical rows, runtime summary projections, lineage reads, and tenant-scoped DLQ replay",
+    "composes_with": [
+      "L12-MANIFEST-001 producer credential and backend wiring",
+      "L12-REC-001 reconciliation consumers",
+      "L12-HOSTED-001 hosted admission"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_tel_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/current-runtime-readback.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/telemetry/BUFFER_CHOICE_ADR.md",
+      "services/telemetry/auth.py",
+      "services/telemetry/batch_writer.py",
+      "services/telemetry/buffer.py",
+      "services/telemetry/dead_letter.py",
+      "services/telemetry/ingest_svc.py",
+      "services/telemetry/lineage_read/service.py",
+      "services/telemetry/main.py",
+      "services/telemetry/requirements.txt",
+      "services/telemetry/runtime_summary.py",
+      "services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "services/telemetry/test_main_routes.py",
+      "services/telemetry/test_runtime_summary_projection.py",
+      "services/telemetry/trade_episode_projection.py",
+      "services/telemetry/trade_journal_event.schema.json"
+    ],
+    "not_changing": "Compose producer credentials, root deployment wiring, hosted deployment admission, canonical architecture policy, or live-capital authority.",
+    "owned_layer": "Telemetry durable ingest receipts, batch acknowledgement semantics, canonical-write acknowledgement, HTTP authority and tenant isolation, tenant-scoped lineage reads, and runtime lifecycle identity projection"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged_via_pr_4148",
+        "sha": "dbcc2452f99ee9800dbe6d5fa9cd2db298b7e42a",
+        "subject": "L12-TEL-001: anchor durable ingest buffer"
+      },
+      {
+        "delivery_state": "merged_via_pr_4148",
+        "sha": "f52f82492e2c97c041f6a73ab7b17455469ff266",
+        "subject": "L12-TEL-001: anchor tenant authority and lifecycle identity"
+      },
+      {
+        "delivery_state": "merged_via_pr_4148",
+        "sha": "af252bdea2f8d8fd8800237c38d2ae9aa76459b5",
+        "subject": "L12-TEL-001: anchor crash and six-runtime regressions"
+      },
+      {
+        "delivery_state": "merged_via_pr_4148",
+        "sha": "9b3d29f42446ec8cc12deadbd73d08c44718cc59",
+        "subject": "L12-TEL-001: prove durable tenant telemetry"
+      },
+      {
+        "delivery_state": "merged_via_pr_4155",
+        "sha": "644321d8ad144a07ec3b99b19c7da7b50794ef72",
+        "subject": "L12-TEL-001: anchor fail-closed telemetry receipts"
+      },
+      {
+        "delivery_state": "merged_via_pr_4155",
+        "sha": "61c52bd84c2178d9eadf6548d0ff9e4b29a4fa75",
+        "subject": "L12-TEL-001: refresh hardened telemetry evidence"
+      },
+      {
+        "delivery_state": "merged_via_pr_4170",
+        "sha": "064366e8f0bab71cbc623abd2771381a874f7a6a",
+        "subject": "L12-TEL-001: anchor tenant-safe acknowledgements"
+      },
+      {
+        "delivery_state": "merged_via_pr_4170",
+        "sha": "81533dc641fbada4d826ad00b6dbdd7fe9197e59",
+        "subject": "L12-TEL-001: refresh reviewer follow-up evidence"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "d331231359527b62998a2d4959d4420395533095",
+      "merge_sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
+      "merged_at": "2026-07-26T11:57:52Z",
+      "number": 4170,
+      "url": "https://github.com/ajoe734/pantheon/pull/4170"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "e6f26b15ba43e8b370a46033886637ef76d089de",
+        "merge_sha": "809c286e456cea262b0b272b34c5e16c87792090",
+        "merged_at": "2026-07-26T10:10:07Z",
+        "number": 4148,
+        "url": "https://github.com/ajoe734/pantheon/pull/4148"
+      },
+      {
+        "base": "dev",
+        "head_sha": "09950f50a056e0f16f6b8792e678304468b73f4a",
+        "merge_sha": "4f905c5a563483ff15eee9221c47eb720b8cecce",
+        "merged_at": "2026-07-26T10:51:28Z",
+        "number": 4155,
+        "url": "https://github.com/ajoe734/pantheon/pull/4155"
+      },
+      {
+        "base": "dev",
+        "head_sha": "d331231359527b62998a2d4959d4420395533095",
+        "merge_sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
+        "merged_at": "2026-07-26T11:57:52Z",
+        "number": 4170,
+        "url": "https://github.com/ajoe734/pantheon/pull/4170"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "e6f26b15ba43e8b370a46033886637ef76d089de",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30197742249,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30197742249",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "09950f50a056e0f16f6b8792e678304468b73f4a",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30198988651,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30198988651",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "d331231359527b62998a2d4959d4420395533095",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30201095356,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30201095356",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_l12_tel_001_durable_ingest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection services.telemetry.lineage_read.test_service",
+        "conclusion": "167 focused tests passed in 8.983s originally and 8.927s during schema remediation, including the real NATS child-process crash recovery; Codex independently reproduced this focused result before reopening only the evidence shape.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py",
+        "conclusion": "ALL SMOKE TESTS PASSED",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m compileall -q services/telemetry",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m json.tool services/telemetry/trade_journal_event.schema.json",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_l12_tel_001_durable_ingest.RealNatsCrashRecoveryTest",
+        "conclusion": "Child exited 23 without ACK; replacement consumer recovered and acknowledged the exact event; one test passed in 1.807s.",
+        "result": "pass"
+      },
+      {
+        "command": "Candidate projection over active dev runtime summaries plus exact current events",
+        "conclusion": "9/9 consumer identities complete after persisted-store reload.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m unittest discover -s services/telemetry -p 'test_*.py'",
+        "conclusion": "266 tests ran in 14.994s with one skip and one unrelated baseline RuntimeManagerClient allow_local setup error; no L12-TEL-001 frame appeared in the failing stack.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "python3 jsonschema validation against schemas/product-evidence.schema.json plus exact task/reviewer/review_file, positive owner admission, acceptance/security status, and no-predeclared-approval assertions",
+        "conclusion": "Schema and owner-review assertions passed.",
+        "result": "pass"
+      },
+      {
+        "command": "(cd docs/deployment/evidence/twelve-loop-gap/L12-TEL-001 && sha256sum -c evidence.sha256)",
+        "conclusion": "evidence.json and current-runtime-readback.json passed after schema remediation.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0 during independent review.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T12:24:06Z",
+    "validated_base_sha": "c939db944c25d6714609b2fb982d560084174e20",
+    "validated_head_sha": "d331231359527b62998a2d4959d4420395533095"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or restart is part of L12-TEL-001; root telemetry wiring remains delegated to L12-MANIFEST-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "The task-owned service requires strict authenticated tenant identity on ingest, reads, lineage queries, and DLQ replay; missing authority fails closed.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_telemetry_service",
+    "publish_cut": {
+      "reason": "Hosted admission remains delegated to L12-HOSTED-001.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "artifact": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/current-runtime-readback.json",
+      "candidate_consumer_identity_complete_count": 9,
+      "candidate_restart_readback_count": 9,
+      "environment": "bounded local nonprod telemetry on 127.0.0.1:18083",
+      "exact_current_event_readback_count": 9,
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-26T10:01:35.317464Z",
+      "packet_minimum_runtime_count": 6,
+      "source_runtime_count": 9,
+      "status": "pass",
+      "terminal_readback": "All nine current runtime summaries and exact current events were read from the running telemetry owner; the candidate persisted-store reload retained all nine consumer identities."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Nats-Msg-Id is the SHA-256 of the canonical immutable event JSON, including tenant_id and event_id, so exact retries deduplicate while conflicting tenant or payload retries reach canonical conflict handling.",
+        "Runtime summaries persist independently by the composite tenant_id and runtime_id identity."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "An empty batch or a batch with zero durable receipts returns HTTP 400; a mixed batch returns HTTP 202 only when at least one receipt is durable and reports partially_accepted with both counts.",
+        "Missing bearer authority, forbidden tenant scope, payload and header mismatch, cross-tenant readback, unscoped legacy lineage, and unauthorized DLQ replay fail closed."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "HTTP success follows the JetStream persistence PubAck, and the canonical writer acknowledges the broker receipt only after Postgres succeeds or a failed event is fsynced to the replayable DLQ.",
+        "Lifecycle identity retains tenant_id, trace_id, aggregate identity, sequence, and correlation envelope while heartbeats update freshness fields."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Against NATS JetStream 2.11 file storage, a child process fetched the accepted event and exited with code 23 before acknowledgement; a replacement durable consumer recovered the exact event and acknowledged it once.",
+        "After persisted runtime-summary store reload, all nine current tenant and runtime identities retained lifecycle correlation; cross-tenant and ambiguous unscoped reads remained isolated."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Canonical write failure produces an fsynced tenant-scoped DLQ record before broker acknowledgement, preserving an operator-authorized replay path.",
+        "This telemetry slice grants no broker, allocation, deployment, runtime-control, or live-capital mutation authority."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only merged Pantheon dev integration, focused service acceptance, and a bounded local nonprod telemetry readback were exercised; hosted activation is not claimed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This internal service lane changes no interactive operator authentication or MFA policy.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Telemetry ingest, projection, read, and replay have no broker or capital authority, and no live-capital path was enabled.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Strict mode permits service, operator, reviewer, or admin reads as scoped; ingest requires service, operator, or admin; DLQ replay requires operator or admin.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Accepted events, runtime summaries, trade episodes, all five lineage query families, DLQ listing, and DLQ replay enforce the authenticated tenant; cross-tenant and unscoped legacy reads return 404.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex2 and reviewer Codex remain distinct. Codex has twice exercised the fail-closed review gate; the actual formal approval must be appended to record_log after a later approval and before done.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/telemetry/buffer.py",
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_l12_tel_001_durable_ingest.py"
+      ],
+      "id": "AC1",
+      "statement": "HTTP success is returned only after durable tenant-scoped ingest.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/main.py",
+        "services/telemetry/test_main_routes.py"
+      ],
+      "id": "AC2",
+      "statement": "Empty or wholly rejected batches return non-2xx, while mixed acceptance is explicit.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/runtime_summary.py",
+        "services/telemetry/test_runtime_summary_projection.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/current-runtime-readback.json"
+      ],
+      "id": "AC3",
+      "statement": "A later heartbeat cannot erase authoritative lifecycle trace identity, including after persisted-store reload.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/auth.py",
+        "services/telemetry/main.py",
+        "services/telemetry/lineage_read/service.py",
+        "services/telemetry/test_main_routes.py"
+      ],
+      "id": "AC4",
+      "statement": "Ingest, reads, all five lineage query families, and DLQ replay enforce service or operator authority and tenant scope.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/test_l12_tel_001_durable_ingest.py#RealNatsCrashRecoveryTest",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/README.md#durable-acknowledgement"
+      ],
+      "id": "AC5",
+      "statement": "Process death before batch flush loses no accepted event.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/runtime_summary.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/current-runtime-readback.json"
+      ],
+      "id": "AC6",
+      "statement": "All nine observed runtime summaries expose consumer-compatible identity, exceeding the packet minimum of six.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Strict telemetry defaults and task-owned acceptance remain fail closed while root credentials and backend wiring are absent.",
+      "description": "Hosted deployment and producer credential wiring intentionally remain downstream responsibilities.",
+      "expiry": "When L12-MANIFEST-001 and L12-HOSTED-001 complete.",
+      "owner": "L12-MANIFEST-001 and L12-HOSTED-001",
+      "recheck_trigger": "Before hosted telemetry activation.",
+      "severity": "medium"
+    },
+    "runtime_count_drift": {
+      "blocking_for_this_task": false,
+      "containment": "The proof covered every observed runtime rather than stopping at the packet minimum.",
+      "description": "The active runtime count increased from the packet's six to nine before bounded readback.",
+      "expiry": "At the next hosted cross-loop runtime inventory readback.",
+      "owner": "L12-HOSTED-001",
+      "recheck_trigger": "When the hosted runtime inventory changes.",
+      "severity": "informational"
+    },
+    "legacy_discovery_setup": {
+      "blocking_for_this_task": false,
+      "containment": "All 167 focused task tests pass; the failing broader-discovery setup has no L12-TEL-001 frame and requires an explicit legacy RuntimeManagerClient allow_local fixture update.",
+      "description": "The broader telemetry discovery ran 266 tests with one skip and one unrelated legacy RuntimeManagerClient setup error.",
+      "expiry": "When the legacy lineage-write fixture is updated by its owning lane.",
+      "owner": "Telemetry legacy lineage test owner",
+      "recheck_trigger": "When test_lineage_write_path or RuntimeManagerClient construction changes.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/current-runtime-readback.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+    "normalized_hosted_readback": {
+      "candidate_consumer_identity_complete_count": 9,
+      "candidate_restart_readback_count": 9,
+      "exact_current_event_readback_count": 9,
+      "hosted_activation_claimed": false,
+      "packet_minimum_runtime_count": 6,
+      "pr_4148_merged_to_dev": true,
+      "pr_4155_merged_to_dev": true,
+      "pr_4170_merged_to_dev": true,
+      "source_runtime_count": 9
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "current_runtime_readback_2026_07_26": "a4de9903e547dc12f17febed39e8d6244785e4e4325f073aeb5e05beb1e08f73"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T10:04:28Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4148",
+      "sequence": 1,
+      "sha": "809c286e456cea262b0b272b34c5e16c87792090",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_fail_closed_hardening_ready",
+      "recorded_at": "2026-07-26T10:46:59Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4155",
+      "sequence": 2,
+      "sha": "4f905c5a563483ff15eee9221c47eb720b8cecce",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_changes_requested",
+      "recorded_at": "2026-07-26T11:38:31Z",
+      "reference": ".orchestrator/task-briefs/l12_tel_001.md",
+      "sequence": 3,
+      "sha": "4ee451348a4c023c4eecd2f76a9ff6bf4bdfb5e9",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_acceptance_repair_ready",
+      "recorded_at": "2026-07-26T11:52:28Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4170",
+      "sequence": 4,
+      "sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_changes_requested",
+      "recorded_at": "2026-07-26T12:24:06Z",
+      "reference": ".orchestrator/task-briefs/l12_tel_001.md",
+      "sequence": 5,
+      "sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_schema_remediation_ready",
+      "recorded_at": "2026-07-26T12:44:40Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+      "sequence": 6,
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-26T14:21:38Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+      "sequence": 7,
+      "sha": "0916ea8d414e05fa7bcacafebc7c5ed2ee6c2306",
+      "status": "approved"
+    }
+  ]
+}

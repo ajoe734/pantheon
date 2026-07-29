@@ -15,6 +15,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import sys
 import threading
@@ -25,6 +26,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
+from services.runtime_auth_inbound import encode_jwt_hs256
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
@@ -37,6 +39,11 @@ from services.telemetry.dead_letter import TAG_WRITER_ERROR
 # ---------------------------------------------------------------------------
 
 _KNOWN_BINDING_ID = "test-binding-001"
+_TENANT_ID = "tenant-alpha"
+_AUTH_HEADERS = {
+    "Authorization": "Bearer telemetry-test:operator",
+    "X-Tenant-Id": _TENANT_ID,
+}
 _KNOWN_BINDING = types.SimpleNamespace(
     binding_id=_KNOWN_BINDING_ID,
     runtime_id="lean-worker-1",
@@ -68,6 +75,7 @@ def _make_event(
     metadata: dict | None = None,
 ) -> dict:
     return {
+        "tenant_id": _TENANT_ID,
         "event_id": event_id,
         "event_type": event_type,
         "created_at": "2026-04-15T12:00:00Z",
@@ -215,6 +223,38 @@ _LINEAGE_CORPUS = {
 }
 
 
+def _with_tenant_scope(corpus: dict, tenant_id: str) -> dict:
+    scoped = copy.deepcopy(corpus)
+    for records in scoped.get("node_sets", {}).values():
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if isinstance(record, dict):
+                record["tenant_id"] = tenant_id
+    return scoped
+
+
+_LINEAGE_CORPUS = _with_tenant_scope(_LINEAGE_CORPUS, _TENANT_ID)
+
+
+class _AuthorizedClient:
+    """Flask test-client wrapper that applies the normal telemetry authority."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def _call(self, method: str, *args, **kwargs):
+        headers = dict(_AUTH_HEADERS)
+        headers.update(kwargs.pop("headers", {}) or {})
+        return getattr(self._client, method)(*args, headers=headers, **kwargs)
+
+    def get(self, *args, **kwargs):
+        return self._call("get", *args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        return self._call("post", *args, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -227,7 +267,11 @@ class TestMainRoutes(unittest.TestCase):
     def setUpClass(cls):
         cls._old_runtime_manager_url = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
         cls._old_telemetry_db_dsn = os.environ.get("TELEMETRY_DB_DSN")
+        cls._old_auth_mode = os.environ.get("PANTHEON_TELEMETRY_AUTH_MODE")
+        cls._old_allowed_tenants = os.environ.get("PANTHEON_TELEMETRY_ALLOWED_TENANTS")
         os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = "http://runtime-manager.test"
+        os.environ["PANTHEON_TELEMETRY_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_TELEMETRY_ALLOWED_TENANTS"] = _TENANT_ID
         os.environ.pop("TELEMETRY_DB_DSN", None)
 
         # Start a dedicated asyncio event loop in a daemon thread so the
@@ -261,7 +305,8 @@ class TestMainRoutes(unittest.TestCase):
 
         cls._svc = svc
         cls._lineage_svc = lineage_svc
-        cls.client = _main.app.test_client()
+        cls.raw_client = _main.app.test_client()
+        cls.client = _AuthorizedClient(cls.raw_client)
 
     @classmethod
     def tearDownClass(cls):
@@ -282,6 +327,14 @@ class TestMainRoutes(unittest.TestCase):
             os.environ.pop("TELEMETRY_DB_DSN", None)
         else:
             os.environ["TELEMETRY_DB_DSN"] = cls._old_telemetry_db_dsn
+        if cls._old_auth_mode is None:
+            os.environ.pop("PANTHEON_TELEMETRY_AUTH_MODE", None)
+        else:
+            os.environ["PANTHEON_TELEMETRY_AUTH_MODE"] = cls._old_auth_mode
+        if cls._old_allowed_tenants is None:
+            os.environ.pop("PANTHEON_TELEMETRY_ALLOWED_TENANTS", None)
+        else:
+            os.environ["PANTHEON_TELEMETRY_ALLOWED_TENANTS"] = cls._old_allowed_tenants
 
     # --- health ---
 
@@ -295,12 +348,262 @@ class TestMainRoutes(unittest.TestCase):
     # --- ingest: happy path ---
 
     def test_known_binding_accepted_202(self):
+        event = _make_event(
+            binding_id=_KNOWN_BINDING_ID,
+            event_id="route-known-001",
+        )
         resp = self.client.post(
             "/api/telemetry/ingest",
-            json=_make_event(binding_id=_KNOWN_BINDING_ID, event_id="route-known-001"),
+            json=event,
         )
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.get_json()["status"], "accepted")
+
+        readback = self.client.get("/api/telemetry/events/route-known-001")
+        self.assertEqual(readback.status_code, 200)
+        self.assertEqual(readback.get_json(), event)
+
+    def test_batch_requires_at_least_one_durable_acceptance(self):
+        wholly_rejected = self.client.post(
+            "/api/telemetry/ingest/batch",
+            json={
+                "events": [
+                    _make_event(
+                        binding_id="missing-batch-binding",
+                        event_id="route-batch-rejected-001",
+                    )
+                ]
+            },
+        )
+        empty = self.client.post(
+            "/api/telemetry/ingest/batch",
+            json={"events": []},
+        )
+
+        self.assertEqual(wholly_rejected.status_code, 400)
+        self.assertEqual(
+            wholly_rejected.get_json(),
+            {
+                "status": "rejected",
+                "ingested": 0,
+                "rejected": 1,
+                "error": {
+                    "code": "BATCH_NOT_ACCEPTED",
+                    "message": "No telemetry event received a durable acknowledgement",
+                },
+            },
+        )
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(empty.get_json()["error"]["code"], "EMPTY_BATCH")
+
+    def test_mixed_batch_returns_202_with_explicit_partial_semantics(self):
+        response = self.client.post(
+            "/api/telemetry/ingest/batch",
+            json={
+                "events": [
+                    _make_event(event_id="route-batch-accepted-001"),
+                    _make_event(
+                        binding_id="missing-batch-binding",
+                        event_id="route-batch-rejected-002",
+                    ),
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "status": "partially_accepted",
+                "ingested": 1,
+                "rejected": 1,
+            },
+        )
+        readback = self.client.get(
+            "/api/telemetry/events/route-batch-accepted-001"
+        )
+        self.assertEqual(readback.status_code, 200)
+
+    def test_ingest_rejects_missing_authority(self):
+        resp = self.raw_client.post(
+            "/api/telemetry/ingest",
+            json=_make_event(event_id="route-missing-auth-001"),
+            headers={"X-Tenant-Id": _TENANT_ID},
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_strict_jwt_without_explicit_role_is_forbidden(self):
+        secret = "telemetry-strict-test-secret"
+        token = encode_jwt_hs256(
+            {
+                "sub": "roleless-telemetry-caller",
+                "allowed_tenants": [_TENANT_ID],
+            },
+            secret=secret,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_AUTH_MODE": "strict",
+                "PANTHEON_TELEMETRY_JWT_SECRET": secret,
+                # An unrelated runtime-manager default must not grant
+                # telemetry authority to a roleless JWT.
+                "PANTHEON_RUNTIME_DEFAULT_ROLE": "admin",
+            },
+            clear=True,
+        ):
+            resp = self.raw_client.post(
+                "/api/telemetry/ingest",
+                json=_make_event(event_id="route-roleless-jwt-001"),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Tenant-Id": _TENANT_ID,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+    def test_ingest_rejects_cross_tenant_header_and_payload(self):
+        forbidden_scope = self.client.post(
+            "/api/telemetry/ingest",
+            json=_make_event(event_id="route-forbidden-scope-001"),
+            headers={"X-Tenant-Id": "tenant-beta"},
+        )
+        self.assertEqual(forbidden_scope.status_code, 403)
+        self.assertEqual(
+            forbidden_scope.get_json()["error"]["code"],
+            "TENANT_FORBIDDEN",
+        )
+
+        payload_mismatch = self.client.post(
+            "/api/telemetry/ingest",
+            json={
+                **_make_event(event_id="route-payload-mismatch-001"),
+                "tenant_id": "tenant-beta",
+            },
+        )
+        self.assertEqual(payload_mismatch.status_code, 403)
+        self.assertEqual(
+            payload_mismatch.get_json()["error"]["code"],
+            "TENANT_PAYLOAD_MISMATCH",
+        )
+
+    def test_service_token_can_ingest_only_its_tenant(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-service-secret",
+                "PANTHEON_TELEMETRY_SERVICE_TENANTS": _TENANT_ID,
+            },
+        ):
+            accepted = self.raw_client.post(
+                "/api/telemetry/ingest",
+                json=_make_event(event_id="route-service-token-001"),
+                headers={
+                    "Authorization": "Bearer telemetry-service-secret",
+                    "X-Tenant-Id": _TENANT_ID,
+                },
+            )
+            forbidden = self.raw_client.post(
+                "/api/telemetry/ingest",
+                json={
+                    **_make_event(event_id="route-service-token-beta-001"),
+                    "tenant_id": "tenant-beta",
+                },
+                headers={
+                    "Authorization": "Bearer telemetry-service-secret",
+                    "X-Tenant-Id": "tenant-beta",
+                },
+            )
+
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(
+            forbidden.get_json()["error"]["code"],
+            "TENANT_FORBIDDEN",
+        )
+
+    def test_service_token_without_dedicated_tenant_scope_is_forbidden(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-service-secret",
+                "PANTHEON_TELEMETRY_ALLOWED_TENANTS": _TENANT_ID,
+            },
+            clear=True,
+        ):
+            resp = self.raw_client.post(
+                "/api/telemetry/ingest",
+                json=_make_event(event_id="route-unscoped-service-token-001"),
+                headers={
+                    "Authorization": "Bearer telemetry-service-secret",
+                    "X-Tenant-Id": _TENANT_ID,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(
+            resp.get_json()["error"]["code"],
+            "TENANT_SCOPE_UNCONFIGURED",
+        )
+
+    def test_exact_event_read_is_tenant_scoped(self):
+        event_id = "route-tenant-read-001"
+        accepted = self.client.post(
+            "/api/telemetry/ingest",
+            json=_make_event(event_id=event_id),
+        )
+        self.assertEqual(accepted.status_code, 202)
+
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_TELEMETRY_ALLOWED_TENANTS": "tenant-alpha,tenant-beta"},
+        ):
+            hidden = self.client.get(
+                f"/api/telemetry/events/{event_id}",
+                headers={"X-Tenant-Id": "tenant-beta"},
+            )
+        self.assertEqual(hidden.status_code, 404)
+
+    def test_missing_accepted_event_returns_404(self):
+        resp = self.client.get("/api/telemetry/events/route-missing-001")
+
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(
+            resp.get_json()["error"]["code"],
+            "TELEMETRY_EVENT_NOT_FOUND",
+        )
+
+    def test_accepted_event_readback_stays_exact_across_replays(self):
+        event = _make_event(
+            binding_id=_KNOWN_BINDING_ID,
+            event_id="route-exact-replay-001",
+        )
+        first = self.client.post("/api/telemetry/ingest", json=event)
+        exact_replay = self.client.post(
+            "/api/telemetry/ingest",
+            json=dict(event),
+        )
+        conflicting_replay = self.client.post(
+            "/api/telemetry/ingest",
+            json={
+                **event,
+                "metrics": {
+                    **event["metrics"],
+                    "pnl": 999.0,
+                },
+            },
+        )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(exact_replay.status_code, 202)
+        self.assertEqual(conflicting_replay.status_code, 400)
+        readback = self.client.get(
+            "/api/telemetry/events/route-exact-replay-001"
+        )
+        self.assertEqual(readback.status_code, 200)
+        self.assertEqual(readback.get_json(), event)
 
     def test_readyz_exposes_writer_and_dlq_metrics(self):
         resp = self.client.get("/readyz")
@@ -376,7 +679,61 @@ class TestMainRoutes(unittest.TestCase):
 
         resp = self.client.post("/api/telemetry/replay")
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.get_json()["replayed"], 1)
+        self.assertGreaterEqual(resp.get_json()["replayed"], 1)
+
+    def test_dlq_read_and_replay_are_tenant_scoped(self):
+        _main._svc._dlq.reject(
+            {
+                **_make_event(event_id="route-dlq-tenant-alpha"),
+                "tenant_id": _TENANT_ID,
+            },
+            tags=[TAG_WRITER_ERROR],
+            reason="tenant alpha outage",
+        )
+        _main._svc._dlq.reject(
+            {
+                **_make_event(event_id="route-dlq-tenant-beta"),
+                "tenant_id": "tenant-beta",
+            },
+            tags=[TAG_WRITER_ERROR],
+            reason="tenant beta outage",
+        )
+
+        listing = self.client.get("/api/telemetry/dlq")
+        self.assertEqual(listing.status_code, 200)
+        listed_ids = {
+            entry["event"]["event_id"]
+            for entry in listing.get_json()["entries"]
+        }
+        self.assertIn("route-dlq-tenant-alpha", listed_ids)
+        self.assertNotIn("route-dlq-tenant-beta", listed_ids)
+
+        replay = self.client.post("/api/telemetry/replay")
+        self.assertEqual(replay.status_code, 200)
+        self.assertGreaterEqual(replay.get_json()["replayed"], 1)
+        self.assertIsNone(
+            _main._svc.get_accepted_event(
+                "route-dlq-tenant-beta",
+                tenant_id=_TENANT_ID,
+            )
+        )
+
+    def test_replay_rejects_service_only_role(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-service-secret",
+                "PANTHEON_TELEMETRY_SERVICE_TENANTS": _TENANT_ID,
+            },
+        ):
+            resp = self.raw_client.post(
+                "/api/telemetry/replay",
+                headers={
+                    "Authorization": "Bearer telemetry-service-secret",
+                    "X-Tenant-Id": _TENANT_ID,
+                },
+            )
+        self.assertEqual(resp.status_code, 403)
 
     def test_paper_heartbeat_updates_runtime_summary_route(self):
         resp = self.client.post(
@@ -558,6 +915,51 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(data["refs"]["broker_order_event_ids"], ["boe-http-001"])
         self.assertEqual(data["refs"]["evolution_decision_ids"], ["evo-http-001"])
 
+    def test_all_lineage_routes_are_tenant_scoped_and_hide_legacy_records(self):
+        urls = (
+            f"/api/telemetry/lineage/runtime-bindings/{_KNOWN_BINDING_ID}/projection",
+            "/api/telemetry/lineage/capital-pools/pool-alpha/projection",
+            "/api/telemetry/lineage/events/evt-lineage-001/trace",
+            "/api/telemetry/lineage/traces/trace-http-001/source-runtime-telemetry",
+            "/api/telemetry/lineage/plans/plan-456/forensic-trace",
+        )
+
+        for url in urls:
+            with self.subTest(url=url, tenant="tenant-alpha"):
+                self.assertEqual(self.client.get(url).status_code, 200)
+
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_TELEMETRY_ALLOWED_TENANTS": "tenant-alpha,tenant-beta"},
+        ):
+            for url in urls:
+                with self.subTest(url=url, tenant="tenant-beta"):
+                    hidden = self.client.get(
+                        url,
+                        headers={"X-Tenant-Id": "tenant-beta"},
+                    )
+                    self.assertEqual(hidden.status_code, 404)
+                    self.assertEqual(
+                        hidden.get_json()["error"]["code"],
+                        "LINEAGE_TARGET_NOT_FOUND",
+                    )
+
+        legacy_corpus = copy.deepcopy(_LINEAGE_CORPUS)
+        for records in legacy_corpus["node_sets"].values():
+            for record in records:
+                record.pop("tenant_id", None)
+        legacy_service = LineageReadService()
+        legacy_service.load_corpus(legacy_corpus)
+        current_service = _main._lineage_svc
+        try:
+            _main._lineage_svc = legacy_service
+            for url in urls:
+                with self.subTest(url=url, tenant="legacy-unscoped"):
+                    hidden = self.client.get(url)
+                    self.assertEqual(hidden.status_code, 404)
+        finally:
+            _main._lineage_svc = current_service
+
     def test_missing_lineage_target_returns_404(self):
         resp = self.client.get("/api/telemetry/lineage/events/evt-does-not-exist/trace")
         self.assertEqual(resp.status_code, 404)
@@ -574,6 +976,7 @@ class TestMainRoutes(unittest.TestCase):
 
     def test_trade_episodes_list_and_get(self):
         opened_event = {
+            "tenant_id": _TENANT_ID,
             "event_id": "00000000-0000-0000-0000-000000000003",
             "schema_version": "1.0",
             "event_type": "trade_episode.opened",

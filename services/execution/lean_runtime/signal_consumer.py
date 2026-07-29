@@ -34,11 +34,13 @@ import json
 import logging
 import math
 import pathlib
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .executor import execute, ExecutionError, _signal_context_metadata, _signal_market_price
+from .pending_signal_store import ExecutionFence
 from .symbol_parser import SymbolParseError
 
 try:
@@ -52,6 +54,75 @@ log = logging.getLogger(__name__)
 # How long to buffer an incomplete FinRL run_id batch before partial execution
 _REBALANCE_TIMEOUT_BARS = 3
 _SUPPORTED_SCHEMA_MAJOR = 1
+
+
+class _ExecutionClaimHeartbeat:
+    """Renew one Redis claim while its execution side effect is in progress."""
+
+    def __init__(
+        self,
+        *,
+        renew: Callable[[dict], bool],
+        signal: dict,
+        interval_seconds: float,
+    ) -> None:
+        self._renew = renew
+        self._signal = signal
+        self._interval = interval_seconds
+        self._stop = threading.Event()
+        self._lease_lost = threading.Event()
+        self._loss_reason: str | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"signal-claim-heartbeat-{signal.get('signal_id', 'unknown')}",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=max(self._interval * 2.0, 1.0))
+        if self._thread.is_alive():
+            log.error(
+                "[%s] Claim heartbeat did not stop within the join deadline",
+                self._signal.get("signal_id", "<unknown>"),
+            )
+
+    @property
+    def lease_lost(self) -> bool:
+        return self._lease_lost.is_set()
+
+    @property
+    def loss_reason(self) -> str | None:
+        return self._loss_reason
+
+    def _publish_lease_loss(self, reason: str) -> None:
+        self._loss_reason = reason
+        self._lease_lost.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                renewed = bool(self._renew(self._signal))
+            except Exception as exc:  # noqa: BLE001 - lease ambiguity fails closed on reclaim
+                self._publish_lease_loss(
+                    f"renew_exception:{type(exc).__name__}:{exc}"
+                )
+                log.error(
+                    "[%s] Claim heartbeat failed during execution: %s",
+                    self._signal.get("signal_id", "<unknown>"),
+                    exc,
+                )
+                return
+            if not renewed:
+                self._publish_lease_loss("renew_returned_false")
+                log.error(
+                    "[%s] Claim heartbeat lost ownership during execution",
+                    self._signal.get("signal_id", "<unknown>"),
+                )
+                return
 
 
 class SignalConsumer:
@@ -90,6 +161,10 @@ class SignalConsumer:
         Pull all pending signals from store, validate, and execute.
         Call from LEAN scheduled event or OnData().
         """
+        # Keep live rebalance claims from becoming visible to another worker.
+        # A claim that already expired is removed from the local buffer and
+        # left for durable reclaim instead of executing from a stale copy.
+        self._renew_rebalance_claims()
         try:
             raw_signals: list[dict] = self._store.get_pending()
         except Exception as exc:
@@ -100,6 +175,8 @@ class SignalConsumer:
         for raw in raw_signals:
             signal = self._validate(raw)
             if signal is None:
+                # Validation failure: route raw payload to DLQ
+                self._enqueue_dlq(raw if isinstance(raw, dict) else {"raw_payload": str(raw)}, "validation_failure")
                 continue
             recorder = getattr(algo, "RecordSignalProcessed", None)
             if callable(recorder):
@@ -114,10 +191,12 @@ class SignalConsumer:
                         "idempotent_replay": True,
                     },
                 )
+                self._ack_signal(signal)
                 continue
             staleness_reason = self._staleness_reason(signal, algo)
             if staleness_reason:
                 self._record_filtered_signal_noop(signal, algo, staleness_reason)
+                self._ack_signal(signal)
                 continue
             if self._is_wrong_binding(signal):
                 self._record_filtered_signal_noop(
@@ -128,8 +207,10 @@ class SignalConsumer:
                         "expected_binding_id": self._binding_id,
                         "signal_binding_id": str(signal.get("binding_id") or "").strip(),
                     },
+                    remember_processed=False,
                 )
-                self._enqueue_dlq(signal, "binding_mismatch")
+                if self._enqueue_dlq(signal, "binding_mismatch"):
+                    self._remember_processed(signal["signal_id"])
                 continue
             if self._is_wrong_runtime(signal):
                 self._record_filtered_signal_noop(
@@ -140,8 +221,10 @@ class SignalConsumer:
                         "expected_runtime_id": self._runtime_id,
                         "signal_runtime_id": str(signal.get("runtime_id") or "").strip(),
                     },
+                    remember_processed=False,
                 )
-                self._enqueue_dlq(signal, "runtime_mismatch")
+                if self._enqueue_dlq(signal, "runtime_mismatch"):
+                    self._remember_processed(signal["signal_id"])
                 continue
             if self._is_wrong_capital_pool(signal):
                 signal_pool = str(
@@ -155,8 +238,10 @@ class SignalConsumer:
                         "expected_capital_pool_id": self._capital_pool_id,
                         "signal_capital_pool_id": signal_pool,
                     },
+                    remember_processed=False,
                 )
-                self._enqueue_dlq(signal, "capital_pool_mismatch")
+                if self._enqueue_dlq(signal, "capital_pool_mismatch"):
+                    self._remember_processed(signal["signal_id"])
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -170,6 +255,13 @@ class SignalConsumer:
 
         # Tick rebalance buffer; execute complete or timed-out batches
         self._tick_rebalance_buffer(algo)
+
+    def _ack_signal(self, signal: dict) -> None:
+        if hasattr(self._store, "ack"):
+            try:
+                self._store.ack(signal)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Validation
@@ -258,16 +350,16 @@ class SignalConsumer:
             log.warning("[%s] Duplicate signal_id — discarding (idempotent)", sid)
             return True
         # Persistent idempotency: a signal processed before a worker restart is
-        # still a duplicate (the in-memory set was lost on restart).
-        is_processed = getattr(self._store, "is_processed", None)
-        if callable(is_processed) and is_processed(sid) is True:
-            self._remember_processed(sid)
+        # detected via store.is_processed() and skipped gracefully.
+        is_p = getattr(self._store, "is_processed", None)
+        if callable(is_p) and is_p(sid) is True:
             log.warning("[%s] Duplicate signal_id (persistent) — discarding (idempotent)", sid)
+            self._processed_signal_ids.add(sid)
             return True
         return False
 
-    def _remember_processed(self, sid: str) -> None:
-        """Record a signal_id as processed in-memory and (best-effort) persistently."""
+    def _remember_processed(self, signal_id: str) -> None:
+        sid = str(signal_id)
         self._processed_signal_ids.add(sid)
         mark = getattr(self._store, "mark_processed", None)
         if callable(mark):
@@ -277,49 +369,32 @@ class SignalConsumer:
         return self._staleness_reason(signal, algo) is not None
 
     def _staleness_reason(self, signal: dict, algo: Any | None = None) -> str | None:
-        """
-        Staleness check. Uses algo.Time if available (real-time or backtest time),
-        falling back to current UTC time.
-
-        Note: algo.Time is naive and represents the exchange's local time.
-        For accurate staleness checks, we compare against signal's timestamp
-        which should also be in a consistent timezone (typically UTC per schema).
-        To avoid mixing aware and naive datetimes, we normalize both to naive
-        datetimes for comparison.
-        """
-        sid = signal["signal_id"]
-
-        # Determine "now" based on algo context
-        if algo and hasattr(algo, "Time"):
-            now = algo.Time
-        else:
-            now = datetime.now(timezone.utc)
-
-        ts = _parse_dt(signal["timestamp"])
-        if not ts:
+        raw_ts = signal.get("timestamp")
+        if not raw_ts:
             return None
-
-        # Normalize both to naive datetimes for comparison (strip timezone info)
-        # This handles the case where algo.Time is naive but represents exchange time
-        if ts.tzinfo is not None:
-            ts = ts.replace(tzinfo=None)
-        if now.tzinfo is not None:
-            now = now.replace(tzinfo=None)
-
-        diff_seconds = (now - ts).total_seconds()
-
-        # Discard signals >24h old
+        signal_dt = _parse_dt(str(raw_ts))
+        if signal_dt is None:
+            return None
+        current_dt = getattr(algo, "Time", None)
+        if not isinstance(current_dt, datetime):
+            current_dt = datetime.now(timezone.utc)
+        if current_dt.tzinfo is None and signal_dt.tzinfo is not None:
+            signal_dt = signal_dt.replace(tzinfo=None)
+        elif current_dt.tzinfo is not None and signal_dt.tzinfo is None:
+            signal_dt = signal_dt.replace(tzinfo=timezone.utc)
+        diff_seconds = (current_dt - signal_dt).total_seconds()
         if diff_seconds > 86400:
-            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale",
-                        sid, now.isoformat(), ts.isoformat())
+            log.warning(
+                "[%s] Signal is stale (age=%.0fs > 86400s) — discarding",
+                signal.get("signal_id", "<unknown>"), diff_seconds,
+            )
             return "stale_signal"
-
-        # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
-             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous",
-                         sid, now.isoformat(), ts.isoformat())
-             return "future_signal_anomaly"
-
+            log.warning(
+                "[%s] Signal timestamp >1h in future — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return "future_signal_anomaly"
         return None
 
     def _record_filtered_signal_noop(
@@ -328,14 +403,17 @@ class SignalConsumer:
         algo: Any | None,
         noop_reason: str,
         extra_metadata: dict[str, Any] | None = None,
+        remember_processed: bool = True,
     ) -> None:
         sid = signal["signal_id"]
         if algo is None:
-            self._remember_processed(sid)
+            if remember_processed:
+                self._remember_processed(sid)
             return
         recorder = getattr(algo, "RecordSignalNoop", None)
         if not callable(recorder):
-            self._remember_processed(sid)
+            if remember_processed:
+                self._remember_processed(sid)
             return
         metadata = _signal_context_metadata(signal)
         metadata["filter_reason"] = noop_reason
@@ -358,20 +436,20 @@ class SignalConsumer:
         if price is not None:
             kwargs["price"] = price
         recorder(signal["symbol"], **kwargs)
-        self._remember_processed(sid)
+        if remember_processed:
+            self._remember_processed(sid)
 
     def _is_wrong_binding(self, signal: dict) -> bool:
-        """Defense-in-depth: discard signals routed to a different binding.
-
-        Only active when this consumer was constructed with a *binding_id*.
-        Signals that carry no ``binding_id`` field pass through regardless —
-        they predate the routing field and must not be silently dropped.
-        """
+        """Fail closed in governed paper mode when binding_id is missing or mismatched."""
         if not self._binding_id:
             return False
         signal_binding = str(signal.get("binding_id") or "").strip()
         if not signal_binding:
-            return False
+            log.warning(
+                "[%s] Fail closed: signal has missing/empty binding_id — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return True
         if signal_binding == self._binding_id:
             return False
         log.warning(
@@ -381,17 +459,16 @@ class SignalConsumer:
         return True
 
     def _is_wrong_runtime(self, signal: dict) -> bool:
-        """Reject signals addressed to a different runtime instance.
-
-        Only active when this consumer was constructed with a *runtime_id*.
-        Signals without a ``runtime_id`` field are unrouted legacy signals and
-        pass through to preserve backward compatibility.
-        """
+        """Fail closed in governed paper mode when runtime_id is missing or mismatched."""
         if not self._runtime_id:
             return False
         signal_runtime = str(signal.get("runtime_id") or "").strip()
         if not signal_runtime:
-            return False
+            log.warning(
+                "[%s] Fail closed: signal has missing/empty runtime_id — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return True
         if signal_runtime == self._runtime_id:
             return False
         log.warning(
@@ -401,19 +478,18 @@ class SignalConsumer:
         return True
 
     def _is_wrong_capital_pool(self, signal: dict) -> bool:
-        """Reject signals scoped to a different capital pool.
-
-        Only active when this consumer was constructed with a *capital_pool_id*.
-        Signals whose metadata carries no ``capital_pool_id`` pass through —
-        they predate the field and must not be silently dropped.
-        """
+        """Fail closed in governed paper mode when capital_pool_id is missing or mismatched."""
         if not self._capital_pool_id:
             return False
         signal_pool = str(
             (signal.get("metadata") or {}).get("capital_pool_id") or ""
         ).strip()
         if not signal_pool:
-            return False
+            log.warning(
+                "[%s] Fail closed: signal has missing/empty capital_pool_id — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return True
         if signal_pool == self._capital_pool_id:
             return False
         log.warning(
@@ -422,21 +498,22 @@ class SignalConsumer:
         )
         return True
 
-    def _enqueue_dlq(self, signal: dict, reason: str) -> None:
-        """Best-effort: send an isolation-rejected signal to the store's DLQ.
-
-        Adds a ``dlq_reason`` marker to the payload copy so operators can
-        identify why the signal was dead-lettered without re-parsing logs.
-        """
-        enqueue_dlq = getattr(self._store, "enqueue_dlq", None)
-        if not callable(enqueue_dlq):
-            return
+    def _enqueue_dlq(self, signal: dict, reason: str) -> bool:
+        """Send a rejected or failed signal to the store's DLQ."""
+        enqueue = getattr(self._store, "enqueue_dlq", None)
+        if not callable(enqueue):
+            return False
         try:
-            dlq_payload = {**signal, "_dlq_reason": reason}
-            enqueue_dlq(dlq_payload)
+            if isinstance(signal, dict):
+                dlq_payload = {**signal, "_dlq_reason": reason}
+            else:
+                dlq_payload = {"raw_payload": str(signal), "_dlq_reason": reason}
+            enqueue(dlq_payload)
+            return True
         except Exception as exc:  # noqa: BLE001 - DLQ write must never break the signal path
             log.warning("[%s] DLQ enqueue failed (%s): %s",
-                        signal.get("signal_id", "<unknown>"), reason, exc)
+                        signal.get("signal_id", "<unknown>") if isinstance(signal, dict) else "<unknown>", reason, exc)
+            return False
 
     # ------------------------------------------------------------------
     # Conflict resolution (same symbol, different signals)
@@ -481,6 +558,7 @@ class SignalConsumer:
                 "conflict_resolution_rule": "last_write_wins_timestamp_then_confidence",
             },
         )
+        self._ack_signal(loser)
 
     # ------------------------------------------------------------------
     # FinRL rebalance batching
@@ -489,6 +567,78 @@ class SignalConsumer:
     def _buffer_rebalance(self, signal: dict) -> None:
         run_id = signal["run_id"]
         self._rebalance_buffer[run_id]["signals"].append(signal)
+
+    def _renew_rebalance_claims(self) -> None:
+        renew = getattr(self._store, "renew_claim", None)
+        if not callable(renew):
+            return
+        for run_id, batch in list(self._rebalance_buffer.items()):
+            retained = [
+                signal
+                for signal in batch["signals"]
+                if self._renew_execution_claim(signal)
+            ]
+            if retained:
+                batch["signals"] = retained
+            else:
+                del self._rebalance_buffer[run_id]
+
+    def _renew_execution_claim(self, signal: dict) -> bool:
+        renew = getattr(self._store, "renew_claim", None)
+        if not callable(renew):
+            return True
+        try:
+            renewed = bool(renew(signal))
+        except Exception as exc:  # noqa: BLE001 - ambiguous ownership fails closed
+            log.error(
+                "[%s] Claim renewal failed; refusing execution: %s",
+                signal.get("signal_id", "<unknown>"),
+                exc,
+            )
+            return False
+        if not renewed:
+            log.warning(
+                "[%s] Claim expired or was reclaimed; refusing stale execution",
+                signal.get("signal_id", "<unknown>"),
+            )
+        return renewed
+
+    def _start_execution_claim_heartbeat(
+        self,
+        signal: dict,
+    ) -> _ExecutionClaimHeartbeat | None:
+        """Start continuous renewal when the store publishes a safe interval."""
+        renew = getattr(self._store, "renew_claim", None)
+        interval_provider = getattr(
+            self._store,
+            "claim_renewal_interval_seconds",
+            None,
+        )
+        if not callable(renew) or not callable(interval_provider):
+            return None
+        try:
+            interval = float(interval_provider())
+        except (TypeError, ValueError, OverflowError) as exc:
+            log.error(
+                "[%s] Invalid claim heartbeat interval; refusing execution: %s",
+                signal.get("signal_id", "<unknown>"),
+                exc,
+            )
+            return None
+        if not math.isfinite(interval) or interval <= 0:
+            log.error(
+                "[%s] Invalid claim heartbeat interval %.6f; refusing execution",
+                signal.get("signal_id", "<unknown>"),
+                interval,
+            )
+            return None
+        heartbeat = _ExecutionClaimHeartbeat(
+            renew=renew,
+            signal=signal,
+            interval_seconds=interval,
+        )
+        heartbeat.start()
+        return heartbeat
 
     def _tick_rebalance_buffer(self, algo: Any | None) -> None:
         completed: list[str] = []
@@ -523,22 +673,166 @@ class SignalConsumer:
     # ------------------------------------------------------------------
 
     def _execute_one(self, signal: dict, algo: Any | None) -> None:
+        # Fence the actual side-effect boundary, not just the earlier claim
+        # loop.  Buffered signals may outlive their original visibility lease.
+        if not self._renew_execution_claim(signal):
+            return
+        if self._is_duplicate(signal):
+            self._record_filtered_signal_noop(
+                signal,
+                algo,
+                "duplicate_signal_id",
+                extra_metadata={
+                    "duplicate_signal_id": signal["signal_id"],
+                    "idempotent_replay": True,
+                    "execution_boundary_recheck": True,
+                },
+            )
+            self._ack_signal(signal)
+            return
         if algo is None:
             log.warning(
                 "[%s] No algo instance — dry-run only", signal["signal_id"]
             )
             self._remember_processed(signal["signal_id"])
+            self._ack_signal(signal)
             return
+        execution_fence: ExecutionFence | None = None
+        begin_execution = getattr(self._store, "begin_execution", None)
+        if callable(begin_execution):
+            try:
+                candidate = begin_execution(signal)
+            except Exception as exc:  # noqa: BLE001 - ambiguous authority fails closed
+                log.error(
+                    "[%s] Unable to reserve execution authority; refusing side effect: %s",
+                    signal.get("signal_id", "<unknown>"),
+                    exc,
+                )
+                return
+            if isinstance(candidate, ExecutionFence):
+                execution_fence = candidate
+        if execution_fence is not None:
+            if execution_fence.status == "lost_claim":
+                log.warning(
+                    "[%s] Claim expired before execution reservation; refusing side effect",
+                    signal.get("signal_id", "<unknown>"),
+                )
+                return
+            if execution_fence.status == "in_progress":
+                log.error(
+                    "[%s] Execution already started under another claim; "
+                    "routing reclaimed copy to durable DLQ",
+                    signal.get("signal_id", "<unknown>"),
+                )
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "execution_in_progress_elsewhere",
+                    extra_metadata={
+                        "execution_fence_status": execution_fence.status,
+                    },
+                    remember_processed=False,
+                )
+                self._enqueue_dlq(signal, "execution_in_progress_elsewhere")
+                return
+            if execution_fence.status == "completed":
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "duplicate_signal_id",
+                    extra_metadata={
+                        "duplicate_signal_id": signal["signal_id"],
+                        "idempotent_replay": True,
+                        "execution_fence_status": execution_fence.status,
+                    },
+                )
+                self._ack_signal(signal)
+                return
+            if (
+                execution_fence.status != "acquired"
+                or not execution_fence.token
+            ):
+                log.error(
+                    "[%s] Invalid execution-fence result %r; refusing side effect",
+                    signal.get("signal_id", "<unknown>"),
+                    execution_fence,
+                )
+                return
+        heartbeat = self._start_execution_claim_heartbeat(signal)
+        execution_succeeded = False
         try:
             execute(signal, algo)
-            # Mark as processed only after successful execution
-            self._remember_processed(signal["signal_id"])
+            execution_succeeded = True
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
             self._record_execution_error_noop(signal, algo, exc)
+            if self._enqueue_dlq(signal, f"execution_error: {exc}"):
+                self._remember_processed(signal["signal_id"])
         except Exception as exc:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
+            self._enqueue_dlq(signal, f"unexpected_error: {exc}")
+        finally:
+            if heartbeat is not None:
+                heartbeat.stop()
+        if not execution_succeeded:
+            return
+
+        lease_loss_reason = (
+            heartbeat.loss_reason
+            if heartbeat is not None and heartbeat.lease_lost
+            else None
+        )
+        if execution_fence is not None:
+            complete_execution = getattr(self._store, "complete_execution", None)
+            try:
+                committed = callable(complete_execution) and bool(
+                    complete_execution(
+                        signal["signal_id"],
+                        execution_fence.token,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - commit ambiguity stays recoverable
+                log.error(
+                    "[%s] Execution fence commit failed; retaining durable recovery: %s",
+                    signal.get("signal_id", "<unknown>"),
+                    exc,
+                )
+                self._enqueue_dlq(signal, f"execution_fence_commit_error: {exc}")
+                return
+            if not committed:
+                log.error(
+                    "[%s] Execution fence ownership changed before commit; "
+                    "retaining durable recovery",
+                    signal.get("signal_id", "<unknown>"),
+                )
+                self._enqueue_dlq(signal, "execution_fence_commit_refused")
+                return
+            self._processed_signal_ids.add(str(signal["signal_id"]))
+            if lease_loss_reason:
+                log.error(
+                    "[%s] Queue claim lease was lost during execution (%s); "
+                    "the durable execution token committed the single side effect",
+                    signal.get("signal_id", "<unknown>"),
+                    lease_loss_reason,
+                )
+            self._ack_signal(signal)
+            return
+
+        if lease_loss_reason:
+            log.error(
+                "[%s] Queue claim lease was lost during unfenced execution (%s); "
+                "refusing processed/ack commit",
+                signal.get("signal_id", "<unknown>"),
+                lease_loss_reason,
+            )
+            self._enqueue_dlq(
+                signal,
+                f"unfenced_execution_claim_lost: {lease_loss_reason}",
+            )
+            return
+        self._remember_processed(signal["signal_id"])
+        self._ack_signal(signal)
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
         reason = _execution_error_reason(exc)
@@ -554,6 +848,7 @@ class SignalConsumer:
                 "signal_action": signal.get("action"),
                 "signal_direction": signal.get("direction"),
             },
+            remember_processed=False,
         )
 
     # ------------------------------------------------------------------

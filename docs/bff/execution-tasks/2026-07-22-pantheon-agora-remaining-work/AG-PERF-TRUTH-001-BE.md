@@ -49,6 +49,41 @@ capital.
 - PR is merged to `dev`; the handoff records exact routes and generated-type
   impact for `AG-PERF-TRUTH-001-FE`.
 
+## Approved delivery handoff
+
+Claude approved the implementation after independently verifying the scoped
+live gate, canonical lineage, typed-unavailable behavior, durable receipts,
+idempotency/CAS, viewer refusal, and no-order boundary. The repository contract
+for `AG-PERF-TRUTH-001-FE` is the additive Agora v1.10 bundle:
+
+- `GET /bff/agora/trading-room/strategies/{strategy_id}/performance`
+- `POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions`
+- `GET /bff/agora/performance/action-receipts/{receipt_id}`
+
+Frontend generated types must consume `PerformanceProjectionEnvelope`,
+`StrategyPerformanceProjection`, `SourceAvailability`, `ComplianceMetric`,
+`InterventionRecord`, `ExecutionHistoryRow`, `PerformanceWarning`,
+`AdjustmentSuggestion`, `SuggestionProvenance`, `SuggestionActionRequest`,
+`SuggestionActionReceipt`, and `SuggestionActionEnvelope` from
+`services/control-plane/specs/agora/v11/performance_truth.schema.json`, routed
+by `services/control-plane/openapi/agora_v1_10.openapi.yaml` and locked by
+`services/control-plane/specs/agora/bundle_index.v1_10.json`. Consumers must
+preserve nullable expected effect/risk and typed availability; they must not
+synthesize fallback values or treat a local toast as a receipt.
+
+Owner closeout verification on 2026-07-22:
+
+- `python -m pytest -q services/control-plane/bff/agora/performance/test_performance.py`
+  — 13 passed (one dependency deprecation warning).
+- `python -m compileall -q` over the performance package, Agora router, and BFF
+  `main.py`; `jq empty` over all v1.10 JSON artifacts; `git diff --check` — all
+  passed.
+- `main.app` unauthenticated smoke for all three routes — each returned 401.
+
+This is repository implementation evidence only. Hosted availability and the
+cross-surface compatibility/deployment claims remain owned by the downstream
+Agora compatibility and hosted-close tasks.
+
 ## Exclusions
 
 - No frontend changes.

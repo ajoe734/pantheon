@@ -8,14 +8,18 @@ import tempfile
 import unittest
 import os
 import json
+import signal
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 import supervisor
+import provider_permissions
 import runtime_state
+import common
 
 
 _OLD_ENV = {}
@@ -157,29 +161,34 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
-    def test_primary_claude_lane_is_enabled_and_alternate_stays_disabled(self) -> None:
+    def test_claude_lanes_are_enabled_with_shared_account_limit(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude2", "Antigravity2", "Copilot"])
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Antigravity2", "Copilot"])
         self.assertEqual(ready_dispatcher["target_workload"]["Claude"], 5)
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 1)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["claude_account_shared_max_1"], 1)
         self.assertNotIn("Claude", ready_dispatcher["disabled_agents"])
+        self.assertNotIn("Claude2", ready_dispatcher["disabled_agents"])
         self.assertEqual(ready_dispatcher["target_workload"]["Copilot"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Copilot"], 0)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["copilot"], 0)
 
-    def test_claude2_lane_is_disabled_with_zero_capacity(self) -> None:
+    def test_claude2_capacity_still_obeys_shared_account_limit(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 0)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 0)
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["claude_account_shared_max_1"], 1)
-        self.assertIn("Claude2", ready_dispatcher["disabled_agents"])
+        self.assertEqual(config["providers"]["claude"]["account"], "claude_account_shared_max_1")
+        self.assertEqual(config["providers"]["claude2"]["account"], "claude_account_shared_max_1")
+        self.assertNotIn("Claude2", ready_dispatcher["disabled_agents"])
 
     def test_primary_antigravity_lane_is_enabled_and_alternate_stays_disabled(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
@@ -608,6 +617,21 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertEqual(result["kind"], "tool_auth")
         self.assertFalse(result["transient"])
+
+    def test_classifies_require_authenticated_gh_session_as_tool_auth(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex2-1"}
+
+        for reason in (
+            "Require authenticated gh session. Run gh auth status.",
+            "Require authenticated `gh` session. Run `gh auth status`.",
+        ):
+            with self.subTest(reason=reason):
+                result = supervisor.classify_worker_failure(config, worker, reason)
+
+                self.assertEqual(result["kind"], "tool_auth")
+                self.assertFalse(result["transient"])
+                self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(result["kind"]))
 
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
@@ -1527,6 +1551,202 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_github_retry_allocates_isolated_worktree_outside_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                    "execution_reasons": ["owned_ready_dispatch"],
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-RETRY-001",
+                reason="github_retry",
+                metadata={
+                    "workspace_task_id": "OPS-RETRY-001",
+                    "require_isolated_worktree": True,
+                },
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-github-retry",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "ops-retry-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(),
+            expected_path,
+            "task/OPS-RETRY-001",
+            "origin/dev",
+        )
+
+    def test_prepare_github_retry_refuses_shared_checkout_when_worktrees_disabled(self) -> None:
+        config = {
+            **self.config,
+            "worker_worktrees": {"enabled": False},
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="OPS-RETRY-001",
+            reason="github_retry",
+            metadata={
+                "workspace_task_id": "OPS-RETRY-001",
+                "require_isolated_worktree": True,
+            },
+        )
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                {},
+                request,
+                queue_event_id="evt-github-retry",
+                target_agent="Codex",
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("Refusing shared-checkout fallback", message or "")
+        self.assertNotIn("workspace_path", request.metadata)
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["refresh_status"],
+            "isolated_worktrees_disabled",
+        )
+
+    def test_prepare_github_retry_rejects_shared_checkout_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "worker_worktrees": {"enabled": True},
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-RETRY-001",
+                reason="github_retry",
+                metadata={
+                    "workspace_task_id": "OPS-RETRY-001",
+                    "require_isolated_worktree": True,
+                    "workspace_path": str(repo_root),
+                },
+            )
+            with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-github-retry",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("shared supervisor checkout", message or "")
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["refresh_status"],
+            "shared_checkout_rejected",
+        )
+
+    def test_create_worker_worktree_quarantines_incomplete_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ag-ws-ops-002"
+            worktree_path.mkdir(parents=True)
+            (worktree_path / "partial-checkout.txt").write_text("preserve me\n", encoding="utf-8")
+
+            completed = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+            with (
+                mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
+                mock.patch.object(supervisor.subprocess, "run", return_value=completed) as run,
+            ):
+                ok, error = supervisor._create_worker_worktree(
+                    repo_root,
+                    worktree_path,
+                    "task/AG-WS-OPS-002",
+                    "origin/dev",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(error)
+            quarantine_root = worktree_path.parent / ".incomplete-worktree-quarantine"
+            quarantined = list(quarantine_root.glob("ag-ws-ops-002-*"))
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(
+                (quarantined[0] / "partial-checkout.txt").read_text(encoding="utf-8"),
+                "preserve me\n",
+            )
+            self.assertIn("original_path=", (quarantined[0] / "ORCHESTRATOR_QUARANTINE.txt").read_text(encoding="utf-8"))
+            run.assert_called_once_with(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    "task/AG-WS-OPS-002",
+                    str(worktree_path),
+                    "origin/dev",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    def test_create_worker_worktree_does_not_move_git_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "active-task"
+            worktree_path.mkdir(parents=True)
+            (worktree_path / ".git").write_text("gitdir: /safe/metadata\n", encoding="utf-8")
+
+            with mock.patch.object(supervisor.subprocess, "run") as run:
+                ok, error = supervisor._create_worker_worktree(
+                    repo_root,
+                    worktree_path,
+                    "task/ACTIVE-TASK",
+                    "origin/dev",
+                )
+
+            self.assertFalse(ok)
+            self.assertIn("already exists and is not empty", error or "")
+            self.assertTrue((worktree_path / ".git").exists())
+            run.assert_not_called()
+
     def test_generated_worker_task_brief_mentions_inherited_status_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2058,7 +2278,15 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "message": "wake",
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        request = object()
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="BUS-VAL-004",
+            reason="owned_in_progress_dispatch",
+            metadata={"workspace_path": "/tmp/workers/bus-val-004"},
+        )
         delivery = {"manual_confirmation_required": False, "auto_delivered": True}
 
         with (
@@ -2077,8 +2305,63 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         build_request.assert_called_once_with(self.config, queue_payload)
         start_worker.assert_called_once()
         sync_dispatched_task_status.assert_called_once_with(
-            self.config, queue_payload, run_id="run-123"
+            self.config,
+            queue_payload,
+            run_id="run-123",
+            workspace_path="/tmp/workers/bus-val-004",
         )
+
+    def test_process_queue_skips_second_event_when_task_worker_is_active(self) -> None:
+        current_task = {
+            "id": "BUS-VAL-DUP",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-07-26T10:20:30Z",
+        }
+        queue_payload = {
+            "event_id": "evt-duplicate",
+            "task_id": "BUS-VAL-DUP",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": "github_retry",
+            "message": "wake",
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-existing": {
+                    "run_id": "run-existing",
+                    "task_id": "BUS-VAL-DUP",
+                    "agent_id": "codex",
+                    "queue_event_id": "evt-original",
+                    "status": "running",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("duplicate task event must not start another worker"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-duplicate"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "task_already_active")
+        self.assertEqual(record["active_run_id"], "run-existing")
+        write_activity_log.assert_called_once()
+        activity = write_activity_log.call_args.args[1]
+        self.assertEqual(activity["type"], "wake_skipped")
+        self.assertEqual(activity["worker_run_id"], "run-existing")
 
     def test_failed_auto_lane_dispatch_does_not_create_manual_pending_worker(self) -> None:
         current_task = {
@@ -2382,6 +2665,115 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "INCIDENT-P0",
         )
 
+    def test_dispatcher_prioritizes_l12_review_over_unrelated_review_for_claude2(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T08:42:03Z",
+                },
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T08:42:52Z",
+                },
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 1
+        config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "shared_review": 1,
+        }
+        config["agents"]["claude2"] = {
+            "id": "claude2",
+            "name": "Claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude",
+        }
+        config["agents"]["antigravity"] = {
+            "id": "antigravity",
+            "name": "Antigravity",
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        config["providers"]["claude2"] = {
+            "delivery_mode": "claude",
+            "account": "shared_review",
+        }
+        config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "shared_review",
+        }
+
+        self.assertEqual(
+            supervisor.quota_group_concurrency_limit(
+                config,
+                "claude2",
+                config["ready_dispatcher"],
+            ),
+            1,
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude2"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "L12-VERIFY-OBS-001")
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
+    def test_l12_priority_gate_is_limited_to_review_dispatch(self) -> None:
+        review_priority = supervisor.dispatch_reason_priority("review_ready_dispatch")
+        owned_priority = supervisor.dispatch_reason_priority("owned_in_progress_dispatch")
+
+        self.assertIsNotNone(review_priority)
+        self.assertIsNotNone(owned_priority)
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "L12-VERIFY-OBS-001"},
+                int(review_priority),
+            ),
+            0,
+        )
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729"},
+                int(review_priority),
+            ),
+            0,
+        )
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "L12-VERIFY-OBS-001"},
+                int(owned_priority),
+            ),
+            1_000_000,
+        )
+
     def test_task_declared_priority_rank_is_fail_safe(self) -> None:
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "P0"}), 0)
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "p12"}), 12)
@@ -2455,6 +2847,102 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertNotEqual(
             queue_delivery_event.call_args.args[1]["key"],
             previous_event["key"],
+        )
+
+    def test_dispatcher_redispatches_interrupted_governed_review_exactly_once(self) -> None:
+        task = {
+            "id": "INTERRUPTED-REVIEW",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "last_update": "2026-07-24T00:10:00Z",
+            "next": "Review the task without mutating its handoff.",
+        }
+        handoff = {
+            "task_id": task["id"],
+            "from": "Claude",
+            "to": "Codex",
+            "message": task["next"],
+            "status": "pending",
+            "created_at": task["last_update"],
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            "review_ready_dispatch",
+            {task["id"]: task},
+        )
+        worker = {
+            "run_id": "codex-review-interrupted",
+            "task_id": task["id"],
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "completed",
+            "runner_finished_at": "2026-07-24T00:11:00Z",
+            "last_event_at": "2026-07-24T00:11:00Z",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "review",
+                "task_id": task["id"],
+                "reason": "review_ready_dispatch",
+                "metadata": {"dispatch_event_key": event["key"]},
+            },
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {event["key"]: supervisor.utc_now()},
+        }
+        status = {"tasks": [task], "handoffs": [handoff]}
+        unchanged_status = json.loads(json.dumps(status))
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state))
+            self.assertFalse(supervisor.dispatch_ready_tasks(config, state))
+
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        redispatch = queued_event["task"]["governed_review_redispatch"]
+        self.assertEqual(redispatch["attempt"], 1)
+        self.assertEqual(redispatch["parent_worker_run_id"], worker["run_id"])
+        self.assertTrue(redispatch["require_isolated_worktree"])
+        self.assertEqual(worker["review_redispatch_event_key"], event["key"])
+        self.assertEqual(status, unchanged_status)
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["review_worker_redispatched"],
+        )
+
+        request = supervisor.build_request(
+            config,
+            {
+                "event_key": queued_event["key"],
+                "target_agent": "codex",
+                "message": "review",
+                "task_id": task["id"],
+                "reason": "review_ready_dispatch",
+                "context_files": [],
+                "metadata": {"task": queued_event["task"]},
+            },
+        )
+        self.assertTrue(supervisor.worker_request_requires_isolated_worktree(request))
+        self.assertEqual(
+            request.metadata["governed_review_redispatch"]["parent_worker_run_id"],
+            worker["run_id"],
         )
 
     def test_queue_completion_starts_unchanged_signature_cooldown(self) -> None:
@@ -3035,6 +3523,332 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-003")
         self.assertEqual(queued_event["target_agent"], "Codex")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_dispatcher_helper_claim_respects_preferred_lane_order(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2", "Codex"],
+                }
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Antigravity",
+                        "Claude2",
+                        "Claude",
+                        "Codex2",
+                        "Codex",
+                    ],
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                {"queue": {"events": {}}, "workers": {}},
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
+    def test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2", "Codex"],
+                }
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "capacity pause",
+                    }
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Antigravity",
+                        "Claude2",
+                        "Claude",
+                        "Codex2",
+                        "Codex",
+                    ],
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Antigravity",
+                        "Claude2",
+                        "Claude",
+                        "Codex2",
+                        "Codex",
+                    ],
+                    "last_update": "2026-07-29T10:51:28Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude2"],
+            )
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "SUP-L12-STALE-PR-RETIRE-20260729")
+        self.assertEqual(kwargs["new_owner"], "Claude2")
+        self.assertEqual(kwargs["new_reviewer"], "Antigravity")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "SUP-L12-STALE-PR-RETIRE-20260729")
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
+    def test_dispatcher_helper_claim_blocks_lower_preferred_lane_when_owner_paused(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Antigravity": ["Claude2", "Codex2", "Codex"],
+                }
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "capacity pause",
+                    }
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Antigravity",
+                        "Claude2",
+                        "Claude",
+                        "Codex2",
+                        "Codex",
+                    ],
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
+    def test_dispatcher_does_not_helper_claim_catalog_locked_task(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-LOCKED-001",
+                    "status": "todo",
+                    "owner": "Copilot",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "catalog_task_contract_sha256": "c" * 64,
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                {"queue": {"events": {}}, "workers": {}},
+            )
+
+        self.assertTrue(changed)
+        persist.assert_not_called()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "L12-LOCKED-001")
+        self.assertEqual(queued_event["target_agent"], "Copilot")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
     def test_dispatcher_helper_claims_unrelated_task_during_failure_loop(self) -> None:
@@ -3754,6 +4568,51 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Codex")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
 
+    def test_normalize_does_not_reassign_catalog_locked_task(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Codex2": ["Codex"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": False},
+                "claude": {"auth_ready": True},
+            }
+        }
+        task = {
+            "id": "L12-LOCKED-001",
+            "status": "todo",
+            "owner": "Codex2",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "catalog_task_contract_sha256": "a" * 64,
+        }
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+
     def test_normalize_does_not_reassign_when_owner_auth_ready(self) -> None:
         config = {
             "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
@@ -4249,6 +5108,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "run_id": "gemini-run-1",
                     "queue_event_id": "evt-current",
                     "status": "running",
+                    "workspace_path": "/tmp/workers/p3-001",
                 }
             },
         }
@@ -4265,8 +5125,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-current"]
         self.assertEqual(record["status"], "started")
         self.assertEqual(record["run_id"], "gemini-run-1")
-        sync_dispatched_task_status.assert_called_once_with(
-            self.config, queue_payload, run_id="gemini-run-1"
+        self.assertEqual(
+            sync_dispatched_task_status.call_args.kwargs["run_id"],
+            "gemini-run-1",
+        )
+        self.assertEqual(
+            Path(sync_dispatched_task_status.call_args.kwargs["workspace_path"]),
+            Path("/tmp/workers/p3-001"),
         )
 
 
@@ -4354,17 +5219,113 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "PANTHEON_COMMAND_ROOT": str(self.root),
             "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
         }
+        workspace = self.root / "worker"
+        workspace.mkdir()
 
         with (
+            mock.patch.dict(
+                supervisor.os.environ,
+                {
+                    "PANTHEON_WORKTREE_ROOT": "/tmp/inherited-other-worker",
+                    "ORCH_WORKSPACE_PATH": "/tmp/inherited-other-worker",
+                },
+                clear=False,
+            ),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(
-                self.config, event, run_id="copilot-run-7"
+                self.config,
+                event,
+                run_id="copilot-run-7",
+                workspace_path=workspace,
             )
 
         self.assertTrue(changed)
-        self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        command_process_env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(command_process_env["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(command_process_env["PANTHEON_WORKTREE_ROOT"], str(workspace))
+        self.assertEqual(command_process_env["ORCH_WORKSPACE_PATH"], str(workspace))
+
+    def test_sync_dispatched_task_status_rejects_run_id_without_workspace(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+
+        with (
+            mock.patch.object(supervisor.subprocess, "run") as run_mock,
+            mock.patch.object(supervisor, "write_activity_log") as activity_log,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config,
+                event,
+                run_id="copilot-run-7",
+            )
+
+        self.assertFalse(changed)
+        run_mock.assert_not_called()
+        self.assertIn(
+            "has no workspace binding",
+            activity_log.call_args.args[1]["message"],
+        )
+
+    def test_sync_dispatched_task_status_binds_worker_workspace_env(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        workspace = self.root / "worker-worktrees" / "app-002"
+        workspace.mkdir(parents=True)
+        runner_status_path = self.root / ".orchestrator" / "worker-runtime" / "status" / "copilot-run-7.json"
+        heartbeat_path = self.root / ".orchestrator" / "worker-runtime" / "heartbeats" / "copilot-run-7.json"
+        runner_status_path.parent.mkdir(parents=True)
+        heartbeat_path.parent.mkdir(parents=True)
+        worker = {
+            "run_id": "copilot-run-7",
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "workspace_path": str(workspace),
+            "status_root": str(self.root),
+            "runner_status_path": str(runner_status_path),
+            "heartbeat_path": str(heartbeat_path),
+            "request_snapshot": {
+                "metadata": {
+                    "workspace_path": str(workspace),
+                    "status_root": str(self.root),
+                }
+            },
+        }
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        self.config["paths"]["state_file"] = str(self.root / ".orchestrator" / "state.json")
+
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor, "load_runtime_state", return_value={"workers": {"copilot-run-7": worker}}),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config,
+                event,
+                run_id="copilot-run-7",
+                workspace_path=workspace,
+            )
+
+        self.assertTrue(changed)
+        env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(env["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(env["ORCH_TASK_ID"], "APP-002-W1-FRONT-HANDOFF")
+        self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace.resolve()))
+        self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace.resolve()))
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(self.root.resolve()))
+        self.assertEqual(env["ORCH_RUNNER_STATUS_PATH"], str(runner_status_path.resolve()))
+        self.assertEqual(env["ORCH_HEARTBEAT_PATH"], str(heartbeat_path.resolve()))
 
     def test_sync_dispatched_task_status_without_run_id_does_not_inherit_lease(self) -> None:
         # A stray ORCH_RUN_ID in the supervisor environment must not be borrowed as a
@@ -4381,14 +5342,27 @@ class DispatchStatusSyncTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.dict(supervisor.os.environ, {"ORCH_RUN_ID": "inherited-run"}, clear=False),
+            mock.patch.dict(
+                supervisor.os.environ,
+                {
+                    "ORCH_RUN_ID": "inherited-run",
+                    "ORCH_TASK_ID": "INHERITED-TASK",
+                    "PANTHEON_WORKTREE_ROOT": str(self.root / "inherited-worktree"),
+                    "ORCH_WORKSPACE_PATH": str(self.root / "inherited-worktree"),
+                    "ORCH_RUNNER_STATUS_PATH": str(self.root / "inherited-status.json"),
+                    "ORCH_HEARTBEAT_PATH": str(self.root / "inherited-heartbeat.json"),
+                },
+                clear=False,
+            ),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertTrue(changed)
-        self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
+        env = run_mock.call_args.kwargs["env"]
+        for env_name in supervisor.DISPATCH_STATUS_WORKER_ENV_NAMES:
+            self.assertNotIn(env_name, env)
 
     def test_run_once_syncs_dispatch_after_releasing_runtime_lock(self) -> None:
         event = {
@@ -4417,6 +5391,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
                 self.config,
                 event,
                 run_id="copilot-run-7",
+                workspace_path=self.root,
             )
             self.assertFalse(changed)
             return False
@@ -4429,6 +5404,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
             mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
             mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            # Provider probing is its own pre-lock step and shells out too; it is
+            # stubbed here so call_order records only the dispatch sync.
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
             mock.patch.object(supervisor.subprocess, "run", side_effect=status_command) as run_mock,
         ):
             changed = supervisor.run_once(self.config, watch=False)
@@ -4439,6 +5417,538 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
         )
         self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["PANTHEON_WORKTREE_ROOT"],
+            str(self.root),
+        )
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["ORCH_WORKSPACE_PATH"],
+            str(self.root),
+        )
+
+    def test_run_once_probes_providers_before_taking_the_runtime_lock(self) -> None:
+        """A gh auth probe must not be charged to the exclusive runtime lock.
+
+        Live symptom: supervisor PID 901543 held runtime-admission inode 807896
+        while reviewer and status processes queued, and the provider probe was
+        one of the unbounded external waits inside that hold.
+        """
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertEqual(kwargs["provider_reports"], ({"previous": True}, {"fresh": True}))
+            return False
+
+        def probe(*_args: object, **_kwargs: object) -> tuple[dict, dict]:
+            call_order.append("provider_probe")
+            return ({"previous": True}, {"fresh": True})
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+            mock.patch.object(supervisor, "probe_provider_reports", side_effect=probe),
+        ):
+            supervisor.run_once(self.config, watch=False)
+
+        self.assertEqual(
+            call_order,
+            ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_fetches_worker_base_before_taking_runtime_lock(self) -> None:
+        """The exact origin/dev network refresh must precede admission."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def fetch_base(_repo_root: Path, base_ref: str) -> tuple[bool, None]:
+            self.assertEqual(base_ref, "origin/dev")
+            call_order.append("fetch_base")
+            return True, None
+
+        def locked_cycle(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertEqual(
+                supervisor._worker_base_ref_precondition("origin/dev"),
+                (True, None),
+            )
+            return False
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
+            mock.patch.object(supervisor, "pending_worker_base_refs", return_value={"origin/dev"}),
+            mock.patch.object(supervisor, "_fetch_worker_base_ref", side_effect=fetch_base),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["fetch_base", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_syncs_github_bus_before_taking_the_runtime_lock(self) -> None:
+        """No gh/API subprocess may extend the exclusive admission hold."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def github_sync(
+            _config: dict[str, object],
+            runtime_snapshot: dict[str, object],
+        ) -> bool:
+            call_order.append("github_sync")
+            self.assertEqual(runtime_snapshot, {"snapshot": True})
+            return True
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertTrue(kwargs["prelock_changed"])
+            return True
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value={"snapshot": True},
+            ),
+            mock.patch.object(supervisor, "sync_github_bus", side_effect=github_sync),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["github_sync", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_prefetches_ownerless_pr_metadata_before_runtime_lock(self) -> None:
+        task_id = "SUP-SQUASH-PREFETCH"
+        head = "a" * 40
+        status = {
+            "tasks": [
+                {
+                    "id": task_id,
+                    "status": "in_progress",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+        runtime_snapshot = {
+            "workers": {
+                "claude-run": {
+                    "run_id": "claude-run",
+                    "task_id": task_id,
+                    "logical_agent_id": "claude",
+                    "agent_id": "claude",
+                    "provider": "claude",
+                    "status": "completed",
+                    "runner_status": "completed",
+                    "exit_code": 0,
+                    "lease_acquired_at": "2026-07-27T14:00:00Z",
+                    "commit_progress_count": 1,
+                    "last_commit_progress_at": "2026-07-27T14:01:00Z",
+                    "work_progress_snapshot": {"commit_sha": head},
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_OWNED_IN_PROGRESS
+                    },
+                }
+            },
+            "queue": {"events": {}},
+        }
+        self.config["agents"].update(
+            {
+                "claude": {
+                    "id": "claude",
+                    "display_name": "Claude",
+                    "provider": "claude",
+                },
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                },
+            }
+        )
+        self.config["branch_workflow"] = {
+            "task_branch_prefix": "task/",
+            "dev_branch": "dev",
+        }
+        lock_held = False
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_held
+            lock_held = True
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_held = False
+
+        def gh_lookup(*_args: object, **_kwargs: object) -> mock.Mock:
+            self.assertFalse(lock_held, "gh PR lookup ran under runtime lock")
+            call_order.append("gh_lookup")
+            return mock.Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "number": 4254,
+                            "state": "MERGED",
+                            "headRefName": f"task/{task_id}",
+                            "headRefOid": head,
+                            "baseRefName": "dev",
+                            "mergedAt": "2026-07-27T14:10:00Z",
+                            "mergeCommit": {"oid": "b" * 40},
+                            "url": "https://github.com/ajoe734/pantheon/pull/4254",
+                        }
+                    ]
+                ),
+            )
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            snapshot = kwargs["ownerless_pr_snapshots"][task_id]
+            self.assertEqual(snapshot["worker_run_id"], "claude-run")
+            self.assertEqual(snapshot["delivery_head"], head)
+            self.assertEqual(snapshot["records"][0]["number"], 4254)
+            return False
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value=runtime_snapshot,
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "resolve_gh_binary", return_value="gh"),
+            mock.patch.object(
+                supervisor,
+                "_repository_slug_from_remote",
+                return_value="ajoe734/pantheon",
+            ),
+            mock.patch.object(supervisor, "run_gh_process", side_effect=gh_lookup),
+            mock.patch.object(supervisor, "pending_worker_base_refs", return_value=set()),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["gh_lookup", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_confirms_worker_termination_after_runtime_lock_release(self) -> None:
+        """Both the signal and confirm/poll path run after admission."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def confirm_kill(pid: int, **_kwargs: object) -> bool:
+            self.assertEqual(pid, 4242)
+            self.assertTrue(_kwargs["is_alive"](pid))
+            call_order.append("confirm_kill")
+            _kwargs["send_signal"](pid, signal.SIGTERM)
+            return True
+
+        def locked_cycle() -> bool:
+            self.assertFalse(supervisor.terminate_worker_pid(4242))
+            return True
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
+            mock.patch.object(
+                supervisor.os,
+                "kill",
+                side_effect=lambda pid, sent_signal: call_order.append(
+                    f"signal:{pid}:{sent_signal}"
+                ),
+            ),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                side_effect=confirm_kill,
+            ),
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            [
+                "lock_enter",
+                "lock_exit",
+                "confirm_kill",
+                f"signal:4242:{signal.SIGTERM}",
+            ],
+        )
+
+    def test_deferred_termination_does_not_signal_a_reused_pid(self) -> None:
+        """The lock-release confirmer is bound to the worker's start time."""
+
+        call_order: list[str] = []
+        start_ticks = iter([111, 222])
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "worker_pid_start_ticks",
+                side_effect=lambda _pid: next(start_ticks),
+            ),
+            mock.patch.object(
+                supervisor.os,
+                "kill",
+                side_effect=lambda _pid, sent_signal: call_order.append(
+                    f"signal:{sent_signal}"
+                ),
+            ),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+            ) as confirm_kill,
+        ):
+            self.assertFalse(
+                supervisor._run_with_deferred_dispatch_status_syncs(
+                    self.config,
+                    lambda: supervisor.terminate_worker_pid(4242),
+                )
+            )
+
+        self.assertEqual(call_order, [])
+        confirm_kill.assert_not_called()
+
+    def test_deferred_termination_without_start_ticks_fails_closed(self) -> None:
+        """An unreadable /proc identity never authorizes a signal."""
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=None),
+            mock.patch.object(supervisor.os, "kill") as send_signal,
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+            ) as confirm_kill,
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                lambda: supervisor.terminate_worker_pid(4242),
+            )
+
+        self.assertFalse(changed)
+        send_signal.assert_not_called()
+        confirm_kill.assert_not_called()
+
+    def test_worker_remains_nonterminal_until_deferred_confirmation(self) -> None:
+        worker = {
+            "run_id": "chair-run",
+            "task_id": "OPS-CHAIR-REVIEW",
+            "pid": 4242,
+            "status": "running",
+        }
+
+        def locked_cycle() -> bool:
+            result = supervisor.poll_worker_assignment_stage(
+                self.config,
+                {"workers": {"chair-run": worker}},
+                worker,
+                run_id="chair-run",
+                provider_report={},
+                task_map={},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertEqual(worker["status"], "running")
+            return result["changed"]
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "chair_review_worker_artifacts_applied",
+                return_value=True,
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                return_value=True,
+            ) as confirm_kill,
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(worker["status"], "running")
+        confirm_kill.assert_called_once()
+
+    def test_auto_commit_archive_subprocess_runs_after_runtime_admission(self) -> None:
+        self.config["paths"].update(
+            {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            }
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        script = self.root / ".orchestrator" / "auto_commit_archive.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        self.config["auto_commit_archive"] = {
+            "enabled": True,
+            "tick_interval_seconds": 0,
+            "script_timeout_seconds": 180,
+        }
+        lock_depth = 0
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_depth
+            lock_depth += 1
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_depth -= 1
+
+        def run_archive(*_args: object, **_kwargs: object) -> mock.Mock:
+            self.assertEqual(lock_depth, 0, "archive subprocess ran under runtime lock")
+            call_order.append("archive_subprocess")
+            return mock.Mock(
+                returncode=0,
+                stdout="auto_commit_archive: opened PR for task briefs\n",
+                stderr="",
+            )
+
+        def locked_cycle() -> bool:
+            state = supervisor.load_runtime_state(self.config)
+            scheduled = supervisor.maybe_auto_commit_archive(self.config, state)
+            self.assertTrue(scheduled)
+            supervisor.save_runtime_state(self.config, state)
+            return scheduled
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "runtime_state_lock",
+                side_effect=runtime_lock,
+            ),
+            mock.patch.object(
+                supervisor.subprocess,
+                "run",
+                side_effect=run_archive,
+            ),
+            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"),
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            [
+                "lock_enter",
+                "lock_exit",
+                "archive_subprocess",
+                "lock_enter",
+                "lock_exit",
+            ],
+        )
+        bucket = supervisor.load_runtime_state(self.config)["auto_commit_archive"]
+        self.assertIsNone(bucket["pending_token"])
+        self.assertIsNone(bucket["pending_since"])
+        self.assertEqual(bucket["last_exit"], 0)
+        self.assertIsNone(bucket["last_error"])
+
+    def test_auto_commit_archive_result_rejects_a_stale_token(self) -> None:
+        self.config["paths"].update(
+            {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            }
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        state = supervisor.load_runtime_state(self.config)
+        state["auto_commit_archive"] = {
+            "pending_token": "current-token",
+            "pending_since": "2026-07-27T15:00:00Z",
+        }
+        supervisor.save_runtime_state(self.config, state)
+
+        applied = supervisor.apply_auto_commit_archive_result(
+            self.config,
+            {
+                "token": "stale-token",
+                "scheduled_at": "2026-07-27T15:00:00Z",
+            },
+            {
+                "finished_at": "2026-07-27T15:00:01Z",
+                "last_exit": 0,
+                "opened_pr": True,
+            },
+        )
+
+        self.assertFalse(applied)
+        bucket = supervisor.load_runtime_state(self.config)["auto_commit_archive"]
+        self.assertEqual(bucket["pending_token"], "current-token")
+        self.assertNotIn("last_exit", bucket)
 
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
         command_env = {
@@ -4475,6 +5985,41 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         self.assertFalse(changed)
         run_mock.assert_not_called()
+
+
+class RuntimeLockHoldTests(unittest.TestCase):
+    """The exclusive hold is the ceiling on every worker status command's wait."""
+
+    def test_hold_within_budget_is_published_without_a_warning(self) -> None:
+        state: dict[str, object] = {}
+
+        held = supervisor.record_runtime_lock_hold(
+            {"supervisor": {"runtime_lock_hold_warn_after_seconds": 30}},
+            state,
+            time.monotonic(),
+        )
+
+        supervisor_state = state["supervisor"]
+        self.assertLess(held, 30)
+        self.assertEqual(supervisor_state["runtime_lock_hold_seconds"], held)
+        self.assertFalse(supervisor_state["runtime_lock_hold_exceeded"])
+
+    def test_multi_minute_hold_is_flagged_and_peak_is_retained(self) -> None:
+        """The live 771s hold left no trace in runtime state; it must now."""
+
+        state: dict[str, object] = {}
+        config = {"supervisor": {"runtime_lock_hold_warn_after_seconds": 30}}
+
+        supervisor.record_runtime_lock_hold(config, state, time.monotonic() - 771.0)
+        supervisor_state = state["supervisor"]
+        self.assertGreaterEqual(supervisor_state["runtime_lock_hold_seconds"], 771.0)
+        self.assertTrue(supervisor_state["runtime_lock_hold_exceeded"])
+        peak = supervisor_state["runtime_lock_hold_peak_seconds"]
+
+        # A later healthy cycle clears the flag but does not erase the peak.
+        supervisor.record_runtime_lock_hold(config, state, time.monotonic())
+        self.assertFalse(supervisor_state["runtime_lock_hold_exceeded"])
+        self.assertEqual(supervisor_state["runtime_lock_hold_peak_seconds"], peak)
 
 
 class TaskStateShadowCatchupTests(unittest.TestCase):
@@ -4554,6 +6099,235 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
         self.assertEqual(store_state["mode"], "authoritative")
         self.assertTrue(store_state["ok"])
         self.assertTrue(store_state["caught_up"])
+
+    def test_caught_up_reports_parity_and_repaired_reports_the_write(self) -> None:
+        """caught_up used to be the divergence predicate, exactly inverted.
+
+        A healthy cycle published caught_up=false while a cycle that had just
+        rewritten a drifted board published caught_up=true, so the field could
+        not be used to tell whether the projection matched the journal.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        # Board already matches the journal head: nothing to repair, and the
+        # projection is by definition caught up.
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertFalse(shadow["repaired"])
+
+        # Drift the board; the cycle must repair it and still report parity.
+        self.write_status("done")
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertTrue(shadow["repaired"])
+        self.assertEqual(
+            json.loads(self.status_file.read_text(encoding="utf-8")),
+            canonical,
+        )
+
+    def test_shadow_mode_reports_parity_and_repair_separately(self) -> None:
+        first = self.write_status("todo")
+
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertTrue(shadow["repaired"])
+        self.assertEqual(shadow["event_count"], 1)
+
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertFalse(shadow["repaired"])
+        self.assertEqual(
+            supervisor.rewrite_task_state_store.load_events(self.event_log)[0]["state"],
+            first,
+        )
+
+    def test_repair_that_never_lands_is_not_reported_as_caught_up(self) -> None:
+        """Parity is asserted about the board on disk, not the value written.
+
+        Comparing the journal head to the in-memory state just handed to
+        write_json would make the check tautological: any repair would report
+        success whether or not the file changed.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        drifted = self.write_status("done")
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        with mock.patch.object(supervisor, "write_json"):
+            self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertFalse(shadow["ok"])
+        self.assertFalse(shadow["caught_up"])
+        self.assertIn("remains divergent", shadow["last_error"])
+        self.assertEqual(
+            json.loads(self.status_file.read_text(encoding="utf-8")),
+            drifted,
+        )
+
+    def test_reconciliation_replays_the_journal_once_per_cycle(self) -> None:
+        """The reconciliation phase must not pay for the journal four times.
+
+        The previous body ran load_events, project_latest_state, and then
+        verify_projection -- which loaded and projected the log all over again --
+        inside the exclusive canonical lock. On the live 2050-event journal that
+        was four full replays per cycle while every reviewer and status command
+        queued on the same lock.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        store = supervisor.rewrite_task_state_store
+        reads: list[str] = []
+        real_snapshot = store.load_snapshot
+        real_load_events = store.load_events
+
+        with (
+            mock.patch.object(
+                store,
+                "load_snapshot",
+                side_effect=lambda *a, **k: (reads.append("snapshot"), real_snapshot(*a, **k))[1],
+            ),
+            mock.patch.object(
+                store,
+                "load_events",
+                side_effect=lambda *a, **k: (reads.append("events"), real_load_events(*a, **k))[1],
+            ),
+        ):
+            supervisor.sync_task_state_shadow(self.config, self.runtime_state)
+
+        self.assertEqual(reads, ["snapshot"])
+
+    def test_run_once_reconciles_task_state_before_runtime_admission(self) -> None:
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+        runtime_snapshot = {"supervisor": {}}
+        lock_held = False
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_held
+            lock_held = True
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_held = False
+
+        real_sync = supervisor.sync_task_state_shadow
+
+        def reconcile_before_lock(
+            config: dict[str, object],
+            state: dict[str, object],
+        ) -> bool:
+            self.assertFalse(lock_held)
+            call_order.append("task_state_shadow")
+            return real_sync(config, state)
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            snapshot = kwargs["task_state_shadow_snapshot"]
+            self.assertTrue(snapshot["report"]["ok"])
+            self.assertTrue(snapshot["report"]["caught_up"])
+            return False
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value=runtime_snapshot,
+            ),
+            mock.patch.object(
+                supervisor,
+                "sync_task_state_shadow",
+                side_effect=reconcile_before_lock,
+            ),
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["task_state_shadow", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_reconciliation_report_describes_one_journal_generation(self) -> None:
+        """The projection report must not straddle two journal generations.
+
+        Live symptom: a verifier started around a lock handoff reported
+        event_count=2046 with the expected SHA taken from event 2045 and the
+        projected SHA from event 2046, because the board and the journal were
+        sampled in two separate lock windows. A stable rerun at event 2049 then
+        returned ok=true, so the failure looked like flapping truth.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        store = supervisor.rewrite_task_state_store
+        real_snapshot = store.load_snapshot
+
+        def snapshot_then_append(*args: object, **kwargs: object) -> dict:
+            snapshot = real_snapshot(*args, **kwargs)
+            # A concurrent writer commits the moment our snapshot is taken.
+            store.append_state_commit(
+                self.event_log,
+                {"tasks": [{"id": "STATE-CATCHUP-001", "status": "review"}]},
+                source="concurrent-writer",
+            )
+            return snapshot
+
+        with mock.patch.object(store, "load_snapshot", side_effect=snapshot_then_append):
+            supervisor.sync_task_state_shadow(self.config, self.runtime_state)
+
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["ok"])
+        self.assertTrue(shadow["caught_up"])
+        # Count, digests, and last event id all describe the snapshot the phase
+        # actually reconciled -- never a mix of the two generations.
+        self.assertEqual(shadow["event_count"], 1)
+        self.assertEqual(
+            shadow["projected_state_sha256"],
+            shadow["expected_state_sha256"],
+        )
 
     def test_authoritative_mode_reports_empty_journal_without_touching_file(self) -> None:
         expected = self.write_status("todo")
@@ -4701,7 +6475,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
-            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "_run_scan_locked", return_value=False),
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
             mock.patch.object(supervisor, "prune_event_queue", return_value=False),
@@ -4751,7 +6525,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
-            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "_run_scan_locked", return_value=False),
             mock.patch.object(supervisor, "sync_coordination_files", return_value=False),
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
@@ -5201,6 +6975,162 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             ],
         )
 
+    def test_process_queue_builds_full_task_brief_inside_run_once_lock_context(self) -> None:
+        task_id = "OPS-TASK-BRIEF-LOCK-ORDER-TEST"
+        dependency_id = "OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY"
+        task = {
+            "id": task_id,
+            "title": "Generate the complete task brief",
+            "summary_zh": "在 supervisor dispatch 鎖上下文內生成完整 brief。",
+            "phase": "operations",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "depends_on": [dependency_id],
+            "artifacts": [".orchestrator/common.py"],
+            "next": "Use the complete task-scoped context",
+        }
+        self.status_path.write_text(
+            json.dumps({"tasks": [task]}) + "\n",
+            encoding="utf-8",
+        )
+        archive_dir = self.root / "ai-task-archive" / "tasks"
+        archive_dir.mkdir(parents=True)
+        (archive_dir / f"{dependency_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": dependency_id,
+                    "archived_at": "2026-07-26T00:00:00Z",
+                    "terminal_status": "done",
+                    "terminal_outcome": "completed",
+                    "task": {
+                        "id": dependency_id,
+                        "title": "Archived dependency",
+                        "status": "done",
+                    },
+                    "handoffs": [],
+                    "blockers": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        event = {
+            "event_id": "evt-task-brief-lock-order",
+            "task_id": task_id,
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": "manual_dispatch",
+            "message": "wake",
+        }
+        self.event_queue_path.write_text(
+            json.dumps(event) + "\n",
+            encoding="utf-8",
+        )
+        config = {
+            **self.config,
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                }
+            },
+            "providers": {"codex": {"delivery_mode": "codex"}},
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        brief_path = self.root / "task-brief.md"
+        lock_trace_path = self.root / "lock-trace.jsonl"
+        captured_requests: list[supervisor.DeliveryRequest] = []
+        real_build_request = supervisor.build_request
+
+        def build_request_under_task_lock(
+            request_config: dict[str, object],
+            request_event: dict[str, object],
+            **kwargs: object,
+        ) -> supervisor.DeliveryRequest:
+            with supervisor.canonical_task_state_lock_file(
+                self.status_path,
+                shared=True,
+                nonblocking=False,
+            ):
+                request = real_build_request(
+                    request_config,
+                    request_event,
+                    **kwargs,
+                )
+            captured_requests.append(request)
+            return request
+
+        def process_queue_under_nested_runtime_lock(
+            request_config: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            with runtime_state.runtime_state_lock(
+                request_config,
+                shared=True,
+                nonblocking=False,
+            ):
+                return supervisor.process_queue(request_config, state, {})
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_run_once_locked",
+                side_effect=process_queue_under_nested_runtime_lock,
+            ),
+            mock.patch.object(
+                supervisor,
+                "build_request",
+                side_effect=build_request_under_task_lock,
+            ),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value=None),
+            mock.patch.object(common, "task_brief_path", return_value=brief_path),
+            mock.patch.object(common, "write_activity_log") as common_activity_log,
+            mock.patch.dict(
+                os.environ,
+                {"PANTHEON_RUNTIME_LOCK_TRACE": str(lock_trace_path)},
+            ),
+        ):
+            changed = supervisor.run_once(config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(captured_requests), 1)
+        self.assertIn(str(brief_path), captured_requests[0].context_files)
+        self.assertNotEqual(
+            captured_requests[0].context_files,
+            ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
+        )
+        self.assertTrue(brief_path.is_file())
+        rendered = brief_path.read_text(encoding="utf-8")
+        self.assertIn("# Task Brief: OPS-TASK-BRIEF-LOCK-ORDER-TEST", rendered)
+        self.assertIn("- Status: todo", rendered)
+        self.assertIn("- Owner: Codex", rendered)
+        self.assertIn("- Reviewer: Codex2", rendered)
+        self.assertIn("- Next: Use the complete task-scoped context", rendered)
+        self.assertIn(
+            "- OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY: done · Archived dependency",
+            rendered,
+        )
+        self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
+        common_activity_log.assert_not_called()
+        lock_trace = [
+            line.split(":", 3)[:2]
+            for line in lock_trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [entry for entry in lock_trace if entry == ["acquire", "task_state"]],
+            [["acquire", "task_state"]],
+        )
+        self.assertLess(
+            lock_trace.index(["acquire", "runtime_admission"]),
+            lock_trace.index(["acquire", "task_state"]),
+        )
+
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
         original_events = [
             {
@@ -5301,13 +7231,41 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         locked_operation_source = inspect.getsource(
             supervisor._run_with_deferred_dispatch_status_syncs
         )
+        locked_cycle_source = inspect.getsource(supervisor._run_once_locked)
         queue_writer_source = inspect.getsource(supervisor.save_event_queue)
 
         self.assertIn("_run_with_deferred_dispatch_status_syncs(", run_once_source)
         self.assertIn("lambda: _run_once_locked(", run_once_source)
+        self.assertIn('"sync_github_bus"', run_once_source)
+        self.assertNotIn('"sync_github_bus"', locked_cycle_source)
+        self.assertIn(
+            "prefetch_ownerless_merged_pr_snapshots",
+            run_once_source,
+        )
+        self.assertNotIn(
+            "_merged_pull_requests_for_branch",
+            locked_cycle_source,
+        )
+        self.assertNotIn("probe_provider_reports", locked_cycle_source)
+        self.assertIn("prefetch_task_state_shadow", run_once_source)
+        self.assertNotIn("sync_task_state_shadow", locked_cycle_source)
+        self.assertIn("_fetch_worker_base_ref", run_once_source)
+        self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
         self.assertIn(
             "with runtime_state_lock(config, shared=False",
             locked_operation_source,
+        )
+        self.assertIn(
+            "for pid, expected_start_ticks in deferred_terminations",
+            locked_operation_source,
+        )
+        self.assertIn(
+            "execute_auto_commit_archive(config, action)",
+            locked_operation_source,
+        )
+        self.assertNotIn(
+            "execute_auto_commit_archive",
+            locked_cycle_source,
         )
         self.assertEqual(
             queue_writer_source.count("replace_event_queue(config, events)"),
@@ -5668,6 +7626,79 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             )
         )
 
+    def test_l12_review_preempts_unrelated_same_tier_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-non-l12-review",
+            "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "review_ready_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "OPS-PROMOTE-PR-CI-TRIGGER-001": {
+                "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+            "L12-VERIFY-OBS-001": {
+                "id": "L12-VERIFY-OBS-001",
+                "status": "review",
+                "owner": "Antigravity",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+            l12_worker = {
+                **worker,
+                "run_id": "claude2-l12-review",
+                "task_id": "L12-VERIFY-OBS-001",
+            }
+            l12_state = {
+                "queue": {"events": {}},
+                "workers": {l12_worker["run_id"]: l12_worker},
+            }
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    l12_worker,
+                    task_map,
+                    l12_state,
+                )
+            )
+
     def test_startup_recovery_does_not_preempt_still_live_worker(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["agents"]["codex"]["worker_slots"] = ["codex1_1"]
@@ -5778,6 +7809,134 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 supervisor.higher_priority_ready_task_exists(
                     config,
                     state["workers"]["run-low-1"],
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_unslotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-wave0-readback",
+            "task_id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "SUP-L12-FLEET-DISPATCH-READBACK-20260729": {
+                "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+            "SUP-L12-STALE-PR-RETIRE-20260729": {
+                "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+            "SUP-L12-MERGED-ROW-RECONCILE-20260729": {
+                "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+                "status": "todo",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_wave0_recovery_worker_is_not_preempted_for_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-wave0-stale-retire",
+            "task_id": "SUP-L12-STALE-PR-RETIRE-20260729",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "SUP-L12-STALE-PR-RETIRE-20260729": {
+                "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+                "dispatch_model": "real-supervisor-auto-workers",
+                "preferred_lane_order": [
+                    "Antigravity",
+                    "Claude2",
+                    "Claude",
+                    "Codex2",
+                    "Codex",
+                ],
+                "phase": "Twelve Loop Remediation / Wave 0 Fleet Hygiene",
+            },
+            "L12-VERIFY-OBS-001": {
+                "id": "L12-VERIFY-OBS-001",
+                "status": "review",
+                "owner": "Antigravity",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
                     task_map,
                     state,
                 )
@@ -6927,6 +9086,37 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(blocker["status"], "resolved")
         self.assertEqual(blocker["resolution_ref"], "chair_reassignment:T-PUSH")
 
+    def test_persist_task_reassignment_rejects_catalog_assignment_drift(self) -> None:
+        status_path = self.root / "ai-status.json"
+        original = {
+            "tasks": [
+                {
+                    "id": "L12-LOCKED-001",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "catalog_task_contract_sha256": "b" * 64,
+                }
+            ]
+        }
+        status_path.write_text(json.dumps(original), encoding="utf-8")
+
+        with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+            applied = supervisor.persist_task_reassignment(
+                self.config,
+                task_id="L12-LOCKED-001",
+                new_owner="Claude",
+                new_reviewer="Codex2",
+                message="Helper claim must not rewrite a catalog assignment.",
+            )
+
+        self.assertFalse(applied)
+        sync.assert_not_called()
+        self.assertEqual(
+            json.loads(status_path.read_text(encoding="utf-8")),
+            original,
+        )
+
     def test_refresh_chair_review_invalid_decision_retries_next_chair(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"
         decision_path = review_path.with_suffix(".json")
@@ -7550,6 +9740,215 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(worker["reassigned_to"], "claude")
         reassign.assert_called_once()
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
+
+    def test_completion_stage_blocks_prepared_head_without_handoff(self) -> None:
+        """SUP-PROVIDER-POOL-PROBE-GATE-001.
+
+        An owner run that pushed the exact review head and then exited 0 without
+        advancing the task used to be recorded as a generic worker exit. The task
+        stayed `in_progress` with the same owner, so the next tick reissued
+        `owned_in_progress_dispatch` and the run reproduced the identical clean
+        exit -- a token loop instead of reviewer dispatch.
+        """
+        worker = {
+            "run_id": "run-prepared-head",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state: dict[str, object] = {}
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "record_missing_handoff_blocker",
+                return_value={"task_id": "TASK-PREPARED", "message": "blocked"},
+            ) as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                state,
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], supervisor.MISSING_HANDOFF_EXIT_REASON)
+        record_blocker.assert_called_once()
+        # No generic-exit streak and no owner reassignment: this shape is a
+        # missing handoff, not a provider failure.
+        record_streak.assert_not_called()
+        reassign.assert_not_called()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
+        finalize_queue_event_record.assert_called_once_with(
+            {}, state, worker, "failed", supervisor.MISSING_HANDOFF_EXIT_REASON
+        )
+
+    def test_completion_stage_keeps_generic_exit_when_no_head_was_prepared(self) -> None:
+        """An owner exit with no pushed PR head is still a plain generic exit."""
+        worker = {
+            "run_id": "run-no-head",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1) as record_streak,
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_blocker.assert_not_called()
+        record_streak.assert_called_once()
+        self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
+
+    def test_completion_stage_ignores_mention_only_pr_url(self) -> None:
+        """A PR URL scraped from logs is audit data, not prepared-head proof."""
+        worker = {
+            "run_id": "run-mentioned-pr",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "log_scrape",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1) as record_streak,
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_blocker.assert_not_called()
+        record_streak.assert_called_once()
+        self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
+
+    def test_completion_stage_does_not_block_finalize_exit(self) -> None:
+        """A review-approved finalize run can exit while waiting for auto-merge."""
+        worker = {
+            "run_id": "run-finalize-pr",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
+            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "review_approved"}},
+                redispatch_statuses={"review_approved"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        record_blocker.assert_not_called()
+        record_streak.assert_not_called()
+        clear_streak.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+        finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
+
+    def test_worker_prepared_review_head_requires_an_owner_dispatch(self) -> None:
+        base = {
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+        }
+        for reason in (
+            supervisor.REASON_OWNED_READY,
+            supervisor.REASON_OWNED_IN_PROGRESS,
+        ):
+            with self.subTest(reason=reason):
+                self.assertTrue(
+                    supervisor.worker_prepared_review_head({**base, "request_snapshot": {"reason": reason}})
+                )
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {**base, "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE}}
+            )
+        )
+        # A reviewer run that happens to cite a PR is not a missing owner handoff.
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {**base, "request_snapshot": {"reason": "review_ready_dispatch"}}
+            )
+        )
+        # A prose-scraped PR URL is also not prepared-head proof.
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {
+                    "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+                    "pr_url_source": "log_scrape",
+                    "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+                }
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {"request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS}}
+            )
+        )
 
     def test_orphan_stage_reaps_dead_worker_after_queue_event_disappears(self) -> None:
         worker = {
@@ -9332,6 +11731,88 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
 
+    def test_worker_base_fetch_updates_origin_dev_with_master_only_refspec(self) -> None:
+        """An explicit branch fetch must update the ref freshness checks consume."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            origin = root / "origin.git"
+            source = root / "source"
+            consumer = root / "consumer"
+            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            source.mkdir()
+            consumer.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "master"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=source, check=True)
+            (source / "tracked.txt").write_text("initial\n", encoding="utf-8")
+            self._commit_all(source, "initial")
+            initial_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=source, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "master"], cwd=source, check=True)
+            subprocess.run(["git", "checkout", "-q", "-b", "dev"], cwd=source, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=source, check=True)
+
+            subprocess.run(["git", "init", "-q"], cwd=consumer, check=True)
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=consumer, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "config",
+                    "remote.origin.fetch",
+                    "+refs/heads/master:refs/remotes/origin/master",
+                ],
+                cwd=consumer,
+                check=True,
+            )
+            subprocess.run(["git", "fetch", "-q", "origin", "master"], cwd=consumer, check=True)
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/dev", initial_sha],
+                cwd=consumer,
+                check=True,
+            )
+
+            (source / "tracked.txt").write_text("advanced\n", encoding="utf-8")
+            self._commit_all(source, "advance dev")
+            advanced_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=source, check=True)
+
+            # This is the live failure shape: FETCH_HEAD advances, but the
+            # master-only configured refspec leaves origin/dev untouched.
+            subprocess.run(["git", "fetch", "-q", "origin", "dev"], cwd=consumer, check=True)
+            stale_sha = subprocess.run(
+                ["git", "rev-parse", "origin/dev"],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(stale_sha, initial_sha)
+
+            fetched, error = supervisor._fetch_worker_base_ref(consumer, "origin/dev")
+
+            self.assertTrue(fetched, error)
+            refreshed_sha = subprocess.run(
+                ["git", "rev-parse", "origin/dev"],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(refreshed_sha, advanced_sha)
+
     def test_clean_status(self) -> None:
         self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
         self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
@@ -9438,6 +11919,8 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             subprocess.run(["git", "checkout", "-q", "-b", "task/OPS-GATEFIX-001"], cwd=repo, check=True)
             # Modified-but-unstaged real change (the common superseded-run residue).
             (repo / "svc.py").write_text("unstaged worker WIP\n", encoding="utf-8")
+            fetched, fetch_error = supervisor._fetch_worker_base_ref(repo, "origin/dev")
+            self.assertTrue(fetched, fetch_error)
 
             ok, detail = supervisor._refresh_reused_worker_worktree(
                 repo, repo, "origin/dev",
@@ -9502,6 +11985,265 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
                 ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
             ).stdout.strip()
             self.assertEqual(head_before, head_after)
+
+
+class CachedProviderCapabilityLoopTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 4.
+
+    `run_once` calls `probe_provider_reports` before every loop. While that path
+    forced the Codex probe, an intended telemetry refresh re-ran `codex exec`
+    (and, per alias, `agy --prompt`) on every supervisor tick regardless of
+    `provider_auth.probe_interval_seconds`.
+    """
+
+    @staticmethod
+    def _is_provider_cli_smoke(command: list[str]) -> bool:
+        if len(command) >= 2 and Path(command[0]).name.startswith("codex") and command[1] == "exec":
+            return True
+        return bool(Path(command[0]).name.startswith("agy") and "--prompt" in command)
+
+    def test_loop_report_reuses_cached_probes_when_none_are_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
+            agy_home = root / "agy-home"
+            (agy_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+            (agy_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").write_text(
+                "token", encoding="utf-8"
+            )
+            stub_bin = root / "bin"
+            stub_bin.mkdir()
+            codex_cli = stub_bin / "codex"
+            codex_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            codex_cli.chmod(0o755)
+            agy_cli = stub_bin / "agy"
+            agy_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            agy_cli.chmod(0o755)
+            recent = (
+                datetime.now(timezone.utc) - timedelta(seconds=60)
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+            def cached(provider_id: str, kind: str) -> dict:
+                return {
+                    "provider": provider_id,
+                    "kind": kind,
+                    "ready": True,
+                    "status": "ready",
+                    "method": "cached",
+                    "error": None,
+                    "checked_at": recent,
+                    "last_auth_probe_at": recent,
+                    "source": "live",
+                }
+
+            capabilities = root / "provider-capabilities.json"
+            capabilities.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "codex": {"auth_ready": True, "auth_probe": cached("codex", "codex")},
+                            "codex2": {"auth_ready": True, "auth_probe": cached("codex2", "codex")},
+                            "antigravity": {
+                                "auth_ready": True,
+                                "auth_probe": cached("antigravity", "antigravity"),
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = {
+                "paths": {
+                    "status_file": str(root / "ai-status.json"),
+                    "activity_log": str(root / "ai-activity-log.jsonl"),
+                    "current_work": str(root / "current-work.md"),
+                    "dashboard": str(root / "dashboard-bundle.json"),
+                    "claude_mcp_config": str(root / "claude-approval-broker.mcp.json"),
+                    "provider_capabilities": str(capabilities),
+                },
+                "provider_auth": {"probe_interval_seconds": 900},
+                "agents": {},
+                "providers": {
+                    "codex": {
+                        "delivery_mode": "codex",
+                        "codex": {"cli": str(codex_cli), "codex_home": str(codex_home)},
+                    },
+                    "codex2": {
+                        "delivery_mode": "codex",
+                        "codex": {"cli": str(codex_cli), "codex_home": str(codex_home)},
+                    },
+                    "antigravity": {
+                        "delivery_mode": "antigravity",
+                        "antigravity": {"cli": str(agy_cli), "home": str(agy_home)},
+                    },
+                },
+            }
+
+            commands: list[list[str]] = []
+
+            def spy(command, **_kwargs):
+                commands.append(list(command))
+                return subprocess.CompletedProcess(command, 1, "", "")
+
+            with mock.patch.object(provider_permissions, "run_command", side_effect=spy):
+                _previous, report = supervisor.probe_provider_reports(config, quiet=True)
+
+        smokes = [command for command in commands if self._is_provider_cli_smoke(command)]
+        self.assertEqual(smokes, [], f"unexpected provider CLI smoke probes: {smokes}")
+        for provider_id in ("codex", "codex2", "antigravity"):
+            self.assertEqual(
+                report["providers"][provider_id]["auth_probe"]["source"],
+                "cached",
+                provider_id,
+            )
+            self.assertTrue(report["providers"][provider_id]["auth_ready"], provider_id)
+
+
+class WorkerBaseRefPreconditionTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001.
+
+    The per-loop `_PREFETCHED_WORKER_BASE_REFS` context proved that *this* cycle
+    fetched the base. After a provider probe, a worker failure, a redispatch, or
+    a split-root restart, a dispatch can cross into a cycle whose context never
+    listed the base even though `origin/dev` resolves fine. Treating the missing
+    flag as proof of a missing fetch stalled the scheduler with
+    `base_ref_not_prefetched:origin/dev`. The invariant is the git ref.
+    """
+
+    def _origin_backed_repo(self, tmpdir: str) -> Path:
+        root = Path(tmpdir)
+        origin = root / "origin.git"
+        repo = root / "repo"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True)
+        (repo / "tracked.txt").write_text("initial\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "initial"], cwd=repo, check=True)
+        subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "fetch", "-q", "origin", "+refs/heads/dev:refs/remotes/origin/dev"],
+            cwd=repo,
+            check=True,
+        )
+        return repo
+
+    def test_prefetched_context_is_still_the_fast_path(self) -> None:
+        token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset({"origin/dev"}))
+        try:
+            with mock.patch.object(supervisor, "_fetch_worker_base_ref") as fetch:
+                self.assertEqual(
+                    supervisor._worker_base_ref_precondition("origin/dev", Path("/nonexistent")),
+                    (True, None),
+                )
+            fetch.assert_not_called()
+        finally:
+            supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+    def test_empty_context_accepts_a_resolvable_freshly_fetched_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+                self.assertTrue(ready, error)
+                self.assertIsNone(error)
+                # The recovered ref is cached for the rest of the cycle.
+                self.assertIn("origin/dev", supervisor._PREFETCHED_WORKER_BASE_REFS.get())
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+    def test_worktree_creation_succeeds_across_a_redispatch_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            worktree = Path(tmpdir) / "leases" / "task-redispatch"
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                created, error = supervisor._create_worker_worktree(
+                    repo, worktree, "task/OPS-REDISPATCH-001", "origin/dev"
+                )
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+            self.assertTrue(created, error)
+            self.assertTrue((worktree / "tracked.txt").exists())
+
+    def test_recovery_fetch_is_time_bounded_inside_the_cycle(self) -> None:
+        """The pre-admission fetch runs outside every lock; this one does not.
+
+        An unbounded recovery fetch would charge its network wait to the
+        runtime-admission hold that approve/assign/note commands queue behind.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                with mock.patch.object(
+                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                ) as fetch:
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+        self.assertTrue(ready, error)
+        self.assertEqual(
+            fetch.call_args.kwargs["timeout_seconds"],
+            supervisor.WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def test_a_hung_recovery_fetch_still_accepts_an_already_resolving_ref(self) -> None:
+        """A fetch timeout is not proof the ref is missing; only rev-parse is."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                with mock.patch.object(
+                    supervisor,
+                    "_fetch_worker_base_ref",
+                    return_value=(False, "git fetch timed out after 30s"),
+                ):
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+        self.assertTrue(ready, error)
+
+    def test_unresolvable_base_still_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                ready, error = supervisor._worker_base_ref_precondition("origin/no-such-branch", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+            self.assertFalse(ready)
+            self.assertTrue(str(error).startswith("base_ref_unresolved:origin/no-such-branch"), error)
+
+    def test_missing_base_ref_name_fails_closed(self) -> None:
+        token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+        try:
+            self.assertEqual(
+                supervisor._worker_base_ref_precondition("", Path("/nonexistent")),
+                (False, "base_ref_not_prefetched:missing"),
+            )
+        finally:
+            supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+    def test_standalone_maintenance_outside_a_cycle_is_unaffected(self) -> None:
+        self.assertEqual(
+            supervisor._worker_base_ref_precondition("origin/dev"),
+            (True, None),
+        )
 
 
 class WorkerReassignmentTests(unittest.TestCase):
@@ -9879,6 +12621,248 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
+
+    def test_l12_owner_failure_does_not_fall_back_to_codex_when_provider_first_lane_fails(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Claude2": ["Codex"]},
+                "reviewer_fallbacks": {"Claude2": ["Codex"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_l12_reviewer_failure_does_not_fall_back_to_codex2_when_provider_first_lane_fails(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "reviewer_fallbacks": {"Claude2": ["Codex2", "Codex"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "L12-VERIFY-OBS-001",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-review-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker exited before the task reached a terminal status.",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_l12_owner_failure_can_fall_back_to_antigravity_provider_first(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Claude2": ["Codex", "Antigravity"]},
+                "reviewer_fallbacks": {"Claude2": ["Codex", "Antigravity"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        worker = {
+            "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Antigravity")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertIn("Task returned to todo until Antigravity starts a fresh run.", kwargs["message"])
+
+
+class MissingHandoffBlockerTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 7."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "agents": {"claude2": {"id": "claude2", "display_name": "Claude2"}},
+        }
+        self.worker = {
+            "run_id": "claude2-run-9",
+            "task_id": "SUP-LOOP-001",
+            "agent_id": "claude2",
+            "provider": "claude2",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+    def _status(self) -> dict:
+        return {
+            "tasks": [
+                {
+                    "id": "SUP-LOOP-001",
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+
+    def test_blocker_takes_the_task_out_of_owned_in_progress_dispatch(self) -> None:
+        status = self._status()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status") as write_status,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-27T19:00:00Z"),
+        ):
+            event = supervisor.record_missing_handoff_blocker(self.config, self.worker)
+
+        self.assertIsNotNone(event)
+        task = status["tasks"][0]
+        # `in_progress` is what owned_in_progress_dispatch selects on; leaving it
+        # there is exactly the loop. `blocked` is not an owned dispatch status.
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(task["waiting_for"], "Codex2")
+        blocker = status["blockers"][0]
+        self.assertEqual(blocker["blocker_kind"], "missing_handoff")
+        self.assertEqual(blocker["status"], "open")
+        self.assertEqual(blocker["waiting_for"], "Codex2")
+        self.assertIn("pull/4270", blocker["message"])
+        write_status.assert_called_once_with(
+            self.config, status, source="supervisor-missing-handoff"
+        )
+        self.assertEqual(
+            status["status_activity_outbox"]["events"][0]["type"],
+            "task_missing_handoff_blocked",
+        )
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"], "task_missing_handoff_blocked"
+        )
+
+    def test_blocker_is_not_duplicated_on_a_later_tick(self) -> None:
+        status = self._status()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-27T19:00:00Z"),
+        ):
+            self.assertIsNotNone(supervisor.record_missing_handoff_blocker(self.config, self.worker))
+            status.pop("status_activity_outbox", None)
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(self.config, self.worker))
+
+        self.assertEqual(len(status["blockers"]), 1)
+
+    def test_blocker_is_skipped_when_the_owner_no_longer_owns_the_task(self) -> None:
+        status = self._status()
+        status["tasks"][0]["owner"] = "Codex"
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status") as write_status,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(self.config, self.worker))
+
+        write_status.assert_not_called()
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
 
 
 class WorkerPreemptionSyncTests(unittest.TestCase):
@@ -10441,6 +13425,111 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}},
         }
 
+    def _missing_worker_case(
+        self,
+        root: Path,
+        *,
+        task_id: str,
+        task_status: str,
+        owner: str,
+        reviewer: str,
+        dispatch_reason: str,
+        max_attempts: int,
+        runner_succeeded: bool = False,
+        pending_outbox_event: dict | None = None,
+    ) -> tuple[dict, dict, dict, mock.Mock]:
+        config = self._config(root)
+        config["worker_retry"] = {
+            "enabled": True,
+            "max_attempts": max_attempts,
+            "backoff_schedule_seconds": [0],
+            "jitter_seconds": 0,
+            "fallback_mode": None,
+        }
+        config["worker_reassignment"] = {"enabled": False}
+        status = {
+            "tasks": [
+                {
+                    "id": task_id,
+                    "status": task_status,
+                    "owner": owner,
+                    "reviewer": reviewer,
+                    "depends_on": [],
+                }
+            ],
+            "blockers": [],
+        }
+        if pending_outbox_event is not None:
+            status["status_activity_outbox"] = supervisor._status_activity_outbox(
+                [pending_outbox_event]
+            )
+        (root / "ai-status.json").write_text(
+            json.dumps(status),
+            encoding="utf-8",
+        )
+        event_id = f"evt-{task_id.lower()}"
+        (root / "event-queue.jsonl").write_text(
+            json.dumps(
+                {
+                    "event_id": event_id,
+                    "task_id": task_id,
+                    "target_agent": "codex",
+                    "message": "wake",
+                    "reason": dispatch_reason,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        worker = {
+            "run_id": f"run-{task_id.lower()}",
+            "status": "running",
+            "provider": "codex",
+            "agent_id": "codex",
+            "task_id": task_id,
+            "queue_event_id": event_id,
+            "pid": 987654,
+            "attempt_count": 1,
+            "retry_count": 0,
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+                "task_id": task_id,
+                "reason": dispatch_reason,
+            },
+        }
+        if runner_succeeded:
+            worker.update(
+                {
+                    "runner_status": "completed",
+                    "runner_finished_at": "2026-07-27T20:00:00Z",
+                    "exit_code": 0,
+                }
+            )
+        state = {
+            "queue": {
+                "events": {
+                    event_id: {
+                        "status": "started",
+                        "run_id": worker["run_id"],
+                    }
+                }
+            },
+            "workers": {worker["run_id"]: worker},
+        }
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+        self.assertTrue(changed)
+        return config, state, worker, write_activity_log
+
     def test_reconcile_runtime_requeues_started_event_without_active_worker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -10505,64 +13594,366 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
-    def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
+    def test_reconcile_queue_records_fails_started_event_when_worker_already_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config = self._config(root)
-            (root / "ai-status.json").write_text(
-                json.dumps(
-                    {
-                        "tasks": [
-                            {
-                                "id": "OPS-LEASE-002",
-                                "status": "in_progress",
-                                "owner": "Codex",
-                                "reviewer": "Claude",
-                                "depends_on": [],
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            (root / "event-queue.jsonl").write_text(
-                json.dumps({"event_id": "evt-worker", "task_id": "OPS-LEASE-002", "target_agent": "codex"})
-                + "\n",
-                encoding="utf-8",
-            )
+            event_key = "dispatcher:Codex:OPS-PR-REVIEW-BEFORE-MERGE-GATE-001:latest"
             state = {
-                "queue": {"events": {"evt-worker": {"status": "started", "run_id": "codex-run-dead"}}},
+                "queue": {
+                    "events": {
+                        "evt-worker": {
+                            "status": "started",
+                            "run_id": "codex-run-failed",
+                            "event_key": event_key,
+                        }
+                    }
+                },
                 "workers": {
-                    "codex-run-dead": {
-                        "run_id": "codex-run-dead",
-                        "status": "running",
-                        "provider": "codex",
-                        "agent_id": "codex",
-                        "task_id": "OPS-LEASE-002",
+                    "codex-run-failed": {
+                        "run_id": "codex-run-failed",
+                        "status": "failed",
                         "queue_event_id": "evt-worker",
-                        "pid": 987654,
+                        "last_event_at": "2026-07-27T21:15:40Z",
+                        "last_error": "worker runner exited 143",
                     }
                 },
             }
 
-            with (
-                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
-                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-            ):
-                changed = supervisor.reconcile_runtime_on_boot(config, state)
+            changed = supervisor.reconcile_queue_records(config, state)
 
             self.assertTrue(changed)
-            worker = state["workers"]["codex-run-dead"]
-            self.assertEqual(worker["status"], "failed")
-            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "failed")
-            self.assertIn("process missing", worker["last_error"])
-            activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
-            self.assertEqual(activity_types, ["worker_failed", "worker_runtime_metrics"])
-            metrics = state["worker_runtime_metrics"]
-            self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
+            record = state["queue"]["events"]["evt-worker"]
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["processed_at"], "2026-07-27T21:15:40Z")
+            self.assertEqual(record["error"], "worker runner exited 143")
+            self.assertEqual(state["seen_event_keys"][event_key], "2026-07-27T21:15:40Z")
+
+    def test_reconcile_runtime_redispatches_completed_review_worker_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+            task = {
+                "id": "OPS-REVIEW-RECOVERY",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+                "last_update": "2026-07-24T00:10:00Z",
+                "next": "Review pending after runtime replacement.",
+            }
+            handoff = {
+                "task_id": task["id"],
+                "from": "Claude",
+                "to": "Codex",
+                "message": task["next"],
+                "status": "pending",
+                "created_at": task["last_update"],
+            }
+            status = {"tasks": [task], "handoffs": [handoff]}
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                "review_ready_dispatch",
+                {task["id"]: task},
+            )
+            event.update(
+                {
+                    "event_id": "evt-review-recovery",
+                    "created_at": "2026-07-24T00:10:01Z",
+                    "target_agent": "codex",
+                    "target_display_name": "Codex",
+                    "message": "review",
+                }
+            )
+            (root / "ai-status.json").write_text(
+                json.dumps(status),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(event) + "\n",
+                encoding="utf-8",
+            )
+            (root / "activity-log.jsonl").write_text("", encoding="utf-8")
+            worker = {
+                "run_id": "codex-review-recovery",
+                "status": "running",
+                "provider": "codex",
+                "agent_id": "codex",
+                "task_id": task["id"],
+                "queue_event_id": event["event_id"],
+                "pid": 987654,
+                "runner_status": "completed",
+                "runner_finished_at": "2026-07-24T00:11:00Z",
+                "exit_code": 0,
+                "request_snapshot": {
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "delivery_mode": "codex",
+                    "message": "review",
+                    "task_id": task["id"],
+                    "reason": "review_ready_dispatch",
+                    "metadata": {"dispatch_event_key": event["key"]},
+                },
+            }
+            state = {
+                "queue": {
+                    "events": {
+                        event["event_id"]: {
+                            "status": "started",
+                            "run_id": worker["run_id"],
+                            "event_key": event["key"],
+                        }
+                    }
+                },
+                "workers": {worker["run_id"]: worker},
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+
+            self.assertEqual(worker["status"], "completed")
             self.assertEqual(
-                metrics["last_measurements"]["boot_reconciliation"]["counts"]["missing_process_workers_failed"],
+                state["seen_event_keys"][event["key"]],
+                state["queue"]["events"][event["event_id"]]["processed_at"],
+            )
+            self.assertTrue(supervisor.prune_event_queue(config, state))
+            self.assertEqual(state["queue"]["events"], {})
+
+            queued: list[dict[str, object]] = []
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, item: queued.append(item) or True,
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.dispatch_ready_tasks(
+                        config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["codex"],
+                        max_dispatches_override=1,
+                    )
+                )
+                self.assertFalse(
+                    supervisor.dispatch_ready_tasks(
+                        config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["codex"],
+                        max_dispatches_override=1,
+                    )
+                )
+
+            self.assertEqual(len(queued), 1)
+            redispatch = queued[0]["task"]["governed_review_redispatch"]
+            self.assertEqual(redispatch["parent_worker_run_id"], worker["run_id"])
+            self.assertTrue(redispatch["require_isolated_worktree"])
+            self.assertEqual(
+                json.loads((root / "ai-status.json").read_text(encoding="utf-8")),
+                status,
+            )
+
+    def test_reconcile_runtime_retries_missing_owner_with_bounded_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, state, worker, write_activity_log = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-RETRY",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=2,
+            )
+
+            self.assertEqual(worker["status"], "retry_backoff")
+            self.assertEqual(worker["retry_count"], 1)
+            self.assertIn("process missing", worker["last_error"])
+            event = next(
+                call.args[1]
+                for call in write_activity_log.call_args_list
+                if call.args[1]["type"] == "worker_retry_scheduled"
+            )
+            self.assertEqual(event["task_id"], "OPS-LEASE-RETRY")
+            self.assertEqual(event["worker_run_id"], "run-ops-lease-retry")
+            self.assertEqual(event["provider"], "codex")
+            self.assertEqual(event["outcome"], "retry")
+            self.assertIn("process missing", event["reason"])
+            metrics = state["worker_runtime_metrics"]
+            self.assertEqual(metrics["totals"]["missing_process_workers_retried"], 1)
+            self.assertEqual(
+                metrics["last_measurements"]["boot_reconciliation"]["counts"][
+                    "missing_process_workers_retried"
+                ],
                 1,
+            )
+
+    def test_reconcile_runtime_blocks_missing_owner_after_retry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, state, worker, write_activity_log = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-OWNER",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=0,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            queue_record = state["queue"]["events"]["evt-ops-lease-owner"]
+            self.assertEqual(queue_record["status"], "failed")
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            task = status["tasks"][0]
+            blocker = status["blockers"][0]
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(blocker["task_id"], "OPS-LEASE-OWNER")
+            self.assertEqual(blocker["worker_run_id"], "run-ops-lease-owner")
+            self.assertEqual(blocker["provider"], "codex")
+            self.assertIn("process missing", blocker["failure_reason"])
+            self.assertEqual(blocker["previous_status"], "in_progress")
+            activity_types = [
+                call.args[1]["type"] for call in write_activity_log.call_args_list
+            ]
+            self.assertEqual(
+                activity_types,
+                [
+                    "task_missing_worker_blocked",
+                    "worker_failed",
+                    "worker_runtime_metrics",
+                ],
+            )
+
+    def test_reconcile_runtime_composes_pending_outbox_before_terminal_outcome(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pending_event = {
+                "event_id": "pending-before-boot-crash",
+                "ts": "2026-07-27T23:59:00Z",
+                "agent": "Codex2",
+                "type": "task_progress",
+                "task_id": "OTHER-TASK",
+                "message": "Pending audit event from the interrupted transaction.",
+            }
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-PENDING-OUTBOX",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=0,
+                pending_outbox_event=pending_event,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-lease-pending-outbox"]["status"],
+                "failed",
+            )
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["tasks"][0]["status"], "blocked")
+            self.assertEqual(len(status["blockers"]), 1)
+            blocker = status["blockers"][0]
+            self.assertEqual(blocker["task_id"], "OPS-LEASE-PENDING-OUTBOX")
+            self.assertEqual(
+                blocker["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(blocker["provider"], "codex")
+            self.assertIn("process missing", blocker["failure_reason"])
+
+            outbox = status["status_activity_outbox"]
+            self.assertEqual(
+                [event["event_id"] for event in outbox["events"][:1]],
+                [pending_event["event_id"]],
+            )
+            terminal_event = outbox["events"][1]
+            self.assertEqual(
+                terminal_event["task_id"], "OPS-LEASE-PENDING-OUTBOX"
+            )
+            self.assertEqual(
+                terminal_event["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(terminal_event["provider"], "codex")
+            self.assertIn("process missing", terminal_event["reason"])
+            self.assertEqual(
+                outbox,
+                supervisor._status_activity_outbox(outbox["events"]),
+            )
+
+    def test_reconcile_runtime_blocks_missing_reviewer_after_retry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, _, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-REVIEW",
+                task_status="review",
+                owner="Claude",
+                reviewer="Codex",
+                dispatch_reason=supervisor.REASON_REVIEW_READY,
+                max_attempts=0,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            task = status["tasks"][0]
+            blocker = status["blockers"][0]
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["waiting_for"], "Codex")
+            self.assertEqual(blocker["previous_status"], "review")
+            self.assertEqual(blocker["dispatch_reason"], supervisor.REASON_REVIEW_READY)
+
+    def test_reconcile_runtime_blocks_missing_closeout_worker_after_clean_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-FINALIZE",
+                task_status="review_approved",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_FINALIZE,
+                max_attempts=0,
+                runner_succeeded=True,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-lease-finalize"]["status"],
+                "failed",
+            )
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            task = status["tasks"][0]
+            blocker = status["blockers"][0]
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["waiting_for"], "Codex")
+            self.assertEqual(blocker["previous_status"], "review_approved")
+            self.assertEqual(
+                blocker["dispatch_reason"],
+                supervisor.REASON_OWNED_FINALIZE,
+            )
+            self.assertIn(
+                "before the task reached a terminal status",
+                blocker["failure_reason"],
             )
 
     def test_reconcile_runtime_expires_stale_progress_despite_fresh_heartbeat(self) -> None:
@@ -10942,6 +14333,90 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
 
         self.assertIsNotNone(reason)
         self.assertIn("quota group claude_account_shared", reason or "")
+
+
+class AgentDispatchLoadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "agents": {
+                "codex2_2": {
+                    "id": "codex2_2",
+                    "display_name": "Codex2",
+                    "provider": "codex2-2",
+                },
+            },
+        }
+
+    def test_active_worker_queue_event_is_counted_once(self) -> None:
+        state = {
+            "workers": {
+                "run-active": {
+                    "status": "running",
+                    "agent_id": "codex2_2",
+                    "queue_event_id": "evt-active",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-active": {"status": "started"},
+                    "evt-pending": {"status": "queued"},
+                },
+            },
+        }
+        queued_events = [
+            {
+                "event_id": "evt-active",
+                "target_display_name": "Codex2",
+                "reason": "owned_finalize_dispatch",
+            },
+            {
+                "event_id": "evt-pending",
+                "target_display_name": "Codex2",
+                "reason": "owned_in_progress_dispatch",
+            },
+        ]
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=queued_events):
+            loads = supervisor.agent_dispatch_loads(self.config, state, {"running"})
+
+        self.assertEqual(
+            loads,
+            {
+                "Codex2": [
+                    supervisor.dispatch_reason_priority("owned_finalize_dispatch"),
+                    supervisor.dispatch_reason_priority("owned_in_progress_dispatch"),
+                ],
+            },
+        )
+
+    def test_queue_event_remains_fallback_when_worker_reason_is_missing(self) -> None:
+        state = {
+            "workers": {
+                "run-active": {
+                    "status": "running",
+                    "agent_id": "codex2_2",
+                    "queue_event_id": "evt-active",
+                    "request_snapshot": {},
+                },
+            },
+            "queue": {"events": {"evt-active": {"status": "started"}}},
+        }
+        queued_events = [
+            {
+                "event_id": "evt-active",
+                "target_display_name": "Codex2",
+                "reason": "owned_in_progress_dispatch",
+            },
+        ]
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=queued_events):
+            loads = supervisor.agent_dispatch_loads(self.config, state, {"running"})
+
+        self.assertEqual(
+            loads,
+            {"Codex2": [supervisor.dispatch_reason_priority("owned_in_progress_dispatch")]},
+        )
 
 
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
@@ -11488,6 +14963,1349 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
         proc = self._run(["--verbose"], '#!/bin/sh\nexit 11\n')
         self.assertEqual(proc.returncode, 11, proc.stderr)
 
+
+# SUP-WORKER-TRUTH-RECONCILE-001 -----------------------------------------------
+# Regression coverage for the four worker-truth defects observed on the live
+# fleet: nonthrottling rate-limit notices read as worker failures, auth pauses
+# that expired on a timer instead of on a fresh probe, ownerless in_progress
+# rows redispatched to their owner forever, and the queue/lease state left
+# dangling by that reconciliation.
+
+
+ALLOWED_WARNING_RATE_LIMIT_LINE = json.dumps(
+    {
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1785153600,
+            "rateLimitType": "seven_day",
+            "utilization": 0.83,
+            "isUsingOverage": False,
+            "surpassedThreshold": 0.75,
+        },
+        "uuid": "466e8308-da86-4dbd-a188-985b8558a428",
+        "session_id": "30c27323-d5f9-41ec-8d84-6ea882f1ba15",
+    },
+    separators=(",", ":"),
+)
+
+
+class AllowedRateLimitNoticeTests(unittest.TestCase):
+    """An `allowed_warning` quota notice is not a worker failure."""
+
+    def _worker_with_log(self, *lines: str) -> dict[str, object]:
+        handle = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
+        self.addCleanup(os.unlink, handle.name)
+        with handle:
+            handle.write("\n".join(lines) + "\n")
+        return {"run_id": "claude1-2-run", "provider": "claude1-2", "log_path": handle.name}
+
+    def test_allowed_warning_event_is_not_detected_as_worker_failure(self) -> None:
+        worker = self._worker_with_log(
+            '{"type":"assistant","message":{"role":"assistant"}}',
+            ALLOWED_WARNING_RATE_LIMIT_LINE,
+        )
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_allowed_status_event_is_still_not_a_worker_failure(self) -> None:
+        payload = json.loads(ALLOWED_WARNING_RATE_LIMIT_LINE)
+        payload["rate_limit_info"]["status"] = "allowed"
+        worker = self._worker_with_log(json.dumps(payload, separators=(",", ":")))
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_rejected_rate_limit_event_is_still_a_worker_failure(self) -> None:
+        payload = json.loads(ALLOWED_WARNING_RATE_LIMIT_LINE)
+        payload["rate_limit_info"]["status"] = "rejected"
+        line = json.dumps(payload, separators=(",", ":"))
+        worker = self._worker_with_log(line)
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
+
+    def test_truncated_allowed_warning_line_is_not_a_worker_failure(self) -> None:
+        truncated = ALLOWED_WARNING_RATE_LIMIT_LINE[: ALLOWED_WARNING_RATE_LIMIT_LINE.index("resetsAt") - 2]
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(truncated)
+        worker = self._worker_with_log(truncated)
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_allowed_warning_reason_classifies_nonterminal_and_never_pauses(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {}, {"provider": "claude1-2"}, ALLOWED_WARNING_RATE_LIMIT_LINE
+        )
+        self.assertEqual(failure["kind"], "transient")
+        self.assertTrue(failure["transient"])
+        self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(failure["kind"]))
+
+    def test_reaped_worker_is_not_paused_for_an_allowed_warning(self) -> None:
+        worker = self._worker_with_log(ALLOWED_WARNING_RATE_LIMIT_LINE)
+        state: dict[str, object] = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reason = supervisor.pause_dispatch_for_reaped_worker(
+                {"paths": {"activity_log": "/tmp/test-activity-log.jsonl"}}, state, worker
+            )
+        self.assertIsNone(reason)
+        self.assertEqual(state.get("provider_guardrails", {}), {})
+
+
+class FreshAuthProbeLaneHoldTests(unittest.TestCase):
+    """A fresh not-ready probe holds the lane until a fresh success, no config edit."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "agents": {"codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"}},
+            "providers": {"codex2": {"delivery_mode": "codex", "quota_group": "codex2"}},
+            "provider_guardrails": {"auth_pause_seconds": 900},
+        }
+        self.config_snapshot = json.dumps(self.config, sort_keys=True)
+
+    def _refresh(self, probe: dict[str, object], state: dict[str, object]) -> dict[str, object]:
+        report = {"providers": {"codex2": {"auth_ready": True}}}
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=probe),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, report, "codex2", state)
+        self.write_caps = write_caps
+        return report
+
+    def test_live_not_ready_probe_holds_lane_until_a_live_success(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "not_ready",
+            "method": "codex_exec_oauth",
+            "error": "login required",
+            "checked_at": "2026-07-26T19:00:00Z",
+            "last_auth_probe_at": "2026-07-26T19:00:00Z",
+            "source": "live",
+        }
+        report = self._refresh(probe, state)
+
+        self.assertIs(report["providers"]["codex2"]["auth_ready"], False)
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(pause["pause_kind"], "auth")
+        self.assertIs(pause["requires_live_auth_probe"], True)
+        self.assertEqual(pause["blocked_until"], supervisor.STICKY_AUTH_BLOCKED_UNTIL)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+        # The refreshed report is persisted so the next capability scan re-probes
+        # on the failed-probe interval rather than reusing the ready cache.
+        self.write_caps.assert_called_once_with(self.config, report=report)
+
+        # A wall-clock sweep must not reopen the lane.
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
+        self.assertFalse(expired)
+        write_activity_log.assert_not_called()
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+        # Neither may a cached "ready" report.
+        cached = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_probe": {"ready": True, "source": "cached", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            recovered = supervisor.reconcile_provider_auth_recovery(self.config, state, report, cached)
+        self.assertFalse(recovered)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+        # Only a fresh live success clears it.
+        live = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_method": "codex_exec_oauth",
+                    "last_auth_probe_at": "2026-07-26T20:00:00Z",
+                    "auth_probe": {"ready": True, "source": "live", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            recovered = supervisor.reconcile_provider_auth_recovery(self.config, state, report, live)
+        self.assertTrue(recovered)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+        self.assertEqual(json.dumps(self.config, sort_keys=True), self.config_snapshot)
+
+    def test_cached_not_ready_probe_does_not_raise_a_lane_hold(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "not_ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T19:00:00Z",
+            "source": "cached",
+        }
+        self._refresh(probe, state)
+        self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
+
+    def test_live_success_probe_persists_recovered_capability(self) -> None:
+        state: dict[str, object] = {}
+        report = {"providers": {"codex2": {"auth_ready": False}}}
+        probe = {
+            "provider": "codex2",
+            "ready": True,
+            "status": "ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=probe),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            health = supervisor.refresh_provider_auth_before_dispatch(
+                self.config,
+                report,
+                "codex2",
+                state,
+            )
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.HEALTHY)
+        self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
+        write_caps.assert_called_once_with(self.config, report=report)
+
+    def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
+        """The observed regression: an auth pause reopened the lane on a timer."""
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "pause_kind": "auth",
+                        "requires_live_auth_probe": True,
+                        "blocked_until": "2020-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
+        self.assertFalse(expired)
+        self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+    def test_capacity_pause_still_expires_on_its_window(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "pause_kind": "capacity_retryable",
+                        "blocked_until": "2020-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
+        self.assertTrue(expired)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+
+
+class OwnerlessInProgressReconciliationTests(unittest.TestCase):
+    """Seven ownerless in_progress fixtures, one authoritative decision each."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json", "activity_log": "/tmp/test-activity-log.jsonl"},
+            "schema": {"tasks_path": "tasks", "handoffs_path": "handoffs"},
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude"},
+                "codex2": {"id": "codex2", "display_name": "Codex2"},
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktree_cleanup": {"base_branches": ["dev"]},
+        }
+
+    # -- fixture helpers ---------------------------------------------------
+
+    def _task(self, task_id: str, **overrides: object) -> dict[str, object]:
+        task = {
+            "id": task_id,
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+        }
+        task.update(overrides)
+        return task
+
+    def _worker(self, task_id: str, **overrides: object) -> dict[str, object]:
+        worker = {
+            "run_id": f"claude1-1-{task_id}",
+            "task_id": task_id,
+            "provider": "claude1-1",
+            "agent_id": "claude1_1",
+            "logical_agent_id": "claude",
+            "status": "completed",
+            "runner_status": "completed",
+            "exit_code": 0,
+            "lease_acquired_at": "2026-07-26T17:00:00Z",
+            "last_event_at": "2026-07-26T18:00:00Z",
+            "runner_finished_at": "2026-07-26T18:00:00Z",
+            "queue_event_id": f"evt-{task_id}",
+            "commit_progress_count": 2,
+            "last_commit_progress_at": "2026-07-26T17:45:00Z",
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        worker.update(overrides)
+        return worker
+
+    def _run(
+        self,
+        *,
+        tasks: list[dict[str, object]],
+        state: dict[str, object],
+        merged_task_ids: set[str],
+        unmerged_task_ids: set[str] | None = None,
+    ) -> tuple[bool, dict[str, object], mock.Mock]:
+        status = {"tasks": tasks, "handoffs": []}
+
+        def fake_load_status(_config: dict[str, object]) -> dict[str, object]:
+            return status
+
+        def fake_write_status(_config: dict[str, object], payload: dict[str, object], *, source: str) -> None:
+            self.write_sources.append(source)
+
+        def fake_merged(
+            _config: dict[str, object],
+            task_id: str,
+            *,
+            # Defaults keep this fake callable under the pre-fix (PR #4212)
+            # signature so the prefix reproduction shows the real false
+            # positive instead of a TypeError.
+            delivery_head: str = "",
+            since: str = "",
+        ) -> dict[str, object] | None:
+            if task_id not in merged_task_ids:
+                return None
+            return {
+                "base_ref": "origin/dev",
+                "commits": [f"{task_id}-sha"],
+                "delivery_head": delivery_head,
+                "merge_commit": f"{task_id}-merge",
+                "trailer_commits_since": since,
+            }
+
+        def fake_unmerged(
+            _config: dict[str, object],
+            task_id: str,
+            _base_ref: str,
+            *,
+            delivery_head: str | None = None,
+        ) -> bool:
+            return task_id in (unmerged_task_ids or set())
+
+        self.write_sources: list[str] = []
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=fake_load_status),
+            mock.patch.object(supervisor, "write_status", side_effect=fake_write_status),
+            mock.patch.object(supervisor, "merged_delivery_commits", side_effect=fake_merged),
+            mock.patch.object(supervisor, "task_branch_has_unmerged_commits", side_effect=fake_unmerged),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True) as sync_pipeline,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-26T20:00:00Z"),
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(self.config, state)
+        return changed, status, sync_pipeline
+
+    # -- fixture 1 ---------------------------------------------------------
+
+    def test_merged_owner_delivery_moves_to_governed_review_handoff(self) -> None:
+        worker = self._worker("SUP-A")
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {"evt-SUP-A": {"task_id": "SUP-A", "status": "started"}}},
+        }
+        # The queue record is finalized by the worker terminal outcome first.
+        state["queue"]["events"]["evt-SUP-A"]["status"] = "completed"
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-A")], state=state, merged_task_ids={"SUP-A"}
+        )
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["last_update"], "2026-07-26T20:00:00Z")
+        self.assertIn("moves to review for Codex2", task["next"])
+        self.assertEqual(self.write_sources, ["supervisor-ownerless-review-handoff"])
+        self.assertEqual(
+            status["status_activity_outbox"]["events"][0]["type"],
+            "task_ownerless_review_handoff",
+        )
+        handoff = status["handoffs"][0]
+        self.assertEqual(handoff["from"], "Claude")
+        self.assertEqual(handoff["to"], "Codex2")
+        self.assertEqual(handoff["status"], "pending")
+        sync_pipeline.assert_called_once_with(self.config)
+        # Queue and lease truth stay consistent with the reconciled outcome.
+        record = state["queue"]["events"]["evt-SUP-A"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["lease_owner"], worker["run_id"])
+        self.assertEqual(record["lease_released_at"], "2026-07-26T20:00:00Z")
+        self.assertEqual(worker["ownerless_reconciled_task_status"], "review")
+
+    # -- fixture 2 ---------------------------------------------------------
+
+    def test_live_worker_task_is_never_reset(self) -> None:
+        worker = self._worker("SUP-B", status="running")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-B")], state=state, merged_task_ids={"SUP-B"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(status["handoffs"], [])
+        self.assertEqual(self.write_sources, [])
+        sync_pipeline.assert_not_called()
+
+    # -- fixture 3 ---------------------------------------------------------
+
+    def test_in_flight_queue_event_is_left_for_dispatch(self) -> None:
+        worker = self._worker("SUP-C")
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {"evt-SUP-C": {"task_id": "SUP-C", "status": "queued"}}},
+        }
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-C")], state=state, merged_task_ids={"SUP-C"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(state["queue"]["events"]["evt-SUP-C"]["status"], "queued")
+
+    # -- fixture 4 ---------------------------------------------------------
+
+    def test_task_without_any_terminal_worker_evidence_is_untouched(self) -> None:
+        state = {"workers": {}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-D")], state=state, merged_task_ids={"SUP-D"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    # -- fixture 5 ---------------------------------------------------------
+
+    def test_failed_terminal_outcome_stays_with_the_failure_ladder(self) -> None:
+        worker = self._worker(
+            "SUP-E",
+            status="failed",
+            runner_status="failed",
+            exit_code=1,
+            last_error="Worker exited before the task reached a terminal status.",
+        )
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-E")], state=state, merged_task_ids={"SUP-E"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertNotIn("ownerless_reconciled_task_status", worker)
+
+    # -- fixture 6 ---------------------------------------------------------
+
+    def test_unmerged_delivery_is_left_for_owner_redispatch(self) -> None:
+        worker = self._worker("SUP-F")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-F")],
+            state=state,
+            merged_task_ids={"SUP-F"},
+            unmerged_task_ids={"SUP-F"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    # -- fixture 7 ---------------------------------------------------------
+
+    def test_task_without_a_distinct_reviewer_is_untouched(self) -> None:
+        worker = self._worker("SUP-G")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-G", reviewer="Claude")],
+            state=state,
+            merged_task_ids={"SUP-G"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    # -- all seven together ------------------------------------------------
+
+    def test_seven_ownerless_fixtures_reconcile_in_one_pass(self) -> None:
+        fixtures = [
+            self._task("SUP-A"),
+            self._task("SUP-B"),
+            self._task("SUP-C"),
+            self._task("SUP-D"),
+            self._task("SUP-E"),
+            self._task("SUP-F"),
+            self._task("SUP-G", reviewer="Claude"),
+        ]
+        workers = {
+            "SUP-A": self._worker("SUP-A"),
+            "SUP-B": self._worker("SUP-B", status="running"),
+            "SUP-C": self._worker("SUP-C"),
+            "SUP-E": self._worker("SUP-E", status="failed", runner_status="failed", exit_code=1),
+            "SUP-F": self._worker("SUP-F"),
+            "SUP-G": self._worker("SUP-G"),
+        }
+        state = {
+            "workers": {worker["run_id"]: worker for worker in workers.values()},
+            "queue": {"events": {"evt-SUP-C": {"task_id": "SUP-C", "status": "queued"}}},
+        }
+        changed, status, sync_pipeline = self._run(
+            tasks=fixtures,
+            state=state,
+            merged_task_ids={"SUP-A", "SUP-B", "SUP-C", "SUP-D", "SUP-E", "SUP-F", "SUP-G"},
+            unmerged_task_ids={"SUP-F"},
+        )
+
+        self.assertTrue(changed)
+        resolved = {task["id"]: task["status"] for task in status["tasks"]}
+        self.assertEqual(
+            resolved,
+            {
+                "SUP-A": "review",
+                "SUP-B": "in_progress",
+                "SUP-C": "in_progress",
+                "SUP-D": "in_progress",
+                "SUP-E": "in_progress",
+                "SUP-F": "in_progress",
+                "SUP-G": "in_progress",
+            },
+        )
+        self.assertEqual([handoff["task_id"] for handoff in status["handoffs"]], ["SUP-A"])
+        sync_pipeline.assert_called_once_with(self.config)
+        self.assertEqual(
+            state["worker_runtime_metrics"]["totals"]["ownerless_in_progress_review_handoffs"],
+            1,
+        )
+
+    def test_reconciled_task_is_not_handed_off_twice(self) -> None:
+        worker = self._worker("SUP-H")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-H")], state=state, merged_task_ids={"SUP-H"}
+        )
+        self.assertTrue(changed)
+        self.assertEqual(status["tasks"][0]["status"], "review")
+
+        status["tasks"][0]["status"] = "in_progress"
+        changed, status, sync_pipeline = self._run(
+            tasks=status["tasks"], state=state, merged_task_ids={"SUP-H"}
+        )
+        self.assertFalse(changed)
+        sync_pipeline.assert_not_called()
+
+    # -- ownership / delivery binding negatives ----------------------------
+    #
+    # Each of these has merged Task-ID evidence for the task id and a clean,
+    # successful terminal worker. Only the binding between that worker, that
+    # delivery, and the task's current owner is missing, and each one must
+    # leave the row untouched.
+
+    def test_reassigned_owner_blocks_the_previous_owners_worker(self) -> None:
+        worker = self._worker("SUP-REASSIGNED")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-REASSIGNED", owner="Codex2", reviewer="Claude")],
+            state=state,
+            merged_task_ids={"SUP-REASSIGNED"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(status["handoffs"], [])
+        sync_pipeline.assert_not_called()
+        self.assertNotIn("ownerless_reconciled_task_status", worker)
+
+    def test_rerun_without_commit_progress_is_not_evidence(self) -> None:
+        """A reopened task re-dispatched over an already merged branch.
+
+        The worker exits cleanly, and its head is the previously merged tip, but
+        it never advanced its worktree, so it delivered nothing this round.
+        """
+        worker = self._worker(
+            "SUP-REOPENED",
+            commit_progress_count=0,
+            last_commit_progress_at=None,
+        )
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-REOPENED")], state=state, merged_task_ids={"SUP-REOPENED"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        sync_pipeline.assert_not_called()
+
+    def test_worker_without_a_delivery_head_fails_closed(self) -> None:
+        worker = self._worker("SUP-NOHEAD", work_progress_snapshot={})
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-NOHEAD")], state=state, merged_task_ids={"SUP-NOHEAD"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_worker_without_a_dispatch_timestamp_fails_closed(self) -> None:
+        worker = self._worker("SUP-NOSTART", lease_acquired_at=None)
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-NOSTART")], state=state, merged_task_ids={"SUP-NOSTART"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_unregistered_worker_identity_fails_closed(self) -> None:
+        worker = self._worker(
+            "SUP-UNKNOWN-AGENT",
+            logical_agent_id="ghost",
+            agent_id="ghost_1",
+            provider="ghost-1",
+        )
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-UNKNOWN-AGENT")],
+            state=state,
+            merged_task_ids={"SUP-UNKNOWN-AGENT"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_stale_terminal_worker_with_new_branch_work_is_not_reconciled(self) -> None:
+        worker = self._worker("SUP-STALE")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-STALE")],
+            state=state,
+            merged_task_ids={"SUP-STALE"},
+            unmerged_task_ids={"SUP-STALE"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_squash_merged_delivery_reconciles_and_skips_base_comparison(self) -> None:
+        """The live #4213 shape, driven end to end through the phase."""
+        worker = self._worker("SUP-SQUASH", work_progress_snapshot={"commit_sha": "9e" + "0" * 38})
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        status = {"tasks": [self._task("SUP-SQUASH")], "handoffs": []}
+        squashed = {
+            "base_ref": "origin/dev",
+            "commits": ["0410a89f0e4ac3c53e7bc5192aebe6925423b4da"],
+            "delivery_head": "9e" + "0" * 38,
+            "merge_commit": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+            "trailer_commits_since": "2026-07-26T17:00:00Z",
+            "delivery_shape": "squash_pr_metadata",
+            "pull_request_number": 4213,
+            "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4213",
+            "pull_request_head_ref_oid": "9e" + "0" * 38,
+            "pull_request_base_ref_name": "dev",
+            "pull_request_merged_at": "2026-07-26T20:18:15Z",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status"),
+            mock.patch.object(supervisor, "merged_delivery_commits", return_value=squashed),
+            mock.patch.object(
+                supervisor, "task_branch_has_unmerged_commits", return_value=False
+            ) as branch_check,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-26T20:00:00Z"),
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(status["tasks"][0]["status"], "review")
+        # A squashed branch is never an ancestor of the base, so the base
+        # comparison must be skipped; only the delivery head still applies.
+        self.assertEqual(branch_check.call_args.args[2], "")
+        self.assertEqual(branch_check.call_args.kwargs["delivery_head"], "9e" + "0" * 38)
+        evidence = status["status_activity_outbox"]["events"][0]["evidence"]
+        self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
+        self.assertEqual(evidence["pull_request_number"], 4213)
+        self.assertEqual(evidence["pull_request_merged_at"], "2026-07-26T20:18:15Z")
+
+    def test_prefetched_squash_metadata_never_falls_back_to_locked_gh(self) -> None:
+        task_id = "SUP-PREFETCHED-SQUASH"
+        head = "b" * 40
+        merge = "c" * 40
+        task = self._task(task_id)
+        worker = self._worker(
+            task_id,
+            work_progress_snapshot={"commit_sha": head},
+        )
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        status = {"tasks": [task], "handoffs": []}
+        identity = supervisor._ownerless_pr_snapshot_identity(
+            self.config,
+            task_id,
+            task,
+            worker,
+        )
+        self.assertIsNotNone(identity)
+        snapshot = {
+            **identity,
+            "fetched_at": "2026-07-26T19:59:59Z",
+            "records": [
+                {
+                    "number": 4213,
+                    "state": "MERGED",
+                    "headRefName": f"task/{task_id}",
+                    "headRefOid": head,
+                    "baseRefName": "dev",
+                    "mergedAt": "2026-07-26T20:18:15Z",
+                    "mergeCommit": {"oid": merge},
+                    "url": "https://github.com/ajoe734/pantheon/pull/4213",
+                }
+            ],
+        }
+
+        def fake_ancestor(_root: object, commit: str, _ref: str) -> bool:
+            return commit == merge
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "origin/dev",
+            ),
+            mock.patch.object(
+                supervisor,
+                "_git_commit_is_ancestor",
+                side_effect=fake_ancestor,
+            ),
+            mock.patch.object(supervisor, "_git_capture", return_value=f"{merge}\n"),
+            mock.patch.object(
+                supervisor,
+                "task_branch_has_unmerged_commits",
+                return_value=False,
+            ),
+            mock.patch.object(
+                supervisor,
+                "_merged_pull_requests_for_branch",
+                side_effect=AssertionError("locked reconciliation retried gh"),
+            ),
+            mock.patch.object(
+                supervisor,
+                "_prepare_ownerless_review_handoff_locked",
+                return_value=None,
+            ) as prepare_handoff,
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(
+                self.config,
+                state,
+                prefetched_merged_prs={task_id: snapshot},
+            )
+
+        self.assertFalse(changed)
+        evidence = prepare_handoff.call_args.kwargs["evidence"]
+        self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
+        self.assertEqual(evidence["pull_request_number"], 4213)
+
+    def test_stale_prefetched_pr_identity_fails_closed(self) -> None:
+        task_id = "SUP-STALE-PREFETCH"
+        task = self._task(task_id)
+        worker = self._worker(task_id)
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        snapshot = {
+            **supervisor._ownerless_pr_snapshot_identity(
+                self.config,
+                task_id,
+                task,
+                worker,
+            ),
+            "owner": "DifferentOwner",
+            "records": [],
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task], "handoffs": []},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "merged_owner_delivery_evidence",
+            ) as merged_evidence,
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(
+                self.config,
+                state,
+                prefetched_merged_prs={task_id: snapshot},
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(task["status"], "in_progress")
+        merged_evidence.assert_not_called()
+
+    def test_reconciled_evidence_records_the_bound_delivery(self) -> None:
+        worker = self._worker("SUP-BOUND")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-BOUND")], state=state, merged_task_ids={"SUP-BOUND"}
+        )
+
+        self.assertTrue(changed)
+        evidence = status["status_activity_outbox"]["events"][0]["evidence"]
+        self.assertEqual(evidence["delivery_head_commit"], "a" * 40)
+        self.assertEqual(evidence["worker_target_agent"], "Claude")
+        self.assertEqual(evidence["task_owner"], "Claude")
+        self.assertEqual(evidence["dispatched_at"], "2026-07-26T17:00:00Z")
+        self.assertEqual(evidence["trailer_commits_since"], "2026-07-26T17:00:00Z")
+        self.assertEqual(evidence["merge_commit"], "SUP-BOUND-merge")
+        self.assertEqual(evidence["commit_progress_count"], 2)
+        self.assertFalse(evidence["pr_url_is_authoritative"])
+        self.assertIn("a" * 12, status["tasks"][0]["next"])
+
+
+class MergedDeliveryEvidenceTests(unittest.TestCase):
+    """Merged evidence is bound to one delivery head, not to a task id."""
+
+    HEAD = "b" * 40
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktree_cleanup": {"base_branches": ["dev"]},
+        }
+
+    def _merged(self, task_id: str, **overrides: object) -> dict[str, object] | None:
+        kwargs = {"delivery_head": self.HEAD, "since": "2026-07-26T17:00:00Z"}
+        kwargs.update(overrides)
+        return supervisor.merged_delivery_commits(self.config, task_id, **kwargs)
+
+    def test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence(self) -> None:
+        def fake_capture(_root: object, args: list[str]) -> str:
+            return "abc123\ndef456\n" if args[0] == "log" else "merge999\n"
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True) as ancestor,
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture) as capture,
+        ):
+            evidence = self._merged("SUP-MERGED-001")
+
+        self.assertEqual(
+            evidence,
+            {
+                "base_ref": "origin/dev",
+                "commits": ["abc123", "def456"],
+                "delivery_head": self.HEAD,
+                "merge_commit": "merge999",
+                "trailer_commits_since": "2026-07-26T17:00:00Z",
+                "delivery_shape": "merge_ancestry",
+            },
+        )
+        ancestor.assert_called_once()
+        self.assertEqual(ancestor.call_args.args[1:], (self.HEAD, "origin/dev"))
+        log_args = capture.call_args_list[0].args[1]
+        self.assertIn("--fixed-strings", log_args)
+        self.assertIn("--grep=Task-ID: SUP-MERGED-001", log_args)
+        self.assertIn("--since=2026-07-26T17:00:00Z", log_args)
+        # The search is scoped to the delivery head, not to the base ref.
+        self.assertEqual(log_args[-1], self.HEAD)
+
+    def test_older_only_merged_trailer_commits_are_not_this_delivery(self) -> None:
+        """The reopened-task case: the id merged before, nothing merged since."""
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", return_value=""),
+        ):
+            self.assertIsNone(self._merged("SUP-REOPENED-001"))
+
+    def test_delivery_head_not_merged_into_the_base_is_not_evidence(self) -> None:
+        """Unpushed work, with no merged PR metadata to fall back on."""
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=False),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch", return_value=[]),
+            mock.patch.object(supervisor, "_git_capture", return_value="") as capture,
+        ):
+            self.assertIsNone(self._merged("SUP-UNPUSHED-001"))
+        # The trailer search never runs: nothing established a merged delivery.
+        self.assertEqual([call.args[1][0] for call in capture.call_args_list], [])
+
+    def test_git_log_failure_fails_closed(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", return_value=None),
+        ):
+            self.assertIsNone(self._merged("SUP-GITFAIL-001"))
+
+    def test_missing_delivery_head_or_since_fails_closed(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", return_value=True),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", return_value="abc123\n"),
+        ):
+            self.assertIsNone(self._merged("SUP-NOHEAD-001", delivery_head=""))
+            self.assertIsNone(self._merged("SUP-NOHEAD-001", delivery_head="task/branch"))
+            self.assertIsNone(self._merged("SUP-NOSINCE-001", since=""))
+
+    def test_fast_forward_merge_without_a_merge_commit_still_binds(self) -> None:
+        def fake_capture(_root: object, args: list[str]) -> str:
+            return "abc123\n" if args[0] == "log" else ""
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture),
+        ):
+            evidence = self._merged("SUP-FASTFORWARD-001")
+
+        self.assertIsNotNone(evidence)
+        self.assertIsNone(evidence["merge_commit"])
+
+    def test_deleted_task_branch_reports_no_unmerged_commits(self) -> None:
+        with mock.patch.object(supervisor, "_git_ref_exists", return_value=False):
+            self.assertFalse(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, "SUP-MERGED-001", "origin/dev", delivery_head=self.HEAD
+                )
+            )
+
+    def test_task_branch_ahead_of_base_reports_unmerged_commits(self) -> None:
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "task/SUP-OPEN-001",
+            ),
+            mock.patch.object(supervisor, "_git_capture", return_value="3\n"),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(self.config, "SUP-OPEN-001", "origin/dev")
+            )
+
+    def test_branch_moved_past_the_delivery_head_reports_unmerged_commits(self) -> None:
+        """Deleted remote branch, local branch carrying newer unpushed work."""
+
+        def fake_capture(_root: object, args: list[str]) -> str:
+            # Everything the terminal worker delivered is on the base, but the
+            # surviving local branch has advanced past that delivery head.
+            return "0\n" if args[-1].startswith("origin/dev..") else "2\n"
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "task/SUP-STALE-001",
+            ),
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, "SUP-STALE-001", "origin/dev", delivery_head=self.HEAD
+                )
+            )
+
+    def test_rev_list_failure_reports_unmerged_commits(self) -> None:
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "task/SUP-GITFAIL-001",
+            ),
+            mock.patch.object(supervisor, "_git_capture", return_value=None),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, "SUP-GITFAIL-001", "origin/dev", delivery_head=self.HEAD
+                )
+            )
+
+
+class SquashMergedDeliveryEvidenceTests(unittest.TestCase):
+    """A squash merge rewrites the head, so PR metadata is the only binding.
+
+    The fixture is the live 2026-07-26 shape: PR #4213, head ``9e484e252``,
+    squash-merged to ``0410a89f0`` on ``dev``. Git ancestry can never recognise
+    it -- ``_git_commit_is_ancestor(head, dev)`` is false forever by design.
+    """
+
+    HEAD = "9e484e2522cd8778b85a4c880e4cd33d07ef401f"
+    MERGE = "0410a89f0e4ac3c53e7bc5192aebe6925423b4da"
+    TASK = "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001"
+    SINCE = "2026-07-26T19:53:14Z"
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktree_cleanup": {"base_branches": ["dev"]},
+        }
+
+    def _pr(self, **overrides: object) -> dict[str, object]:
+        record = {
+            "number": 4213,
+            "state": "MERGED",
+            "headRefName": f"task/{self.TASK}",
+            "headRefOid": self.HEAD,
+            "baseRefName": "dev",
+            "mergedAt": "2026-07-26T20:18:15Z",
+            "mergeCommit": {"oid": self.MERGE},
+            "url": "https://github.com/ajoe734/pantheon/pull/4213",
+        }
+        record.update(overrides)
+        return record
+
+    def _merged(self, records: list[dict[str, object]], *, trailer: str | None = None):
+        """Run the full lookup with the squash shape wired up.
+
+        ``_git_commit_is_ancestor`` answers false for the delivery head (the
+        squash rewrote it) and true for the merge commit.
+        """
+        if trailer is None:
+            trailer = f"{self.MERGE}\n"
+
+        def fake_ancestor(_root: object, commit: str, _ref: str) -> bool:
+            return commit == self.MERGE
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", side_effect=fake_ancestor),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch", return_value=records) as lookup,
+            mock.patch.object(supervisor, "_git_capture", return_value=trailer) as capture,
+        ):
+            evidence = supervisor.merged_delivery_commits(
+                self.config, self.TASK, delivery_head=self.HEAD, since=self.SINCE
+            )
+        return evidence, lookup, capture
+
+    def test_live_4213_squash_shape_binds_through_pr_metadata(self) -> None:
+        evidence, lookup, capture = self._merged([self._pr()])
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
+        self.assertEqual(evidence["base_ref"], "origin/dev")
+        self.assertEqual(evidence["delivery_head"], self.HEAD)
+        self.assertEqual(evidence["merge_commit"], self.MERGE)
+        self.assertEqual(evidence["commits"], [self.MERGE])
+        self.assertEqual(evidence["pull_request_number"], 4213)
+        self.assertEqual(evidence["pull_request_head_ref_oid"], self.HEAD)
+        self.assertEqual(evidence["pull_request_base_ref_name"], "dev")
+        self.assertEqual(evidence["pull_request_merged_at"], "2026-07-26T20:18:15Z")
+        # The branch name is only the lookup key.
+        self.assertEqual(lookup.call_args.args[2], f"task/{self.TASK}")
+        # The trailer is read off the squashed commit itself, not its ancestry.
+        log_args = capture.call_args.args[1]
+        self.assertIn("--no-walk", log_args)
+        self.assertIn(f"--grep=Task-ID: {self.TASK}", log_args)
+        self.assertIn(f"--since={self.SINCE}", log_args)
+        self.assertEqual(log_args[-1], self.MERGE)
+
+    def test_wrong_pr_head_is_not_this_delivery(self) -> None:
+        evidence, _, _ = self._merged([self._pr(headRefOid="f" * 40)])
+        self.assertIsNone(evidence)
+
+    def test_wrong_base_branch_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(baseRefName="master")])
+        self.assertIsNone(evidence)
+
+    def test_merge_before_the_worker_was_dispatched_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(mergedAt="2026-07-26T10:00:00Z")])
+        self.assertIsNone(evidence)
+
+    def test_unmergeable_or_unparseable_merged_at_fails_closed(self) -> None:
+        self.assertIsNone(self._merged([self._pr(mergedAt=None)])[0])
+        self.assertIsNone(self._merged([self._pr(mergedAt="whenever")])[0])
+
+    def test_pr_not_actually_merged_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(state="OPEN", mergeCommit=None)])
+        self.assertIsNone(evidence)
+
+    def test_unrelated_merge_commit_fails_closed(self) -> None:
+        """The recorded mergeCommit is not on the integration base."""
+
+        def fake_ancestor(_root: object, _commit: str, _ref: str) -> bool:
+            return False
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", side_effect=fake_ancestor),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch", return_value=[self._pr()]),
+            mock.patch.object(supervisor, "_git_capture", return_value=f"{self.MERGE}\n"),
+        ):
+            self.assertIsNone(
+                supervisor.merged_delivery_commits(
+                    self.config, self.TASK, delivery_head=self.HEAD, since=self.SINCE
+                )
+            )
+
+    def test_merge_commit_without_this_tasks_trailer_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr()], trailer="")
+        self.assertIsNone(evidence)
+
+    def test_missing_merge_commit_oid_fails_closed(self) -> None:
+        self.assertIsNone(self._merged([self._pr(mergeCommit=None)])[0])
+        self.assertIsNone(self._merged([self._pr(mergeCommit={"oid": "0410a89"})])[0])
+
+    def test_deleted_branch_with_no_merged_pr_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([])
+        self.assertIsNone(evidence)
+
+    def test_github_lookup_failure_fails_closed(self) -> None:
+        evidence, _, _ = self._merged(None)
+        self.assertIsNone(evidence)
+
+    def test_multiple_prs_for_the_task_resolve_by_exact_head(self) -> None:
+        """Two merged PRs on the same task branch; only one delivered this head."""
+        earlier = self._pr(number=4100, headRefOid="c" * 40, mergeCommit={"oid": "d" * 40})
+        evidence, _, _ = self._merged([earlier, self._pr()])
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["pull_request_number"], 4213)
+
+    def test_ambiguous_duplicate_head_metadata_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(), self._pr(number=4214)])
+        self.assertIsNone(evidence)
+
+    def test_squash_delivery_does_not_require_branch_ancestry(self) -> None:
+        """The surviving branch is never an ancestor of the base after a squash.
+
+        Only movement past the delivery head may block that shape, so the base
+        comparison must be skipped for it.
+        """
+        with mock.patch.object(supervisor, "_git_ref_exists", return_value=False):
+            self.assertFalse(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, self.TASK, "", delivery_head=self.HEAD
+                )
+            )
+
+        def fake_capture(_root: object, args: list[str]) -> str:
+            return "4\n" if args[-1].startswith(f"{self.HEAD}..") else "0\n"
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == f"task/{self.TASK}",
+            ),
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, self.TASK, "", delivery_head=self.HEAD
+                )
+            )
+
+    def test_ancestry_shape_is_preferred_and_skips_the_pr_lookup(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch") as lookup,
+            mock.patch.object(supervisor, "_git_capture", return_value="abc123\n"),
+        ):
+            evidence = supervisor.merged_delivery_commits(
+                self.config, self.TASK, delivery_head=self.HEAD, since=self.SINCE
+            )
+
+        self.assertEqual(evidence["delivery_shape"], "merge_ancestry")
+        lookup.assert_not_called()
+
+
+class MergedPullRequestLookupTests(unittest.TestCase):
+    """The PR lookup itself: authoritative or nothing."""
+
+    def setUp(self) -> None:
+        self.config = {"paths": {"status_file": "ai-status.json"}}
+        self.repo_root = Path("/repo")
+
+    def _lookup(self, **patches: object):
+        defaults = {
+            "resolve_gh_binary": mock.patch.object(supervisor, "resolve_gh_binary", return_value="gh"),
+            "_repository_slug_from_remote": mock.patch.object(
+                supervisor, "_repository_slug_from_remote", return_value="ajoe734/pantheon"
+            ),
+        }
+        defaults.update(patches)
+        with contextlib.ExitStack() as stack:
+            for patcher in defaults.values():
+                stack.enter_context(patcher)
+            return supervisor._merged_pull_requests_for_branch(
+                self.config, self.repo_root, "task/SUP-001"
+            )
+
+    def _proc(self, returncode: int = 0, stdout: str = "[]") -> mock.Mock:
+        return mock.Mock(returncode=returncode, stdout=stdout)
+
+    def test_successful_lookup_returns_the_records(self) -> None:
+        runner = mock.Mock(return_value=self._proc(stdout='[{"number": 1}]'))
+        records = self._lookup(
+            run_gh_process=mock.patch.object(supervisor, "run_gh_process", runner)
+        )
+        self.assertEqual(records, [{"number": 1}])
+        args = runner.call_args.args[0]
+        self.assertEqual(args[:2], ["pr", "list"])
+        self.assertIn("--head", args)
+        self.assertIn("task/SUP-001", args)
+        self.assertIn("merged", args)
+        self.assertIn("ajoe734/pantheon", args)
+
+    def test_missing_gh_binary_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(resolve_gh_binary=mock.patch.object(supervisor, "resolve_gh_binary", return_value=None))
+        )
+
+    def test_unknown_repository_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(
+                _repository_slug_from_remote=mock.patch.object(
+                    supervisor, "_repository_slug_from_remote", return_value=None
+                )
+            )
+        )
+
+    def test_nonzero_exit_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(
+                run_gh_process=mock.patch.object(
+                    supervisor, "run_gh_process", return_value=self._proc(returncode=1, stdout="")
+                )
+            )
+        )
+
+    def test_timeout_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(
+                run_gh_process=mock.patch.object(
+                    supervisor,
+                    "run_gh_process",
+                    side_effect=subprocess.TimeoutExpired(cmd=["gh"], timeout=1),
+                )
+            )
+        )
+
+    def test_unparseable_or_unexpected_json_fails_closed(self) -> None:
+        for payload in ("not json", '{"number": 1}'):
+            self.assertIsNone(
+                self._lookup(
+                    run_gh_process=mock.patch.object(
+                        supervisor, "run_gh_process", return_value=self._proc(stdout=payload)
+                    )
+                )
+            )
+
+    def test_disabled_lookup_fails_closed(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "ready_dispatcher": {"ownerless_in_progress": {"github_pr_lookup_enabled": False}},
+        }
+        with mock.patch.object(supervisor, "run_gh_process") as runner:
+            self.assertIsNone(
+                supervisor._merged_pull_requests_for_branch(config, self.repo_root, "task/SUP-001")
+            )
+        runner.assert_not_called()
+
+    def test_repository_slug_is_read_from_the_origin_remote(self) -> None:
+        for url in (
+            "git@github.com:ajoe734/pantheon.git",
+            "https://github.com/ajoe734/pantheon.git",
+            "https://github.com/ajoe734/pantheon",
+            "ssh://git@github.com/ajoe734/pantheon.git",
+        ):
+            with mock.patch.object(supervisor, "_git_capture", return_value=f"{url}\n"):
+                self.assertEqual(
+                    supervisor._repository_slug_from_remote(self.repo_root), "ajoe734/pantheon"
+                )
+        for url in ("", "git@gitlab.com:ajoe734/pantheon.git"):
+            with mock.patch.object(supervisor, "_git_capture", return_value=url):
+                self.assertIsNone(supervisor._repository_slug_from_remote(self.repo_root))
+
+
+class WorkerDeliveryIdentityTests(unittest.TestCase):
+    """Which worker, dispatched as whom, delivered which commit."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "agents": {
+                "claude": {"display_name": "Claude"},
+                "claude1_1": {"display_name": "Claude"},
+                "codex2": {"display_name": "Codex2"},
+            }
+        }
+
+    def test_logical_agent_id_resolves_the_dispatched_display_name(self) -> None:
+        worker = {"logical_agent_id": "claude", "agent_id": "claude1_1", "provider": "claude1-1"}
+        self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "Claude")
+
+    def test_unregistered_agent_id_is_unresolved_not_echoed(self) -> None:
+        worker = {"logical_agent_id": "ghost", "agent_id": "ghost_1", "provider": "ghost-1"}
+        self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "")
+
+    def test_delivery_head_requires_a_full_commit_sha(self) -> None:
+        self.assertEqual(
+            supervisor.worker_delivery_head_commit({"work_progress_snapshot": {"commit_sha": "C" * 40}}),
+            "c" * 40,
+        )
+        self.assertIsNone(supervisor.worker_delivery_head_commit({"work_progress_snapshot": {}}))
+        self.assertIsNone(
+            supervisor.worker_delivery_head_commit({"work_progress_snapshot": {"commit_sha": "abc123"}})
+        )
+        self.assertIsNone(supervisor.worker_delivery_head_commit({"work_progress_snapshot": None}))
+
+    def test_scraped_pr_url_is_never_the_delivery_binding(self) -> None:
+        """Pinned from live .orchestrator/state.json at 2026-07-26T20:21Z.
+
+        That worker was running SUP/OPS task work whose delivery head was
+        8703d1f5d, while its scraped pr_url was a malformed string naming an
+        unrelated PR. Any binding that trusted pr_url would bind the wrong PR.
+        """
+        worker = {
+            "task_id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+            "pr_url": 'https://github.com/ajoe734/pantheon/pull/4170\\"\\n',
+            "work_progress_snapshot": {"commit_sha": "8703d1f5db76fc16f8c579177fc35dec4f526922"},
+        }
+        self.assertEqual(
+            supervisor.worker_delivery_head_commit(worker),
+            "8703d1f5db76fc16f8c579177fc35dec4f526922",
+        )
+
+    def test_dispatch_start_prefers_the_lease_acquisition(self) -> None:
+        worker = {"lease_acquired_at": "2026-07-26T17:00:00Z", "started_at": "2026-07-26T10:00:00Z"}
+        self.assertEqual(
+            supervisor._isoformat_utc(supervisor.worker_dispatch_started_at(worker)),
+            "2026-07-26T17:00:00Z",
+        )
+        self.assertIsNone(supervisor.worker_dispatch_started_at({"lease_acquired_at": "not-a-date"}))
+        self.assertIsNone(supervisor.worker_dispatch_started_at({}))
 
 
 if __name__ == "__main__":

@@ -49,12 +49,22 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import json
 import logging
 import os
+import threading
 import time
-from datetime import datetime, timezone
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Coroutine, Mapping, Optional, Protocol, runtime_checkable
+
+try:  # POSIX advisory locking makes the admission ledger replica-safe.
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None  # type: ignore[assignment]
 
 from .buffer import DurableBuffer, create_buffer
 from .batch_writer import AsyncBatchWriter, WriteResult
@@ -93,6 +103,34 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 TELEMETRY_COMMIT_NOTIFY_CHANNEL = "pantheon_lifecycle_events"
+
+# --- Non-trading infrastructure health contract -----------------------------
+# OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001. Infrastructure health is admitted
+# through its own authoritative schema and its own strict-auth route. It never
+# carries, requires, or invents RuntimeBinding evidence, and it never enters the
+# trading ingest path, so trading binding and lineage validation are unaffected.
+INFRASTRUCTURE_HEALTH_EVENT_TYPE = "infrastructure_health"
+INFRASTRUCTURE_HEALTH_SCHEMA_VERSION = "pantheon.infrastructure-health/1"
+INFRASTRUCTURE_HEALTH_SCHEMA_DEFINITION = "InfrastructureHealthEvent"
+INFRASTRUCTURE_HEALTH_LEDGER_FILENAME = "infrastructure_health_admissions.jsonl"
+
+# RuntimeBinding evidence fields. An infrastructure producer presenting any of
+# these — at any depth, including inside metadata — is rejected outright rather
+# than being allowed to look like an attributable trading event.
+RUNTIME_BINDING_EVIDENCE_FIELDS = frozenset({
+    "binding_id",
+    "runtime_id",
+    "capital_pool_id",
+    "artifact_id",
+    "artifact_version",
+    "deployment_stage",
+    "execution_mode",
+    "plan_id",
+    "persona_capital_binding_id",
+    "rollback_parent",
+    "rollback_action_type",
+})
+
 TRADE_JOURNEY_FIXTURE_EVENT_TYPE = "trade_journey_fixture"
 TRADE_JOURNEY_FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
 TRADE_JOURNEY_FIXTURE_SOURCE = "tj_e2e_012_hosted_seed_v3"
@@ -136,6 +174,357 @@ _VALIDATION_FAILURE_TAGS = frozenset({
     TAG_BINDING_MISMATCH,
     TAG_TEMPORAL_VIOLATION,
 })
+
+# ---------------------------------------------------------------------------
+# Durable infrastructure health admission ledger
+# ---------------------------------------------------------------------------
+
+
+def infrastructure_health_fingerprint(event: Mapping[str, Any]) -> str:
+    """Return the content fingerprint used to detect event_id reuse."""
+
+    payload = json.dumps(
+        dict(event),
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
+        default=str,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+@dataclass(frozen=True)
+class InfrastructureHealthReservation:
+    """Result of one attempt to reserve a stable infrastructure event ID."""
+
+    outcome: str
+    token: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class InfrastructureHealthAdmissionLedger:
+    """Durable, replica-safe two-phase admission log keyed by stable event ID.
+
+    The in-process dedup set of :class:`TelemetryIngestService` is lost on
+    restart and is not shared between replicas, so it cannot by itself make
+    admission idempotent for a producer that retries across a redeploy or that
+    runs two probe replicas. This ledger is an append-only JSONL file in the
+    shared telemetry storage directory, guarded by a POSIX advisory lock so
+    concurrent replicas serialise on the same event_id.
+
+    Admission is deliberately **two-phase**, because a single-phase
+    "record then enqueue" log has a loss window: a second caller arriving
+    between the record and the durable enqueue would be answered as a
+    successful duplicate even though nothing had been persisted yet, and a crash
+    in that window would leave an event_id that was permanently marked admitted
+    and permanently never enqueued.
+
+    Record states:
+
+    * ``reserved`` — one caller holds a leased, fenced claim on the event_id.
+      It carries the owner ``token`` and an ``expires_at`` lease. No caller may
+      be told the event was accepted while the claim is only reserved.
+    * ``committed`` — a durable enqueue receipt exists. Only now is the event_id
+      an idempotent success for every later retry.
+    * ``released`` — the owner's enqueue did not succeed, so the event_id is
+      free to be admitted again.
+
+    ``commit`` and ``release`` are token-scoped, so a slow owner whose lease
+    expired and was taken over by another caller is fenced out and cannot
+    resurrect or cancel someone else's claim. An expired reservation left by a
+    crashed process is recovered by the next caller, which steals the claim with
+    a fresh token.
+    """
+
+    STATE_RESERVED = "reserved"
+    STATE_COMMITTED = "committed"
+    STATE_RELEASED = "released"
+
+    OUTCOME_RESERVED = "reserved"
+    OUTCOME_COMMITTED = "committed"
+    OUTCOME_IN_FLIGHT = "in_flight"
+    OUTCOME_CONFLICT = "conflict"
+    OUTCOME_FENCED = "fenced"
+
+    DEFAULT_LEASE_SECONDS = 30.0
+
+    def __init__(self, path: str, *, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> None:
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.touch(exist_ok=True)
+        self._lease_seconds = max(0.1, float(lease_seconds))
+        self._lock = threading.Lock()
+        self._records: dict[str, dict[str, Any]] = {}
+        self._offset = 0
+        with self._lock:
+            self._refresh_locked()
+
+    @property
+    def path(self) -> str:
+        return str(self._path)
+
+    @property
+    def lease_seconds(self) -> float:
+        return self._lease_seconds
+
+    # -- internal helpers --
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _stamp(moment: datetime) -> str:
+        return moment.isoformat().replace("+00:00", "Z")
+
+    @classmethod
+    def _parse_stamp(cls, value: Any) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _reservation_expired(cls, record: Mapping[str, Any], now: datetime) -> bool:
+        expires_at = cls._parse_stamp(record.get("expires_at"))
+        if expires_at is None:
+            # A reservation without a readable lease cannot be trusted to be
+            # live; treat it as expired so a crashed owner never blocks forever.
+            return True
+        return now >= expires_at
+
+    def _refresh_locked(self) -> None:
+        """Replay ledger records written since the last read, in order."""
+        with self._path.open("rb") as handle:
+            handle.seek(self._offset)
+            pending = handle.read()
+        consumed = 0
+        for raw_line in pending.splitlines(keepends=True):
+            if not raw_line.endswith(b"\n"):
+                # Partial trailing write from a crashed or concurrent writer.
+                # Leave it unconsumed and re-read it once it is complete.
+                break
+            consumed += len(raw_line)
+            try:
+                record = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                log.warning("Skipping unreadable infrastructure health ledger record")
+                continue
+            if not isinstance(record, dict):
+                continue
+            event_id = str(record.get("event_id") or "").strip()
+            if not event_id:
+                continue
+            if record.get("state") == self.STATE_RELEASED:
+                self._records.pop(event_id, None)
+            else:
+                self._records[event_id] = record
+        self._offset += consumed
+
+    def _append_locked(self, handle, record: dict[str, Any]) -> None:
+        line = json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
+        handle.seek(0, os.SEEK_END)
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+        self._offset = handle.tell()
+
+    def _locked_handle(self):
+        handle = self._path.open("r+b")
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+
+    @staticmethod
+    def _unlock(handle) -> None:
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+    # -- public API --
+
+    def begin(
+        self,
+        event_id: str,
+        fingerprint: str,
+        *,
+        attributes: Optional[Mapping[str, Any]] = None,
+    ) -> InfrastructureHealthReservation:
+        """Phase one: try to take a leased, fenced claim on *event_id*.
+
+        Outcomes:
+
+        * ``reserved`` — the caller owns the claim and must follow with
+          :meth:`commit` after a durable enqueue, or :meth:`release`;
+        * ``committed`` — a durable receipt already exists for identical
+          content, so this is a true idempotent duplicate;
+        * ``in_flight`` — another caller holds a live claim and no durable
+          receipt exists yet, so this caller must not be told it succeeded;
+        * ``conflict`` — the event_id is already bound to different content.
+        """
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            raise ValueError("infrastructure health admission requires an event_id")
+        now = self._now()
+        with self._lock:
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                current = self._records.get(clean_id)
+                if current is not None:
+                    if str(current.get("fingerprint") or "") != fingerprint:
+                        return InfrastructureHealthReservation(
+                            self.OUTCOME_CONFLICT,
+                            detail=f"event_id is bound to state {current.get('state')!r} with different content",
+                        )
+                    if current.get("state") == self.STATE_COMMITTED:
+                        return InfrastructureHealthReservation(self.OUTCOME_COMMITTED)
+                    if not self._reservation_expired(current, now):
+                        return InfrastructureHealthReservation(
+                            self.OUTCOME_IN_FLIGHT,
+                            detail="another admission attempt holds a live reservation",
+                        )
+                token = uuid.uuid4().hex
+                record: dict[str, Any] = {
+                    "event_id": clean_id,
+                    "fingerprint": fingerprint,
+                    "state": self.STATE_RESERVED,
+                    "token": token,
+                    "reserved_at": self._stamp(now),
+                    "expires_at": self._stamp(now + timedelta(seconds=self._lease_seconds)),
+                }
+                if current is not None:
+                    # Recovering a crashed or stalled owner's expired claim.
+                    record["recovered_token"] = current.get("token")
+                for key, value in (attributes or {}).items():
+                    record.setdefault(str(key), value)
+                self._append_locked(handle, record)
+                self._records[clean_id] = record
+                return InfrastructureHealthReservation(self.OUTCOME_RESERVED, token=token)
+            finally:
+                self._unlock(handle)
+
+    def commit(self, event_id: str, fingerprint: str, token: str) -> str:
+        """Phase two: record the durable receipt for a claim this caller owns.
+
+        Returns ``committed`` when the receipt is now durable — including the
+        case where the current owner already committed identical content —
+        ``conflict`` when the event_id is bound to different content, and
+        ``fenced`` when this caller no longer owns the claim.
+        """
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            return self.OUTCOME_FENCED
+        now = self._now()
+        with self._lock:
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                current = self._records.get(clean_id)
+                if current is None:
+                    return self.OUTCOME_FENCED
+                if str(current.get("fingerprint") or "") != fingerprint:
+                    return self.OUTCOME_CONFLICT
+                if current.get("state") == self.STATE_COMMITTED:
+                    # Someone durably committed identical content. The receipt
+                    # this caller needs already exists, so this is not a loss.
+                    return self.OUTCOME_COMMITTED
+                if str(current.get("token") or "") != str(token or ""):
+                    return self.OUTCOME_FENCED
+                record = {
+                    key: value
+                    for key, value in current.items()
+                    if key not in ("state", "expires_at")
+                }
+                record["state"] = self.STATE_COMMITTED
+                record["committed_at"] = self._stamp(now)
+                self._append_locked(handle, record)
+                self._records[clean_id] = record
+                return self.OUTCOME_COMMITTED
+            finally:
+                self._unlock(handle)
+
+    def release(self, event_id: str, token: str) -> bool:
+        """Release a claim this caller owns whose durable enqueue failed."""
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            return False
+        with self._lock:
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                current = self._records.get(clean_id)
+                if current is None:
+                    return False
+                if current.get("state") != self.STATE_RESERVED:
+                    return False
+                if str(current.get("token") or "") != str(token or ""):
+                    # Fenced: the lease was taken over by another caller.
+                    return False
+                self._append_locked(
+                    handle,
+                    {
+                        "event_id": clean_id,
+                        "state": self.STATE_RELEASED,
+                        "token": current.get("token"),
+                        "released_at": self._stamp(self._now()),
+                    },
+                )
+                self._records.pop(clean_id, None)
+                return True
+            finally:
+                self._unlock(handle)
+
+    def is_committed(self, event_id: str) -> bool:
+        """Return whether a durable receipt exists for *event_id*."""
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            return False
+        with self._lock:
+            self._refresh_locked()
+            current = self._records.get(clean_id)
+            return bool(current) and current.get("state") == self.STATE_COMMITTED
+
+    def state_of(self, event_id: str) -> Optional[str]:
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            return None
+        with self._lock:
+            self._refresh_locked()
+            current = self._records.get(clean_id)
+            return None if current is None else str(current.get("state") or "")
+
+    def stats(self) -> dict[str, Any]:
+        now = self._now()
+        with self._lock:
+            self._refresh_locked()
+            committed = 0
+            open_reservations = 0
+            expired_reservations = 0
+            for record in self._records.values():
+                if record.get("state") == self.STATE_COMMITTED:
+                    committed += 1
+                elif record.get("state") == self.STATE_RESERVED:
+                    if self._reservation_expired(record, now):
+                        expired_reservations += 1
+                    else:
+                        open_reservations += 1
+            return {
+                "path": str(self._path),
+                "committed_event_ids": committed,
+                "open_reservations": open_reservations,
+                "recoverable_expired_reservations": expired_reservations,
+                "lease_seconds": self._lease_seconds,
+            }
+
 
 # ---------------------------------------------------------------------------
 # RuntimeBinding protocol (injected dependency)
@@ -331,8 +720,13 @@ class TelemetryIngestService:
         schema_path: Optional[str] = None,
         storage_dir: Optional[str] = None,
         buffer_backend: str = "memory",
+        buffer: Optional[DurableBuffer] = None,
         buffer_maxsize: int = 100_000,
         buffer_redis_url: str = "redis://localhost:6379/0",
+        buffer_nats_url: str = "nats://localhost:4222",
+        buffer_stream_name: str = "PANTHEON_TELEMETRY_INGEST",
+        buffer_subject: str = "pantheon.telemetry.ingest",
+        buffer_durable_name: str = "telemetry-postgres-writer",
         batch_size: int = 500,
         batch_interval: float = 1.0,
         max_retries: int = 5,
@@ -347,6 +741,8 @@ class TelemetryIngestService:
         dedup_max_size: int = 500_000,
         replay_dlq_on_start: bool = False,
         dlq_replay_tag_filter: Optional[str] = None,
+        infrastructure_health_ledger_path: Optional[str] = None,
+        infrastructure_health_lease_seconds: Optional[float] = None,
     ):
         """
         Parameters
@@ -356,11 +752,21 @@ class TelemetryIngestService:
         storage_dir : str, optional
             Directory for spill files (DLQ, emergency buffer).
         buffer_backend : str
-            "memory" (v1) or "redis" (v2).
+            "jetstream" (deployed default), "redis", or explicit test-only
+            "memory".
+        buffer : DurableBuffer, optional
+            Pre-built buffer instance used instead of the ``buffer_backend``
+            factory. This is an in-process wiring seam for tests and embedders
+            that supply their own broker adapter; it is deliberately not
+            reachable from configuration, and it grants no durability of its
+            own. Infrastructure health admission trusts ``is_durable()`` alone,
+            so injecting a volatile buffer here still fails closed.
         buffer_maxsize : int
             Max events in buffer before backpressure.
         buffer_redis_url : str
             Redis URL (only used if buffer_backend="redis").
+        buffer_nats_url : str
+            NATS URL (only used if buffer_backend="jetstream").
         batch_size : int
             Max events per write batch.
         batch_interval : float
@@ -401,20 +807,44 @@ class TelemetryIngestService:
         dlq_replay_tag_filter : str, optional
             Optional explicit tag filter for startup replay. When None, startup
             replay uses the safe default write-failure tag set.
+        infrastructure_health_ledger_path : str, optional
+            Path to the durable infrastructure health admission ledger. Defaults
+            to ``<storage_dir>/infrastructure_health_admissions.jsonl``. When no
+            path can be resolved, infrastructure health ingestion fails closed
+            rather than admitting events it cannot deduplicate durably.
+        infrastructure_health_lease_seconds : float, optional
+            Lease held by one infrastructure health admission reservation before
+            another caller may recover it. It must exceed the worst-case durable
+            enqueue latency; a crashed owner's claim becomes recoverable only
+            after it expires.
         """
         # Schema
         self._schema: Optional[dict[str, Any]] = schema
         self._schema_path = schema_path
+        self._infrastructure_health_schema: Optional[dict[str, Any]] = None
         self._trade_journal_schema: Optional[dict[str, Any]] = None
         self._trade_journal_schema_path = str(Path(schema_path).parent / "trade_journal_event.schema.json") if schema_path else None
         if self._schema_path and not self._schema:
             self._load_schema()
+        self._infrastructure_health_schema = self._extract_infrastructure_health_schema()
 
         # Buffer
-        buffer_kwargs: dict[str, Any] = {"maxsize": buffer_maxsize}
-        if buffer_backend == "redis":
-            buffer_kwargs["redis_url"] = buffer_redis_url
-        self._buffer: DurableBuffer = create_buffer(backend=buffer_backend, **buffer_kwargs)
+        if buffer is not None:
+            self._buffer: DurableBuffer = buffer
+        else:
+            buffer_kwargs: dict[str, Any] = {"maxsize": buffer_maxsize}
+            if buffer_backend == "redis":
+                buffer_kwargs["redis_url"] = buffer_redis_url
+            elif buffer_backend in {"jetstream", "nats", "nats_jetstream"}:
+                buffer_kwargs.update(
+                    {
+                        "nats_url": buffer_nats_url,
+                        "stream_name": buffer_stream_name,
+                        "subject": buffer_subject,
+                        "durable_name": buffer_durable_name,
+                    }
+                )
+            self._buffer = create_buffer(backend=buffer_backend, **buffer_kwargs)
 
         # Dead-letter queue
         dlq_spill = dlq_spill_path
@@ -459,6 +889,42 @@ class TelemetryIngestService:
         self._seen_event_ids: dict[str, dict[str, Any]] = {}
         self._dedup_max_size = dedup_max_size
 
+        # Durable infrastructure health admission ledger. Unlike the in-process
+        # dedup set above, this survives restart and is shared between replicas
+        # that mount the same telemetry storage directory.
+        ledger_path = infrastructure_health_ledger_path
+        if not ledger_path and storage_dir:
+            ledger_path = str(Path(storage_dir) / INFRASTRUCTURE_HEALTH_LEDGER_FILENAME)
+        self._infrastructure_health_ledger: Optional[InfrastructureHealthAdmissionLedger] = None
+        if ledger_path:
+            try:
+                self._infrastructure_health_ledger = InfrastructureHealthAdmissionLedger(
+                    ledger_path,
+                    lease_seconds=(
+                        infrastructure_health_lease_seconds
+                        if infrastructure_health_lease_seconds is not None
+                        else InfrastructureHealthAdmissionLedger.DEFAULT_LEASE_SECONDS
+                    ),
+                )
+            except OSError as exc:
+                log.error(
+                    "Infrastructure health admission ledger unavailable at %s: %s",
+                    ledger_path,
+                    exc,
+                )
+        else:
+            log.warning(
+                "No telemetry storage directory configured — infrastructure health "
+                "ingestion will fail closed without a durable admission ledger"
+            )
+        self._infrastructure_health_admitted = 0
+        self._infrastructure_health_duplicates = 0
+        self._infrastructure_health_conflicts = 0
+        self._infrastructure_health_in_flight = 0
+        self._infrastructure_health_fenced = 0
+        self._infrastructure_health_non_durable = 0
+        self._infrastructure_health_rejected = 0
+
         # State
         self._started = False
         self._total_ingested = 0
@@ -493,6 +959,23 @@ class TelemetryIngestService:
                 log.warning(f"Failed to load trade journal schema: {e}")
                 self._trade_journal_schema = None
 
+    def _extract_infrastructure_health_schema(self) -> Optional[dict[str, Any]]:
+        """Return the standalone non-trading infrastructure health schema."""
+        if not isinstance(self._schema, dict):
+            return None
+        definitions = self._schema.get("definitions")
+        if not isinstance(definitions, dict):
+            return None
+        infrastructure = definitions.get(INFRASTRUCTURE_HEALTH_SCHEMA_DEFINITION)
+        if not isinstance(infrastructure, dict):
+            log.warning(
+                "Telemetry schema has no %s definition — infrastructure health "
+                "ingestion will fail closed",
+                INFRASTRUCTURE_HEALTH_SCHEMA_DEFINITION,
+            )
+            return None
+        return infrastructure
+
     def _validate_event(self, event: dict[str, Any]) -> tuple[bool, Optional[str]]:
         """
         Validate event against schema.
@@ -500,6 +983,14 @@ class TelemetryIngestService:
         Returns (valid, error_message).
         """
         event_type = event.get("event_type")
+        if event_type == INFRASTRUCTURE_HEALTH_EVENT_TYPE:
+            # Infrastructure health has its own authority, its own schema, and
+            # its own route. It must never reach the trading ingest path, where
+            # there is no RuntimeBinding to validate it against.
+            return False, (
+                "infrastructure_health events must be admitted through the "
+                "infrastructure health authority, not the trading telemetry path"
+            )
         if event_type in TRADE_JOURNAL_EVENT_TYPES:
             if not self._trade_journal_schema or not jsonschema:
                 return True, None
@@ -845,11 +1336,366 @@ class TelemetryIngestService:
                 rejected += 1
         return {"ingested": ingested, "rejected": rejected}
 
+    # -- Non-trading infrastructure health admission --
+
+    @staticmethod
+    def _forbidden_binding_fields(value: Any) -> list[str]:
+        """Return every RuntimeBinding evidence key present at any depth.
+
+        "At any depth" is literal. The traversal is iterative over an explicit
+        stack, so it has no depth ceiling of its own and cannot exhaust the
+        interpreter stack on a deeply nested payload. An earlier revision
+        recursed and gave up past depth 8 by returning no findings, which made
+        the contract false in the one direction that matters: a ``binding_id``
+        nested deeper than the cap was silently admitted rather than rejected.
+        A scan that cannot see the whole payload must never answer "clean".
+
+        Containers are tracked by identity so a payload that reuses or
+        self-references an object terminates instead of looping. Re-visiting is
+        skipped only after that object's keys have already been collected, so
+        the returned key set is unaffected.
+        """
+        found: list[str] = []
+        visited: set[int] = set()
+        stack: list[Any] = [value]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, Mapping):
+                if id(current) in visited:
+                    continue
+                visited.add(id(current))
+                for key, item in current.items():
+                    if str(key) in RUNTIME_BINDING_EVIDENCE_FIELDS:
+                        found.append(str(key))
+                    stack.append(item)
+            elif isinstance(current, (list, tuple, set, frozenset)):
+                if id(current) in visited:
+                    continue
+                visited.add(id(current))
+                stack.extend(current)
+        return found
+
+    def _buffer_durability_defect(self) -> Optional[str]:
+        """Return why the configured buffer cannot back an admission, or None.
+
+        Infrastructure health admission is authoritative: a 202 plus a committed
+        ledger receipt is a promise that the event survives this process. A
+        volatile buffer cannot keep that promise — a crash erases the only copy
+        of the event while the committed receipt makes every later producer
+        retry an idempotent ``duplicate``, so the observation is permanently
+        lost with no error anywhere. The buffer's own ``is_durable()`` is the
+        single authority here; there is no configuration, environment variable,
+        or event field that can assert durability on a backend's behalf.
+        """
+
+        buffer = self._buffer
+        is_durable = getattr(buffer, "is_durable", None)
+        if not callable(is_durable):
+            return (
+                f"Configured telemetry buffer {type(buffer).__name__!r} does not "
+                "implement the durable broker contract"
+            )
+        try:
+            durable = bool(is_durable())
+        except Exception as exc:  # noqa: BLE001 - an unprovable buffer is not durable
+            return (
+                f"Configured telemetry buffer {type(buffer).__name__!r} could not "
+                f"prove durability: {exc}"
+            )
+        if not durable:
+            return (
+                f"Configured telemetry buffer {type(buffer).__name__!r} is volatile; "
+                "infrastructure health admission requires a durable broker so an "
+                "admitted event survives process crash, restart, and replica failover"
+            )
+        return None
+
+    def _reject_infrastructure_health(
+        self,
+        event: dict[str, Any],
+        code: str,
+        message: str,
+        *,
+        tag: str = TAG_SCHEMA_VIOLATION,
+        dead_letter: bool = True,
+    ) -> dict[str, Any]:
+        self._infrastructure_health_rejected += 1
+        if dead_letter:
+            self._dlq.reject(
+                event=event,
+                tags=[tag],
+                reason=f"{code}: {message}",
+            )
+        log.warning("Infrastructure health ingest rejected (%s): %s", code, message)
+        return {
+            "status": "rejected",
+            "code": code,
+            "message": message,
+            "event_id": str(event.get("event_id") or ""),
+        }
+
+    async def ingest_infrastructure_health(
+        self,
+        event: dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Admit one non-trading infrastructure health event.
+
+        The caller must already have been authenticated and tenant/producer
+        bound by the infrastructure health authority in ``services.telemetry.auth``.
+
+        Flow
+        ----
+        1. Reject anything that is not an infrastructure_health event.
+        2. Reject any RuntimeBinding evidence field at any depth — an
+           infrastructure producer must never be able to present, invent, or
+           spoof trading binding identity.
+        3. Validate against the authoritative non-trading schema. Fail closed
+           when that schema or its validator is unavailable.
+        4. Fail closed *before* any reservation when the configured buffer is
+           not a durable broker, so no volatile enqueue can ever be recorded as
+           an admitted event.
+        5. Take a leased, fenced reservation on the stable event_id in the
+           durable admission ledger. A live reservation held by another attempt
+           is answered as retryable, never as success.
+        6. Enqueue for durable persistence, re-check durability, then commit the
+           reservation. A failed enqueue releases it so the producer's retry
+           still works.
+
+        Only a committed reservation — one backed by a durable enqueue receipt —
+        makes a later retry an idempotent ``duplicate``.
+
+        Returns a result dict with ``status`` of ``accepted``, ``duplicate``, or
+        ``rejected``; rejections carry a stable ``code``.
+        """
+        if event.get("event_type") != INFRASTRUCTURE_HEALTH_EVENT_TYPE:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_EVENT_TYPE_INVALID",
+                f"event_type must be {INFRASTRUCTURE_HEALTH_EVENT_TYPE!r}",
+            )
+
+        forbidden = list(dict.fromkeys(self._forbidden_binding_fields(event)))
+        if forbidden:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_BINDING_FIELD_FORBIDDEN",
+                (
+                    "infrastructure health telemetry must not carry RuntimeBinding "
+                    f"evidence fields: {forbidden}"
+                ),
+                tag=TAG_BINDING_MISMATCH,
+            )
+
+        if self._infrastructure_health_schema is None or jsonschema is None:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_SCHEMA_UNAVAILABLE",
+                "Authoritative infrastructure health schema is not loaded",
+                dead_letter=False,
+            )
+        try:
+            jsonschema.validate(
+                instance=event,
+                schema=self._infrastructure_health_schema,
+            )
+        except jsonschema.ValidationError as exc:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_SCHEMA_VIOLATION",
+                exc.message,
+            )
+        except jsonschema.SchemaError as exc:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_SCHEMA_UNAVAILABLE",
+                f"Schema error: {exc.message}",
+                dead_letter=False,
+            )
+
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_EVENT_ID_REQUIRED",
+                "infrastructure health telemetry requires a stable event_id",
+            )
+
+        # Durability is checked before the reservation, not after the enqueue.
+        # A reservation taken against a volatile buffer could still be committed
+        # by this attempt, and a committed receipt is irreversible: it turns
+        # every later retry of a lost event into a successful duplicate.
+        durability_defect = self._buffer_durability_defect()
+        if durability_defect is not None:
+            self._infrastructure_health_non_durable += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_BUFFER_NOT_DURABLE",
+                durability_defect,
+                dead_letter=False,
+            )
+
+        ledger = self._infrastructure_health_ledger
+        if ledger is None:
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_LEDGER_UNCONFIGURED",
+                (
+                    "Durable infrastructure health admission ledger is unavailable; "
+                    "refusing to admit an event that cannot be deduplicated durably"
+                ),
+                dead_letter=False,
+            )
+
+        fingerprint = infrastructure_health_fingerprint(event)
+        component = event.get("component") if isinstance(event.get("component"), dict) else {}
+        reservation = ledger.begin(
+            event_id,
+            fingerprint,
+            attributes={
+                "tenant_id": event.get("tenant_id"),
+                "producer": event.get("producer"),
+                "service_name": component.get("service_name"),
+                "created_at": event.get("created_at"),
+            },
+        )
+        if reservation.outcome == ledger.OUTCOME_CONFLICT:
+            self._infrastructure_health_conflicts += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_EVENT_ID_CONFLICT",
+                f"event_id {event_id!r} is already bound to different content",
+            )
+        if reservation.outcome == ledger.OUTCOME_COMMITTED:
+            # A durable receipt already exists for identical content, so this is
+            # a true idempotent duplicate rather than an optimistic success.
+            self._infrastructure_health_duplicates += 1
+            log.debug("Infrastructure health admission skipped (duplicate): %s", event_id)
+            return {
+                "status": "duplicate",
+                "event_id": event_id,
+                "fingerprint": fingerprint,
+            }
+        if reservation.outcome == ledger.OUTCOME_IN_FLIGHT:
+            # Another attempt holds a live reservation and nothing is durable
+            # yet. Answering "accepted" here would be a false success that stops
+            # the producer from retrying an event that may never be persisted.
+            self._infrastructure_health_in_flight += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_ADMISSION_IN_FLIGHT",
+                (
+                    f"event_id {event_id!r} is being admitted by another attempt and has no "
+                    "durable receipt yet; retry"
+                ),
+                dead_letter=False,
+            )
+
+        token = reservation.token or ""
+        try:
+            enqueued = await self._buffer.put(event, timeout=timeout)
+        except BaseException:
+            # Never strand the reservation on cancellation or a buffer error.
+            ledger.release(event_id, token)
+            raise
+        if not enqueued:
+            # The reservation must not outlive a failed enqueue, otherwise the
+            # producer's retry would be answered as an already-admitted event
+            # that was never persisted.
+            ledger.release(event_id, token)
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_BUFFER_OVERFLOW",
+                "Buffer full — infrastructure health event was not durably enqueued",
+                tag=TAG_BUFFER_OVERFLOW,
+            )
+
+        # Re-prove durability before the commit makes the receipt permanent. A
+        # backend that degraded to a volatile path during this enqueue must not
+        # be able to convert an unsafe write into an idempotent success; release
+        # the claim so the producer's retry is still admissible.
+        durability_defect = self._buffer_durability_defect()
+        if durability_defect is not None:
+            ledger.release(event_id, token)
+            self._infrastructure_health_non_durable += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_BUFFER_NOT_DURABLE",
+                durability_defect,
+                dead_letter=False,
+            )
+
+        commit_outcome = ledger.commit(event_id, fingerprint, token)
+        if commit_outcome == ledger.OUTCOME_CONFLICT:
+            self._infrastructure_health_conflicts += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_EVENT_ID_CONFLICT",
+                f"event_id {event_id!r} is already bound to different content",
+            )
+        if commit_outcome != ledger.OUTCOME_COMMITTED:
+            # This attempt's lease expired and another caller took the claim over.
+            # The event is durably enqueued, but this attempt cannot own the
+            # admission record, so report a retryable failure rather than a
+            # success it cannot prove.
+            self._infrastructure_health_fenced += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_ADMISSION_FENCED",
+                (
+                    f"reservation for event_id {event_id!r} expired and was taken over by "
+                    "another admission attempt; retry"
+                ),
+                dead_letter=False,
+            )
+
+        self._seen_event_ids[event_id] = copy.deepcopy(event)
+        if len(self._seen_event_ids) > self._dedup_max_size:
+            evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]
+            for eid in evict:
+                self._seen_event_ids.pop(eid, None)
+
+        self._infrastructure_health_admitted += 1
+        return {
+            "status": "accepted",
+            "event_id": event_id,
+            "fingerprint": fingerprint,
+        }
+
+    def infrastructure_health_stats(self) -> dict[str, Any]:
+        ledger = self._infrastructure_health_ledger
+        durability_defect = self._buffer_durability_defect()
+        return {
+            "schema_version": INFRASTRUCTURE_HEALTH_SCHEMA_VERSION,
+            "schema_loaded": self._infrastructure_health_schema is not None,
+            "buffer_type": type(self._buffer).__name__,
+            "buffer_durable": durability_defect is None,
+            "buffer_durability_defect": durability_defect,
+            "admitted": self._infrastructure_health_admitted,
+            "duplicates": self._infrastructure_health_duplicates,
+            "conflicts": self._infrastructure_health_conflicts,
+            "in_flight_rejections": self._infrastructure_health_in_flight,
+            "fenced_rejections": self._infrastructure_health_fenced,
+            "non_durable_rejections": self._infrastructure_health_non_durable,
+            "rejected": self._infrastructure_health_rejected,
+            "ledger": ledger.stats() if ledger is not None else {
+                "path": None,
+                "committed_event_ids": 0,
+                "open_reservations": 0,
+                "recoverable_expired_reservations": 0,
+                "lease_seconds": None,
+            },
+        }
+
     async def start(self) -> None:
         """Start the ingest service (buffer + batch writer)."""
         if self._started:
             return
         self._load_dlq_from_spill_once()
+        # Fail startup closed when a configured durable backend cannot prove
+        # its stream/consumer safety. HTTP must never acknowledge into a
+        # process-local fallback.
+        await self._buffer.start()
         self._started = True
         self._start_time = time.monotonic()
         await self._writer.start()
@@ -928,6 +1774,7 @@ class TelemetryIngestService:
                 if self._trade_episode_projection_store is not None
                 else {"projection_count": 0, "projections_path": None}
             ),
+            "infrastructure_health": self.infrastructure_health_stats(),
             "startup": {
                 "dlq_loaded_from_spill": self._dlq_loaded_from_spill_count,
                 "dlq_replay_on_start": self._replay_dlq_on_start,
@@ -936,15 +1783,62 @@ class TelemetryIngestService:
             },
         }
 
-    def get_runtime_summary(self, runtime_id: str) -> Optional[dict[str, Any]]:
+    @staticmethod
+    def _event_tenant_id(event: dict[str, Any]) -> str:
+        top_level = str(event.get("tenant_id") or "").strip()
+        envelope = event.get("correlation_envelope")
+        envelope_tenant = (
+            str(envelope.get("tenant_id") or "").strip()
+            if isinstance(envelope, dict)
+            else ""
+        )
+        if top_level and envelope_tenant and top_level != envelope_tenant:
+            return ""
+        return top_level or envelope_tenant
+
+    def get_runtime_summary(
+        self,
+        runtime_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return None
-        return self._runtime_summary_store.get(runtime_id)
+        return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
 
-    def list_runtime_summaries(self) -> list[dict[str, Any]]:
+    def list_runtime_summaries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return []
-        return self._runtime_summary_store.list()
+        return self._runtime_summary_store.list(tenant_id=tenant_id)
+
+    def get_accepted_event(
+        self,
+        event_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Return the immutable event accepted by this owner process.
+
+        The exact event lookup is deliberately separate from runtime summaries:
+        summaries are continuously updated by concurrent heartbeats and are not
+        a stable acknowledgement surface for one producer event.
+        """
+
+        clean_event_id = str(event_id or "").strip()
+        if not clean_event_id:
+            return None
+        event = self._seen_event_ids.get(clean_event_id)
+        if (
+            event is not None
+            and tenant_id is not None
+            and self._event_tenant_id(event) != tenant_id
+        ):
+            return None
+        return copy.deepcopy(event) if event is not None else None
 
     def get_trade_episode_projection(
         self,
@@ -952,10 +1846,16 @@ class TelemetryIngestService:
         *,
         as_of: Optional[str] = None,
         as_of_sequence: Optional[int] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         if self._trade_episode_projection_store is None:
             return None
-        return self._trade_episode_projection_store.get(trade_episode_id, as_of=as_of, as_of_sequence=as_of_sequence)
+        return self._trade_episode_projection_store.get(
+            trade_episode_id,
+            as_of=as_of,
+            as_of_sequence=as_of_sequence,
+            tenant_id=tenant_id,
+        )
 
     def list_trade_episode_projections(
         self,
@@ -973,6 +1873,7 @@ class TelemetryIngestService:
         coverage_state: Optional[str] = None,
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict[str, Any]:
         if self._trade_episode_projection_store is None:
             return {"projections": [], "next_cursor": None, "count": 0}
@@ -990,6 +1891,7 @@ class TelemetryIngestService:
             coverage_state=coverage_state,
             start_time=start_time,
             end_time=end_time,
+            tenant_id=tenant_id,
         )
 
     def has_runtime_binding_store(self) -> bool:
@@ -1002,9 +1904,26 @@ class TelemetryIngestService:
 
     # -- Diagnostics / Replay --
 
-    def get_dlq_entries(self, tag_filter: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def get_dlq_entries(
+        self,
+        tag_filter: Optional[str] = None,
+        limit: int = 100,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         """Get dead-letter queue entries."""
-        return self._dlq.get_entries_as_dicts(tag_filter=tag_filter, limit=limit)
+        entries = self._dlq.get_entries_as_dicts(
+            tag_filter=tag_filter,
+            limit=max(limit, 10_000) if tenant_id is not None else limit,
+        )
+        if tenant_id is not None:
+            entries = [
+                entry
+                for entry in entries
+                if isinstance(entry.get("event"), dict)
+                and self._event_tenant_id(entry["event"]) == tenant_id
+            ]
+        return entries[-limit:]
 
     @staticmethod
     def _deduplicate_replay_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1020,7 +1939,12 @@ class TelemetryIngestService:
             deduplicated.append(event)
         return deduplicated
 
-    async def replay_dlq(self, tag_filter: Optional[str] = None) -> int:
+    async def replay_dlq(
+        self,
+        tag_filter: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> int:
         """
         Replay dead-letter events through the full ingest validation path.
 
@@ -1065,6 +1989,12 @@ class TelemetryIngestService:
             for tag in _WRITE_FAILURE_TAGS:
                 replay_candidates.extend(self._dlq.replay_entries(tag_filter=tag))
             events = self._deduplicate_replay_events(replay_candidates)
+        if tenant_id is not None:
+            events = [
+                event
+                for event in events
+                if self._event_tenant_id(event) == tenant_id
+            ]
 
         count = 0
         for event in events:

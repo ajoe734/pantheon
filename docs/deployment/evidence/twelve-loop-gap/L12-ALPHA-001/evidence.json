@@ -1,0 +1,471 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-ALPHA-001 product-level owner closeout gate.",
+    "note": "Owner closeout manifest over the merged Alpha replication implementation, reviewer-requested fixes, focused verification, and independent reviewer verdict.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Changes require a task-scoped commit and PR; append a record_log entry when the accepted evidence cut changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T11:40:10Z",
+    "evidence_cut_semantics": "Owner closeout packaging over merged PRs #4147 and #4161 plus the independent Codex2 approval; shared runtime activation and hosted deployment are not claimed.",
+    "id": "L12-ALPHA-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Alpha",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-ALPHA-001",
+    "title": "Dispatch approved Alpha replication into authoritative ExperimentRuns"
+  },
+  "authorities": {
+    "actual_state": [
+      "research ExperimentTask",
+      "research ExperimentRun",
+      "replication queue and DLQ"
+    ],
+    "desired_state": [
+      "approved StrategySpec review decision",
+      "revalidation due policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-ALPHA-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for the Alpha replication queue, research authority adapter, controller receipt publication, and task evidence",
+    "composes_with": [
+      "L12-DIST-001 immutable StrategySpec approval",
+      "L12-CTRL-001 loop evidence consumption",
+      "L12-MANIFEST-001 runtime activation"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_alpha_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/research/alpha_replication/__init__.py",
+      "services/research/alpha_replication/queue.py",
+      "services/research/alpha_replication/replication_controller.py",
+      "services/research/alpha_replication/revalidation_worker.py",
+      "services/research/alpha_replication/test_queue.py",
+      "services/research/alpha_replication/test_replication_controller.py",
+      "services/research/alpha_replication/test_revalidation_worker.py",
+      "services/research/experiment_orchestrator/__init__.py",
+      "services/research/experiment_orchestrator/authority.py",
+      "services/research/experiment_orchestrator/parallel_dispatch.py",
+      "services/research/experiment_orchestrator/test_authority.py",
+      "services/research/experiment_orchestrator/test_parallel_dispatch.py",
+      "services/research/experiments/README.md",
+      "services/research/experiments/experiment_run.schema.json",
+      "services/research/experiments/experiment_task.schema.json",
+      "services/research/experiments/models.py",
+      "services/research/experiments/registry_writeback.py",
+      "services/research/experiments/test_models.py"
+    ],
+    "not_changing": "Registry review ownership, shared Compose activation, hosted deployment, broker authority, live capital authority, or cross-loop aggregation.",
+    "owned_layer": "Approved-only tenant-scoped Alpha replication queue, fenced lease and replay recovery, authoritative ExperimentTask and ExperimentRun persistence/readback, and resolvable controller evidence receipts"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged",
+        "sha": "0c018d4bc4a962a878c0d2742bfcc9f5e484306b",
+        "subject": "L12-ALPHA-001: anchor tenant authority foundation"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "95dd93fddd8811a2fc11a03ca81eeaf6d482686b",
+        "subject": "L12-ALPHA-001: anchor authoritative execution"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "d1d2405122918a3f5c63f5b6cfbd6b2e5284c9a8",
+        "subject": "L12-ALPHA-001: bind loop evidence to authority receipts"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "288c21eadbfa9995bf50a3d54ab3307cdbf055bc",
+        "subject": "L12-ALPHA-001: anchor replay and receipt fixes"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "03264cb0eaebd2bf9d2ddcf002096e57fa731c57",
+        "subject": "L12-ALPHA-001: publish replay and authority proof"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "bbc92af1a89d98338c22663cf41a4cf2005c33ea",
+        "subject": "L12-ALPHA-001: finalize approved replication evidence"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "95c6c5d5dcf6298074a9c3a35d4eafde98148661",
+      "merge_sha": "dd9d83722b24598a623692c2b6ca8b80f159fe04",
+      "merged_at": "2026-07-26T10:07:42Z",
+      "number": 4147,
+      "url": "https://github.com/ajoe734/pantheon/pull/4147"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "95c6c5d5dcf6298074a9c3a35d4eafde98148661",
+        "merge_sha": "dd9d83722b24598a623692c2b6ca8b80f159fe04",
+        "merged_at": "2026-07-26T10:07:42Z",
+        "number": 4147,
+        "url": "https://github.com/ajoe734/pantheon/pull/4147"
+      },
+      {
+        "base": "dev",
+        "head_sha": "06a3070e8f4011cb27caefccda081c729ceb84d1",
+        "merge_sha": "cba34f5bd37ebb8056a9317f4a7e6b062c6111e4",
+        "merged_at": "2026-07-26T11:35:41Z",
+        "number": 4161,
+        "url": "https://github.com/ajoe734/pantheon/pull/4161"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "95c6c5d5dcf6298074a9c3a35d4eafde98148661",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30197672481,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30197672481",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "95c6c5d5dcf6298074a9c3a35d4eafde98148661",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30197671366,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30197671366",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "06a3070e8f4011cb27caefccda081c729ceb84d1",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30200385554,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30200385554",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "06a3070e8f4011cb27caefccda081c729ceb84d1",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30200384584,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30200384584",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider services/research/alpha_replication services/research/experiment_orchestrator services/research/experiments services/research/tests/test_research_orchestrator_http_service.py",
+        "conclusion": "60 passed, 11 pre-existing warnings in 13.19s after current dev integration",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider <15 approved/tenant/lease/DLQ/ABA/crash/authority-ref cases>",
+        "conclusion": "15 passed, 1 TestClient compatibility warning in 4.42s after current dev integration",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/research/alpha_replication/queue.py services/research/alpha_replication/replication_controller.py services/research/alpha_replication/revalidation_worker.py services/research/experiment_orchestrator/authority.py services/research/experiment_orchestrator/parallel_dispatch.py services/research/experiments/models.py services/research/experiments/registry_writeback.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m json.tool evidence.json; jsonschema.validate(product-evidence.schema.json); sha256sum -c evidence.sha256",
+        "conclusion": "manifest parses, validates against the formal product schema, and matches its companion checksum",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T11:40:10Z",
+    "validated_base_sha": "917d281ae10b0426dae0667cf452b2d64263777f",
+    "validated_head_sha": "06a3070e8f4011cb27caefccda081c729ceb84d1"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Shared runtime activation and provider configuration remain delegated to L12-MANIFEST-001."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "reason": "This task proves repository behavior, authority transport, and merged CI; it does not claim hosted Alpha activation.",
+      "status": "not_applicable"
+    },
+    "public_bff_base_url": "not_applicable_internal_research_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "No hosted publication is claimed by this Alpha-owned slice."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Hosted activation belongs to L12-MANIFEST-001 and the later hosted verification slice.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Queue identity is tenant_id plus strategy_spec_id, so duplicate discovery converges to one durable record per tenant.",
+        "Every consumed replay ID remains durable; replay-A, replay-B, process restart, and reused replay-A leave replay_count unchanged at two."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Bounded failures enter the DLQ and only an operator replay with a new replay identity creates a new generation.",
+        "Research authority failure remains retryable and never creates a local run file as authoritative truth."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Queue acknowledgement preserves domain ExperimentTask and ExperimentRun IDs separately from resolvable research-authority task and run IDs.",
+        "A real FastAPI transport test derives both emitted GET paths from controller evidence references and reads HTTP 200 authority receipts back."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Expired claims return to pending and the previous fencing token cannot acknowledge reclaimed work.",
+        "A crash after authority persistence reclaims the same deterministic task and run identity without duplicate authority state.",
+        "The A-B-A replay identity remains rejected after the queue process restarts."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Lease token and generation fencing prevent stale acknowledgements after expiry or reclaim.",
+        "A failed attempt retains authority receipt lineage for diagnosis while bounded retry and DLQ state contain further execution."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree and merged Pantheon dev integration were exercised; hosted activation remains outside this task.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Production activation remains disabled and the worker has no broker or capital authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "The task consumes an already approved immutable review envelope and does not add an external operator endpoint.",
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "proof": "Tenant identity participates in queue, claim, acknowledgement, failure, DLQ, replay, task, and run keys; cross-tenant collisions are covered.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex and independent reviewer Codex2 remained distinct; Codex2 approved the repaired tip after independent validation.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/queue.py",
+        "services/research/alpha_replication/test_queue.py"
+      ],
+      "id": "AC1",
+      "statement": "Only an approved reviewed immutable StrategySpec enters replication.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/queue.py",
+        "services/research/alpha_replication/test_revalidation_worker.py"
+      ],
+      "id": "AC2",
+      "statement": "Discovery uses the canonical StrategySpec identifier and tenant-scoped keys.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/test_queue.py#test_claim_lease_expires_and_stale_token_cannot_ack",
+        "services/research/alpha_replication/test_revalidation_worker.py#test_crash_after_authority_write_reclaims_same_attempt_without_duplicate"
+      ],
+      "id": "AC3",
+      "statement": "Claims expire and stale work can be safely reclaimed or replayed.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/research/experiment_orchestrator/authority.py",
+        "services/research/alpha_replication/test_replication_controller.py#test_controller_evidence_refs_dereference_real_fastapi_authority"
+      ],
+      "id": "AC4",
+      "statement": "Research authority stores and reads a non-local ExperimentTask and ExperimentRun through its real service routes.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/test_queue.py#test_replay_id_aba_reuse_is_always_a_noop_after_restart",
+        "services/research/alpha_replication/test_revalidation_worker.py#test_failure_to_dlq_and_operator_replay_create_one_new_generation"
+      ],
+      "id": "AC5",
+      "statement": "Duplicate review, restart, failure, and DLQ replay are deterministic.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "hosted_runtime_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Production activation is disabled and the worker fails closed outside its accepted authoritative dispatch mode.",
+      "description": "Shared Compose activation and selected hosted environment configuration remain outside this task.",
+      "expiry": "When L12-MANIFEST-001 completes.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "Before hosted Alpha replication activation.",
+      "severity": "medium"
+    },
+    "hosted_product_drill": {
+      "blocking_for_this_task": false,
+      "containment": "Real FastAPI transport readback, merged CI, restart, lease, duplicate, and tenant tests prove the task-owned boundary.",
+      "description": "A later hosted verification task owns the cross-service product drill.",
+      "expiry": "When the twelve-loop hosted verification slice completes.",
+      "owner": "twelve-loop hosted verification",
+      "recheck_trigger": "After shared runtime activation.",
+      "severity": "informational"
+    },
+    "datetime_deprecations": {
+      "blocking_for_this_task": false,
+      "containment": "The warnings do not affect authority readback, queue state, or acceptance results.",
+      "description": "ReplicationGate retains pre-existing datetime.utcnow deprecation warnings.",
+      "expiry": "When the replication gate adopts timezone-aware timestamps.",
+      "owner": "research replication maintainers",
+      "recheck_trigger": "On the next ReplicationGate maintenance change.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "pr_4147_merged_to_dev": true,
+      "pr_4161_merged_to_dev": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "approved_readme": "b068eaffb621a52e2d7e1f218f31e29c949eb5762afde57a3ec4c7029e042374",
+      "queue": "635fcd52ce4c50da68c3c3690e5a8df2406baad45ea917f17cd5ff2a154d22eb",
+      "replication_controller": "4becce123512ba41b4a92413ef31c39dbf8db6b444316bfaa8209cfdce7cd62f",
+      "revalidation_worker": "cc18240d1e010e65cbb2db3d31699ad2b54d4f27dcb39e87d4a4a560e48f2f98"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T10:10:58Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4147",
+      "sequence": 1,
+      "sha": "95c6c5d5dcf6298074a9c3a35d4eafde98148661",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_changes_requested",
+      "recorded_at": "2026-07-26T10:26:08Z",
+      "reference": "canonical task handoff to owner",
+      "sequence": 2,
+      "sha": "dd9d83722b24598a623692c2b6ca8b80f159fe04",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_review_fixes_ready",
+      "recorded_at": "2026-07-26T10:43:10Z",
+      "reference": "canonical task handoff to reviewer",
+      "sequence": 3,
+      "sha": "03264cb0eaebd2bf9d2ddcf002096e57fa731c57",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T11:06:05Z",
+      "reference": "canonical review_approved transition",
+      "sequence": 4,
+      "sha": "03264cb0eaebd2bf9d2ddcf002096e57fa731c57",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T11:35:41Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4161",
+      "sequence": 5,
+      "sha": "cba34f5bd37ebb8056a9317f4a7e6b062c6111e4",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_product_manifest_formalization",
+      "recorded_at": "2026-07-26T11:40:10Z",
+      "reference": "task-closeout-finalization",
+      "sequence": 6,
+      "sha": "06a3070e8f4011cb27caefccda081c729ceb84d1",
+      "status": "pass"
+    }
+  ]
+}

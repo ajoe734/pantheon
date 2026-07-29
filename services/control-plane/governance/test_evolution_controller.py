@@ -26,8 +26,11 @@ from evolution_decision import (
     EvolutionActionType,
     EvolutionActorRole,
     EvolutionDecision,
+    EvolutionDecisionError,
     EvolutionDecisionState,
     EvolutionTargetType,
+    ExecutionResult,
+    ExecutionStatus,
     ThresholdSignalType,
     ThresholdSnapshot,
 )
@@ -96,12 +99,71 @@ def make_approved_decision(
     return decision
 
 
+def route_and_execute(
+    controller: EvolutionController,
+    decision: EvolutionDecision,
+    *,
+    actor_id: str,
+    executed_at: str,
+    **dispatch_kwargs,
+):
+    """Route an approved decision, then execute it on a terminal receipt.
+
+    ``EvolutionController.execute_approved`` still records the ``submitted``
+    dispatch intent it always did, and ``EvolutionDecision.execute`` now
+    refuses that: an approved decision may only reach ``executed`` on a real
+    downstream terminal readback (L12-EVO-001).  These routing tests care about
+    plane/command/window selection, so they dispatch through the controller and
+    then supply the terminal receipt the downstream plane would return.
+    """
+    outcome = controller.dispatch_approved(
+        decision, executed_at=executed_at, **dispatch_kwargs
+    )
+    decision.execute(
+        EvolutionActorRole.EVOLUTION_CONTROLLER,
+        actor_id,
+        ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            plane=outcome.execution_result.plane,
+            executed_at=executed_at,
+            execution_ref_id=outcome.primary_command.command_id,
+            outcome_summary=outcome.execution_result.outcome_summary,
+        ),
+        cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
+        observation_window_ends_at=outcome.primary_command.observation_window_ends_at,
+    )
+    return outcome
+
+
 class TestEvolutionControllerDispatch(unittest.TestCase):
+    def test_execute_approved_refuses_synthetic_submitted_result(self):
+        """The in-process helper must not be able to mint an executed state.
+
+        ``execute_approved`` composes ``dispatch_approved`` with a ``submitted``
+        ExecutionResult.  That is a dispatch intent, not a downstream outcome,
+        so the decision must stay ``approved`` and remain dispatchable.
+        """
+        controller = EvolutionController()
+        decision = make_approved_decision(decision_id="evo-ctrl-synthetic-001")
+
+        with self.assertRaises(EvolutionDecisionError) as ctx:
+            controller.execute_approved(
+                decision,
+                actor_id="controller-01",
+                executed_at="2026-04-11T10:00:00Z",
+                has_active_runtime=False,
+            )
+
+        self.assertIn("non-terminal execution result", str(ctx.exception))
+        self.assertEqual(decision.decision_state, EvolutionDecisionState.APPROVED)
+        self.assertIsNone(decision.execution_result)
+
     def test_freeze_live_without_runtime_stays_governance_only(self):
         controller = EvolutionController()
         decision = make_approved_decision()
 
-        outcome = controller.execute_approved(
+        outcome = route_and_execute(
+            controller,
             decision,
             actor_id="controller-01",
             executed_at="2026-04-11T10:00:00Z",
@@ -122,7 +184,8 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
         controller = EvolutionController()
         decision = make_approved_decision(decision_id="evo-ctrl-002")
 
-        outcome = controller.execute_approved(
+        outcome = route_and_execute(
+            controller,
             decision,
             actor_id="controller-01",
             executed_at="2026-04-11T10:00:00Z",
@@ -143,7 +206,8 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
         controller = EvolutionController()
         decision = make_approved_decision(decision_id="evo-ctrl-003")
 
-        outcome = controller.execute_approved(
+        outcome = route_and_execute(
+            controller,
             decision,
             actor_id="controller-01",
             executed_at="2026-04-11T10:00:00Z",
@@ -169,7 +233,8 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
             target_stage=None,
         )
 
-        outcome = controller.execute_approved(
+        outcome = route_and_execute(
+            controller,
             decision,
             actor_id="controller-01",
             executed_at="2026-04-11T10:00:00Z",
@@ -195,7 +260,8 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
             linked_postmortem_id=None,
         )
 
-        outcome = controller.execute_approved(
+        outcome = route_and_execute(
+            controller,
             decision,
             actor_id="controller-01",
             executed_at="2026-04-11T10:00:00Z",
@@ -214,7 +280,8 @@ class TestEvolutionControllerDispatch(unittest.TestCase):
             target_stage=None,
             linked_postmortem_id=None,
         )
-        controller.execute_approved(
+        route_and_execute(
+            controller,
             decision,
             actor_id="controller-01",
             executed_at="2026-04-11T10:00:00Z",

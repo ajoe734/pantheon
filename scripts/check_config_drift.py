@@ -34,7 +34,17 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "ready_dispatcher.enabled",
     "ready_dispatcher.require_explicit_provider_accounts",
     "ready_dispatcher.allow_legacy_provider_account_aliases",
+    "ready_dispatcher.disabled_agents",
+    "ready_dispatcher.sidecar_only_agents",
+    "ready_dispatcher.target_workload",
+    "ready_dispatcher.max_tasks_per_agent_by_agent",
+    "ready_dispatcher.max_dispatches_per_tick",
+    "ready_dispatcher.max_active_workers_per_task",
     "ready_dispatcher.max_concurrent_per_account",
+    "ready_dispatcher.max_concurrent_workers",
+    # Silently flipping this off strands queued work behind an idle lane and
+    # disables the paused-owner rescue path, with no activity-log record.
+    "ready_dispatcher.helper_claim.enabled",
     "coordination.enabled",
     "github_bus.enabled",
     "watchdog.enabled",
@@ -110,9 +120,16 @@ def find_drift(
 
 def git_commits_behind(checkout: Path, ref: str, runner=subprocess.run) -> int | None:
     """How many commits `checkout` HEAD is behind `ref`. None if undeterminable."""
+    fetch_ref = ref.split("/", 1)[-1]
+    if ref.startswith("origin/"):
+        # Deployment roots intentionally use narrow fetch refspecs. A bare
+        # `git fetch origin dev` updates FETCH_HEAD only in those checkouts and
+        # can leave refs/remotes/origin/dev stale, hiding real dev-root lag.
+        branch = ref.split("/", 1)[1]
+        fetch_ref = f"{branch}:refs/remotes/origin/{branch}"
     try:
         runner(["git", "-C", str(checkout), "fetch", "--quiet",
-                "origin", ref.split("/", 1)[-1]],
+                "origin", fetch_ref],
                check=False, capture_output=True, timeout=120)
         result = runner(["git", "-C", str(checkout), "rev-list", "--count",
                          f"HEAD..{ref}"], check=False, capture_output=True,

@@ -85,6 +85,7 @@ class DatasetRecord(BaseModel):
     """
 
     evidence_id: str
+    dataset_version_id: str
     dataset_kind: DatasetKind
     interaction_kind: InteractionKind
     persona_id: str
@@ -105,10 +106,27 @@ class DatasetRecord(BaseModel):
     version: int = 1
 
 
+class HandoffAcknowledgementRequest(BaseModel):
+    """Durable downstream acknowledgement for one dataset-version handoff.
+
+    The expected dataset version is required so a stale downstream consumer
+    cannot acknowledge a newer extraction accidentally.  Acknowledgement only
+    closes the Observe/Learn handoff; it carries no runtime, deployment, order,
+    or capital authority.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    acknowledgement_id: str = Field(min_length=1)
+    dataset_version_id: str = Field(min_length=1)
+    downstream_ref: str = Field(min_length=1)
+
+
 __all__ = [
     "AgoraInteractionEvidenceRequest",
     "DatasetKind",
     "DatasetRecord",
+    "HandoffAcknowledgementRequest",
     "InteractionKind",
     "route_to_dataset",
 ]

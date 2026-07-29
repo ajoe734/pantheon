@@ -24,6 +24,7 @@ def _event_payload(**overrides: object) -> dict:
     payload = {
         "event_id": "tevt-20260516-001",
         "session_id": "trn-20260516-001",
+        "tenant_id": "tenant-test",
         "event_type": "message",
         "actor_type": "user",
         "actor": "operator",
@@ -43,6 +44,7 @@ def _session_payload(**overrides: object) -> dict:
         "id": "trn-20260516-001",
         "session_id": "trn-20260516-001",
         "persona_id": "persona-alpha",
+        "tenant_id": "tenant-test",
         "opened_by": "operator-1",
         "mode": "coaching",
         "session_type": "trainer",
@@ -132,8 +134,12 @@ def test_event_session_cross_check() -> None:
     session = module.TeachingSession.from_dict(_session_payload())
     event = module.TeachingEvent.from_dict(_event_payload())
     wrong_event = module.TeachingEvent.from_dict(_event_payload(session_id="trn-other"))
+    wrong_tenant = module.TeachingEvent.from_dict(_event_payload(tenant_id="tenant-other"))
 
     assert module.validate_teaching_event_against_session(event, session) == []
     assert module.validate_teaching_event_against_session(wrong_event, session) == [
         "event.session_id must match session.session_id"
+    ]
+    assert module.validate_teaching_event_against_session(wrong_tenant, session) == [
+        "event.tenant_id must match session.tenant_id"
     ]

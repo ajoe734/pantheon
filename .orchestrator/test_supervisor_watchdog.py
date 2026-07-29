@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import os
 import sys
@@ -190,6 +191,45 @@ class SupervisorWatchdogTests(unittest.TestCase):
                 now=now + supervisor_watchdog.timedelta(seconds=301),
                 candidate_pids={123},
             )
+        )
+
+    def test_main_prints_recorded_intent_as_json(self) -> None:
+        target_sha = "a" * 40
+        recorded = {
+            "version": 1,
+            "kind": "intentional_deploy_restart",
+            "created_at": "2026-07-26T11:17:13Z",
+            "expires_at": "2026-07-26T11:22:13Z",
+            "old_pid": 123,
+            "target_sha": target_sha,
+        }
+        args = mock.Mock(
+            config="/tmp/watchdog-config.json",
+            restart=False,
+            dry_run=False,
+            record_intent_pid=123,
+            record_intent_target=target_sha,
+            json=True,
+        )
+
+        with (
+            mock.patch.object(supervisor_watchdog, "parse_args", return_value=args),
+            mock.patch.object(supervisor_watchdog, "load_config", return_value=self.config),
+            mock.patch.object(
+                supervisor_watchdog,
+                "record_intentional_restart",
+                return_value=recorded,
+            ) as record_intentional_restart,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = supervisor_watchdog.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), recorded)
+        record_intentional_restart.assert_called_once_with(
+            self.config,
+            old_pid=123,
+            target_sha=target_sha,
         )
 
     def test_intentional_restart_bypasses_crash_budget_and_closes_circuit(self) -> None:
@@ -1586,6 +1626,143 @@ class ActiveWorkerCountDedupeTests(unittest.TestCase):
         # Verify it is now dead
         self.assertFalse(supervisor_watchdog.pid_is_alive(pid))
 
+
+
+class SupervisorRootCoherenceTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 5.
+
+    The live supervisor was observed running from `dev-root-6692d51c9bc5` while
+    worker runners launched from `dev-root-29054ab270d5`, and the stale root was
+    63 commits behind `origin/dev`. The sync/watchdog path only ever knew about
+    a default `dev-root` path, so the split was invisible. Root coherence has to
+    be read from the live process, not assumed from the module location.
+    """
+
+    def _write_process(
+        self, proc_root: Path, pid: int, parts: list[str], cwd: Path
+    ) -> None:
+        proc_dir = proc_root / str(pid)
+        proc_dir.mkdir(parents=True)
+        (proc_dir / "cmdline").write_bytes(
+            b"\x00".join(part.encode("utf-8") for part in parts) + b"\x00"
+        )
+        cwd.mkdir(parents=True, exist_ok=True)
+        (proc_dir / "cwd").symlink_to(cwd, target_is_directory=True)
+
+    def test_process_working_directory_reports_the_live_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc_root = root / "proc"
+            active = root / "dev-root-6692d51c9bc5"
+            self._write_process(
+                proc_root, 4242, ["python3", "-u", ".orchestrator/supervisor.py"], active
+            )
+
+            cwd, error = supervisor_watchdog.process_working_directory(4242, proc_root=proc_root)
+
+        self.assertIsNone(error)
+        self.assertEqual(cwd, str(active.resolve()))
+
+    def test_process_working_directory_reports_missing_pid_instead_of_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc_root = Path(tmp) / "proc"
+            proc_root.mkdir()
+
+            self.assertEqual(
+                supervisor_watchdog.process_working_directory(None, proc_root=proc_root),
+                (None, "no_pid"),
+            )
+            cwd, error = supervisor_watchdog.process_working_directory(9999, proc_root=proc_root)
+
+        self.assertIsNone(cwd)
+        self.assertTrue(str(error).startswith("cwd_unreadable:"), error)
+
+    def test_report_exposes_a_split_between_active_and_worker_runner_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc_root = root / "proc"
+            supervisor_root = root / "dev-root-6692d51c9bc5"
+            worker_root = root / "dev-root-29054ab270d5"
+            (worker_root / ".orchestrator").mkdir(parents=True)
+            (worker_root / ".orchestrator" / "worker_runner.py").write_text("", encoding="utf-8")
+
+            self._write_process(
+                proc_root, 100, ["python3", "-u", ".orchestrator/supervisor.py"], supervisor_root
+            )
+            self._write_process(
+                proc_root,
+                200,
+                ["/usr/bin/python3", str(worker_root / ".orchestrator" / "worker_runner.py"), "--run-id", "r1"],
+                worker_root,
+            )
+
+            report = supervisor_watchdog.supervisor_root_report(
+                {},
+                100,
+                proc_root=proc_root,
+                settings={"supervisor_root": str(supervisor_root)},
+            )
+
+        self.assertEqual(report["active_root"], str(supervisor_root.resolve()))
+        self.assertFalse(report["split_from_expected"])
+        self.assertEqual(report["worker_runner_roots"], [str(worker_root.resolve())])
+        self.assertTrue(report["split_from_worker_runners"])
+
+    def test_report_flags_an_active_root_that_is_not_the_expected_dev_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc_root = root / "proc"
+            expected_root = root / "dev-root"
+            expected_root.mkdir()
+            active_root = root / "dev-root-6692d51c9bc5"
+            self._write_process(
+                proc_root, 101, ["python3", "-u", ".orchestrator/supervisor.py"], active_root
+            )
+
+            report = supervisor_watchdog.supervisor_root_report(
+                {},
+                101,
+                proc_root=proc_root,
+                settings={"supervisor_root": str(expected_root)},
+            )
+
+        self.assertEqual(report["expected_root"], str(expected_root.resolve()))
+        self.assertEqual(report["active_root"], str(active_root.resolve()))
+        self.assertTrue(report["split_from_expected"])
+        # No live worker runners is not a split.
+        self.assertEqual(report["worker_runner_roots"], [])
+        self.assertFalse(report["split_from_worker_runners"])
+
+    def test_watchdog_decision_publishes_the_active_supervisor_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "paths": {
+                    "state_file": str(root / "state.json"),
+                    "activity_log": str(root / "activity-log.jsonl"),
+                },
+                "watchdog": {
+                    "enabled": False,
+                    "state_file": str(root / "watchdog-state.json"),
+                    "metrics_file": str(root / "metrics.jsonl"),
+                    "contention_metrics_file": str(root / "metrics-contention.jsonl"),
+                },
+            }
+            (root / "state.json").write_text(json.dumps({"workers": {}}), encoding="utf-8")
+            observed: dict = {}
+
+            def fake_root_report(_config, pid, **_kwargs):
+                observed["pid"] = pid
+                return {"expected_root": "/expected", "active_root": "/actual", "split_from_expected": True}
+
+            with mock.patch.object(
+                supervisor_watchdog, "supervisor_root_report", side_effect=fake_root_report
+            ):
+                result = supervisor_watchdog.run_watchdog(config)
+
+        self.assertEqual(result["supervisor_root"]["active_root"], "/actual")
+        self.assertTrue(result["supervisor_root"]["split_from_expected"])
+        self.assertIn("pid", observed)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,13 @@
 set -euo pipefail
 
 MODE="${1:-now}"
+case "$MODE" in
+  now|check) ;;
+  *)
+    echo "usage: $0 [now|check]" >&2
+    exit 2
+    ;;
+esac
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -51,8 +58,7 @@ git fetch origin --tags --prune --quiet
 
 DEV_SHA=$(git rev-parse "origin/${DEV_BRANCH}")
 LATEST_RELEASE_SHA=$(git for-each-ref --sort=-creatordate \
-  --format='%(objectname) %(refname:short)' "refs/tags/${RELEASE_PREFIX}*" \
-  | head -1 | awk '{print $1}')
+  --count=1 --format='%(objectname)' "refs/tags/${RELEASE_PREFIX}*")
 
 # Resolve to the commit the tag points at (handle annotated tags).
 if [[ -n "$LATEST_RELEASE_SHA" ]]; then
@@ -104,6 +110,6 @@ git worktree add "$WT" "origin/${DEV_BRANCH}" --quiet
 )
 
 echo "✓ published ${VER} (${DEV_SHA:0:10})"
-echo "  branch: $PUBLISH_BRANCH"
-echo "  tag:    $RELEASE_TAG"
+echo "publish_branch=$PUBLISH_BRANCH"
+echo "release_tag=$RELEASE_TAG"
 echo "  next:   publish-promote.yml will pick this up after the soak window"

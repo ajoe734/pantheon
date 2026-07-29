@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -55,6 +56,7 @@ def _connector(**overrides):
 
 
 def _configure_with_records(test_client, connector_id="conn-sched-notes"):
+    source_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return test_client.post(
         "/api/source-ingest/connectors",
         json={
@@ -70,6 +72,7 @@ def _configure_with_records(test_client, connector_id="conn-sched-notes"):
                         "metadata": {
                             "body": "Autonomous scheduled evidence",
                             "access_scope": ["operator"],
+                            "available_time": source_timestamp,
                         },
                     }
                 ],
@@ -142,6 +145,18 @@ def test_run_scheduled_runs_due_connector_and_persists_evidence(client) -> None:
     assert body["ran"][0]["connector_id"] == "conn-sched-notes"
     assert body["ran"][0]["run"]["status"] == "completed"
     assert body["ran"][0]["evidence_refs"]["knowledge_object_ids"]
+    receipt = body["ran"][0]["receipt"]
+    assert receipt["schema_version"] == "source_ingest_receipt.v1"
+    assert receipt["status"] == "completed"
+    assert receipt["connector_id"] == "conn-sched-notes"
+    assert receipt["normalized_count"] == 1
+    assert receipt["source_timestamp"]
+    assert receipt["source_timestamp_status"] == "valid"
+    assert receipt["typed_failure"] is None
+
+    receipt_readback = test_client.get(f"/api/source-ingest/receipts/{receipt['ingest_run_id']}")
+    assert receipt_readback.status_code == 200
+    assert receipt_readback.json()["receipt"] == receipt
 
     source = test_client.get("/api/source-ingest/source-records/src-conn-sched-notes-note-1")
     assert source.status_code == 200
@@ -168,6 +183,143 @@ def test_run_scheduled_force_reconciles_changed_connector_before_cadence(client)
     assert duplicate.json()["summary"]["total_skipped"] == 1
     assert forced.json()["summary"]["total_ran"] == 1
     assert forced.json()["summary"]["forced_connector_count"] == 1
+
+
+def test_two_scheduler_threads_create_one_run_and_one_source_record(client) -> None:
+    test_client, _, module = client
+    configured = _configure_with_records(test_client, connector_id="conn-two-workers")
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-two-workers/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(
+            executor.map(
+                lambda _worker: test_client.post(
+                    "/api/source-ingest/run-scheduled",
+                    json={"max_concurrency": 1},
+                ),
+                range(2),
+            )
+        )
+
+    assert [response.status_code for response in responses] == [200, 200]
+    payloads = [response.json() for response in responses]
+    assert sum(payload["summary"]["total_ran"] for payload in payloads) == 1
+    assert sum(payload["summary"]["total_skipped"] for payload in payloads) == 1
+    assert len(module.store.list_runs()) == 1
+    assert len(module.store.list_frontier(status="done")) == 1
+    assert len(module.evidence_repository.list_source_records()) == 1
+    assert len(module.schedule_config_store.list_schedules()) == 1
+    assert module.connector_store.get_fetch_state("conn-two-workers")["attempts"] == 1
+
+
+def test_run_scheduled_rejects_concurrency_above_supervised_limit(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={"max_concurrency": 2},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "max_concurrency exceeds SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1"
+
+
+def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_connector(client) -> None:
+    test_client, _, module = client
+    target_id = "conn-exclusive-target"
+    unrelated_id = "conn-exclusive-unrelated"
+    for connector_id in (target_id, unrelated_id):
+        configured = _configure_with_records(test_client, connector_id=connector_id)
+        assert configured.status_code == 201, configured.text
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 1, "enabled": True},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+    unrelated_frontier = module.store.enqueue_frontier(
+        connector_id=unrelated_id,
+        available_at="2020-01-01T00:00:00Z",
+    )
+
+    response = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={
+            "max_concurrency": 1,
+            "force_connector_ids": [target_id],
+            "exclusive_connector_ids": [target_id],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"]["total_enqueued"] == 1
+    assert body["summary"]["total_ran"] == 1
+    assert body["summary"]["total_failed"] == 0
+    assert body["summary"]["exclusive_connector_count"] == 1
+    assert body["summary"]["total_excluded"] == 1
+    assert [item["connector_id"] for item in body["enqueued"]] == [target_id]
+    assert [item["connector_id"] for item in body["ran"]] == [target_id]
+    assert body["excluded"] == [unrelated_id]
+    assert module.store.get_frontier(unrelated_frontier.frontier_id).status == "queued"
+    assert module.store.list_receipts(connector_id=unrelated_id) == []
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected_error", "expected_enqueued"),
+    [
+        ("missing", "schedule not found", 0),
+        ("disabled_schedule", "schedule is disabled", 0),
+        ("disabled_connector", "connector is disabled", 0),
+        ("fetch_failure", "selected connector fetch failed", 1),
+    ],
+)
+def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
+    client,
+    setup: str,
+    expected_error: str,
+    expected_enqueued: int,
+) -> None:
+    test_client, _, _ = client
+    connector_id = f"conn-exclusive-{setup}"
+    if setup != "missing":
+        connector_overrides = {"status": "disabled"} if setup == "disabled_connector" else {}
+        fetch = {"mode": "static_records", "records": []}
+        if setup == "fetch_failure":
+            fetch.update(
+                {
+                    "fail_until_attempt": 2,
+                    "failure_reason": "selected connector fetch failed",
+                }
+            )
+        configured = test_client.post(
+            "/api/source-ingest/connectors",
+            json={
+                "connector": _connector(connector_id=connector_id, **connector_overrides),
+                "fetch": fetch,
+            },
+        )
+        assert configured.status_code == 201, configured.text
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 60, "enabled": setup != "disabled_schedule"},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+
+    response = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={"exclusive_connector_ids": [connector_id]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_ran"] == 0
+    assert response.json()["summary"]["total_enqueued"] == expected_enqueued
+    assert response.json()["summary"]["total_failed"] == 1
+    assert expected_error in response.json()["failed"][0]["error"]
 
 
 def test_stale_running_frontier_is_durably_recovered_after_restart(client) -> None:
@@ -227,6 +379,259 @@ def test_run_scheduled_honors_bounded_concurrency(client) -> None:
     done_frontier = test_client.get("/api/source-ingest/frontier?status=done")
     assert done_frontier.status_code == 200
     assert len(done_frontier.json()["frontier"]) == 2
+
+
+def test_blocked_host_records_typed_denial_without_outbound_request(client, monkeypatch) -> None:
+    test_client, _, _ = client
+    outbound_called = False
+
+    def forbidden_transport(*args, **kwargs):
+        nonlocal outbound_called
+        outbound_called = True
+        raise AssertionError("outbound transport must not be built for a denied host")
+
+    monkeypatch.setattr("urllib.request.build_opener", forbidden_transport)
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-blocked-host"),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://blocked.example/source.json",
+                "allowed_url_prefixes": ["https://blocked.example/"],
+                "respect_robots_txt": False,
+                "max_records": 1,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-blocked-host/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    receipt = response.json()["failed"][0]["receipt"]
+    assert receipt["typed_failure"]["category"] == "external_egress"
+    assert receipt["typed_failure"]["code"] == "host_not_allowlisted"
+    assert receipt["typed_failure"]["retryable"] is False
+    assert outbound_called is False
+
+
+def test_provider_failure_matrix_is_isolated_and_projected_to_source_health(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    connector_ids = {
+        "success": "conn-00-success",
+        "policy": "conn-10-policy",
+        "credential": "conn-20-credential",
+        "provider": "conn-30-provider",
+    }
+    for classification in ("success", "credential", "provider"):
+        configured = _configure_with_records(test_client, connector_id=connector_ids[classification])
+        assert configured.status_code == 201, configured.text
+    configured_policy = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id=connector_ids["policy"]),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://blocked.example/source.json",
+                "allowed_url_prefixes": ["https://blocked.example/"],
+                "respect_robots_txt": False,
+                "max_records": 1,
+            },
+        },
+    )
+    assert configured_policy.status_code == 201, configured_policy.text
+    for connector_id in connector_ids.values():
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 60, "enabled": True},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+
+    class CredentialUnavailableError(RuntimeError):
+        pass
+
+    class ProviderServiceFailure(RuntimeError):
+        pass
+
+    original_fetch = module.configured_fetcher.fetch_batch
+
+    def classified_fetch(connector_id, watermark, **kwargs):
+        if connector_id == connector_ids["credential"]:
+            raise CredentialUnavailableError("credential reference unavailable")
+        if connector_id == connector_ids["provider"]:
+            raise ProviderServiceFailure("provider unavailable")
+        return original_fetch(connector_id, watermark, **kwargs)
+
+    monkeypatch.setattr(module.configured_fetcher, "fetch_batch", classified_fetch)
+
+    payloads = [
+        test_client.post(
+            "/api/source-ingest/run-scheduled",
+            json={"max_concurrency": 1},
+        ).json()
+        for _ in connector_ids
+    ]
+
+    assert sum(payload["summary"]["total_ran"] for payload in payloads) == 1
+    assert sum(payload["summary"]["total_failed"] for payload in payloads) == 3
+    expected_outcomes = {
+        "success": ("success", "success", "completed"),
+        "policy": ("policy_denial", "external_egress", "host_not_allowlisted"),
+        "credential": ("credential_unavailable", "credential", "credential_unavailable"),
+        "provider": ("provider_failure", "provider", "provider_fetch_failed"),
+    }
+    for label, connector_id in connector_ids.items():
+        response = test_client.get(f"/api/source-ingest/health/{connector_id}")
+        assert response.status_code == 200, response.text
+        health = response.json()
+        outcome = health["metadata"]["last_outcome"]
+        classification, category, code = expected_outcomes[label]
+        assert outcome["classification"] == classification
+        assert outcome["category"] == category
+        assert outcome["code"] == code
+        if label == "success":
+            assert health["status"] == "ok"
+            assert health["last_success_at"]
+        else:
+            assert health["status"] == "failed"
+            assert health["last_failure_at"]
+    assert len(module.evidence_repository.list_source_records()) == 1
+
+
+def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    configured = _configure_with_records(test_client, connector_id="conn-post-processing-failure")
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-post-processing-failure/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    def fail_health_write(*args, **kwargs):
+        raise OSError("simulated health-store failure")
+
+    monkeypatch.setattr(module.source_health_store, "upsert", fail_health_write)
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    terminal_runs = [run for run in module.store.list_runs() if run.status.value == "completed"]
+    assert len(terminal_runs) == 1
+    receipt = module.store.get_receipt(terminal_runs[0].ingest_run_id)
+    assert receipt is not None
+    assert receipt.status == "failed"
+    assert receipt.typed_failure == {
+        "schema_version": "source_ingest_typed_failure.v1",
+        "category": "persistence",
+        "code": "post_processing_failed",
+        "error_type": "OSError",
+        "retryable": True,
+        "stage": "source_health_usage",
+    }
+
+    reloaded_store = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    durable_run = reloaded_store.get_run(terminal_runs[0].ingest_run_id)
+    durable_receipt = reloaded_store.get_receipt(terminal_runs[0].ingest_run_id)
+    assert durable_run is not None and durable_run.status.value == "completed"
+    assert durable_receipt is not None and durable_receipt.status == "failed"
+    assert durable_receipt.typed_failure["code"] == "post_processing_failed"
+
+
+def test_final_receipt_append_failure_is_rewritten_as_terminal_typed_failure(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    connector_id = "conn-final-receipt-retry"
+    assert _configure_with_records(test_client, connector_id=connector_id).status_code == 201
+    assert test_client.put(
+        f"/api/source-ingest/connectors/{connector_id}/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    ).status_code == 200
+
+    original_upsert = module.store.upsert_receipt
+    receipt_writes = 0
+
+    def fail_final_receipt_once(receipt):
+        nonlocal receipt_writes
+        receipt_writes += 1
+        if receipt_writes == 2:
+            raise OSError("simulated final receipt append failure")
+        return original_upsert(receipt)
+
+    monkeypatch.setattr(module.store, "upsert_receipt", fail_final_receipt_once)
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    run = next(run for run in module.store.list_runs() if run.connector_id == connector_id)
+    receipt = module.store.get_receipt(run.ingest_run_id)
+    assert run.status.value == "completed"
+    assert receipt is not None and receipt.status == "failed"
+    assert receipt.typed_failure["code"] == "post_processing_failed"
+    assert receipt.typed_failure["stage"] == "receipt_finalize"
+    assert receipt_writes == 3
+
+    durable_receipt = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
+    assert durable_receipt is not None and durable_receipt.status == "failed"
+    assert durable_receipt.typed_failure["stage"] == "receipt_finalize"
+
+
+def test_restart_recovers_processing_receipt_when_final_and_fallback_appends_fail(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    connector_id = "conn-final-receipt-restart"
+    assert _configure_with_records(test_client, connector_id=connector_id).status_code == 201
+    assert test_client.put(
+        f"/api/source-ingest/connectors/{connector_id}/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    ).status_code == 200
+
+    original_upsert = module.store.upsert_receipt
+
+    def fail_terminal_receipts(receipt):
+        if receipt.status != "processing":
+            raise OSError("simulated persistent terminal receipt failure")
+        return original_upsert(receipt)
+
+    monkeypatch.setattr(module.store, "upsert_receipt", fail_terminal_receipts)
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    run = next(run for run in module.store.list_runs() if run.connector_id == connector_id)
+    stranded = module.store.get_receipt(run.ingest_run_id)
+    assert run.status.value == "completed"
+    assert stranded is not None and stranded.status == "processing"
+
+    reloaded = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    recovered = reloaded.get_receipt(run.ingest_run_id)
+    assert recovered is not None and recovered.status == "failed"
+    assert recovered.typed_failure == {
+        "schema_version": "source_ingest_typed_failure.v1",
+        "category": "persistence",
+        "code": "post_processing_interrupted",
+        "error_type": "IncompleteReceiptRecovered",
+        "retryable": True,
+        "stage": "restart_recovery",
+    }
+    replayed = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
+    assert replayed is not None and replayed.to_dict() == recovered.to_dict()
 
 
 def test_run_scheduled_skips_disabled_connector(client) -> None:
@@ -607,10 +1012,17 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
         if connector["connector_id"] == "conn-sched-notes"
     )
     freshness = entry["freshness"]
-    assert freshness["schema_version"] == "source_connector_freshness.v1"
+    assert freshness["schema_version"] == "source_connector_freshness.v2"
     assert freshness["status"] == "fresh"
+    assert freshness["stale"] is False
     assert freshness["is_due"] is False
     assert freshness["last_ingest_run_id"]
+    assert freshness["source_timestamp"]
+    assert freshness["age_seconds"] >= 0
+    assert freshness["stale_threshold_seconds"] >= 86400
+    assert freshness["next_run_at"] == freshness["next_due_at"]
+    assert freshness["last_typed_failure"] is None
+    assert freshness["latest_receipt"]["status"] == "completed"
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
     health = entry["health_metrics"]
@@ -620,6 +1032,110 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
     assert health["expected_rows"] == 1
     assert health["schema_hash"]
     assert health["source_error"] is None
+
+
+def test_stale_source_remains_readable_with_explicit_readiness_truth(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(
+                connector_id="conn-stale-readable",
+                metadata={"stale_threshold_seconds": 60},
+            ),
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": "src-stale-readable-1",
+                        "title": "Persisted stale source",
+                        "content_ref": "memory://scheduled/stale/source-1",
+                        "metadata": {"available_time": "2020-01-01T00:00:00Z"},
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-stale-readable/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    run = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert run.status_code == 200, run.text
+
+    registry = test_client.get("/api/source-ingest/registry").json()
+    entry = next(item for item in registry["connectors"] if item["connector_id"] == "conn-stale-readable")
+    assert entry["freshness"]["status"] == "stale"
+    assert entry["freshness"]["stale"] is True
+    assert entry["freshness"]["age_seconds"] > entry["freshness"]["stale_threshold_seconds"]
+
+    persisted = test_client.get("/api/source-ingest/source-records/src-stale-readable-1")
+    assert persisted.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "metadata", "expected_status"),
+    [
+        ("conn-source-time-missing", {}, "missing"),
+        (
+            "conn-source-time-future",
+            {"available_time": "2099-01-01T00:00:00Z"},
+            "future",
+        ),
+        (
+            "conn-source-time-invalid",
+            {"available_time": "not-a-provider-timestamp"},
+            "invalid",
+        ),
+    ],
+)
+def test_unknown_or_future_source_time_is_never_reported_fresh(
+    client,
+    connector_id: str,
+    metadata: dict[str, str],
+    expected_status: str,
+) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id=connector_id),
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": f"src-{connector_id}",
+                        "title": "Source-time truth fixture",
+                        "content_ref": f"memory://scheduled/{connector_id}",
+                        "metadata": metadata,
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        f"/api/source-ingest/connectors/{connector_id}/schedule",
+        json={"interval_seconds": 86400, "enabled": True},
+    )
+
+    run = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert run.status_code == 200, run.text
+    receipt = run.json()["ran"][0]["receipt"]
+    assert receipt["source_timestamp_status"] == expected_status
+    registry = test_client.get("/api/source-ingest/registry").json()
+    entry = next(item for item in registry["connectors"] if item["connector_id"] == connector_id)
+    freshness = entry["freshness"]
+    assert freshness["status"] == "stale"
+    assert freshness["stale"] is True
+    assert freshness["source_timestamp_status"] == expected_status
+    assert freshness["age_seconds"] is None
+    ready = test_client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.json()["dependencies"]["source_freshness"]["status"] == "stale"
+    assert ready.json()["dependencies"]["source_freshness"]["data_ready"] is False
 
 
 def test_active_universe_plan_endpoint_uses_default_low_cost_rules(client) -> None:

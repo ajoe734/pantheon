@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "repository": "ajoe734/execute-plans",
+  "profile": "read-only",
+  "pairId": "ec91a4aaaee16719f6db6a3d7b6edba048c08e676d789bfb9301df92913c3de2",
+  "commit": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+  "sourceBranch": "dev",
+  "sourceRef": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+  "frontendSha": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+  "frontend": {
+    "repository": "ajoe734/execute-plans",
+    "commitSha": "e4399e3ec68f882ace35d0349e6597cdd101525f"
+  },
+  "bffHost": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+  "bffCommit": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+  "bffSourceCommitSha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+  "bffCommitEvidence": true,
+  "bff": {
+    "baseUrl": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "sourceCommitSha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+    "sourceCommitKnown": true
+  },
+  "gate": {
+    "workflow": "pantheon-integration-gate.yml",
+    "runId": "30003411349",
+    "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/30003411349"
+  },
+  "integrationGateRunId": "30003411349",
+  "artifactDigest": "21ca02943702cd89f902be53595db56fa2b4fbb24378f8029973c9b557ed1750",
+  "artifactDigestSha256": "21ca02943702cd89f902be53595db56fa2b4fbb24378f8029973c9b557ed1750",
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false",
+    "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+    "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+  },
+  "deploymentState": "accepted",
+  "releaseName": "20260724T045319Z-e4399e3ec68f-gate-30003411349-30067684910-1-3592355",
+  "deployedAt": "20260724T045319Z",
+  "previousCommit": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+  "previousArtifactDigest": "21ca02943702cd89f902be53595db56fa2b4fbb24378f8029973c9b557ed1750",
+  "previousReleaseName": "20260724T005255Z-e4399e3ec68f-gate-30003411349-30056451511-2-1465460",
+  "githubArtifactDigest": "sha256:20bd72963da7c997a88dcf33f6c35b86f16ffc8b682ff5cc1835ed956fa1c8fe",
+  "agoraCompatibility": {
+    "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+    "contract_family": "agora.v1.13",
+    "environment": "dev",
+    "compatibility_status": "accepted",
+    "blocking_reasons": [],
+    "manifest_sha256": "d61e11cf2cead97d4a66ab153a2081ef4d633671ee4f962d271a7b3feeb86867",
+    "gate_controller": {
+      "repo": "ajoe734/pantheon",
+      "commit": "9b97aa71a16124dbb4577464d68c1d0e4ea23ba1",
+      "tree": "8efd064027f74cb85c04deb13b75657879f9c376"
+    },
+    "backend": {
+      "repo": "ajoe734/pantheon",
+      "runtime_commit": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+      "tree": "963dbd087ebf608cf5533c4047f6b5fb908fd6fd"
+    },
+    "frontend": {
+      "repo": "ajoe734/execute-plans",
+      "runtime_commit": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+      "tree": "064ffbae400918aaa359902a3472e74cc4f752fa"
+    },
+    "source_handoffs": {
+      "backend": {
+        "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+        "commit": "d8d7c7690068d8a5223b747cd2284eb9f4da2b5e",
+        "sha256": "8510946b40ec2adc11788dc40be7cd8db9fc824184c8b1faabe3e0f62f29312b"
+      },
+      "frontend": {
+        "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+        "commit": "580a668570f0e85eb0aee4a953a411f25c43340e",
+        "sha256": "5fa6c75ae6e8c044c038570a7765522fa145c1b603cc66e4db72bdf6898b3f2b"
+      }
+    },
+    "hash_policy": {
+      "file_hash": "sha256-exact-git-bytes-v1",
+      "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+    }
+  },
+  "deploymentProfile": "read-only",
+  "pair": {
+    "pairId": "ec91a4aaaee16719f6db6a3d7b6edba048c08e676d789bfb9301df92913c3de2",
+    "readOnlyArtifactDigestSha256": "21ca02943702cd89f902be53595db56fa2b4fbb24378f8029973c9b557ed1750",
+    "operatorLiveArtifactDigestSha256": "bdb24d8e4494fb6c503f0ccc075d7ae2715bdc0b33437b0bb6fad257e9269245",
+    "writeProofArtifactDigestSha256": "0f697fe148a56f1bb6ce0a86d625d7b71e87a3950fce3c9fc1e8619ed47004e5"
+  },
+  "emergencyOverride": {
+    "enabled": false,
+    "actor": null,
+    "reasonSha256": null
+  },
+  "acceptedAt": "2026-07-24T04:55:21Z",
+  "probes": {
+    "candidatePreSwitch": "passed",
+    "postSwitch": "passed",
+    "rollbackRequired": false
+  }
+}

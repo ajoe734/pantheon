@@ -1,454 +1,509 @@
-"""Unit tests for AlphaRevalidationWorker."""
+"""Behavioral proof for authoritative Alpha revalidation."""
 
 from __future__ import annotations
 
 import os
-import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import pytest
+
+from services.research.experiment_orchestrator.authority import (
+    AuthoritativeRunReceipt,
+    AuthoritativeTaskReceipt,
+)
+from services.research.experiments.models import ExperimentRun, ExperimentTask
 
 from .queue import AlphaReplicationQueue
 from .revalidation_worker import AlphaRevalidationWorker, SAFE_DISPATCH_MODES
 
 
-def _approved_spec(strategy_id: str = "strat-001", spec_version: str = "1.0") -> dict:
+def _queue_payload(
+    *,
+    tenant_id: str = "tenant-a",
+    strategy_spec_id: str = "reg-strategy-spec-alpha-1.0.0",
+    strategy_id: str = "strat-alpha",
+) -> dict:
     return {
-        "spec_version": spec_version,
+        "tenant_id": tenant_id,
+        "strategy_spec_id": strategy_spec_id,
         "strategy_id": strategy_id,
-        "lifecycle_state": "approved",
+        "spec_version": "1.0.0",
+        "artifact_state": "approved",
+        "checksum": f"sha256:{tenant_id}-{strategy_spec_id}",
+        "approval_decision_id": f"approval:{tenant_id}:{strategy_spec_id}",
+        "approver": "research-reviewer",
+        "approved_at": "2026-07-26T09:00:00Z",
     }
 
 
-def _make_worker(
-    tmp_path,
-    dispatch_mode: str = "stub",
-) -> tuple[AlphaReplicationQueue, AlphaRevalidationWorker]:
+def _strategy_spec(
+    *,
+    tenant_id: str = "tenant-a",
+    strategy_id: str = "strat-alpha",
+) -> dict:
+    return {
+        "spec_version": "1.0",
+        "strategy_id": strategy_id,
+        "title": "Approved alpha replication strategy",
+        "hypothesis": "A governed daily signal remains reproducible.",
+        "objective": "Revalidate schema and governance constraints.",
+        "lifecycle_state": "approved",
+        "market_scope": {
+            "symbols": ["SPY"],
+            "asset_classes": ["equity"],
+            "frequency": "1d",
+            "venues": ["NYSE"],
+        },
+        "data_dependencies": [{"ref": "dataset:alpha-v1", "kind": "dataset"}],
+        "code_refs": [
+            {
+                "repo_ref": "ajoe734/pantheon",
+                "path": "services/research/alpha_replication",
+                "commit": "git:alpha123",
+            }
+        ],
+        "execution_profile": {
+            "signal_schema_version": "1.0",
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "rebalance_cadence": "1d",
+            "execution_mode_hint": "research",
+        },
+        "evaluation_plan": {
+            "metrics": ["sharpe_ratio"],
+            "candidate_gate": "All required replication checks pass.",
+            "paper_gate": "Separate paper review required.",
+            "live_gate": "Separate live review required.",
+        },
+        "governance": {
+            "approval_required": True,
+            "policy_id": "policy-alpha",
+            "risk_profile": "research_only",
+        },
+        "provenance": {
+            "source_kind": "workflow",
+            "created_at": "2026-07-26T08:00:00Z",
+            "source_refs": ["source:alpha"],
+            "created_by": "Codex",
+        },
+    }
+
+
+def _registry_entry(payload: dict | None = None, spec: dict | None = None) -> dict:
+    queue_payload = payload or _queue_payload()
+    strategy_spec = spec or _strategy_spec(
+        tenant_id=queue_payload["tenant_id"],
+        strategy_id=queue_payload["strategy_id"],
+    )
+    return {
+        "registry_id": queue_payload["strategy_spec_id"],
+        "artifact_type": "strategy_spec",
+        "strategy_id": queue_payload["strategy_id"],
+        "version": queue_payload["spec_version"],
+        "artifact_state": "approved",
+        "checksum": queue_payload["checksum"],
+        "approval_decision_id": queue_payload["approval_decision_id"],
+        "approver": queue_payload["approver"],
+        "approved_at": queue_payload["approved_at"],
+        "metadata": {
+            "tenant_id": queue_payload["tenant_id"],
+            "strategy_spec": strategy_spec,
+        },
+    }
+
+
+class FakeAuthority:
+    def __init__(self) -> None:
+        self.tasks: dict[str, ExperimentTask] = {}
+        self.runs: dict[str, ExperimentRun] = {}
+        self.ensure_task_calls = 0
+        self.ensure_run_calls = 0
+        self.fail_run_write = False
+
+    def ensure_task(
+        self,
+        task: ExperimentTask,
+        *,
+        approval_decision_id: str,
+        approver: str,
+        approved_at: str,
+        checksum: str,
+    ) -> AuthoritativeTaskReceipt:
+        self.ensure_task_calls += 1
+        existing = self.tasks.setdefault(task.idempotency_key, task)
+        return AuthoritativeTaskReceipt(
+            authority_task_id=f"rtask:{existing.task_id}",
+            task=existing,
+            record={
+                "approval_decision_id": approval_decision_id,
+                "approver": approver,
+                "approved_at": approved_at,
+                "checksum": checksum,
+            },
+        )
+
+    def ensure_run(
+        self,
+        authority_task_id: str,
+        run: ExperimentRun,
+        *,
+        approval_decision_id: str,
+    ) -> AuthoritativeRunReceipt:
+        self.ensure_run_calls += 1
+        if self.fail_run_write:
+            raise RuntimeError("research authority unavailable")
+        key = str(run.metadata["idempotency_key"])
+        existing = self.runs.setdefault(key, run)
+        return AuthoritativeRunReceipt(
+            authority_run_id=f"rrun:{existing.run_id}",
+            run=existing,
+            record={
+                "task_id": authority_task_id,
+                "approval_decision_id": approval_decision_id,
+                "production_activation": "disabled",
+            },
+        )
+
+    def list_runs(
+        self,
+        *,
+        tenant_id: str | None = None,
+        strategy_spec_id: str | None = None,
+    ) -> list[ExperimentRun]:
+        runs = list(self.runs.values())
+        if tenant_id is not None:
+            runs = [run for run in runs if run.tenant_id == tenant_id]
+        if strategy_spec_id is not None:
+            runs = [
+                run for run in runs if run.strategy_spec_id == strategy_spec_id
+            ]
+        return runs
+
+
+@dataclass
+class FakeGateResponse:
+    passed: bool
+    summary: str
+
+    def to_dict(self) -> dict:
+        return {
+            "admission_status": "admitted" if self.passed else "rejected",
+            "replication_status": "passed" if self.passed else "failed",
+            "summary": self.summary,
+        }
+
+
+def _worker(tmp_path, authority: FakeAuthority, *, mode: str = "authoritative"):
     queue = AlphaReplicationQueue(tmp_path)
-    worker = AlphaRevalidationWorker(queue, tmp_path, dispatch_mode=dispatch_mode)
+    worker = AlphaRevalidationWorker(
+        queue,
+        tmp_path,
+        dispatch_mode=mode,
+        authority=authority,
+        registry_url="http://registry.test",
+        lease_seconds=300,
+    )
     return queue, worker
 
 
-class TestAlphaRevalidationWorkerSafetyBoundary:
-    def test_stub_dispatch_mode_accepted(self, tmp_path):
-        _make_worker(tmp_path, dispatch_mode="stub")  # no error
-
-    def test_handoff_only_dispatch_mode_accepted(self, tmp_path):
-        _make_worker(tmp_path, dispatch_mode="handoff_only")
-
-    def test_manual_dispatch_mode_accepted(self, tmp_path):
-        _make_worker(tmp_path, dispatch_mode="manual")
-
-    def test_production_dispatch_mode_rejected(self, tmp_path):
-        queue = AlphaReplicationQueue(tmp_path)
-        with pytest.raises(ValueError, match="fail-closed"):
-            AlphaRevalidationWorker(queue, tmp_path, dispatch_mode="production")
-
-    def test_paper_dispatch_mode_rejected(self, tmp_path):
-        queue = AlphaReplicationQueue(tmp_path)
-        with pytest.raises(ValueError, match="fail-closed"):
-            AlphaRevalidationWorker(queue, tmp_path, dispatch_mode="paper")
-
-    def test_live_dispatch_mode_rejected(self, tmp_path):
-        queue = AlphaReplicationQueue(tmp_path)
-        with pytest.raises(ValueError, match="fail-closed"):
-            AlphaRevalidationWorker(queue, tmp_path, dispatch_mode="live")
-
-    def test_env_var_overrides_default(self, tmp_path):
-        queue = AlphaReplicationQueue(tmp_path)
-        with mock.patch.dict(
-            os.environ,
-            {"PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE": "handoff_only"},
-        ):
-            worker = AlphaRevalidationWorker(queue, tmp_path)
-        assert worker._dispatch_mode == "handoff_only"
-
-    def test_env_var_production_rejected(self, tmp_path):
-        queue = AlphaReplicationQueue(tmp_path)
-        with mock.patch.dict(
-            os.environ,
-            {"PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE": "live"},
-        ):
-            with pytest.raises(ValueError, match="fail-closed"):
-                AlphaRevalidationWorker(queue, tmp_path)
+def _run_with_registry(
+    worker: AlphaRevalidationWorker,
+    registry_entry: dict,
+    *,
+    tenant_id: str = "tenant-a",
+    gate_passed: bool = True,
+):
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=registry_entry,
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        return_value=FakeGateResponse(
+            passed=gate_passed,
+            summary="replication passed" if gate_passed else "replication rejected",
+        ),
+    ):
+        return worker.run_once(tenant_id=tenant_id)
 
 
-class TestAlphaRevalidationWorkerRunOnce:
-    def test_empty_queue_produces_no_runs(self, tmp_path):
-        _, worker = _make_worker(tmp_path)
-        result = worker.run_once()
-        assert result["processed"] == 0
-        assert result["created_run_ids"] == []
-        assert result["errors"] == []
+def test_worker_rejects_stub_manual_and_execution_activation_modes(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue = AlphaReplicationQueue(tmp_path)
+    assert SAFE_DISPATCH_MODES == {"authoritative", "handoff_only"}
+    for mode in ("stub", "manual", "paper", "canary", "live", "production"):
+        with pytest.raises(ValueError, match="not authoritative"):
+            AlphaRevalidationWorker(
+                queue,
+                tmp_path,
+                dispatch_mode=mode,
+                authority=authority,
+            )
 
-    def test_run_once_creates_stub_run_for_pending_entry(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        result = worker.run_once()
-        assert result["processed"] == 1
-        assert len(result["created_run_ids"]) == 1
-        assert result["dispatch_mode"] == "stub"
 
-    def test_run_once_idempotent_duplicate_tick(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker.run_once()
-        result2 = worker.run_once()
-        # Second tick: already processed, leaves pending
-        assert result2["processed"] == 0
-        assert len(result2["created_run_ids"]) == 0
-        runs = worker.list_runs()
-        assert len(runs) == 1  # no duplicate run created
+def test_handoff_only_config_alias_executes_authoritative_path(tmp_path) -> None:
+    authority = FakeAuthority()
+    _, worker = _worker(tmp_path, authority, mode="handoff_only")
+    assert worker._configured_mode == "handoff_only"
+    assert worker._dispatch_mode == "authoritative"
 
-    def test_run_once_processes_multiple_pending_entries(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        queue.enqueue(_approved_spec("s2"))
-        queue.enqueue(_approved_spec("s3"))
-        result = worker.run_once()
-        assert result["processed"] == 3
-        assert len(result["created_run_ids"]) == 3
-        runs = worker.list_runs()
-        assert len(runs) == 3
+    with mock.patch.dict(
+        os.environ,
+        {"PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE": "stub"},
+    ):
+        with pytest.raises(ValueError, match="not authoritative"):
+            AlphaRevalidationWorker(
+                AlphaReplicationQueue(tmp_path / "other"),
+                tmp_path / "other",
+                authority=authority,
+            )
 
-    def test_run_record_has_required_fields(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker.run_once()
-        runs = worker.list_runs()
-        run = runs[0]
-        assert run["run_id"].startswith("arvrun-")
-        assert run["task_id"].startswith("arvtask-")
-        assert run["strategy_id"] == "s1"
-        assert run["strategy_spec_version"] == "1.0"
-        assert run["status"] == "pending"
-        assert run["runtime_env"] == "research"
-        assert run["metadata"]["production_activation"] == "disabled"
-        assert run["metadata"]["dispatch_mode"] == "stub"
-        assert run["trace_id"].startswith("trace-alpha-reval-")
 
-    def test_run_record_persists_to_file(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker.run_once()
-        worker2 = AlphaRevalidationWorker(queue, tmp_path)
-        runs = worker2.list_runs()
-        assert len(runs) == 1
+def test_approved_spec_creates_authoritative_task_and_completed_run(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
 
-    def test_run_queue_entry_updated_after_dispatch(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker.run_once()
-        entries = queue.list_all()
-        assert entries[0]["last_revalidation_status"] in ("dispatched", "skipped_already_exists")
-        assert entries[0]["revalidation_count"] >= 1
-        assert len(entries[0]["experiment_run_ids"]) >= 1
+    result = _run_with_registry(worker, _registry_entry(payload))
 
-    def test_run_once_non_stub_revalidation_completed(self, tmp_path):
-        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
-        queue.enqueue(_approved_spec("s1"))
-        
-        mock_spec = {
-            "spec_version": "1.0",
-            "strategy_id": "s1",
-            "title": "Mock Canonical Strategy s1",
-            "hypothesis": "Two liquid symbols SMA crossover produces a research signal.",
-            "objective": "Prove revalidation.",
-            "lifecycle_state": "candidate",
-            "market_scope": {
-                "symbols": ["SPY"],
-                "asset_classes": ["equity"],
-                "frequency": "1d",
-                "venues": ["NYSE"]
-            },
-            "data_dependencies": [
-                {"ref": "dataset:synthetic", "kind": "dataset"}
-            ],
-            "execution_profile": {
-                "signal_schema_version": "1.0",
-                "quantity_type": "PERCENT_PORTFOLIO",
-                "rebalance_cadence": "1d",
-                "execution_mode_hint": "research"
-            },
-            "evaluation_plan": {
-                "metrics": ["sharpe_ratio"],
-                "candidate_gate": "Gate pass.",
-                "paper_gate": "Paper gate.",
-                "live_gate": "Live gate."
-            },
-            "governance": {
-                "approval_required": True,
-                "policy_id": "policy-1",
-                "risk_profile": "research_only"
-            },
-            "provenance": {
-                "source_kind": "workflow",
-                "created_at": "2026-05-17T11:10:00Z",
-                "source_refs": ["source:1"],
-                "created_by": "Codex"
-            }
+    assert result["processed"] == 1
+    assert result["dispatch_mode"] == "authoritative"
+    assert result["errors"] == []
+    assert len(result["created_run_ids"]) == 1
+    assert len(authority.tasks) == 1
+    assert len(authority.runs) == 1
+
+    task = next(iter(authority.tasks.values()))
+    run = next(iter(authority.runs.values()))
+    assert task.tenant_id == payload["tenant_id"]
+    assert task.strategy_spec_id == payload["strategy_spec_id"]
+    assert run.status == "completed"
+    assert run.backend_id == "replication_gate"
+    assert run.tenant_id == task.tenant_id
+    assert run.strategy_spec_id == task.strategy_spec_id
+    assert run.metadata["production_activation"] == "disabled"
+    authority_task_id = f"rtask:{task.task_id}"
+    authority_run_id = f"rrun:{run.run_id}"
+    assert result["created_run_ids"] == [authority_run_id]
+    assert result["created_authority_task_ids"] == [authority_task_id]
+    assert result["created_authority_run_ids"] == [authority_run_id]
+    assert result["created_experiment_task_ids"] == [task.task_id]
+    assert result["created_experiment_run_ids"] == [run.run_id]
+    assert result["authority_receipts"] == [
+        {
+            "authority_task_id": authority_task_id,
+            "authority_run_id": authority_run_id,
+            "experiment_task_id": task.task_id,
+            "experiment_run_id": run.run_id,
         }
-        
-        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec) as mock_fetch, \
-             mock.patch.object(worker, "_writeback_lineage_to_registry") as mock_writeback:
-            result = worker.run_once()
-            mock_fetch.assert_called_once_with("s1", "1.0")
-            mock_writeback.assert_called_once_with("s1", "1.0", mock.ANY, "dataset:synthetic", mock.ANY)
+    ]
+    assert worker.list_runs(
+        tenant_id=payload["tenant_id"],
+        strategy_spec_id=payload["strategy_spec_id"],
+    ) == [run.to_dict()]
 
-        assert result["processed"] == 1
-        assert len(result["created_run_ids"]) == 1
-        assert result["dispatch_mode"] == "handoff_only"
+    queued = queue.list_all()[0]
+    assert queued["status"] == "completed"
+    assert queued["authority_task_id"] == authority_task_id
+    assert queued["authority_run_ids"] == [authority_run_id]
+    assert queued["experiment_task_id"] == task.task_id
+    assert queued["experiment_run_ids"] == [run.run_id]
 
-        runs = worker.list_runs()
-        assert len(runs) == 1
-        run = runs[0]
-        assert run["status"] == "completed"
-        assert run["started_at"] is not None
-        assert run["finished_at"] is not None
-        assert run["output_manifest_ref"].startswith("manifest://")
-        assert run["artifact_refs"] == ["reg-strategy-spec-s1"]
-        assert run["metadata"].get("input_source") == "registry"
-        assert run["metadata"].get("production_activation") == "disabled"
 
-    def test_run_once_non_stub_revalidation_registry_miss(self, tmp_path):
-        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
-        queue.enqueue(_approved_spec("s1"))
+def test_real_replication_gate_accepts_the_approved_canonical_spec(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    registry_entry = _registry_entry(payload)
+    queue.enqueue(payload)
 
-        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=None) as mock_fetch:
-            result = worker.run_once()
-            mock_fetch.assert_called_once_with("s1", "1.0")
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=registry_entry,
+    ):
+        result = worker.run_once(tenant_id="tenant-a")
 
-        assert result["processed"] == 1
-        assert len(result["created_run_ids"]) == 0
+    assert result["errors"] == []
+    run = next(iter(authority.runs.values()))
+    assert run.status == "completed"
+    gate = run.metadata["replication_gate"]
+    assert gate["admission_status"] == "admitted"
+    assert gate["replication_status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "changed_value"),
+    [
+        ("artifact_state", "retired"),
+        ("checksum", "sha256:changed"),
+        ("approval_decision_id", "approval:changed"),
+        ("approver", "other-reviewer"),
+        ("approved_at", "2026-07-26T09:01:00Z"),
+    ],
+)
+def test_registry_recheck_rejects_stale_or_changed_review(
+    tmp_path,
+    field_name,
+    changed_value,
+) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    registry_entry = _registry_entry(payload)
+    registry_entry[field_name] = changed_value
+
+    result = _run_with_registry(worker, registry_entry)
+
+    assert result["created_run_ids"] == []
+    assert len(result["errors"]) == 1
+    assert field_name in result["errors"][0]["error"]
+    assert authority.tasks == {}
+    entry = queue.list_all()[0]
+    assert entry["status"] == "pending"
+    assert entry["attempt_count"] == 1
+
+
+def test_tenant_collision_isolated_across_authority_and_queue(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload_a = _queue_payload(tenant_id="tenant-a")
+    payload_b = _queue_payload(tenant_id="tenant-b")
+    queue.enqueue(payload_a)
+    queue.enqueue(payload_b)
+
+    result_a = _run_with_registry(
+        worker,
+        _registry_entry(payload_a),
+        tenant_id="tenant-a",
+    )
+    result_b = _run_with_registry(
+        worker,
+        _registry_entry(payload_b),
+        tenant_id="tenant-b",
+    )
+
+    assert len(result_a["created_run_ids"]) == 1
+    assert len(result_b["created_run_ids"]) == 1
+    assert len(authority.tasks) == 2
+    assert len(authority.runs) == 2
+    assert {run.tenant_id for run in authority.runs.values()} == {
+        "tenant-a",
+        "tenant-b",
+    }
+
+
+def test_crash_after_authority_write_reclaims_same_attempt_without_duplicate(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    claimed = queue.claim_next_pending(
+        "tenant-a",
+        claimant="crashing-worker",
+        lease_seconds=1,
+    )
+    assert claimed is not None
+
+    with mock.patch.object(
+        worker,
+        "_fetch_strategy_spec_entry",
+        return_value=_registry_entry(payload),
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        return_value=FakeGateResponse(True, "replication passed"),
+    ):
+        worker._process_entry(claimed, tick_at="2026-07-26T10:00:00Z")
+
+    assert len(authority.tasks) == 1
+    assert len(authority.runs) == 1
+    assert queue.list_all()[0]["status"] == "claimed"
+
+    future = datetime.now(timezone.utc) + timedelta(seconds=301)
+    assert queue.recover_expired_claims("tenant-a", now=future) == 1
+    result = _run_with_registry(worker, _registry_entry(payload))
+
+    assert len(result["created_run_ids"]) == 1
+    assert len(authority.tasks) == 1
+    assert len(authority.runs) == 1
+    assert authority.ensure_task_calls == 2
+    assert authority.ensure_run_calls == 2
+    assert queue.list_all()[0]["status"] == "completed"
+
+
+def test_failure_to_dlq_and_operator_replay_create_one_new_generation(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+
+    for _ in range(3):
+        result = _run_with_registry(
+            worker,
+            _registry_entry(payload),
+            gate_passed=False,
+        )
         assert len(result["errors"]) == 1
-        assert "Stale, retired, or missing StrategySpec" in result["errors"][0]["error"]
-        
-        runs = worker.list_runs()
-        assert len(runs) == 1
-        run = runs[0]
-        assert run["status"] == "failed"
-        assert "Stale, retired, or missing StrategySpec" in run["failure_reason"]
-        assert run["metadata"].get("production_activation") == "disabled"
+
+    entry = queue.list_all()[0]
+    assert entry["status"] == "dlq"
+    assert entry["attempt_count"] == 3
+    assert len(authority.runs) == 3
+
+    assert worker.replay_dlq(
+        "tenant-a",
+        payload["strategy_spec_id"],
+        replay_id="replay-alpha-001",
+        replayed_by="operator-a",
+        reason="reviewed failure repaired",
+    )
+    replay_result = _run_with_registry(worker, _registry_entry(payload))
+    assert len(replay_result["created_run_ids"]) == 1
+    assert len(authority.runs) == 4
+    replayed = queue.list_all()[0]
+    assert replayed["status"] == "completed"
+    assert replayed["replay_count"] == 1
 
 
-class TestAlphaRevalidationWorkerMetrics:
-    def test_metrics_initial_state(self, tmp_path):
-        _, worker = _make_worker(tmp_path)
-        m = worker.get_metrics()
-        assert m["run_count"] == 0
-        assert m["error_count"] == 0
-        assert m["last_success_at"] is None
+def test_authority_failure_is_retryable_and_never_creates_local_run_truth(tmp_path) -> None:
+    authority = FakeAuthority()
+    authority.fail_run_write = True
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
 
-    def test_metrics_updated_after_successful_run(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker.run_once()
-        m = worker.get_metrics()
-        assert m["run_count"] == 1
-        assert m["last_success_at"] is not None
-        assert m["last_failure_at"] is None
+    failed = _run_with_registry(worker, _registry_entry(payload))
+    assert failed["created_run_ids"] == []
+    assert "research authority unavailable" in failed["errors"][0]["error"]
+    assert not (tmp_path / "alpha_revalidation_runs.jsonl").exists()
+    failed_entry = queue.list_all()[0]
+    assert failed_entry["status"] == "pending"
+    assert failed_entry["authority_task_id"].startswith("rtask:")
+    assert failed_entry["authority_run_ids"] == []
 
-    def test_metrics_persist_across_instances(self, tmp_path):
-        queue, worker1 = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker1.run_once()
-        queue2 = AlphaReplicationQueue(tmp_path)
-        worker2 = AlphaRevalidationWorker(queue2, tmp_path)
-        m = worker2.get_metrics()
-        assert m["run_count"] == 1
-
-    def test_metrics_multiple_ticks_accumulate(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        queue.enqueue(_approved_spec("s2"))
-        worker.run_once()
-        m = worker.get_metrics()
-        assert m["run_count"] == 2
+    authority.fail_run_write = False
+    recovered = _run_with_registry(worker, _registry_entry(payload))
+    assert len(recovered["created_run_ids"]) == 1
+    assert queue.list_all()[0]["status"] == "completed"
 
 
-class TestAlphaRevalidationWorkerListRuns:
-    def test_list_runs_empty_initially(self, tmp_path):
-        _, worker = _make_worker(tmp_path)
-        assert worker.list_runs() == []
+def test_metrics_persist_without_becoming_run_authority(tmp_path) -> None:
+    authority = FakeAuthority()
+    queue, worker = _worker(tmp_path, authority)
+    payload = _queue_payload()
+    queue.enqueue(payload)
+    _run_with_registry(worker, _registry_entry(payload))
 
-    def test_list_runs_by_strategy_id_filters(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        queue.enqueue(_approved_spec("s2"))
-        worker.run_once()
-        runs = worker.list_runs(strategy_id="s1")
-        assert len(runs) == 1
-        assert runs[0]["strategy_id"] == "s1"
-
-    def test_list_runs_unknown_strategy_id_returns_empty(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        queue.enqueue(_approved_spec("s1"))
-        worker.run_once()
-        assert worker.list_runs(strategy_id="nonexistent") == []
-
-
-class TestAlphaRevalidationWorkerBehavioralProof:
-    def test_restart_and_recovery_flow(self, tmp_path):
-        # 1. Start with initial queue and worker
-        queue = AlphaReplicationQueue(tmp_path)
-        worker = AlphaRevalidationWorker(queue, tmp_path)
-        
-        # Enqueue spec
-        spec = _approved_spec("strat-restart", "1.0")
-        queue.enqueue(spec)
-        
-        # Verify pending
-        assert len(queue.list_pending()) == 1
-        
-        # 2. Simulate shutdown/restart by recreating queue and worker from the same files
-        queue_restarted = AlphaReplicationQueue(tmp_path)
-        worker_restarted = AlphaRevalidationWorker(queue_restarted, tmp_path)
-        
-        # State should be recovered
-        assert len(queue_restarted.list_pending()) == 1
-        
-        # Process and verify
-        res = worker_restarted.run_once()
-        assert res["processed"] == 1
-        assert len(res["created_run_ids"]) == 1
-        
-        # Recreated worker should list the run
-        runs = worker_restarted.list_runs()
-        assert len(runs) == 1
-        assert runs[0]["strategy_id"] == "strat-restart"
-        
-        # Recreated worker metrics should be updated
-        metrics = worker_restarted.get_metrics()
-        assert metrics["run_count"] == 1
-        assert metrics["last_success_at"] is not None
-
-    def test_retry_and_recovery_from_exception(self, tmp_path):
-        # Test that if _process_entry raises an exception, the queue entry remains pending
-        # and can be retried in a subsequent run/after restart (guaranteeing RPO=0 / no lost events).
-        queue = AlphaReplicationQueue(tmp_path)
-        worker = AlphaRevalidationWorker(queue, tmp_path, dispatch_mode="handoff_only")
-        
-        # Enqueue spec
-        spec = _approved_spec("strat-retry", "1.0")
-        queue.enqueue(spec)
-        
-        # Mock _fetch_spec_from_registry to raise an exception
-        with mock.patch.object(worker, "_fetch_spec_from_registry", side_effect=RuntimeError("Transient registry error")):
-            result = worker.run_once()
-            
-            # The run failed with an error
-            assert result["processed"] == 1
-            assert len(result["created_run_ids"]) == 0
-            assert len(result["errors"]) == 1
-            assert "Transient registry error" in result["errors"][0]["error"]
-            
-        # Verify that queue entry is STILL pending (rollback/compensation behavior)
-        # and not lost or marked as completed/dispatched.
-        assert len(queue.list_pending()) == 1
-        
-        # Now simulate a retry where the error is resolved
-        mock_spec = {
-            "spec_version": "1.0",
-            "strategy_id": "strat-retry",
-            "title": "Strategy",
-            "hypothesis": "H",
-            "objective": "O",
-            "lifecycle_state": "candidate",
-            "market_scope": {"symbols": ["SPY"], "asset_classes": ["equity"], "frequency": "1d", "venues": ["NYSE"]},
-            "data_dependencies": [{"ref": "dataset:synthetic", "kind": "dataset"}],
-            "execution_profile": {"signal_schema_version": "1.0", "quantity_type": "PERCENT_PORTFOLIO", "rebalance_cadence": "1d", "execution_mode_hint": "research"},
-            "evaluation_plan": {"metrics": ["sharpe_ratio"], "candidate_gate": "pass", "paper_gate": "pass", "live_gate": "pass"},
-            "governance": {"approval_required": True, "policy_id": "policy-1", "risk_profile": "research_only"},
-            "provenance": {"source_kind": "workflow", "created_at": "2026-05-17T11:10:00Z", "source_refs": ["source:1"], "created_by": "Codex"}
-        }
-        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec), \
-             mock.patch.object(worker, "_writeback_lineage_to_registry") as mock_writeback:
-            result2 = worker.run_once()
-            assert result2["processed"] == 1
-            assert len(result2["created_run_ids"]) == 1
-            
-        # The queue entry is still logically there, but its last revalidation status is completed.
-        entries = queue.list_all()
-        assert len(entries) == 1
-        assert entries[0]["last_revalidation_status"] == "completed"
-
-    def test_run_once_tenant_scoped_claiming(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        
-        # Enqueue spec for tenant A
-        spec_a = _approved_spec("s-a")
-        spec_a["tenant_id"] = "tenant-a"
-        queue.enqueue(spec_a)
-        
-        # Enqueue spec for tenant B
-        spec_b = _approved_spec("s-b")
-        spec_b["tenant_id"] = "tenant-b"
-        queue.enqueue(spec_b)
-        
-        # Run for tenant-a only
-        result_a = worker.run_once(tenant_id="tenant-a")
-        assert result_a["processed"] == 1
-        assert len(result_a["created_run_ids"]) == 1
-        assert result_a["created_run_ids"][0].startswith("arvrun-s-a-")
-        
-        # Run for tenant-b only
-        result_b = worker.run_once(tenant_id="tenant-b")
-        assert result_b["processed"] == 1
-        assert len(result_b["created_run_ids"]) == 1
-        assert result_b["created_run_ids"][0].startswith("arvrun-s-b-")
-
-    def test_worker_replay_dlq(self, tmp_path):
-        queue, worker = _make_worker(tmp_path)
-        spec = _approved_spec("s1")
-        queue.enqueue(spec)
-        
-        # Fail it 3 times to move to DLQ
-        for _ in range(3):
-            queue.mark_failed("s1", "1.0", error="error", max_retries=3)
-            
-        entries = queue.list_all()
-        assert entries[0]["status"] == "dlq"
-        
-        # Replay via worker
-        assert worker.replay_dlq("s1", "1.0") is True
-        
-        entries = queue.list_all()
-        assert entries[0]["status"] == "pending"
-
-    def test_non_stub_writeback_lineage_fail_closed_and_readback(self, tmp_path):
-        import json
-        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
-        
-        # 1. Test success (POST returns registry_id, GET returns correct producer_run_id)
-        mock_response_post = mock.MagicMock()
-        mock_response_post.__enter__.return_value = mock_response_post
-        mock_response_post.read.return_value = json.dumps({"entry": {"registry_id": "reg-1"}}).encode("utf-8")
-        
-        mock_response_get = mock.MagicMock()
-        mock_response_get.__enter__.return_value = mock_response_get
-        mock_response_get.read.return_value = json.dumps({"entry": {"producer_run_id": "run-1"}}).encode("utf-8")
-        
-        with mock.patch("urllib.request.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = [mock_response_post, mock_response_get]
-            
-            # This should run without raising an error
-            worker._writeback_lineage_to_registry("s1", "1.0", "run-1", "dataset-1", "code-1")
-            
-            assert mock_urlopen.call_count == 2
-            
-        # 2. Test readback mismatch (GET returns wrong producer_run_id)
-        mock_response_get_mismatch = mock.MagicMock()
-        mock_response_get_mismatch.__enter__.return_value = mock_response_get_mismatch
-        mock_response_get_mismatch.read.return_value = json.dumps({"entry": {"producer_run_id": "run-mismatch"}}).encode("utf-8")
-        
-        with mock.patch("urllib.request.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = [mock_response_post, mock_response_get_mismatch]
-            
-            with pytest.raises(RuntimeError, match="Readback verification failed"):
-                worker._writeback_lineage_to_registry("s1", "1.0", "run-1", "dataset-1", "code-1")
-
-        # 3. Test HTTP failure (fails closed / raises RuntimeError)
-        with mock.patch("urllib.request.urlopen", side_effect=Exception("HTTP connection failed")):
-            with pytest.raises(RuntimeError, match="Lineage writeback or readback verification failed"):
-                worker._writeback_lineage_to_registry("s1", "1.0", "run-1", "dataset-1", "code-1")
-
+    restarted = AlphaRevalidationWorker(
+        AlphaReplicationQueue(tmp_path),
+        tmp_path,
+        authority=authority,
+        registry_url="http://registry.test",
+    )
+    metrics = restarted.get_metrics()
+    assert metrics["run_count"] == 1
+    assert metrics["last_success_at"] is not None
+    assert metrics["last_run_strategy_spec_ids"] == [payload["strategy_spec_id"]]

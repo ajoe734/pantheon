@@ -1,0 +1,184 @@
+========================================================================
+SECTION 1 - PRE-FIX task_finalize.sh at f9b6760d6
+canonical row: ABC-001 status=in_progress owner=Codex reviewer=Claude
+========================================================================
+exit=0
+gh calls:
+pr create --base dev --head task/ABC-001 --title ABC-001: deliver --label auto-merge --body-file /tmp/task-pr-body-dXS2.md
+pr merge task/ABC-001 --auto --merge
+pr view task/ABC-001 --json url -q .url
+
+========================================================================
+SECTION 2 - POST-FIX task_finalize.sh (same fixture, same row)
+========================================================================
+exit=0
+gh calls:
+pr create --base dev --head task/ABC-001 --title ABC-001: deliver --body-file /tmp/task-pr-body-eqVx.md
+pr merge task/ABC-001 --disable-auto
+pr view task/ABC-001 --json url -q .url
+
+========================================================================
+SECTION 3 - recorded canonical state of PRs #4212 / #4213 / #4214
+========================================================================
+test_a_later_approval_still_cannot_bless_the_premature_merge (test_task_review_merge_gate.PrematureMergeRegressionTests.test_a_later_approval_still_cannot_bless_the_premature_merge)
+#4213 merged at 20:18:15Z; an approval recorded afterwards is not retroactive. ... ok
+test_pr_4212_supervisor_worker_truth_reconcile (test_task_review_merge_gate.PrematureMergeRegressionTests.test_pr_4212_supervisor_worker_truth_reconcile) ... ok
+test_pr_4213_telemetry_lineage_test_isolation (test_task_review_merge_gate.PrematureMergeRegressionTests.test_pr_4213_telemetry_lineage_test_isolation) ... ok
+test_pr_4214_telemetry_lineage_test_isolation_followup (test_task_review_merge_gate.PrematureMergeRegressionTests.test_pr_4214_telemetry_lineage_test_isolation_followup) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+
+========================================================================
+SECTION 4 - recorded canonical state of the eight later live regressions
+           PRs #4201 / #4217 / #4222 / #4225 (enable + direct merge)
+           / #4226 / #4227 / #4230, plus shared-credential entry points
+========================================================================
+test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up)
+The stale base clearing changes nothing; the task is still unapproved. ... ok
+test_a_changes_requested_decision_blocks_the_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_changes_requested_decision_blocks_the_merge)
+Canonical rejection blocks even with a GitHub APPROVED review present. ... ok
+test_a_payload_claim_cannot_downgrade_the_declared_policy (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_payload_claim_cannot_downgrade_the_declared_policy) ... ok
+test_an_approved_task_never_unlocks_auto_merge_creation (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_an_approved_task_never_unlocks_auto_merge_creation)
+Approval unlocks an exact-head merge, never a standing merge grant. ... ok
+test_an_ordinary_progress_note_does_not_revoke_an_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_an_ordinary_progress_note_does_not_revoke_an_approval)
+Only an explicit do-not-merge marker revokes; notes are not blanket. ... ok
+test_approval_binds_the_head_that_would_actually_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_approval_binds_the_head_that_would_actually_merge)
+Refreshing a BEHIND branch produces a head nobody approved. ... ok
+test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request)
+Only `mergeStateStatus=BEHIND` was holding this back, not the gate. ... ok
+test_pr_4217_direct_merge_without_any_auto_merge_request (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4217_direct_merge_without_any_auto_merge_request)
+The gate cannot be an auto-merge-only guard: #4217 had none. ... ok
+test_pr_4217_owner_cannot_record_its_own_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4217_owner_cannot_record_its_own_approval)
+An approval whose agent is the owner is not independent review. ... ok
+test_pr_4217_owner_github_credential_does_not_satisfy_the_reviewer (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4217_owner_github_credential_does_not_satisfy_the_reviewer)
+A GitHub approving review from the merging account changes nothing. ... ok
+test_pr_4222_auto_merge_enable_and_completion_both_fail_closed (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4222_auto_merge_enable_and_completion_both_fail_closed) ... ok
+test_pr_4222_reviewer_rejection_arrived_twenty_minutes_after_the_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4222_reviewer_rejection_arrived_twenty_minutes_after_the_merge)
+Codex2 rejected the merged tree at 22:15:44Z; #4222 landed at 21:55:32Z. ... ok
+test_pr_4225_direct_merge_by_the_same_credential_is_refused (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4225_direct_merge_by_the_same_credential_is_refused)
+The escalation: the blocked auto-merge became a manual merge. ... ok
+test_pr_4225_human_ops_do_not_merge_note_revokes_an_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4225_human_ops_do_not_merge_note_revokes_an_approval)
+Exact-head do-not-merge notes stood at 22:43:10Z and 22:52:13Z. ... ok
+test_pr_4225_premature_auto_merge_enable_is_refused (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4225_premature_auto_merge_enable_is_refused)
+Human/Ops disabled this by hand at 22:42:46Z; the gate must do it. ... ok
+test_pr_4226_third_merge_on_one_unapproved_task_branch (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4226_third_merge_on_one_unapproved_task_branch)
+#4222, #4225 and #4226 all merged task/OPS-L12-...-IMPORT-001 unreviewed. ... ok
+test_pr_4227_auto_merge_creation_and_completion_fail_closed (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_auto_merge_creation_and_completion_fail_closed) ... ok
+test_pr_4227_auto_merge_request_outlived_the_head_it_landed (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_auto_merge_request_outlived_the_head_it_landed)
+Enabled 23:10:54Z, head committed 23:13:21Z, merged 23:14:41Z. ... ok
+test_pr_4227_docs_only_payload_claims_do_not_waive_review (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_docs_only_payload_claims_do_not_waive_review)
+Stage-1 docs/evidence with the live swap still blocked stays gated. ... ok
+test_pr_4227_shape_is_refused_even_when_this_head_is_approved (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_shape_is_refused_even_when_this_head_is_approved)
+Approving the new head does not legitimise the older merge grant. ... ok
+test_pr_4230_green_ci_is_not_canonical_reviewer_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4230_green_ci_is_not_canonical_reviewer_approval)
+All three required checks were SUCCESS; the task was in_progress. ... ok
+test_the_shared_credential_cannot_enable_auto_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_the_shared_credential_cannot_enable_auto_merge)
+Creation half: the request #4230 armed at 23:33:20Z is refused. ... ok
+test_the_shared_credential_cannot_finalize_a_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_the_shared_credential_cannot_finalize_a_merge)
+Finalization half: the same account completing the merge is refused. ... ok
+test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request (test_task_review_merge_gate.IntegratorGateTests.test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request)
+`waiting` for a new approval must not leave the old grant armed. ... ok
+test_approved_gated_pr_merges_the_exact_head_without_auto (test_task_review_merge_gate.IntegratorGateTests.test_approved_gated_pr_merges_the_exact_head_without_auto) ... ok
+test_approved_gated_pr_revokes_a_standing_auto_merge_request_first (test_task_review_merge_gate.IntegratorGateTests.test_approved_gated_pr_revokes_a_standing_auto_merge_request_first)
+PR #4227's hazard: never leave a merge grant armed for the next push. ... ok
+test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe (test_task_review_merge_gate.IntegratorGateTests.test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe)
+PR #4201's shape: BEHIND, unapproved, auto-merge still armed. ... ok
+test_concurrent_open_prs_for_one_task_branch_fail_closed (test_task_review_merge_gate.IntegratorGateTests.test_concurrent_open_prs_for_one_task_branch_fail_closed) ... ok
+test_gated_pr_needing_a_rebase_is_not_force_pushed (test_task_review_merge_gate.IntegratorGateTests.test_gated_pr_needing_a_rebase_is_not_force_pushed) ... ok
+test_merge_then_review_task_keeps_its_documented_behavior (test_task_review_merge_gate.IntegratorGateTests.test_merge_then_review_task_keeps_its_documented_behavior) ... ok
+test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked (test_task_review_merge_gate.IntegratorGateTests.test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked) ... ok
+
+----------------------------------------------------------------------
+Ran 31 tests in 0.008s
+
+OK
+
+========================================================================
+SECTION 5 - PRE-FIX at reviewed head 190fb7fe8, the two 2026-07-27
+           independent-review findings, reproduced as reported
+========================================================================
+-- finding 1: approval is not bound to the reviewed head [prefix]
+   reviewer approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb at 2026-07-26T12:00:00Z
+   PR head replaced with cccccccccccccccccccccccccccccccccccccccc, committed 2026-07-26T11:00:00Z (BEFORE the approval)
+   -> allow_merge=True reason=exact_head_approved
+      reviewer Claude approved ABC-001 at 2026-07-26T12:00:00Z; head cccccccccccccccccccccccccccccccccccccccc is unchanged since then
+
+-- finding 2: `gh pr merge --disable-auto` returns 1 on an approved gated PR [prefix]
+   -> action=merged
+      Merged the reviewer-approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb of PR #100 into dev and reconciled ABC-001 to done.
+   gh pr merge calls emitted:
+     gh pr merge 100 --disable-auto
+     gh pr merge 100 --merge --match-head-commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+========================================================================
+SECTION 6 - POST-FIX, same two fixtures
+========================================================================
+-- finding 1: approval is not bound to the reviewed head [postfix]
+   reviewer approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb at 2026-07-26T12:00:00Z
+   PR head replaced with cccccccccccccccccccccccccccccccccccccccc, committed 2026-07-26T11:00:00Z (BEFORE the approval)
+   -> allow_merge=False reason=approval_head_mismatch
+      reviewer Claude approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb but the PR head is cccccccccccccccccccccccccccccccccccccccc; this exact commit was never reviewed
+
+-- finding 2: `gh pr merge --disable-auto` returns 1 on an approved gated PR [postfix]
+   -> action=blocked
+      PR #100 is approved for head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb but `gh pr merge --disable-auto` failed, so a pending auto-merge request is still armed on it. Refusing to merge with a standing merge grant; revoke it manually and re-run the integrator.
+   gh pr merge calls emitted:
+     gh pr merge 100 --disable-auto
+     (no merge call beyond the failed revocation)
+
+========================================================================
+SECTION 7 - regressions that now pin both findings
+========================================================================
+test_a_head_named_only_in_the_approval_message_is_not_a_binding (test_task_review_merge_gate.ApprovalBindingTests.test_a_head_named_only_in_the_approval_message_is_not_a_binding)
+Free text is not compared; only the recorded binding is. ... ok
+test_a_string_pr_number_still_binds (test_task_review_merge_gate.ApprovalBindingTests.test_a_string_pr_number_still_binds) ... ok
+test_binding_expecting_another_base_blocks (test_task_review_merge_gate.ApprovalBindingTests.test_binding_expecting_another_base_blocks) ... ok
+test_binding_for_another_pr_blocks (test_task_review_merge_gate.ApprovalBindingTests.test_binding_for_another_pr_blocks)
+Two open PRs can carry the same head; the approval names only one. ... ok
+test_binding_head_sha_is_compared_case_insensitively (test_task_review_merge_gate.ApprovalBindingTests.test_binding_head_sha_is_compared_case_insensitively) ... ok
+test_binding_naming_another_head_branch_blocks (test_task_review_merge_gate.ApprovalBindingTests.test_binding_naming_another_head_branch_blocks) ... ok
+test_binding_without_a_pr_number_is_unusable (test_task_review_merge_gate.ApprovalBindingTests.test_binding_without_a_pr_number_is_unusable) ... ok
+test_malformed_binding_is_unusable (test_task_review_merge_gate.ApprovalBindingTests.test_malformed_binding_is_unusable) ... ok
+test_pre_dated_head_replacement_is_refused (test_task_review_merge_gate.ApprovalBindingTests.test_pre_dated_head_replacement_is_refused)
+The reported fail-open: approve `b...`, then swap in older `c...`. ... ok
+test_pre_dated_head_replacement_survives_a_matching_commit_history (test_task_review_merge_gate.ApprovalBindingTests.test_pre_dated_head_replacement_survives_a_matching_commit_history)
+Rewriting the PR's commit list does not rebuild the approval. ... ok
+test_the_approved_decision_reports_what_it_was_bound_to (test_task_review_merge_gate.ApprovalBindingTests.test_the_approved_decision_reports_what_it_was_bound_to) ... ok
+test_unbound_approval_cannot_open_the_gate (test_task_review_merge_gate.ApprovalBindingTests.test_unbound_approval_cannot_open_the_gate)
+A legacy approval with no binding is unusable, not permissive. ... ok
+test_failed_auto_merge_revocation_never_reaches_the_merge (test_task_review_merge_gate.IntegratorGateTests.test_failed_auto_merge_revocation_never_reaches_the_merge)
+An armed merge grant the integrator could not revoke blocks the pass. ... ok
+test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason (test_task_review_merge_gate.IntegratorGateTests.test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason)
+A gate refusal is the more precise diagnosis; it must not be masked. ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.003s
+
+OK
+
+========================================================================
+SECTION 8 - LATER PR #4218 REVIEW: exit-zero revocation is not proof
+========================================================================
+-- reviewed head dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3 [prefix]
+   `gh pr merge 100 --disable-auto` returned 0 while FakeRunner retained
+   autoMergeRequest.
+   -> action=merged
+   gh pr merge calls emitted:
+     gh pr merge 100 --disable-auto
+     gh pr merge 100 --merge --match-head-commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+-- implementation tree 86ce9f3028e11856179bb19838f2cfd1453426af [postfix]
+test_successful_revocation_that_still_reads_armed_never_merges
+A zero exit from gh is not proof that GitHub withdrew the grant. ... ok
+test_unreadable_revocation_readback_never_reaches_the_merge
+A command result cannot replace the required live state proof. ... ok
+test_nonzero_revocation_can_continue_only_when_readback_proves_off
+The live grant, not the command exit status, is authoritative. ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.003s
+
+OK

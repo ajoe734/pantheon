@@ -30,6 +30,14 @@ _ACCEPTED_CONTROLLER_HEALTH_STATUSES = {
 }
 _CONTROLLER_RECORD_MAX_AGE_SECONDS = 900
 _CONTROLLER_RECORD_MAX_FUTURE_SKEW_SECONDS = 60
+_IMPLEMENTED_CONTROLLER_STATUSES = {"implemented", "proven_live"}
+_CONTROLLER_CONTRACT_REQUIRED_FIELDS = (
+    "controller_name",
+    "desired_state_query",
+    "actual_state_query",
+    "restart_behavior",
+    "liveness_metric",
+)
 _SNAPSHOT_TRUTH_LEVEL = "snapshot_fallback"
 _TRUTH_LEVEL_ORDER = (
     "seed_fixture",
@@ -505,6 +513,71 @@ def _eligible_live_truth_levels(loop: Dict[str, Any]) -> set[str]:
     return levels
 
 
+def _controller_contract_declaration(loop: Dict[str, Any]) -> Dict[str, Any]:
+    """Report what the catalog claims about one loop's controller, nothing more.
+
+    A declared controller contract is an implementation claim, not liveness.
+    ``contract_complete`` only says the catalog filled in every field a
+    reconciled claim would later need; it never admits runtime truth.
+    """
+
+    controller = loop.get("controller_contract") if isinstance(loop.get("controller_contract"), dict) else {}
+    status = str(controller.get("status") or "unknown")
+    implemented = status in _IMPLEMENTED_CONTROLLER_STATUSES
+    missing_fields = [
+        field
+        for field in _CONTROLLER_CONTRACT_REQUIRED_FIELDS
+        if not str(controller.get(field) or "").strip()
+    ]
+    return {
+        "status": status,
+        "controller_implemented": implemented,
+        "controller_name": controller.get("controller_name"),
+        "contract_complete": implemented and not missing_fields,
+        "missing_contract_fields": missing_fields,
+        "declared_only": True,
+        "note": (
+            "Catalog declares an implemented controller; liveness still requires a "
+            "current accepted controller runtime record."
+            if implemented
+            else "Catalog declares no implemented controller for this loop."
+        ),
+    }
+
+
+def _controller_contract_coverage(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    declarations = [
+        (str(entry.get("loop_id") or ""), _controller_contract_declaration(entry))
+        for entry in entries
+    ]
+    implemented_ids = [
+        loop_id
+        for loop_id, declaration in declarations
+        if declaration["controller_implemented"]
+    ]
+    incomplete_ids = [
+        loop_id
+        for loop_id, declaration in declarations
+        if declaration["controller_implemented"] and not declaration["contract_complete"]
+    ]
+    return {
+        "declared_controller_loop_ids": implemented_ids,
+        "declared_controller_count": len(implemented_ids),
+        "no_declared_controller_count": len(declarations) - len(implemented_ids),
+        "incomplete_contract_loop_ids": incomplete_ids,
+        "controller_names": {
+            loop_id: declaration["controller_name"]
+            for loop_id, declaration in declarations
+            if declaration["controller_implemented"]
+        },
+        "note": (
+            "A declared controller contract is an implementation claim only; the "
+            "loop-health read model still requires a current accepted controller "
+            "record before any live truth is shown."
+        ),
+    }
+
+
 def _registry_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
     canonical = registry.get("loops") if isinstance(registry.get("loops"), list) else []
     overlays = (
@@ -554,6 +627,7 @@ def loop_inventory_meta() -> Dict[str, Any]:
             "archived_task_completion_accepted_as_liveness": False,
             "controller_record_max_age_seconds": _CONTROLLER_RECORD_MAX_AGE_SECONDS,
         },
+        "controller_contract_coverage": _controller_contract_coverage(entries),
         "registry_ref": _REGISTRY_REF,
     }
 
@@ -592,6 +666,7 @@ def _project_loop(loop: Dict[str, Any]) -> Dict[str, Any]:
             "task_completion_policy": "reference_only",
             "archived_task_completion_accepted": False,
         },
+        "controller_contract_declaration": _controller_contract_declaration(loop),
         "truth_source": {
             "level": "registry_metadata",
             "source": "static_json_registry",
@@ -755,19 +830,74 @@ def _project_downstream_actual_state(
         or health_record.get("downstream_status")
     )
     if downstream:
+        checked_at = downstream.get("checked_at") or downstream.get("captured_at")
+        authoritative = bool(
+            checked_at
+            and health_source in _ACCEPTED_RUNTIME_HEALTH_SOURCES
+            and str(downstream.get("status") or "").strip().lower()
+            not in {"", "unknown", "unobserved"}
+        )
         return {
-            "status": downstream.get("status") or "unknown",
+            "status": downstream.get("status") if authoritative else "unobserved",
             "source": downstream.get("source") or health_source,
+            "authoritative": authoritative,
+            "reported_status": downstream.get("status"),
             "summary": downstream.get("summary") or downstream.get("message"),
-            "checked_at": downstream.get("checked_at") or downstream.get("captured_at"),
+            "checked_at": checked_at if authoritative else None,
             "sources": deepcopy(downstream.get("sources") or []),
+            "query": downstream.get("query") or actual_state.get("query"),
         }
     return {
-        "status": actual_state.get("query_status") or "unknown",
+        "status": "unobserved",
         "source": "registry_metadata",
+        "authoritative": False,
+        "reported_status": actual_state.get("query_status"),
         "summary": actual_state.get("query"),
         "checked_at": None,
         "sources": deepcopy(actual_state.get("sources") or []),
+        "query": actual_state.get("query"),
+    }
+
+
+def _project_desired_state_presence(
+    desired_state: Dict[str, Any],
+    health_record: Dict[str, Any],
+    health_source: str,
+) -> Dict[str, Any]:
+    observed = _dict_or_empty(health_record.get("desired_state_presence"))
+    checked_at = observed.get("checked_at") or observed.get("captured_at")
+    if observed:
+        present = observed.get("present")
+        authoritative = bool(
+            isinstance(present, bool)
+            and checked_at
+            and health_source in _ACCEPTED_RUNTIME_HEALTH_SOURCES
+        )
+        return {
+            "status": (
+                ("present" if present else "absent")
+                if authoritative
+                else "configured_unobserved"
+            ),
+            "present": present if authoritative else None,
+            "authoritative": authoritative,
+            "source": observed.get("source") or health_source,
+            "summary": observed.get("summary"),
+            "checked_at": checked_at if authoritative else None,
+            "sources": deepcopy(observed.get("sources") or []),
+            "query": observed.get("query") or desired_state.get("query"),
+        }
+    return {
+        "status": (
+            "declared_unobserved" if desired_state.get("query") else "missing"
+        ),
+        "present": None,
+        "authoritative": False,
+        "source": "registry_metadata",
+        "summary": desired_state.get("query"),
+        "checked_at": None,
+        "sources": deepcopy(desired_state.get("sources") or []),
+        "query": desired_state.get("query"),
     }
 
 
@@ -858,6 +988,7 @@ def _project_loop_health(
     loop_id = str(projected.get("loop_id") or "")
     maturity = projected.get("maturity") if isinstance(projected.get("maturity"), dict) else {}
     controller = projected.get("controller") if isinstance(projected.get("controller"), dict) else {}
+    desired_state = projected.get("desired_state") if isinstance(projected.get("desired_state"), dict) else {}
     actual_state = projected.get("actual_state") if isinstance(projected.get("actual_state"), dict) else {}
     evidence_profile = projected.get("evidence") if isinstance(projected.get("evidence"), dict) else {}
     evidence_packet = _project_evidence_packet(
@@ -881,6 +1012,11 @@ def _project_loop_health(
                 health_record,
                 event_key="last_failure",
                 fallback_source=health_source,
+            ),
+            "desired_state_presence": _project_desired_state_presence(
+                desired_state,
+                health_record,
+                health_source,
             ),
             "downstream_actual_state": _project_downstream_actual_state(actual_state, health_record, health_source),
             "evidence_packet": evidence_packet,
