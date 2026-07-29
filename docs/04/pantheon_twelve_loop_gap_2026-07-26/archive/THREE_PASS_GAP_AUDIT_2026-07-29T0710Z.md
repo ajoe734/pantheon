@@ -12,6 +12,8 @@ Dispatch-priority correction captured at: `2026-07-29T08:48Z`
 
 Terminal-fallback correction captured at: `2026-07-29T09:08Z`
 
+Clean command-root correction captured at: `2026-07-29T09:31Z`
+
 Program: `pantheon-twelve-loop-gap-2026-07-26`
 
 This is a current-state audit, not a completion claim. The purpose is to keep
@@ -39,6 +41,32 @@ produced stale, partial, or synthetic proof.
 - Current supervisor process:
   `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py`
   with live status root `/home/lupin/pantheon`.
+- Live supervisor rescue after #4365:
+  - #4365 latest head `cbcb4574da48e353e3e33673f81dce5dc13e790d` has all
+    visible Branch CI jobs green and auto-merge enabled, but still awaits
+    independent review/branch-protection gates.
+  - The live command root first carried an uncommitted `.orchestrator/supervisor.py`
+    patch matching #4365, which caused `worker_runner.py` to reject new workers
+    with `PANTHEON_COMMAND_ROOT contains dirty executable/import file`.
+  - Temporary live repair commit
+    `adcb65105e9daf3124e95962a9a627562debf739` made the live
+    command-root supervisor clean while preserving the same supervisor code as
+    #4365 `cbcb4574...`, but `worker_runner.py` still rejected it because the
+    source SHA was not merged into `origin/dev`.
+  - The live command root was therefore restored to merged SHA
+    `a6d56c366f7436574e6d2d241b47564558beac74` at
+    `2026-07-29T09:37Z` to unblock worker bootstrap. #4365 is not live until
+    independent review, merge, and promotion. `.orchestrator/config.json` was
+    not edited.
+  - `SUP-L12-REVIEW-PRIORITY-GATE-20260729` Antigravity review was placed in
+    unchanged-task cooldown after failed run
+    `antigravity1-1-20260729T092019...`; that worker failed before review
+    because of the dirty command-root guard, not because Antigravity reviewed
+    the PR.
+  - `L12-VERIFY-OBS-001`, `L12-VERIFY-RUNTIME-001`, and
+    `L12-VERIFY-KNOW-001` remain blocked from Claude2 redispatch by
+    `failure_loop` / `chair_reassignment_triage` state and still need
+    governed recovery, not a completion claim.
 - Live fleet workers observed:
   - `Claude2` run `claude2-20260729T070505Z-eafcb609`,
     task `L12-VERIFY-RUNTIME-001`, later failed at `2026-07-29T07:12:01Z`.

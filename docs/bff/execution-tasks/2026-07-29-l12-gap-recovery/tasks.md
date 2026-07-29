@@ -12,6 +12,8 @@ Dispatch-priority correction: `2026-07-29T08:48Z`
 
 Terminal-fallback correction: `2026-07-29T09:08Z`
 
+Clean command-root correction: `2026-07-29T09:31Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
 
@@ -283,6 +285,21 @@ progress.
   The supervisor then auto-reassigned ownership from `Claude2` back to `Codex`
   at `2026-07-29T09:04:29Z`, proving the terminal-fallback path also violates
   provider-first L12 routing until #4365 is merged and live-promoted.
+- 09:31Z correction: #4365 latest head
+  `cbcb4574da48e353e3e33673f81dce5dc13e790d` has all visible Branch CI jobs
+  green and auto-merge enabled. A local clean repair commit
+  `adcb65105e9daf3124e95962a9a627562debf739` proved the dirty-file blocker,
+  but `worker_runner.py` still rejected it because that source SHA was not
+  merged into `origin/dev`. Live root was restored to merged SHA
+  `a6d56c366f7436574e6d2d241b47564558beac74` at `2026-07-29T09:37Z` so
+  worker bootstrap is not globally frozen. #4365 is not live until review,
+  merge, and promotion.
+- Remaining live gate: the failed Antigravity run at
+  `2026-07-29T09:20:19Z` put this review dispatch event into unchanged-task
+  cooldown until roughly `2026-07-29T09:35:19Z`; this is not a completed
+  review. `L12-VERIFY-OBS-001`, `L12-VERIFY-RUNTIME-001`, and
+  `L12-VERIFY-KNOW-001` are also still blocked from Claude2 redispatch by
+  failure-loop / chair-reassignment-triage state.
 - Scope:
   - supervisor dispatch ordering for `review` tasks;
   - provider quota selection when L12 tasks compete with non-L12 OPS tasks;
@@ -354,3 +371,40 @@ Observed after the 08:20Z rescue and updated at 08:48Z:
 - Runtime deps were temporarily rescued in `/tmp/l12-alpha-pydeps`; this is
   not durable completion and must be formalized by
   `SUP-L12-WORKER-PYDEPS-20260729`.
+
+09:31Z update:
+
+- #4365 durable PR head is now
+  `cbcb4574da48e353e3e33673f81dce5dc13e790d`; all visible Branch CI jobs are
+  green and auto-merge is enabled, but independent Antigravity review remains
+  outstanding.
+- Temporary local commit `adcb65105e9daf3124e95962a9a627562debf739` removed
+  the dirty `.orchestrator/supervisor.py` condition but was rejected by
+  worker_runner because it was not merged into `origin/dev`.
+- Live root was restored to merged SHA
+  `a6d56c366f7436574e6d2d241b47564558beac74` at `2026-07-29T09:37Z`; #4365
+  remains PR-only until independent review, merge, and promotion.
+- The failed `antigravity1-1` review worker at `2026-07-29T09:20:19Z` failed
+  before model work due to the dirty-command-root guard and only created a
+  cooldown blocker; it is not review evidence.
+- Current dispatch blockers are factual and still open:
+  - `SUP-L12-REVIEW-PRIORITY-GATE-20260729`: waiting for cooldown expiry and
+    Antigravity exact review of #4365 `cbcb4574...`;
+  - `L12-VERIFY-OBS-001`: Claude2 reviewer is blocked by failure-loop /
+    chair-reassignment-triage state;
+  - `L12-VERIFY-RUNTIME-001` and `L12-VERIFY-KNOW-001`: Claude2 owner work is
+    blocked by the same failure-loop / chair-reassignment-triage state.
+
+## Final audit result
+
+Not complete. The immediate next work is:
+
+1. Finish FE product proof or keep `L12-FE-TRUTH-001` blocked.
+2. Clear the supervisor cooldown/failure-loop/chair-triage gates without
+   editing `.orchestrator/config.json`, then dispatch Antigravity/Claude2
+   workers again.
+3. Restart Runtime verifier when Claude2 can actually run.
+4. Restart Knowledge verifier when Claude2 can actually run.
+5. Replace Learning verifier fake proof with real service-boundary proof.
+6. Complete Observability review/repair with real durable readback proof.
+7. Only then run Hosted and Closeout.

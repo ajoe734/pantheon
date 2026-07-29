@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T09:08:00Z",
+  "updated_at": "2026-07-29T09:31:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
@@ -95,10 +95,10 @@
   "fleet_checkpoint_2026_07_29T0904Z": {
     "priority_gate_pr": {
       "pr": 4365,
-      "head": "08fec4999c7a542ef7debf6913e809091164e3d8",
+      "head": "cbcb4574da48e353e3e33673f81dce5dc13e790d",
       "base": "dev",
       "status": "open",
-      "visible_checks": "rerunning_after_provider_first_fallback_update",
+      "visible_checks": "success",
       "merge_state": "BLOCKED",
       "auto_merge": "enabled"
     },
@@ -124,12 +124,42 @@
         }
       ],
       "bad_reassignment": "After repeated Claude2 terminal/missing-process handling, the supervisor auto-reassigned SUP-L12-REVIEW-PRIORITY-GATE-20260729 back to Codex at 2026-07-29T09:04:29Z.",
-      "durable_fix": "#4365 head 08fec4999 adds L12/SUP-L12 provider-first fallback filtering so Claude2/Antigravity terminal failures cannot fall back to Codex/Codex2 unless an Antigravity/Claude-family candidate is viable."
+      "durable_fix": "#4365 head cbcb4574 adds L12/SUP-L12 provider-first fallback filtering while preserving review-tier-only L12 priority so Claude2/Antigravity terminal failures cannot fall back to Codex/Codex2 unless an Antigravity/Claude-family candidate is viable."
     },
     "not_complete": [
-      "#4365 must merge and be promoted to the live supervisor command root before the fallback guard is effective",
+      "#4365 still needs independent Antigravity review and branch-protection merge",
       "L12-VERIFY-OBS-001 still waits for exact Claude2 review of PR #4364",
-      "The live supervisor remains on runtime SHA a6d56c366f7436574e6d2d241b47564558beac74 until a reviewed merge/promotion happens"
+      "The live supervisor has a temporary local command-root commit until #4365 is merged and promoted from dev"
+    ]
+  },
+  "fleet_checkpoint_2026_07_29T0931Z": {
+    "priority_gate_pr": {
+      "pr": 4365,
+      "head": "cbcb4574da48e353e3e33673f81dce5dc13e790d",
+      "visible_checks": "success",
+      "auto_merge": "enabled",
+      "merge_state": "BLOCKED",
+      "review": "pending_antigravity_exact_head_review"
+    },
+    "live_command_root": {
+      "temporary_commit_attempt": "adcb65105e9daf3124e95962a9a627562debf739",
+      "temporary_commit_supervisor_matched_pr_head": true,
+      "temporary_commit_rejected_by_worker_runner": "PANTHEON_COMMAND_ROOT source SHA adcb65105e9daf3124e95962a9a627562debf739 is not merged into origin/dev",
+      "restored_merged_runtime_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+      "restored_at": "2026-07-29T09:37:00Z",
+      "config_changed": false,
+      "reason": "Dirty live supervisor.py patch blocked worker_runner; local clean commit also blocked because command-root SHA must be merged into origin/dev. #4365 must merge before live promotion."
+    },
+    "dispatch_blockers": {
+      "SUP-L12-REVIEW-PRIORITY-GATE-20260729": "Antigravity review event is in unchanged-task cooldown after the 2026-07-29T09:20:19Z worker failed before model work due to the dirty command-root guard.",
+      "L12-VERIFY-OBS-001": "Claude2 review is blocked by failure_loop and chair_reassignment_triage state.",
+      "L12-VERIFY-RUNTIME-001": "Claude2 owner redispatch is blocked by failure_loop and chair_reassignment_triage state.",
+      "L12-VERIFY-KNOW-001": "Claude2 owner redispatch is blocked by failure_loop and chair_reassignment_triage state."
+    },
+    "not_complete": [
+      "No new Antigravity or Claude2 model work completed after the clean command-root repair attempt at this checkpoint.",
+      "Do not count the 09:20 Antigravity worker as review evidence.",
+      "Cooldown/failure-loop/chair-triage recovery plus #4365 review/merge/promotion remains required before the 12 loop lanes can progress."
     ]
   },
   "waves": [
