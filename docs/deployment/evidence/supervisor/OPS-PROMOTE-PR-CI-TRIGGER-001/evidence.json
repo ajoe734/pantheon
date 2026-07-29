@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "in_progress",
-  "generated_at": "2026-07-29T04:54:47Z",
+  "generated_at": "2026-07-29T08:25:56Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -224,10 +224,10 @@
   },
   "current_dev_refresh": {
     "review_reopen_context_anchor_commit": "13583c5ea8b54fd418453ba47a9b4bd0a5f2cb07",
-    "reviewed_head": "c89bff92a314641714c771971492385d576c1ccb",
+    "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
     "reviewed_head_ci": {
-      "push_run": 30422862189,
-      "pull_request_run": 30422863646,
+      "push_run": 30423656277,
+      "pull_request_run": 30423658834,
       "github_actions_check_count": 8,
       "all_github_actions_checks_successful": true,
       "required_contexts": {
@@ -247,6 +247,10 @@
       {
         "base_commit": "3eb6a6bd86093a0296fcd18871e0f014a4292e7b",
         "base_update_merge_commit": "8d17cdbaf90d1469c36d111a5002ef95b6a3336c"
+      },
+      {
+        "base_commit": "22fb0b6ba2c1beccfd55a32b3e48bca250375192",
+        "base_update_merge_commit": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b"
       }
     ],
     "scope_changed": false,
@@ -267,16 +271,17 @@
     },
     "pre_push_pr_state": {
       "pr": 4262,
-      "head": "c89bff92a314641714c771971492385d576c1ccb",
+      "head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
       "base": "dev",
       "merge_state": "BEHIND",
       "auto_merge_enabled": false,
       "github_actions_check_count": 8,
       "all_github_actions_checks_successful": true,
-      "external_commit_status_count": 0,
+      "external_commit_status_count": 1,
+      "canonical_review_gate": "failure",
       "strict_base_required": true
     },
-    "next": "commit and push the current evidence refresh, reacquire Branch CI on the resulting exact PR head, obtain Codex2 exact-head approval, and merge through the governed integrator"
+    "next": "compose current origin/dev, commit and push this exact-head evidence refresh, reacquire Branch CI on the resulting PR head, obtain Codex2 exact-head approval, and merge through the governed integrator"
   },
   "delivery": {
     "implementation_pr": 4258,
@@ -297,12 +302,12 @@
     "rest_followup_pr": 4262,
     "rest_followup_code_commit": "c0254c6faa70b9bd18b6132567cb8cf87b46c136",
     "rest_followup_pre_evidence_head": "25d8f0764352369dbb6394694627e05d29087448",
-    "rest_followup_head": "c89bff92a314641714c771971492385d576c1ccb",
+    "rest_followup_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
     "rest_followup_merge_commit": null,
     "rest_followup_checks": {
-      "observed_head": "c89bff92a314641714c771971492385d576c1ccb",
-      "push_run": 30422862189,
-      "pull_request_run": 30422863646,
+      "observed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+      "push_run": 30423656277,
+      "pull_request_run": 30423658834,
       "required_contexts": {
         "Commit trailers": "success",
         "Runtime mirror guard": "success",
@@ -313,8 +318,8 @@
       }
     },
     "merge_gate": {
-      "observed_at": "2026-07-29T04:52:31Z",
-      "observed_head": "c89bff92a314641714c771971492385d576c1ccb",
+      "observed_at": "2026-07-29T05:04:54Z",
+      "observed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
       "pr_state": "open",
       "mergeable_state": "behind",
       "auto_merge_enabled": false,
@@ -324,7 +329,7 @@
         "Pantheon root merge freeze 2026-07-27"
       ],
       "head_check_runs": 8,
-      "head_commit_statuses": 0,
+      "head_commit_statuses": 1,
       "owner_rescue_requires_fresh_head_gates": true,
       "waiting_for": [
         "current dev composition push and fresh Branch CI",
@@ -382,8 +387,8 @@
     "decision": null,
     "latest_reopened_review": {
       "reviewer": "Codex2",
-      "reviewed_head": "c89bff92a314641714c771971492385d576c1ccb",
-      "reviewed_at": "2026-07-29T04:47:38Z",
+      "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+      "reviewed_at": "2026-07-29T05:04:54Z",
       "decision": "reopened_for_stale_base_and_stale_evidence",
       "implementation_finding": "REST repair is sound at the reviewed head",
       "verification": {
@@ -391,7 +396,7 @@
         "pytest": "70 focused tests passed",
         "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed",
         "live_read_only": "26 promote PRs discovered through REST; PR 4138 exact head had zero check runs",
-        "exact_head_ci": "push run 30422862189 and pull-request run 30422863646 supplied eight successful Branch CI checks"
+        "exact_head_ci": "push run 30423656277 and pull-request run 30423658834 supplied eight successful Branch CI checks"
       },
       "required_changes": [
         "compose the latest origin/dev into the task branch",

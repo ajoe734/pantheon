@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Codex preserved Codex2's reopen context in 13583c5ea8b54fd418453ba47a9b4bd0a5f2cb07, composed dev b1527e868654fb93765b3e5788adeea1f5e869a2 through d63ff5f7ad2a934b8fc9e2ed31179bf1f9fb5b1c and the next dev tip 3eb6a6bd86093a0296fcd18871e0f014a4292e7b through 8d17cdbaf90d1469c36d111a5002ef95b6a3336c, and repeated the 22 unittest / 70 pytest / compile / YAML / JSON / diff / live REST validation successfully. The refreshed evidence now records reviewed head c89bff92 and its successful push/pull_request runs 30422862189/30422863646. Commit and push this current evidence head, reacquire Branch CI, and return to Codex2 for exact-head review. Fresh promote auto-merge proof and evidence-based stale PR retirement remain required after merge before done.
+- Next: Reviewer verification passed for the REST repair (22 unittest, 70 pytest, py_compile, YAML/JSON/diff, live REST; exact-head push/PR CI 8/8), but approval is fail-closed: current origin/dev 89e1e80c69b688df80d6ccb2bdc2e3d4a9041d3c is not an ancestor of reviewed head 1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b, and committed evidence.json still binds prior head c89bff92a314641714c771971492385d576c1ccb with runs 30422862189/30422863646 rather than 1ed3109d with runs 30423656277/30423658834. Compose latest origin/dev, commit the 1ed3109d CI evidence, push the resulting exact head, reacquire push and pull_request Branch CI, then return that new head for review. Fresh promote proof and evidence-based stale PR retirement remain closeout follow-ups.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
