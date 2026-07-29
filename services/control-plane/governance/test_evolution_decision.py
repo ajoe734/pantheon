@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -191,11 +191,11 @@ class TestEvolutionDecisionLifecycle(unittest.TestCase):
             EvolutionActorRole.EVOLUTION_CONTROLLER,
             "evolution-controller-01",
             ExecutionResult(
-                status=ExecutionStatus.SUBMITTED,
+                status=ExecutionStatus.SUCCEEDED,
                 plane=ExecutionPlane.RUNTIME,
                 executed_at="2026-04-10T05:00:00Z",
                 execution_ref_id="freeze-order-001",
-                outcome_summary="Freeze order submitted to runtime manager.",
+                outcome_summary="Freeze order confirmed terminal by runtime manager.",
             ),
             cooldown_ends_at="2026-04-17T05:00:00Z",
             observation_window_ends_at="2026-04-24T05:00:00Z",
@@ -221,11 +221,11 @@ class TestEvolutionDecisionLifecycle(unittest.TestCase):
                 "admin",
                 "admin-01",
                 ExecutionResult(
-                    status=ExecutionStatus.SUBMITTED,
+                    status=ExecutionStatus.SUCCEEDED,
                     plane=ExecutionPlane.RUNTIME,
                     executed_at="2026-04-10T05:00:00Z",
                     execution_ref_id="freeze-order-001",
-                    outcome_summary="Freeze order submitted to runtime manager.",
+                    outcome_summary="Freeze order confirmed terminal by runtime manager.",
                 ),
                 cooldown_ends_at="2026-04-17T05:00:00Z",
                 observation_window_ends_at="2026-04-24T05:00:00Z",
@@ -311,6 +311,109 @@ class TestEvolutionDecisionValidation(unittest.TestCase):
 
 
 class TestEvolutionDecisionStore(unittest.TestCase):
+    def test_postgres_write_uses_cross_replica_table_fence(self):
+        connection = MagicMock()
+        rows = MagicMock()
+        rows.fetchall.return_value = []
+        connection.execute.side_effect = [None, rows, None]
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+
+        postgres = MagicMock()
+        postgres.table = '"evolution"."decisions"'
+        postgres._connect.return_value = connection_context
+
+        with patch(
+            "evolution_decision.PostgresJsonOwnerStore",
+            return_value=postgres,
+        ):
+            store = EvolutionDecisionStore(
+                backend="postgres",
+                dsn="postgresql://evolution.test/pantheon",
+            )
+            store.put(make_decision())
+
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        self.assertTrue(
+            any("LOCK TABLE" in statement for statement in statements),
+            "the active-decision check must be fenced across service replicas",
+        )
+        self.assertTrue(any("INSERT INTO" in statement for statement in statements))
+
+    def test_postgres_fence_enforces_active_uniqueness_per_tenant(self):
+        existing = make_decision(decision_id="evo-existing").to_dict()
+        connection = MagicMock()
+        rows = MagicMock()
+        rows.fetchall.return_value = [("evo-existing", existing)]
+        connection.execute.side_effect = [None, rows]
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+
+        postgres = MagicMock()
+        postgres.table = '"evolution"."decisions"'
+        postgres._connect.return_value = connection_context
+        postgres._decode_payload.side_effect = lambda payload: payload
+
+        with patch(
+            "evolution_decision.PostgresJsonOwnerStore",
+            return_value=postgres,
+        ):
+            store = EvolutionDecisionStore(
+                backend="postgres",
+                dsn="postgresql://evolution.test/pantheon",
+            )
+            with self.assertRaisesRegex(
+                EvolutionDecisionError,
+                "already has an active EvolutionDecision",
+            ):
+                store.put(make_decision(decision_id="evo-competing"))
+
+        self.assertFalse(
+            any(
+                "INSERT INTO" in str(call.args[0])
+                for call in connection.execute.call_args_list
+            )
+        )
+
+    def test_postgres_active_uniqueness_is_tenant_scoped(self):
+        existing = make_decision(
+            decision_id="evo-existing",
+            tenant_id="tenant-a",
+        ).to_dict()
+        connection = MagicMock()
+        rows = MagicMock()
+        rows.fetchall.return_value = [("evo-existing", existing)]
+        connection.execute.side_effect = [None, rows, None]
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = connection
+
+        postgres = MagicMock()
+        postgres.table = '"evolution"."decisions"'
+        postgres._connect.return_value = connection_context
+        postgres._decode_payload.side_effect = lambda payload: payload
+
+        with patch(
+            "evolution_decision.PostgresJsonOwnerStore",
+            return_value=postgres,
+        ):
+            store = EvolutionDecisionStore(
+                backend="postgres",
+                dsn="postgresql://evolution.test/pantheon",
+            )
+            store.put(
+                make_decision(
+                    decision_id="evo-other-tenant",
+                    tenant_id="tenant-b",
+                )
+            )
+
+        self.assertTrue(
+            any(
+                "INSERT INTO" in str(call.args[0])
+                for call in connection.execute.call_args_list
+            )
+        )
+
     def test_single_active_rule_blocks_parallel_target(self):
         store = EvolutionDecisionStore()
         first = make_decision(decision_id="evo-001")

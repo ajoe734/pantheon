@@ -1,0 +1,198 @@
+{
+  "schema_version": "pantheon.ops.provider_first_readiness_evidence.v2",
+  "task": {
+    "id": "OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+    "title": "Provider-first readiness refresh exact-head gate and merge",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "status_snapshot_at": "2026-07-28T21:50:43Z",
+    "status_snapshot_note": "Pre-handoff owner snapshot from governed ai-status.sh show; later lifecycle transitions do not invalidate the observation-cut evidence.",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728/evidence.json",
+    "observation_cut": "2026-07-28T19:30:00Z"
+  },
+  "scope": {
+    "owned_layer": "Live supervisor provider-first readiness evidence and fleet dispatch proof for Antigravity and Claude families.",
+    "not_changing": "Provider configuration (.orchestrator/config.json), provider credentials, dispatch policy, product services, hosted FE/BFF deployment.",
+    "composes_with": [
+      "OPS-L12-PROVIDER-FIRST-READINESS-20260728",
+      "L12-FLEET-001"
+    ]
+  },
+  "provider_architecture_distinction": {
+    "supervisor_antigravity_cli": {
+      "provider_id": "antigravity",
+      "delivery_mode": "antigravity",
+      "cli": ".orchestrator/bin/agy",
+      "description": "Supervisor's live auto worker provider for Antigravity worker runs."
+    },
+    "openclaw_assistant_provider": {
+      "provider_id": "openclaw",
+      "delivery_mode": "openclaw_adapter",
+      "description": "Upstream OpenClaw assistant gateway for Management AI/OpenClaw dev bridge integration."
+    }
+  },
+  "forced_probes": {
+    "claude": {
+      "provider": "claude",
+      "kind": "claude",
+      "ready": false,
+      "status": "auth_not_ready",
+      "method": "claude_auth_status_refresh",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:28Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "fail_closed_not_dispatchable"
+    },
+    "claude2": {
+      "provider": "claude2",
+      "kind": "claude",
+      "ready": true,
+      "status": "ready",
+      "method": "claude_auth_status_refresh",
+      "error": null,
+      "checked_at": "2026-07-28T19:29:29Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "ready_dispatchable"
+    },
+    "claude1-1": {
+      "provider": "claude1-1",
+      "kind": "claude",
+      "ready": false,
+      "status": "auth_not_ready",
+      "method": "claude_auth_status_refresh",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:30Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "fail_closed_not_dispatchable"
+    },
+    "claude1-2": {
+      "provider": "claude1-2",
+      "kind": "claude",
+      "ready": false,
+      "status": "auth_not_ready",
+      "method": "claude_auth_status_refresh",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:31Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "fail_closed_not_dispatchable"
+    },
+    "claude1-3": {
+      "provider": "claude1-3",
+      "kind": "claude",
+      "ready": false,
+      "status": "auth_not_ready",
+      "method": "claude_auth_status_refresh",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:32Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "fail_closed_not_dispatchable"
+    },
+    "claude1-4": {
+      "provider": "claude1-4",
+      "kind": "claude",
+      "ready": false,
+      "status": "auth_not_ready",
+      "method": "claude_auth_status_refresh",
+      "error": "Claude CLI authentication is missing or OAuth refresh failed.",
+      "checked_at": "2026-07-28T19:29:34Z",
+      "account_group": "claude_account_38214705729dc49b",
+      "verdict": "fail_closed_not_dispatchable"
+    },
+    "antigravity": {
+      "provider": "antigravity",
+      "kind": "antigravity",
+      "ready": true,
+      "status": "ready",
+      "method": "agy_prompt_oauth",
+      "error": null,
+      "checked_at": "2026-07-28T19:29:39Z",
+      "metadata": {
+        "oauth_token": "/home/lupin/.gemini/antigravity-cli/antigravity-oauth-token",
+        "probe_model": "gemini-3.6-flash-low",
+        "rotation_slot": "primary"
+      },
+      "verdict": "ready_dispatchable"
+    }
+  },
+  "dispatch_proof": {
+    "antigravity_worker_run": {
+      "worker_run_id": "antigravity1-1-20260728T185208Z-a6cb5d2a",
+      "provider": "antigravity1-1",
+      "target_agent": "Antigravity",
+      "queue_event_id": "evt-20260728T185119Z-ff2129b2",
+      "started_at": "2026-07-28T18:52:08Z",
+      "finished_at": "2026-07-28T18:54:29Z",
+      "exit_code": 0,
+      "status": "completed",
+      "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260728T185208Z-a6cb5d2a.json",
+      "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T185208347695Z-antigravity1-1-antigravity1_1-0bd76c.log"
+    },
+    "current_antigravity_worker_run": {
+      "worker_run_id": "antigravity1-1-20260728T190729Z-8aeb78de",
+      "provider": "antigravity1-1",
+      "target_agent": "Antigravity",
+      "queue_event_id": "evt-20260728T190707Z-b52139da",
+      "started_at": "2026-07-28T19:07:29Z",
+      "finished_at": "2026-07-28T19:09:57Z",
+      "exit_code": 0,
+      "status": "completed",
+      "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/antigravity1-1-20260728T190729Z-8aeb78de.json",
+      "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T190729417957Z-antigravity1-1-antigravity1_1-840628.log"
+    },
+    "claude2_worker_runs": [
+      {
+        "worker_run_id": "claude2-20260728T193745Z-8bf75509",
+        "provider": "claude2",
+        "target_agent": "Claude2",
+        "started_at": "2026-07-28T19:37:46Z",
+        "finished_at": "2026-07-28T19:43:49Z",
+        "status": "failed",
+        "exit_code": 143,
+        "note": "Exit code 143 is supervisor reconciliation/termination truth, not a successful completion; it proves a real worker process was dispatched and managed by the supervisor.",
+        "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260728T193745Z-8bf75509.json",
+        "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T193745782933Z-claude2-claude2-21d117.log"
+      },
+      {
+        "worker_run_id": "claude2-20260728T195332Z-9d18c7ed",
+        "provider": "claude2",
+        "target_agent": "Claude2",
+        "started_at": "2026-07-28T19:53:32Z",
+        "finished_at": "2026-07-28T19:56:32Z",
+        "status": "failed",
+        "exit_code": 143,
+        "note": "Exit code 143 is supervisor reconciliation/termination truth, not a successful completion; it proves a real worker process was dispatched and managed by the supervisor.",
+        "status_path": "/home/lupin/pantheon/.orchestrator/worker-runtime/status/claude2-20260728T195332Z-9d18c7ed.json",
+        "log_path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/logs/20260728T195332131589Z-claude2-claude2-8ca33a.log"
+      }
+    ]
+  },
+  "fallback_truth": {
+    "claude_family_truth": "Claude family has partial readiness: claude slot and claude1-1..claude1-4 subslots are auth_not_ready (fail-closed), but claude2 slot is verified ready=true with real supervisor worker dispatches (claude2-20260728T193745Z-8bf75509 and claude2-20260728T195332Z-9d18c7ed, exit 143 supervisor reconciliation truth).",
+    "antigravity_success": "Antigravity provider passed forced probe (ready) via agy_prompt_oauth, successfully executing real supervisor worker runs (antigravity1-1-20260728T185208Z-a6cb5d2a and antigravity1-1-20260728T190729Z-8aeb78de)."
+  },
+  "verdict": {
+    "summary": "Supervisor Antigravity CLI provider is verified ready (ready=true) with real dispatch execution proven. Claude family is partially ready: primary claude slot and claude1-1..claude1-4 subslots are fail-closed (auth_not_ready), while claude2 slot is verified ready (ready=true) with real supervisor dispatch proof. Configuration remained unedited.",
+    "config_edited": false
+  },
+  "validation": {
+    "verified_at": "2026-07-28T21:57:43Z",
+    "pytest_suite": "services/openclaw-gateway-adapter/tests/",
+    "pytest_passed": 117,
+    "openclaw_smoke_command": "bash scripts/openclaw-smoke-test.sh",
+    "openclaw_smoke_passed": 6,
+    "manifest_checks": [
+      "python3 -m json.tool evidence.json",
+      "sha256sum -c evidence.sha256",
+      "git diff --check"
+    ],
+    "live_cross_check": {
+      "provider_capabilities_path": "/home/lupin/pantheon/.orchestrator/provider_capabilities.json",
+      "provider_probe_records_matched": 7,
+      "worker_status_records_matched": 4
+    }
+  }
+}

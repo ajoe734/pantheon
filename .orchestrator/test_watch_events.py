@@ -4,8 +4,10 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +15,27 @@ import watch_events
 
 
 class WatcherBookkeepingTests(unittest.TestCase):
+    def test_main_uses_locked_scan_without_reentering_runtime_lock(self) -> None:
+        config = {
+            "paths": {"provider_capabilities": "/tmp/provider-capabilities.json"},
+            "watcher": {"poll_interval_seconds": 2.0},
+        }
+        state: dict[str, object] = {}
+        with (
+            mock.patch.object(sys, "argv", ["watch_events.py", "--once"]),
+            mock.patch.object(watch_events, "load_config", return_value=config),
+            mock.patch.object(watch_events, "config_path", return_value=Path("/tmp/provider-capabilities.json")),
+            mock.patch.object(watch_events, "load_json", return_value={}),
+            mock.patch.object(watch_events, "runtime_state_lock", return_value=nullcontext()) as runtime_lock,
+            mock.patch.object(watch_events, "load_runtime_state", return_value=state),
+            mock.patch.object(watch_events, "run_scan", side_effect=AssertionError("main must not re-enter runtime lock")),
+            mock.patch.object(watch_events, "_run_scan_locked", return_value=False) as locked_scan,
+        ):
+            self.assertEqual(watch_events.main(), 0)
+
+        runtime_lock.assert_called_once()
+        locked_scan.assert_called_once_with(config, state, replay=False, provider_capabilities={})
+
     def test_run_scan_updates_snapshot_without_queueing_when_runtime_enqueue_disabled(self) -> None:
         config = {
             "schema": {

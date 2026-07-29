@@ -618,6 +618,21 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "tool_auth")
         self.assertFalse(result["transient"])
 
+    def test_classifies_require_authenticated_gh_session_as_tool_auth(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex2-1"}
+
+        for reason in (
+            "Require authenticated gh session. Run gh auth status.",
+            "Require authenticated `gh` session. Run `gh auth status`.",
+        ):
+            with self.subTest(reason=reason):
+                result = supervisor.classify_worker_failure(config, worker, reason)
+
+                self.assertEqual(result["kind"], "tool_auth")
+                self.assertFalse(result["transient"])
+                self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(result["kind"]))
+
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
 
@@ -6083,7 +6098,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
-            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "_run_scan_locked", return_value=False),
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
             mock.patch.object(supervisor, "prune_event_queue", return_value=False),
@@ -6133,7 +6148,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_runtime_state", side_effect=[dict(initial_state), dict(initial_state)]),
             mock.patch.object(supervisor, "prune_stale_approvals", return_value=False),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
-            mock.patch.object(supervisor, "run_scan", return_value=False),
+            mock.patch.object(supervisor, "_run_scan_locked", return_value=False),
             mock.patch.object(supervisor, "sync_coordination_files", return_value=False),
             mock.patch.object(supervisor, "poll_workers", return_value=False),
             mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
@@ -12682,6 +12697,111 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}},
         }
 
+    def _missing_worker_case(
+        self,
+        root: Path,
+        *,
+        task_id: str,
+        task_status: str,
+        owner: str,
+        reviewer: str,
+        dispatch_reason: str,
+        max_attempts: int,
+        runner_succeeded: bool = False,
+        pending_outbox_event: dict | None = None,
+    ) -> tuple[dict, dict, dict, mock.Mock]:
+        config = self._config(root)
+        config["worker_retry"] = {
+            "enabled": True,
+            "max_attempts": max_attempts,
+            "backoff_schedule_seconds": [0],
+            "jitter_seconds": 0,
+            "fallback_mode": None,
+        }
+        config["worker_reassignment"] = {"enabled": False}
+        status = {
+            "tasks": [
+                {
+                    "id": task_id,
+                    "status": task_status,
+                    "owner": owner,
+                    "reviewer": reviewer,
+                    "depends_on": [],
+                }
+            ],
+            "blockers": [],
+        }
+        if pending_outbox_event is not None:
+            status["status_activity_outbox"] = supervisor._status_activity_outbox(
+                [pending_outbox_event]
+            )
+        (root / "ai-status.json").write_text(
+            json.dumps(status),
+            encoding="utf-8",
+        )
+        event_id = f"evt-{task_id.lower()}"
+        (root / "event-queue.jsonl").write_text(
+            json.dumps(
+                {
+                    "event_id": event_id,
+                    "task_id": task_id,
+                    "target_agent": "codex",
+                    "message": "wake",
+                    "reason": dispatch_reason,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        worker = {
+            "run_id": f"run-{task_id.lower()}",
+            "status": "running",
+            "provider": "codex",
+            "agent_id": "codex",
+            "task_id": task_id,
+            "queue_event_id": event_id,
+            "pid": 987654,
+            "attempt_count": 1,
+            "retry_count": 0,
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+                "task_id": task_id,
+                "reason": dispatch_reason,
+            },
+        }
+        if runner_succeeded:
+            worker.update(
+                {
+                    "runner_status": "completed",
+                    "runner_finished_at": "2026-07-27T20:00:00Z",
+                    "exit_code": 0,
+                }
+            )
+        state = {
+            "queue": {
+                "events": {
+                    event_id: {
+                        "status": "started",
+                        "run_id": worker["run_id"],
+                    }
+                }
+            },
+            "workers": {worker["run_id"]: worker},
+        }
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+        self.assertTrue(changed)
+        return config, state, worker, write_activity_log
+
     def test_reconcile_runtime_requeues_started_event_without_active_worker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -12745,6 +12865,41 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 metrics["last_measurements"]["boot_reconciliation"]["counts"]["started_queue_records_requeued"],
                 1,
             )
+
+    def test_reconcile_queue_records_fails_started_event_when_worker_already_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            event_key = "dispatcher:Codex:OPS-PR-REVIEW-BEFORE-MERGE-GATE-001:latest"
+            state = {
+                "queue": {
+                    "events": {
+                        "evt-worker": {
+                            "status": "started",
+                            "run_id": "codex-run-failed",
+                            "event_key": event_key,
+                        }
+                    }
+                },
+                "workers": {
+                    "codex-run-failed": {
+                        "run_id": "codex-run-failed",
+                        "status": "failed",
+                        "queue_event_id": "evt-worker",
+                        "last_event_at": "2026-07-27T21:15:40Z",
+                        "last_error": "worker runner exited 143",
+                    }
+                },
+            }
+
+            changed = supervisor.reconcile_queue_records(config, state)
+
+            self.assertTrue(changed)
+            record = state["queue"]["events"]["evt-worker"]
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["processed_at"], "2026-07-27T21:15:40Z")
+            self.assertEqual(record["error"], "worker runner exited 143")
+            self.assertEqual(state["seen_event_keys"][event_key], "2026-07-27T21:15:40Z")
 
     def test_reconcile_runtime_redispatches_completed_review_worker_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -12878,64 +13033,199 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 status,
             )
 
-    def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
+    def test_reconcile_runtime_retries_missing_owner_with_bounded_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            config = self._config(root)
-            (root / "ai-status.json").write_text(
-                json.dumps(
-                    {
-                        "tasks": [
-                            {
-                                "id": "OPS-LEASE-002",
-                                "status": "in_progress",
-                                "owner": "Codex",
-                                "reviewer": "Claude",
-                                "depends_on": [],
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
+            _, state, worker, write_activity_log = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-RETRY",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=2,
             )
-            (root / "event-queue.jsonl").write_text(
-                json.dumps({"event_id": "evt-worker", "task_id": "OPS-LEASE-002", "target_agent": "codex"})
-                + "\n",
-                encoding="utf-8",
-            )
-            state = {
-                "queue": {"events": {"evt-worker": {"status": "started", "run_id": "codex-run-dead"}}},
-                "workers": {
-                    "codex-run-dead": {
-                        "run_id": "codex-run-dead",
-                        "status": "running",
-                        "provider": "codex",
-                        "agent_id": "codex",
-                        "task_id": "OPS-LEASE-002",
-                        "queue_event_id": "evt-worker",
-                        "pid": 987654,
-                    }
-                },
-            }
 
-            with (
-                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
-                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-            ):
-                changed = supervisor.reconcile_runtime_on_boot(config, state)
-
-            self.assertTrue(changed)
-            worker = state["workers"]["codex-run-dead"]
-            self.assertEqual(worker["status"], "failed")
-            self.assertEqual(state["queue"]["events"]["evt-worker"]["status"], "failed")
+            self.assertEqual(worker["status"], "retry_backoff")
+            self.assertEqual(worker["retry_count"], 1)
             self.assertIn("process missing", worker["last_error"])
-            activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
-            self.assertEqual(activity_types, ["worker_failed", "worker_runtime_metrics"])
+            event = next(
+                call.args[1]
+                for call in write_activity_log.call_args_list
+                if call.args[1]["type"] == "worker_retry_scheduled"
+            )
+            self.assertEqual(event["task_id"], "OPS-LEASE-RETRY")
+            self.assertEqual(event["worker_run_id"], "run-ops-lease-retry")
+            self.assertEqual(event["provider"], "codex")
+            self.assertEqual(event["outcome"], "retry")
+            self.assertIn("process missing", event["reason"])
             metrics = state["worker_runtime_metrics"]
-            self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
+            self.assertEqual(metrics["totals"]["missing_process_workers_retried"], 1)
             self.assertEqual(
-                metrics["last_measurements"]["boot_reconciliation"]["counts"]["missing_process_workers_failed"],
+                metrics["last_measurements"]["boot_reconciliation"]["counts"][
+                    "missing_process_workers_retried"
+                ],
                 1,
+            )
+
+    def test_reconcile_runtime_blocks_missing_owner_after_retry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, state, worker, write_activity_log = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-OWNER",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=0,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            queue_record = state["queue"]["events"]["evt-ops-lease-owner"]
+            self.assertEqual(queue_record["status"], "failed")
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            task = status["tasks"][0]
+            blocker = status["blockers"][0]
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(blocker["task_id"], "OPS-LEASE-OWNER")
+            self.assertEqual(blocker["worker_run_id"], "run-ops-lease-owner")
+            self.assertEqual(blocker["provider"], "codex")
+            self.assertIn("process missing", blocker["failure_reason"])
+            self.assertEqual(blocker["previous_status"], "in_progress")
+            activity_types = [
+                call.args[1]["type"] for call in write_activity_log.call_args_list
+            ]
+            self.assertEqual(
+                activity_types,
+                [
+                    "task_missing_worker_blocked",
+                    "worker_failed",
+                    "worker_runtime_metrics",
+                ],
+            )
+
+    def test_reconcile_runtime_composes_pending_outbox_before_terminal_outcome(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pending_event = {
+                "event_id": "pending-before-boot-crash",
+                "ts": "2026-07-27T23:59:00Z",
+                "agent": "Codex2",
+                "type": "task_progress",
+                "task_id": "OTHER-TASK",
+                "message": "Pending audit event from the interrupted transaction.",
+            }
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-PENDING-OUTBOX",
+                task_status="in_progress",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=0,
+                pending_outbox_event=pending_event,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-lease-pending-outbox"]["status"],
+                "failed",
+            )
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["tasks"][0]["status"], "blocked")
+            self.assertEqual(len(status["blockers"]), 1)
+            blocker = status["blockers"][0]
+            self.assertEqual(blocker["task_id"], "OPS-LEASE-PENDING-OUTBOX")
+            self.assertEqual(
+                blocker["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(blocker["provider"], "codex")
+            self.assertIn("process missing", blocker["failure_reason"])
+
+            outbox = status["status_activity_outbox"]
+            self.assertEqual(
+                [event["event_id"] for event in outbox["events"][:1]],
+                [pending_event["event_id"]],
+            )
+            terminal_event = outbox["events"][1]
+            self.assertEqual(
+                terminal_event["task_id"], "OPS-LEASE-PENDING-OUTBOX"
+            )
+            self.assertEqual(
+                terminal_event["worker_run_id"], "run-ops-lease-pending-outbox"
+            )
+            self.assertEqual(terminal_event["provider"], "codex")
+            self.assertIn("process missing", terminal_event["reason"])
+            self.assertEqual(
+                outbox,
+                supervisor._status_activity_outbox(outbox["events"]),
+            )
+
+    def test_reconcile_runtime_blocks_missing_reviewer_after_retry_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, _, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-REVIEW",
+                task_status="review",
+                owner="Claude",
+                reviewer="Codex",
+                dispatch_reason=supervisor.REASON_REVIEW_READY,
+                max_attempts=0,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            task = status["tasks"][0]
+            blocker = status["blockers"][0]
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["waiting_for"], "Codex")
+            self.assertEqual(blocker["previous_status"], "review")
+            self.assertEqual(blocker["dispatch_reason"], supervisor.REASON_REVIEW_READY)
+
+    def test_reconcile_runtime_blocks_missing_closeout_worker_after_clean_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-LEASE-FINALIZE",
+                task_status="review_approved",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_FINALIZE,
+                max_attempts=0,
+                runner_succeeded=True,
+            )
+
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-lease-finalize"]["status"],
+                "failed",
+            )
+            status = json.loads(
+                Path(config["paths"]["status_file"]).read_text(encoding="utf-8")
+            )
+            task = status["tasks"][0]
+            blocker = status["blockers"][0]
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["waiting_for"], "Codex")
+            self.assertEqual(blocker["previous_status"], "review_approved")
+            self.assertEqual(
+                blocker["dispatch_reason"],
+                supervisor.REASON_OWNED_FINALIZE,
+            )
+            self.assertIn(
+                "before the task reached a terminal status",
+                blocker["failure_reason"],
             )
 
     def test_reconcile_runtime_expires_stale_progress_despite_fresh_heartbeat(self) -> None:
@@ -14125,6 +14415,34 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         }
         self._refresh(probe, state)
         self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
+
+    def test_live_success_probe_persists_recovered_capability(self) -> None:
+        state: dict[str, object] = {}
+        report = {"providers": {"codex2": {"auth_ready": False}}}
+        probe = {
+            "provider": "codex2",
+            "ready": True,
+            "status": "ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=probe),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            health = supervisor.refresh_provider_auth_before_dispatch(
+                self.config,
+                report,
+                "codex2",
+                state,
+            )
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.HEALTHY)
+        self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
+        write_caps.assert_called_once_with(self.config, report=report)
 
     def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
         """The observed regression: an auth pause reopened the lane on a timer."""
