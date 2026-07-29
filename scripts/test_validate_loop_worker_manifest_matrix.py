@@ -25,6 +25,7 @@ def _matrix() -> dict:
                     "status": "pass",
                     "environment_all_of": ["SERVICE_TOKEN"],
                     "environment_any_of": [],
+                    "environment_equals": {"AUTH_MODE": "token"},
                     "rationale": "The target API requires a bearer token.",
                 },
                 "durable_volume": {
@@ -68,7 +69,10 @@ def _compose(*, include_stateless_auth: bool = False) -> dict:
     return {
         "services": {
             "durable-worker": {
-                "environment": {"SERVICE_TOKEN": "redacted-nonempty"},
+                "environment": {
+                    "AUTH_MODE": "token",
+                    "SERVICE_TOKEN": "redacted-nonempty",
+                },
                 "volumes": [
                     {
                         "type": "volume",
@@ -143,6 +147,20 @@ def test_named_volume_target_drift_fails() -> None:
 
     assert report["matrix_consistent"] is False
     assert any("named-volume targets differ" in error for error in report["errors"])
+
+
+def test_auth_mode_value_drift_fails() -> None:
+    compose = _compose()
+    compose["services"]["durable-worker"]["environment"]["AUTH_MODE"] = "disabled"
+
+    report = validator.validate_matrix(
+        matrix=_matrix(),
+        compose=compose,
+        required_workers=["durable-worker", "stateless-worker"],
+    )
+
+    assert report["matrix_consistent"] is False
+    assert any("AUTH_MODE=token" in error for error in report["errors"])
 
 
 def test_required_worker_inventory_drift_fails() -> None:

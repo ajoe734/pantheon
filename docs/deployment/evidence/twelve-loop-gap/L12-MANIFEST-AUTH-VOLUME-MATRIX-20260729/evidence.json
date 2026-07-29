@@ -1,0 +1,85 @@
+{
+  "schema_version": "l12_manifest_auth_volume_matrix_evidence.v1",
+  "task": {
+    "id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+    "parent_task_id": "L12-MANIFEST-001",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "ready_for_independent_review",
+    "repository": "ajoe734/pantheon",
+    "branch": "task/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729"
+  },
+  "scope": {
+    "owned_layer": "Per-required-worker auth and durable-volume applicability, rendered-Compose readback, and a fail-closed matrix validator.",
+    "not_changing": [
+      "docker-compose.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      ".orchestrator/config.json",
+      "service auth implementations",
+      "L12-MANIFEST-001 owner evidence"
+    ],
+    "composes_with": "The L12-MANIFEST-001 owner may consume the merged validator and matrix, repair the declared auth gaps in its uniquely owned Compose surface, and cite the zero-volume adjudications in its recut readback."
+  },
+  "artifacts": [
+    "scripts/validate_loop_worker_manifest_matrix.py",
+    "scripts/test_validate_loop_worker_manifest_matrix.py",
+    "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json",
+    "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/manifest-readback.md"
+  ],
+  "findings": {
+    "required_worker_count": 27,
+    "auth_pass_count": 17,
+    "auth_gap_count": 10,
+    "durable_volume_pass_count": 27,
+    "durable_volume_gap_count": 0,
+    "zero_named_volume_count": 6,
+    "zero_named_volume_services": [
+      "policy-learning-shadow-eval-scheduler",
+      "deployment-outbox-consumer",
+      "paper-signal-producer",
+      "reconciliation-drift-scheduler",
+      "evolution-daily-sweep-scheduler",
+      "search-index-scheduler"
+    ],
+    "auth_gap_services": [
+      "training-session-svc",
+      "training-session-preview-worker",
+      "consultation-svc",
+      "deployment-outbox-consumer",
+      "capital",
+      "reconciliation-drift-svc",
+      "reconciliation-drift-consumer",
+      "reconciliation-drift-scheduler",
+      "reconciliation-drift-incident-listener",
+      "operator-bff"
+    ],
+    "adjudication": "All six zero-named-volume workers are stateless clients whose durable claims, retries, idempotency, queues, or results are owned by a named API/store. They are not missing-volume repairs. The ten auth gaps are not waived: default validator admission remains fail-closed."
+  },
+  "validation": {
+    "commands": [
+      "python3 scripts/dev/provision_python_distribution.py",
+      "$PANTHEON_TEST_PY -m pytest -q scripts/test_validate_loop_worker_manifest_matrix.py",
+      "python3 scripts/validate_loop_worker_manifest_matrix.py --matrix docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json --allow-declared-gaps",
+      "python3 scripts/validate_loop_worker_manifest_matrix.py --matrix docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json",
+      "docker compose -f docker-compose.yml --env-file /dev/null config --quiet",
+      "python3 -m json.tool docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json",
+      "python3 -m json.tool docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/evidence.json",
+      "git diff --check"
+    ],
+    "expected": {
+      "unit_tests": "pass",
+      "audit_mode": "pass with declared_gap_count=10",
+      "default_admission": "fail because declared gaps are intentionally unresolved",
+      "compose_config": "pass",
+      "json_syntax": "pass",
+      "diff_check": "pass"
+    }
+  },
+  "independent_review": {
+    "reviewer": "Antigravity",
+    "status": "pending",
+    "decision": null,
+    "reviewed_at": null,
+    "notes": []
+  }
+}

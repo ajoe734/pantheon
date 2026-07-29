@@ -146,9 +146,19 @@ def _auth_expectation_satisfied(
         field=f"{field}.environment_any_of",
         errors=errors,
     )
+    equals = block.get("environment_equals", {})
+    if not isinstance(equals, Mapping) or any(
+        not isinstance(key, str) or not key.strip()
+        for key in equals
+    ):
+        errors.append(f"{field}.environment_equals must be an object with string keys")
+        equals = {}
     missing = [key for key in all_of if not _nonempty_environment(environment, key)]
     if any_of and not any(_nonempty_environment(environment, key) for key in any_of):
         missing.append("any_of(" + ",".join(any_of) + ")")
+    for key, expected in equals.items():
+        if str(environment.get(key, "")) != str(expected):
+            missing.append(f"{key}={expected}")
     return not missing, missing
 
 
@@ -298,7 +308,7 @@ def validate_matrix(
                 )
             has_expectation = bool(auth.get("environment_all_of")) or bool(
                 auth.get("environment_any_of")
-            )
+            ) or bool(auth.get("environment_equals"))
             satisfied = True
             missing: list[str] = []
             if expectation_applies:
