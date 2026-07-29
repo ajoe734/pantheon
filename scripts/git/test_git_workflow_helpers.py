@@ -868,6 +868,11 @@ class PublishPromoteTests(unittest.TestCase):
                 "request_verified_auto_merge",
                 return_value={"auto_merge_enabled": True, "merged": False},
             ) as auto_merge,
+            mock.patch.object(
+                publish_promote,
+                "rerun_action_required_branch_ci",
+                return_value=1234,
+            ) as rerun_branch_ci,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             run_git.side_effect = lambda *args: "a" * 40 if args == ("rev-parse", "HEAD") else ""
@@ -898,6 +903,8 @@ class PublishPromoteTests(unittest.TestCase):
             ],
             commands,
         )
+        rerun_branch_ci.assert_called_once_with("a" * 40, 42)
+        self.assertEqual(result["pull_request_ci_rerun"], 1234)
         auto_merge.assert_called_once_with("promote/v2026.20.0", 42)
 
     def test_open_candidate_is_idempotent_when_pr_exists(self) -> None:
@@ -981,6 +988,11 @@ class PublishPromoteTests(unittest.TestCase):
                 "request_verified_auto_merge",
                 return_value={"auto_merge_enabled": True, "merged": False},
             ) as auto_merge,
+            mock.patch.object(
+                publish_promote,
+                "rerun_action_required_branch_ci",
+                return_value=5678,
+            ) as rerun_branch_ci,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
@@ -1002,7 +1014,92 @@ class PublishPromoteTests(unittest.TestCase):
             ],
             commands,
         )
+        rerun_branch_ci.assert_called_once_with("c" * 40, 42)
+        self.assertEqual(result["pull_request_ci_rerun"], 5678)
         auto_merge.assert_called_once_with("promote/v2026.20.0", 42)
+
+    def test_reruns_exact_action_required_branch_ci_placeholder(self) -> None:
+        row = {
+            "id": 30451895166,
+            "path": ".github/workflows/branch-ci.yml",
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "action_required",
+            "head_sha": "d" * 40,
+            "pull_requests": [{"number": 4378}],
+        }
+        completed = subprocess.CompletedProcess(
+            ["gh", "api"], returncode=0, stdout="{}", stderr=""
+        )
+        with (
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_rows",
+                return_value=([row], None),
+            ) as lookup,
+            mock.patch.object(
+                publish_promote.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            run_id = publish_promote.rerun_action_required_branch_ci(
+                "d" * 40,
+                4378,
+                discovery_attempts=1,
+                discovery_interval=0,
+            )
+
+        self.assertEqual(run_id, 30451895166)
+        self.assertIn("event=pull_request", lookup.call_args.args[0])
+        self.assertIn("head_sha=" + "d" * 40, lookup.call_args.args[0])
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                "repos/{owner}/{repo}/actions/runs/30451895166/rerun",
+            ],
+        )
+
+    def test_placeholder_rerun_ignores_a_different_pr_or_head(self) -> None:
+        rows = [
+            {
+                "id": 9,
+                "path": ".github/workflows/branch-ci.yml",
+                "event": "pull_request",
+                "conclusion": "action_required",
+                "head_sha": "e" * 40,
+                "pull_requests": [{"number": 99}],
+            },
+            {
+                "id": 8,
+                "path": ".github/workflows/branch-ci.yml",
+                "event": "pull_request",
+                "conclusion": "success",
+                "head_sha": "d" * 40,
+                "pull_requests": [{"number": 42}],
+            },
+        ]
+        with (
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_rows",
+                return_value=(rows, None),
+            ),
+            mock.patch.object(publish_promote.subprocess, "run") as run,
+        ):
+            run_id = publish_promote.rerun_action_required_branch_ci(
+                "d" * 40,
+                42,
+                discovery_attempts=1,
+                discovery_interval=0,
+            )
+
+        self.assertIsNone(run_id)
+        self.assertFalse(run.called)
 
     def test_existing_legacy_promote_ref_is_retained_without_dispatch_error(self) -> None:
         candidate = {

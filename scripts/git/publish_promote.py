@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -39,6 +40,7 @@ CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$")
 DAILY_RELEASE_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}\.\d+$")
 BRANCH_CI_WORKFLOW = "branch-ci.yml"
+BRANCH_CI_WORKFLOW_PATH = ".github/workflows/branch-ci.yml"
 REQUIRED_PROMOTE_CHECKS = frozenset(
     {
         "Commit trailers",
@@ -330,6 +332,89 @@ def dispatch_promote_ci(
         check=True,
         cwd=ROOT,
     )
+
+
+def rerun_action_required_branch_ci(
+    expected_head_sha: str,
+    pr_number: int | str,
+    *,
+    discovery_attempts: int = 6,
+    discovery_interval: float = 1.0,
+) -> int | None:
+    """Rerun the bot-created PR's inert Branch CI placeholder.
+
+    GitHub records ``pull_request`` workflow runs created by ``GITHUB_TOKEN``
+    as ``action_required`` placeholders with no jobs. An exact-head
+    ``workflow_dispatch`` run proves the candidate, but GitHub branch
+    protection does not add those checks to the PR rollup while the inert
+    pull-request suite is present. Re-running only that exact PR/head Branch CI
+    run materializes the required contexts in the rollup so the already
+    requested protected auto-merge can complete.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_head_sha):
+        raise RuntimeError("promote PR head must be a full lowercase commit SHA")
+    try:
+        expected_pr_number = int(pr_number)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("promote PR number must be an integer") from exc
+    if discovery_attempts < 1:
+        raise RuntimeError("Branch CI placeholder discovery requires at least one attempt")
+
+    endpoint = (
+        "repos/{owner}/{repo}/actions/runs"
+        f"?event=pull_request&head_sha={quote(expected_head_sha, safe='')}"
+        "&per_page=100"
+    )
+    for attempt in range(discovery_attempts):
+        rows, error = _gh_api_rows(
+            endpoint,
+            (
+                ".workflow_runs[] | "
+                "{id,path,event,status,conclusion,head_sha,pull_requests} | @json"
+            ),
+        )
+        if error:
+            raise RuntimeError(
+                f"Branch CI placeholder lookup failed: {error}"
+            )
+        for row in sorted(rows, key=lambda item: int(item.get("id") or 0), reverse=True):
+            path = str(row.get("path") or "").split("@", 1)[0]
+            pull_numbers = {
+                int(pull.get("number"))
+                for pull in row.get("pull_requests") or []
+                if str(pull.get("number") or "").isdigit()
+            }
+            if (
+                path != BRANCH_CI_WORKFLOW_PATH
+                or row.get("event") != "pull_request"
+                or row.get("conclusion") != "action_required"
+                or row.get("head_sha") != expected_head_sha
+                or expected_pr_number not in pull_numbers
+            ):
+                continue
+            run_id = int(row["id"])
+            proc = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    "--method",
+                    "POST",
+                    f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/rerun",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    "Branch CI placeholder rerun failed: "
+                    f"{_result_detail(proc)}"
+                )
+            return run_id
+        if attempt + 1 < discovery_attempts:
+            time.sleep(discovery_interval)
+    return None
 
 
 def request_verified_auto_merge(
@@ -697,6 +782,9 @@ def open_candidate(cand: dict, settings: dict) -> dict:
                 ),
             }
         dispatch_promote_ci(promote_branch, promote_head, existing_pr["number"])
+        pull_request_ci_rerun = rerun_action_required_branch_ci(
+            promote_head, existing_pr["number"]
+        )
         auto_merge = request_verified_auto_merge(
             promote_branch, existing_pr["number"]
         )
@@ -705,6 +793,7 @@ def open_candidate(cand: dict, settings: dict) -> dict:
             "disposition": "ci_dispatched",
             "missing_required_checks": missing,
             "head_sha": promote_head,
+            "pull_request_ci_rerun": pull_request_ci_rerun,
             **auto_merge,
             "detail": (
                 f"dispatched required Branch CI for existing PR "
@@ -781,6 +870,9 @@ def open_candidate(cand: dict, settings: dict) -> dict:
             cwd=ROOT,
         )
     dispatch_promote_ci(promote_branch, promote_head, opened_pr["number"])
+    pull_request_ci_rerun = rerun_action_required_branch_ci(
+        promote_head, opened_pr["number"]
+    )
     auto_merge = request_verified_auto_merge(
         promote_branch, opened_pr["number"]
     )
@@ -789,6 +881,7 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         "disposition": "pr_opened",
         "promotion_mode": cand.get("promotion_mode", "clean_merge"),
         "head_sha": promote_head,
+        "pull_request_ci_rerun": pull_request_ci_rerun,
         **auto_merge,
         "detail": (
             f"opened {promote_branch}, dispatched required Branch CI, "
