@@ -12163,6 +12163,156 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
 
+    def test_l12_owner_failure_does_not_fall_back_to_codex_when_provider_first_lane_fails(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Claude2": ["Codex"]},
+                "reviewer_fallbacks": {"Claude2": ["Codex"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_l12_reviewer_failure_does_not_fall_back_to_codex2_when_provider_first_lane_fails(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "reviewer_fallbacks": {"Claude2": ["Codex2", "Codex"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "L12-VERIFY-OBS-001",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-review-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker exited before the task reached a terminal status.",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_l12_owner_failure_can_fall_back_to_antigravity_provider_first(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Claude2": ["Codex", "Antigravity"]},
+                "reviewer_fallbacks": {"Claude2": ["Codex", "Antigravity"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        worker = {
+            "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Antigravity")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertIn("Task returned to todo until Antigravity starts a fresh run.", kwargs["message"])
+
 
 class MissingHandoffBlockerTests(unittest.TestCase):
     """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 7."""
