@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: L12 manifest isolated restart proof workstream
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude2
-- Next: Workstream under L12-MANIFEST-001. Do not edit .orchestrator/config.json. Produce isolated non-shared restart proof with RestartCount increment, or a governed waiver packet, for L12-MANIFEST-001 evidence.
+- Next: Independent review passed at PR #4334 exact head 1656574ca9314f93a02af0a34b56ed2ac966ee7a (evidence directory byte-identical to reviewed anchor afac18b8f; merge only pulled unrelated dev files). Claude2 re-ran run-proof.sh under isolated project l12-restart-proof-review-claude2: result=pass, same container ID before/after, PID 180354->183080, RestartCount 0->1, restart_policy unless-stopped, running_after=true, and 2 startup_recovery records. Source audit confirmed no docker stop/kill and no start/up after SIGKILL; the shared worker stayed unchanged and cleanup left 0 isolated containers and 0 networks. Owner closeout materializes that exact verdict in evidence.json and its checksum before PR merge and governed done finalization.
 
 ## Summary
 補 isolated/non-shared PID1 crash restart proof，或取得明確 governed waiver。
