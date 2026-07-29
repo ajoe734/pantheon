@@ -153,4 +153,3 @@ mutation.
 - `python3 -m json.tool evidence.json`
 - `sha256sum -c evidence.sha256`
 - `git diff --check`
-
