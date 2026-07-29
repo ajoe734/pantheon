@@ -124,10 +124,10 @@
     "owner_closeout_post_fleet_refresh": {
       "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
       "result": "pass",
-      "conclusion": "57 passed, 4 skipped, 1 warning in 17.78s; py_compile, exact rendered Compose healthcheck argv, literal false live/canary flags, JSON parsing, and git diff --check also passed.",
-      "validated_head_sha": "503f9ca4b5172662e7bfaa6b9b3ad796dd1c6218",
-      "refreshed_dev_sha": "5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a",
-      "task_owned_diff_vs_reviewed_head": "heartbeat implementation and paper-capital safety behavior unchanged; refresh adds only already-landed dev work plus task-scoped closeout records"
+      "conclusion": "57 passed, 4 skipped, 1 warning in 16.19s; py_compile, exact rendered Compose healthcheck argv, literal false live/canary flags, JSON parsing, and git diff --check also passed.",
+      "validated_head_sha": "9ed28dbf357ebdf60a613c61e978229f0d2191fb",
+      "refreshed_dev_sha": "f9063be7da0106c43039042ea6edfdbd33a0bb51",
+      "task_owned_diff_vs_reviewed_head": "heartbeat implementation and paper-capital safety behavior unchanged; refresh adds only already-landed reconciliation and parent L12 dev work plus task-scoped closeout records"
     },
     "owner_closeout_post_alpha_refresh": {
       "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
