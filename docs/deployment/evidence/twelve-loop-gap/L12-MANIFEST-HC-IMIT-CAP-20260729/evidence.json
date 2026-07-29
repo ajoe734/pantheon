@@ -121,6 +121,12 @@
     }
   ],
   "validation": {
+    "final_post_rebase": {
+      "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
+      "result": "pass",
+      "conclusion": "57 passed, 4 skipped, 1 warning in 15.77s",
+      "validated_base_sha": "d9cbbbfa2b0d4076f939a6d0fcc921406993d7af"
+    },
     "commands": [
       {
         "command": "python -m pytest -q services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/execution/lean_runtime/test_paper_signal_producer.py scripts/test_paper_runtime_topology_contract.py",
