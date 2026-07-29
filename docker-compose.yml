@@ -591,6 +591,7 @@ services:
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
       SHADOW_EVAL_MAX_DATASETS: ${SHADOW_EVAL_MAX_DATASETS:-}
+      SHADOW_EVAL_SCHEDULER_HEALTH_FILE: ${SHADOW_EVAL_SCHEDULER_HEALTH_FILE:-/tmp/policy-learning-shadow-eval-scheduler-health.json}
       # Same credential and same tenant scope as policy-learning-svc above.
       # The scheduler presents this token as `Authorization: Bearer` and the
       # tenant as `X-Tenant-Id`; both must resolve to the same values the API
@@ -602,6 +603,12 @@ services:
     depends_on:
       policy-learning-svc:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/policy-learning/scheduler_worker.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
 
   research-orchestrator-svc:
     build:
@@ -1929,11 +1936,20 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+      PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/tmp/paper-signal-producer-health.json}
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_CANARY_EXECUTION_ENABLED: "false"
     depends_on:
       runtime-manager:
         condition: service_healthy
       signal-store:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   reconciliation-drift-svc:
     stop_grace_period: 30s

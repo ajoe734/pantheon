@@ -1,0 +1,802 @@
+{
+  "schema_version": "loop_worker_manifest_applicability.v1",
+  "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+  "parent_task_id": "L12-MANIFEST-001",
+  "render_contract": {
+    "compose_file": "docker-compose.yml",
+    "deploy_script": "scripts/deploy_nonprod_vm.sh",
+    "env_file": "/dev/null",
+    "profile_set": "empty"
+  },
+  "semantics": {
+    "auth": {
+      "manifest_required": "The service or client source exposes an auth contract and the rendered manifest must provide its mode, credential, tenant, or verifier inputs.",
+      "conditional": "Credentials are required only when the named rendered condition activates the protected integration.",
+      "service_default": "The service source enforces an auth boundary using an explicit source default; the matrix does not mistake the lack of a Compose key for no auth.",
+      "not_applicable": "The process has no protected HTTP boundary in its current contract. Tenant or actor metadata alone is not counted as authentication."
+    },
+    "durable_volume": {
+      "manifest_required": "The worker owns local authoritative or recovery state and every named-volume target is enumerated.",
+      "delegated": "The worker is stateless; the named state owner holds claims, retries, idempotency, queues, or results durably.",
+      "not_applicable": "The process owns no state that must survive restart and has no delegated state dependency."
+    },
+    "gap_policy": "A declared gap is an accurate readback, not an acceptance waiver. The validator exits non-zero by default until the parent manifest repairs or explicitly re-adjudicates it."
+  },
+  "workers": [
+    {
+      "service": "source-ingest",
+      "loop_id": "source_ingestion",
+      "rationale": "The service owns durable source/controller state and protects controller-owned mutations with a token file.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/source_ingestion/main.py",
+        "services/source_ingestion/controller_auth.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "SOURCE_INGEST_CONTROLLER_TOKEN_FILE"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "Controller mutation routes load their bearer secret from the rendered token-file path."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/source-ingest"
+        ],
+        "rationale": "Connector, controller, requirement, and evidence state use source-ingest-data."
+      }
+    },
+    {
+      "service": "strategy-distillation-worker",
+      "loop_id": "strategy_distillation",
+      "rationale": "The controller uses tenant context and the internal registry/source contracts; it has no credential-bearing HTTP boundary in this worker contract.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/source_ingestion/distillation_controller.py"
+      ],
+      "auth": {
+        "applicability": "not_applicable",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "PANTHEON_TENANT_ID is correlation context, not an authentication credential; the current internal targets expose no client-auth input for this worker."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/source-ingest"
+        ],
+        "rationale": "Controller state, queue, evidence, and strategy seed paths live on source-ingest-data."
+      }
+    },
+    {
+      "service": "alpha-replication-worker",
+      "loop_id": "alpha_replication",
+      "rationale": "The controller reads internal registry/research state under tenant context and persists its checkpoint/data inputs on named volumes.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/research/alpha_replication/replication_controller.py"
+      ],
+      "auth": {
+        "applicability": "not_applicable",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The worker has no credential input or protected inbound route; PANTHEON_TENANT_ID is identity context only."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/research-orchestrator",
+          "/data/source-ingest"
+        ],
+        "rationale": "Replication controller state and strategy inputs span the research-orchestrator and source-ingest stores."
+      }
+    },
+    {
+      "service": "training-session-svc",
+      "loop_id": "persona_teaching",
+      "rationale": "The API owns durable teaching/preview state and its enforced-persistence contract requires strict inbound authority with a configured verifier.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/training-session/inbound_authority.py",
+        "services/training-session/main.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [],
+        "environment_any_of": [
+          "TRAINING_SESSION_JWT_SECRET",
+          "TRAINING_SESSION_JWKS_URI",
+          "TRAINING_SESSION_OIDC_DISCOVERY_URL",
+          "PANTHEON_RUNTIME_JWT_SECRET",
+          "PANTHEON_RUNTIME_JWKS_URI",
+          "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"
+        ],
+        "environment_equals": {
+          "TRAINING_SESSION_AUTH_MODE": "strict"
+        },
+        "rationale": "authority_configuration_health reports jwt_verifier_missing for strict mode without a service-specific or runtime verifier.",
+        "gap_reason": "Bare Compose renders neither TRAINING_SESSION_AUTH_MODE nor any accepted JWT/JWKS/OIDC verifier input."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/source-ingest",
+          "/data/training-session"
+        ],
+        "rationale": "The service owns session/job/event state and reads source evidence from the named source-ingest volume."
+      }
+    },
+    {
+      "service": "training-session-preview-worker",
+      "loop_id": "persona_teaching",
+      "rationale": "The poller delegates the durable job lease/result state to training-session-svc but must authenticate every claim and run request.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/training-session/preview_eval_worker.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "TRAINING_SESSION_WORKER_TOKEN",
+          "TRAINING_SESSION_TENANT_ID"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "_authority_headers refuses to issue a request without both worker token and tenant.",
+        "gap_reason": "Compose injects neither TRAINING_SESSION_WORKER_TOKEN nor TRAINING_SESSION_TENANT_ID."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/training-session"
+        ],
+        "rationale": "The mounted service data volume also carries the worker heartbeat path."
+      }
+    },
+    {
+      "service": "policy-learning-svc",
+      "loop_id": "agora_interaction_evidence",
+      "rationale": "The API enforces a tenant-bound service-token boundary and owns the durable policy/agora state.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/policy-learning/inbound_authority.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "POLICY_LEARNING_SERVICE_TOKEN",
+          "POLICY_LEARNING_SERVICE_TENANTS"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The rendered service token and allowed tenant set are the source contract's required dev service boundary."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/policy-learning"
+        ],
+        "rationale": "Policy, evaluation, and local evidence state use policy-learning-data."
+      }
+    },
+    {
+      "service": "policy-learning-shadow-eval-scheduler",
+      "loop_id": "human_imitation_shadow_evaluation",
+      "rationale": "The sidecar is stateless and tenant-bound; it refuses startup unless the same service credential accepted by policy-learning-svc is present.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/policy-learning/scheduler_worker.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "POLICY_LEARNING_SERVICE_TOKEN",
+          "POLICY_LEARNING_AGORA_TENANT_ID"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "require_caller_configuration fails closed without both bearer token and tenant."
+      },
+      "durable_volume": {
+        "applicability": "delegated",
+        "status": "pass",
+        "expected_targets": [],
+        "state_owner": "policy-learning-svc",
+        "rationale": "Dataset discovery, shadow runs, recovery, and results are API-owned; the sidecar retains no local checkpoint."
+      }
+    },
+    {
+      "service": "consultation-svc",
+      "loop_id": "consultation",
+      "rationale": "The API owns durable consultation state and has a source-supported required-token mode that the runtime manifest does not activate.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/consultation/auth.py",
+        "services/consultation/main.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "CONSULTATION_SERVICE_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {
+          "CONSULTATION_AUTH_REQUIRED": "true"
+        },
+        "rationale": "When CONSULTATION_AUTH_REQUIRED is true the API requires a service/operator bearer token and explicit tenant.",
+        "gap_reason": "Bare Compose renders neither CONSULTATION_AUTH_REQUIRED=true nor a service token, leaving the service in legacy unauthenticated mode."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/consultation"
+        ],
+        "rationale": "Consultation records use consultation-data."
+      }
+    },
+    {
+      "service": "deployment",
+      "loop_id": "promotion_deployment",
+      "rationale": "The API owns deployment plans/outbox state and its source default still authenticates structured service/operator tokens with an explicit tenant.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/deployment/auth.py",
+        "services/deployment/service.py"
+      ],
+      "auth": {
+        "applicability": "service_default",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "services.deployment.auth defaults to permissive structured-token validation, not disabled auth, and the middleware requires X-Tenant-Id."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/capital",
+          "/data/governance",
+          "/data/runtime"
+        ],
+        "rationale": "Deployment plan/binding authority reads and writes the three named state surfaces with the declared read-only boundaries."
+      }
+    },
+    {
+      "service": "deployment-outbox-consumer",
+      "loop_id": "promotion_deployment",
+      "rationale": "The stateless consumer delegates leases, claims, retries, and idempotency to deployment but requires a tenant-bound service credential for every deployment API call.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/deployment/outbox_consumer_worker.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "PANTHEON_DEPLOYMENT_SERVICE_TOKEN",
+          "PANTHEON_DEPLOYMENT_TENANT_ID"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "_deployment_headers raises before a request when either value is absent.",
+        "gap_reason": "Compose injects PANTHEON_RUNTIME_MANAGER_TOKEN but omits both deployment service auth variables."
+      },
+      "durable_volume": {
+        "applicability": "delegated",
+        "status": "pass",
+        "expected_targets": [],
+        "state_owner": "deployment",
+        "rationale": "Outbox leases, claim tokens, inbox dedupe, retry, and terminal state are owned by the deployment API; the local health file is ephemeral."
+      }
+    },
+    {
+      "service": "runtime-manager",
+      "loop_id": "promotion_deployment",
+      "rationale": "The service owns runtime binding/command state and enforces the rendered runtime auth mode.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/runtime-manager/main.py",
+        "services/runtime_auth_inbound.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {
+          "PANTHEON_RUNTIME_AUTH_MODE": "permissive"
+        },
+        "rationale": "The safe dev manifest explicitly selects structured-token permissive auth; it does not select a disabled mode."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/runtime"
+        ],
+        "rationale": "Runtime binding and command state use runtime-data."
+      }
+    },
+    {
+      "service": "broker",
+      "loop_id": "capital_pool_execution",
+      "rationale": "The safe default disables paper execution; external broker credentials become applicable only when broker execution is enabled.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/broker/main.py"
+      ],
+      "auth": {
+        "applicability": "conditional",
+        "status": "pass",
+        "condition": {
+          "environment": "BROKER_PAPER_ENABLED",
+          "equals": "true"
+        },
+        "environment_all_of": [
+          "BROKER_SHIOAJI_API_KEY",
+          "BROKER_SHIOAJI_SECRET_KEY"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "Bare Compose keeps broker execution false; an activated Shioaji path must provide both external credentials."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/broker"
+        ],
+        "rationale": "Paper broker state uses broker-data."
+      }
+    },
+    {
+      "service": "capital",
+      "loop_id": "capital_pool_execution",
+      "rationale": "The service owns durable capital state and its enforced-persistence contract requires strict inbound authority with a configured verifier.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/capital/main.py",
+        "services/capital/inbound_authority.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [],
+        "environment_any_of": [
+          "CAPITAL_JWT_SECRET",
+          "CAPITAL_JWKS_URI",
+          "CAPITAL_OIDC_DISCOVERY_URL",
+          "PANTHEON_RUNTIME_JWT_SECRET",
+          "PANTHEON_RUNTIME_JWKS_URI",
+          "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"
+        ],
+        "environment_equals": {
+          "CAPITAL_AUTH_MODE": "strict"
+        },
+        "rationale": "authority_configuration_health reports unconfigured when strict mode has no JWT/JWKS/OIDC verifier.",
+        "gap_reason": "Bare Compose renders neither CAPITAL_AUTH_MODE nor any accepted capital/runtime verifier input; S3 keys are storage credentials and do not satisfy API auth."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/capital"
+        ],
+        "rationale": "Capital pool and audit state use capital-data."
+      }
+    },
+    {
+      "service": "paper-fleet-reconciler",
+      "loop_id": "capital_pool_execution",
+      "rationale": "The reconciler owns local worker recovery state and authenticates desired-state reads/writes through runtime-manager.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/execution/runtime-manager/paper_fleet_reconciler.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "PANTHEON_RUNTIME_MANAGER_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The runtime-manager service token is rendered for the reconciler's protected control boundary."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/runtime"
+        ],
+        "rationale": "Performance and reconciler recovery state use runtime-data."
+      }
+    },
+    {
+      "service": "paper-signal-producer",
+      "loop_id": "capital_pool_execution",
+      "rationale": "The producer is stateless, reads protected runtime desired state, and writes binding-scoped pending signals to the signal-store service.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/execution/lean_runtime/paper_signal_producer.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "PANTHEON_RUNTIME_MANAGER_TOKEN",
+          "PANTHEON_TENANT_ID"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "Runtime desired-state reads carry the rendered bearer token and generated signals remain tenant-bound."
+      },
+      "durable_volume": {
+        "applicability": "delegated",
+        "status": "pass",
+        "expected_targets": [],
+        "state_owner": "signal-store",
+        "rationale": "Pending signal queues are written to the external signal-store; the producer retains no local authoritative state."
+      }
+    },
+    {
+      "service": "reconciliation-drift-svc",
+      "loop_id": "telemetry_reconciliation",
+      "rationale": "The API owns durable drift state and implements a token mode, but the runtime manifest leaves its auth mode at the source default disabled.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/reconciliation-drift/main.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {
+          "RECONCILIATION_DRIFT_AUTH_MODE": "token"
+        },
+        "rationale": "Hosted/internal token mode requires a configured bearer token and X-Tenant-Id.",
+        "gap_reason": "Bare Compose renders neither RECONCILIATION_DRIFT_AUTH_MODE=token nor RECONCILIATION_DRIFT_AUTH_TOKEN."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/reconciliation-drift"
+        ],
+        "rationale": "Drift windows, evidence, and reconciliation records use reconciliation-drift-data."
+      }
+    },
+    {
+      "service": "reconciliation-drift-consumer",
+      "loop_id": "telemetry_reconciliation",
+      "rationale": "The consumer owns a durable cursor/retry state file and can present the reconciliation service token, but Compose omits it.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/reconciliation-drift/consumer.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The worker adds Authorization only when the token is configured.",
+        "gap_reason": "Compose does not inject RECONCILIATION_DRIFT_AUTH_TOKEN into the consumer."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/reconciliation-drift"
+        ],
+        "rationale": "Consumer cursor, retry, and DLQ state use reconciliation-drift-data."
+      }
+    },
+    {
+      "service": "reconciliation-drift-scheduler",
+      "loop_id": "telemetry_reconciliation",
+      "rationale": "The scheduler is stateless and can present a reconciliation bearer token, while the API owns scheduled-window idempotency and results.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/reconciliation-drift/scheduler_worker.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The request builder emits Authorization only when RECONCILIATION_DRIFT_AUTH_TOKEN is set.",
+        "gap_reason": "Compose does not inject RECONCILIATION_DRIFT_AUTH_TOKEN into the scheduler."
+      },
+      "durable_volume": {
+        "applicability": "delegated",
+        "status": "pass",
+        "expected_targets": [],
+        "state_owner": "reconciliation-drift-svc",
+        "rationale": "Scheduled window identity, retry outcome, and reconciliation records are service-owned; the poller retains no local checkpoint."
+      }
+    },
+    {
+      "service": "reconciliation-drift-incident-listener",
+      "loop_id": "telemetry_reconciliation",
+      "rationale": "The listener persists its cursor locally and can authenticate writes to reconciliation-drift-svc, but Compose omits the token.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/reconciliation-drift/incident_listener.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [
+          "RECONCILIATION_DRIFT_AUTH_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The listener adds Authorization only when the reconciliation token is configured.",
+        "gap_reason": "Compose does not inject RECONCILIATION_DRIFT_AUTH_TOKEN into the incident listener."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/reconciliation-drift"
+        ],
+        "rationale": "Incident listener state and reconciliation records use reconciliation-drift-data."
+      }
+    },
+    {
+      "service": "evolution",
+      "loop_id": "evolution",
+      "rationale": "The API enforces token mode with an allowed tenant set and owns durable evolution/incident state.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/evolution/main.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "EVOLUTION_AUTH_TOKEN",
+          "EVOLUTION_AUTH_ALLOWED_TENANTS"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {
+          "EVOLUTION_AUTH_MODE": "token"
+        },
+        "rationale": "The rendered API mode, token, and tenant allowlist satisfy the fail-closed middleware contract."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/evolution",
+          "/data/incidents"
+        ],
+        "rationale": "Evolution programs and incident/postmortem inputs use both named data volumes."
+      }
+    },
+    {
+      "service": "evolution-dispatch-worker",
+      "loop_id": "evolution",
+      "rationale": "The dispatch worker calls the protected evolution API and shares the durable program/dispatch store.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/evolution/dispatch_worker.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "EVOLUTION_AUTH_TOKEN"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {
+          "EVOLUTION_AUTH_MODE": "token"
+        },
+        "rationale": "Worker startup fails when token mode is active without EVOLUTION_AUTH_TOKEN."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/evolution"
+        ],
+        "rationale": "Dispatch records, leases, and recovery state use evolution-data."
+      }
+    },
+    {
+      "service": "evolution-daily-sweep-scheduler",
+      "loop_id": "evolution",
+      "rationale": "The stateless scheduler calls the protected evolution API; the service owns sweep idempotency and resulting state.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/evolution/scheduler_worker.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "environment_all_of": [
+          "EVOLUTION_AUTH_TOKEN",
+          "EVOLUTION_SCHEDULER_TENANT_ID"
+        ],
+        "environment_any_of": [],
+        "environment_equals": {
+          "EVOLUTION_AUTH_MODE": "token"
+        },
+        "rationale": "The scheduler sends bearer and tenant headers and fails startup if token mode has no token."
+      },
+      "durable_volume": {
+        "applicability": "delegated",
+        "status": "pass",
+        "expected_targets": [],
+        "state_owner": "evolution",
+        "rationale": "Daily sweep selection, idempotency, and resulting proposals/incidents are API-owned; the health file is ephemeral."
+      }
+    },
+    {
+      "service": "evolution-threshold-sweep-producer",
+      "loop_id": "evolution",
+      "rationale": "The producer uses internal telemetry/incidents endpoints that currently expose no client-auth contract and persists threshold state on evolution-data.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/evolution/threshold_sweep_worker.py"
+      ],
+      "auth": {
+        "applicability": "not_applicable",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "Its current source has no credential input; the read-only config bind is not authentication and is not counted as a durable volume."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/evolution"
+        ],
+        "rationale": "Threshold sweep checkpoint and health state use evolution-data; the source config bind is intentionally excluded from named-volume durability."
+      }
+    },
+    {
+      "service": "operator-bff",
+      "loop_id": "bff_health_monitoring",
+      "rationale": "The externally reached control plane selects strict auth and owns durable BFF/assistant/read-model state, so a verifier must be present in the rendered default.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/control-plane/bff/main.py"
+      ],
+      "auth": {
+        "applicability": "manifest_required",
+        "status": "gap",
+        "environment_all_of": [],
+        "environment_any_of": [
+          "PANTHEON_BFF_JWT_SECRET",
+          "PANTHEON_BFF_JWKS_URI",
+          "PANTHEON_BFF_OIDC_DISCOVERY_URL"
+        ],
+        "environment_equals": {
+          "PANTHEON_BFF_AUTH_MODE": "strict",
+          "PANTHEON_BFF_AUTH_STUB": "false"
+        },
+        "rationale": "Strict mode disables the dev stub and requires a JWT, JWKS, or OIDC verifier.",
+        "gap_reason": "Bare Compose renders strict/stub-false but all accepted verifier inputs are empty; hosted env injection may repair runtime, but the default readback cannot claim it."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/bff",
+          "/data/governance",
+          "/data/incidents",
+          "/data/runtime"
+        ],
+        "rationale": "BFF state is writable while governance, incident, and runtime mounts are read-only authority readbacks; the status-root bind is not counted as a named volume."
+      }
+    },
+    {
+      "service": "loop-run-projector-scheduler",
+      "loop_id": "bff_health_monitoring",
+      "rationale": "The projector reads telemetry through a direct database DSN and writes generation/state files to bff-data without an HTTP auth boundary.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/trade_journey/lifecycle_projector.py"
+      ],
+      "auth": {
+        "applicability": "not_applicable",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "Database connectivity is a storage authority boundary, not per-request worker auth; the projector exposes no inbound mutation route."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/bff"
+        ],
+        "rationale": "Lifecycle generations, projector checkpoint, and health state use bff-data."
+      }
+    },
+    {
+      "service": "search-svc",
+      "loop_id": "bff_health_monitoring",
+      "rationale": "The service owns the durable search index/materialization state; its current internal API exposes no manifest-level auth contract.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/search/main.py"
+      ],
+      "auth": {
+        "applicability": "not_applicable",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "No search API token or verifier input exists in the current service contract; S3 credentials are storage auth, not client API auth."
+      },
+      "durable_volume": {
+        "applicability": "manifest_required",
+        "status": "pass",
+        "expected_targets": [
+          "/data/search",
+          "/data/source-ingest"
+        ],
+        "rationale": "Search index/pipeline state uses search-data and source evidence is mounted read-only from source-ingest-data."
+      }
+    },
+    {
+      "service": "search-index-scheduler",
+      "loop_id": "bff_health_monitoring",
+      "rationale": "The poller is stateless and calls the current unauthenticated internal search API, which owns index jobs and materialized results.",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/search/scheduler_worker.py"
+      ],
+      "auth": {
+        "applicability": "not_applicable",
+        "status": "pass",
+        "environment_all_of": [],
+        "environment_any_of": [],
+        "environment_equals": {},
+        "rationale": "The source exposes no token input and the target search contract has no client-auth mode in this manifest slice."
+      },
+      "durable_volume": {
+        "applicability": "delegated",
+        "status": "pass",
+        "expected_targets": [],
+        "state_owner": "search-svc",
+        "rationale": "Index scheduling, pipeline retention, materialization, and evidence are service-owned; the scheduler retains no local checkpoint."
+      }
+    }
+  ]
+}
