@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "in_progress",
-  "generated_at": "2026-07-29T08:25:56Z",
+  "generated_at": "2026-07-29T09:05:31Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -129,7 +129,9 @@
         30284788017,
         30284856368,
         30285398658
-      ]
+      ],
+      "legacy_ref_handling": "read the exact promote head workflow through REST; return legacy_ci_contract without dispatch when the guarded inputs are absent",
+      "auto_merge_verification": "fail closed on gh pr merge --auto failure, then require REST to expose auto_merge or merged_at"
     }
   },
   "validation": [
@@ -283,6 +285,41 @@
     },
     "next": "compose current origin/dev, commit and push this exact-head evidence refresh, reacquire Branch CI on the resulting PR head, obtain Codex2 exact-head approval, and merge through the governed integrator"
   },
+  "owner_closeout_gap_repair": {
+    "reviewed_head": "77dc9e49cc105a81e213b3ff02c1b657685acf6e",
+    "review_approval_recorded_at": "2026-07-29T08:54:33Z",
+    "review_dispatch_anchor_commit": "ab31d3cebef86e4702e392cc7ea2bfecab11c29d",
+    "code_anchor_commit": "253858835a4671e9f905b030d4ff70f108ad0077",
+    "findings_addressed": {
+      "legacy_existing_pr": "exact-head workflow content is inspected through REST; refs predating workflow_dispatch return legacy_ci_contract without a hard workflow error",
+      "auto_merge": "gh pr merge --auto now uses check=True and the PR REST resource must expose auto_merge or merged_at"
+    },
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.284s",
+      "pytest": "73 focused tests passed in 8.75s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "legacy_pr": 4138,
+      "legacy_branch": "promote/v2026.07.26.2",
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_supports_dispatch": false,
+      "legacy_disposition": "legacy_ci_contract",
+      "legacy_missing_required_checks": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance"
+      ],
+      "fresh_release_tag": "release/v2026.07.29.5",
+      "fresh_release_commit": "57abe669fc0b2c9c871c09920e156adf85f7e30e",
+      "fresh_release_supports_dispatch": true,
+      "fresh_release_disposition": "eligible"
+    },
+    "next": "commit and push the evidence head, reacquire Branch CI and Claude2 review, merge after Human Ops releases the root freeze, then execute fresh live proof and ancestry-based stale retirement"
+  },
   "delivery": {
     "implementation_pr": 4258,
     "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
@@ -380,7 +417,7 @@
     "ancestry_evidence": null
   },
   "review": {
-    "status": "pending_current_head_review",
+    "status": "review_approved_at_77dc_owner_gap_repair_pending_current_head_review",
     "reviewer": "Codex2",
     "reviewed_head": null,
     "reviewed_at": null,

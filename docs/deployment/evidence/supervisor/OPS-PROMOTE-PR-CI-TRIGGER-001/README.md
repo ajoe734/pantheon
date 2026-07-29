@@ -199,6 +199,41 @@ and has the fail-closed canonical review status recorded by Codex2. The
 refreshed PR head must reacquire Branch CI and Codex2 exact-head approval; the
 canonical review and root-freeze contexts remain Human/Ops-controlled.
 
+## Owner Closeout Gap Repair
+
+Claude2 approved exact head
+`77dc9e49cc105a81e213b3ff02c1b657685acf6e` but correctly withheld `done`
+because the live acceptance was incomplete and exposed two additional
+fail-open edges. Codex preserved the approval dispatch at
+`ab31d3cebef86e4702e392cc7ea2bfecab11c29d`, then repaired those edges at
+`253858835a4671e9f905b030d4ff70f108ad0077`.
+
+The existing-PR path now reads `.github/workflows/branch-ci.yml` from the
+exact promote head through REST before dispatch. A legacy head without
+`workflow_dispatch`, `expected_head_sha`, and `promote_pr_number` returns
+`legacy_ci_contract` without dispatching or failing the hourly promote run.
+It remains open only until the evidence-based stale-retirement pass can prove
+its release ancestry. The auto-merge request now fails closed on a non-zero
+`gh pr merge --auto` result and immediately verifies through the pull-request
+REST resource that either `auto_merge` is non-null or `merged_at` is present.
+
+A live read-only probe exercised the new classification against PR `#4138`
+head `cb90dc479214c6ff0779aff70f915593ec9196c4`. The exact workflow lacks the
+dispatch contract, and `open_candidate` returned `legacy_ci_contract` with all
+three required checks missing without mutating the PR. The same REST probe
+confirmed current fresh release `release/v2026.07.29.5` at
+`57abe669fc0b2c9c871c09920e156adf85f7e30e` contains the dispatch contract.
+Read-only discovery classified that release as the single eligible candidate.
+The checkout-local provisioned interpreter passed all 25
+`PublishPromoteTests` and the 73-test focused workflow slice; Python
+compilation, both workflow YAML parses, evidence JSON parsing, and both diff
+checks also passed.
+
+These changes still require fresh Branch CI and Claude2 review on the final
+PR head. The root merge-freeze status remains Human/Ops-controlled. Actual
+workflow dispatch, auto-merge observation, master reachability, and stale PR
+closure remain blocked until PR `#4262` merges into `dev`.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
