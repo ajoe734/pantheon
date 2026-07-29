@@ -200,6 +200,28 @@
         "event": "pull_request",
         "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
         "workflow": "Smoke acceptance"
+      },
+      {
+        "conclusion": "absent",
+        "event": "external_commit_status",
+        "head_sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
+        "jobs": {
+          "posted_by": "scripts/git/github_review_bridge.py, driven by the reviewer's governed approve",
+          "required_by": "dev branch protection, app_id null; no workflow posts this context",
+          "unblocks": "reviewer Antigravity running approve with both REVIEW_PR and REVIEW_HEAD_SHA bound to the current head"
+        },
+        "workflow": "Pantheon canonical review gate"
+      },
+      {
+        "conclusion": "absent",
+        "event": "external_commit_status",
+        "head_sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
+        "jobs": {
+          "posted_by": "Human/Ops, manually",
+          "required_by": "dev branch protection, app_id null; no workflow posts this context",
+          "unblocks": "Human/Ops escalation; no fleet agent can produce this status"
+        },
+        "workflow": "Pantheon root merge freeze 2026-07-27"
       }
     ]
   },
@@ -222,7 +244,33 @@
     },
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
-    "source_artifact_sha256_by_epoch": {}
+    "source_artifact_sha256_by_epoch": {
+      "owner_evidence_cut_2026-07-29T05:08:59Z": {
+        "branch_sha_stability": {
+          "current_base_sha": "89e1e80c69b688df80d6ccb2bdc2e3d4a9041d3c",
+          "note": "Branch SHAs recorded elsewhere in this manifest are valid only until the next rebase. These artifact digests are the rebase-invariant identity of what was validated and reviewed. The definitive delivery binding is the merge_sha recorded at closeout.",
+          "pre_rebase_to_post_rebase": {
+            "4068400c9f2cf3e3bba1db347f2bd03d1e003ad9": "806ff1f2bc07f235d5b885cf9aa82c3924e55d77",
+            "47f752dbd": "00548f554e6b0bce8cb62bc10ade104af4172fdd",
+            "880ca444fc63a9d325b970559fed4927b8f391af": "35e525fe835711bfd8b7b716502fe360d61ebea5"
+          },
+          "previous_base_sha": "b1527e868654fb93765b3e5788adeea1f5e869a2",
+          "rebase_authority": "auto_integrator rebases task/L12-TRUTH-001 onto the dev tip when the PR falls BEHIND, which rewrites every branch commit SHA while preserving the artifact trees.",
+          "rebased_at": "2026-07-29T05:15:19Z",
+          "verification": "git diff --stat <pre-rebase-sha> <post-rebase-sha> over the six artifact paths is empty for every mapped pair"
+        },
+        "digests": {
+          "docs/deployment/loop-catalog.registry.json": "0aa0cfaeddd45bf50dc023a133abbc9ff2c57d4c78e7f7710661a87521d5c694",
+          "services/control-plane/bff/loop_inventory.py": "e0489e192d4796fe1211b25317c10b3f0a45f5174faa056e14b79cec3b1fb8fc",
+          "services/control-plane/bff/main.py": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
+          "services/control-plane/bff/test_loop_health_read_model_contract.py": "ec28b030bc9141e5e22c707ef78a4f7fd982228f5fa104c05c2866a7dcb74907",
+          "services/control-plane/bff/test_loop_inventory_read_model_contract.py": "71eac95e92e174a9762ced2f3feaade8cd47d827a759a1feaa341066ff5148bc",
+          "tests/test_loop_catalog_registry.py": "d90fe59d86e3c1942e2580ee795470f84ec03466e0a1468b028ba477ee590b45"
+        },
+        "recorded_at": "2026-07-29T05:25:50Z",
+        "verification": "sha256sum over the six artifact paths at branch head 106e1edd11f4c04da5accc28504db4cd848df39c; unchanged since the evidence cut"
+      }
+    }
   },
   "record_log": [
     {
@@ -259,6 +307,15 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
       "sequence": 4,
       "sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_rebase_invariant_identity_recorded",
+      "recorded_at": "2026-07-29T05:25:50Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
+      "sequence": 5,
+      "sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
       "status": "pass"
     }
   ],

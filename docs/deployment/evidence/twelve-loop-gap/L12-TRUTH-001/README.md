@@ -64,6 +64,32 @@ Five negative controls were run to confirm the new guards are not vacuous; each
 one made exactly the intended test fail and was then reverted. They are listed
 in `evidence.json` under `validation.commands`.
 
+Re-run after `auto_integrator` rebased the branch onto the `dev` tip
+(`89e1e80c6`): all three files together, 44 passed.
+
+## Merge status
+
+`auto_integrator` rebases this branch whenever the PR falls BEHIND `dev`, which
+rewrites every branch commit SHA while leaving the artifact trees byte-identical.
+Branch SHAs in `evidence.json` are therefore valid only until the next rebase;
+`integrity.source_artifact_sha256_by_epoch` carries the rebase-invariant digests
+of the six artifacts, and the definitive binding is the merge SHA recorded at
+closeout.
+
+PR [#4350](https://github.com/ajoe734/pantheon/pull/4350) is `MERGEABLE` with all
+four Actions checks green, but `mergeStateStatus: BLOCKED`. `dev` branch
+protection requires two further contexts that no workflow posts:
+
+- `Pantheon canonical review gate` — posted by
+  `scripts/git/github_review_bridge.py` only when the reviewer's governed
+  `approve` carries **both** `REVIEW_PR` and `REVIEW_HEAD_SHA`. An unbound
+  approve warns `approval_head_binding_missing` and leaves this context unset.
+- `Pantheon root merge freeze 2026-07-27` — posted manually by `Human/Ops`; no
+  fleet agent can produce it.
+
+Both are recorded in `evidence.json` under
+`implementation_delivery.required_checks` with `conclusion: absent`.
+
 ## Out of scope, recorded not hidden
 
 - Nine canonical loops still have no controller. The catalog says so.
