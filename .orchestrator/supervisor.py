@@ -12398,12 +12398,140 @@ def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> i
 L12_PROVIDER_FIRST_AGENT_NAMES = frozenset(
     {"Antigravity", "Antigravity2", "Claude", "Claude2"}
 )
+L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT = 4
 
 
 def task_is_l12_recovery_work(task: dict[str, Any] | None) -> bool:
     candidate = task or {}
     task_id = str(candidate.get("id") or "").strip().upper()
     return task_id.startswith("L12-") or task_id.startswith("SUP-L12-")
+
+
+def _canonical_task_agent_pairs(
+    config: dict[str, Any],
+    pairs: set[tuple[str, str]],
+) -> set[tuple[str, str]]:
+    canonical: set[tuple[str, str]] = set()
+    for task_id, agent_id in pairs:
+        agent_name = canonical_agent_name(config, agent_id)
+        if task_id and agent_name:
+            canonical.add((str(task_id), agent_name))
+    return canonical
+
+
+def reap_stale_l12_missing_process_failure_streaks(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_map: dict[str, dict[str, Any]] | None = None,
+    active_task_agents: set[tuple[str, str]] | None = None,
+    pending_task_agents: set[tuple[str, str]] | None = None,
+) -> bool:
+    """Drop bounded L12 process-loss loops superseded by newer task truth.
+
+    A missing process is real failure evidence until the task lifecycle moves
+    forward. Once a newer task checkpoint exists, keeping the old streak can
+    suppress the newly eligible provider-first owner and every helper claim for
+    the task even though no matching execution remains. Reap only that narrow
+    stale shape; quota, auth, fresh process loss, and live/pending executions
+    remain fail-closed.
+    """
+
+    if task_map is None:
+        try:
+            task_map = task_index_from_status(config, load_status(config))
+        except KeyError:
+            return False
+
+    settings = ready_dispatch_settings(config)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    if active_task_agents is None:
+        _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    if pending_task_agents is None:
+        try:
+            _pending_agents, pending_task_agents, _pending_keys = outstanding_delivery_indexes(config, state)
+        except KeyError:
+            pending_task_agents = set()
+
+    runtime_pairs = _canonical_task_agent_pairs(
+        config,
+        set(active_task_agents or set()) | set(pending_task_agents or set()),
+    )
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    owned_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"])
+    threshold = max(
+        1,
+        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
+    )
+    bucket = _task_failure_streak_bucket(state)
+    candidates: list[tuple[datetime, str, dict[str, Any], str]] = []
+
+    for key, raw_record in bucket.items():
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        if str(record.get("last_failure_kind") or "").strip().lower() != "missing_process":
+            continue
+        try:
+            if int(record.get("count", 0)) < threshold:
+                continue
+        except (TypeError, ValueError):
+            continue
+
+        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        task = task_map.get(task_id)
+        if not task_is_l12_recovery_work(task):
+            continue
+        task_status = str(task.get("status") or "").strip().lower()
+        if task_status in review_statuses:
+            assigned_agent = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        elif task_status in owned_statuses | finalize_statuses:
+            assigned_agent = canonical_agent_name(config, str(task.get("owner") or ""))
+        else:
+            continue
+
+        provider_id = str(record.get("provider") or str(key).rsplit(":", 1)[-1] or "").strip()
+        failed_agent = canonical_agent_name(config, provider_id)
+        if not failed_agent or failed_agent != assigned_agent:
+            continue
+        if (task_id, failed_agent) in runtime_pairs:
+            continue
+
+        failed_at = _parse_iso_utc(str(record.get("last_failure_at") or ""))
+        task_updated_at = _parse_iso_utc(str(task.get("last_update") or ""))
+        if failed_at is None or task_updated_at is None or task_updated_at <= failed_at:
+            continue
+        candidates.append((failed_at, str(key), record, failed_agent))
+
+    reaped: list[dict[str, Any]] = []
+    for _failed_at, key, record, failed_agent in sorted(candidates)[:L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT]:
+        bucket.pop(key, None)
+        reaped.append(
+            {
+                "key": key,
+                "task_id": record.get("task_id") or key.rsplit(":", 1)[0],
+                "agent": failed_agent,
+                "count": record.get("count"),
+                "last_failure_at": record.get("last_failure_at"),
+            }
+        )
+
+    if reaped and config.get("paths", {}).get("activity_log"):
+        write_activity_log(
+            config,
+            {
+                "type": "stale_l12_missing_process_streaks_reaped",
+                "message": (
+                    f"Reaped {len(reaped)} stale L12 missing_process failure streak(s) "
+                    "after newer task truth and no matching active or pending execution."
+                ),
+                "policy": "newer_task_truth_without_runtime_evidence",
+                "limit": L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT,
+                "reaped": reaped,
+            },
+        )
+    return bool(reaped)
 
 
 def l12_provider_first_candidates(
@@ -13123,11 +13251,17 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
+    changed = reap_stale_l12_missing_process_failure_streaks(
+        config,
+        state,
+        task_map=task_map,
+        active_task_agents=active_task_agents,
+        pending_task_agents=pending_task_agents,
+    )
     failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
     failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = False
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
@@ -14060,6 +14194,13 @@ def _run_once_locked(
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
         changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase(
+            "reap_stale_l12_missing_process_failure_streaks",
+            reap_stale_l12_missing_process_failure_streaks,
+            config,
+            state,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("maybe_reassign_tasks_from_failure_streaks", maybe_reassign_tasks_from_failure_streaks, config, state, quiet=quiet) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
