@@ -1,0 +1,306 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-MANIFEST-HC-REC-20260729 reconciliation worker heartbeat workstream owner evidence cut.",
+    "note": "The owner implementation and bounded local validation are complete. Independent Codex review, PR checks, merge, and hosted manifest integration are intentionally not asserted by this cut.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever implementation delivery or review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-29T02:49:19Z",
+    "evidence_cut_semantics": "Owner evidence at anchor 982f224a2953d948fcc46d0342c611f3d0b22389. Three reconciliation workers publish atomic fresh heartbeats and root Compose probes consume them. This cut does not claim PR merge, hosted deployment, or independent review.",
+    "id": "L12-MANIFEST-HC-REC-20260729",
+    "overall_admission": "pass_owner_evidence_ready",
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Manifest Workstream",
+    "product_level_required": false,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev manifest candidate and bounded local worker probes",
+    "target_maturity": "integrable manifest health workstream",
+    "task_branch": "task/L12-MANIFEST-HC-REC-20260729",
+    "title": "L12 manifest reconciliation health heartbeat workstream"
+  },
+  "authorities": {
+    "actual_state": [
+      "The three default-on reconciliation drift worker processes in docker-compose.yml",
+      "Worker-loop heartbeat documents written inside each worker container",
+      "Reconciliation controller_status and failure details emitted by existing worker tick results"
+    ],
+    "desired_state": [
+      "A recent identity-bound worker heartbeat after at least one completed tick",
+      "A stale, missing, malformed, starting, or wrong-worker heartbeat fails the Compose probe",
+      "Business/controller degradation remains observable without pretending the worker loop is dead"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_manifest_hc_rec_20260729.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "The reconciliation worker process owns only its process-local heartbeat file. Existing reconciliation-drift service and durable worker state remain business authority.",
+    "composes_with": [
+      "L12-MANIFEST-001 runtime manifest inventory, health readback, restart proof, and evidence",
+      "L12-HOSTED-001 hosted container admission",
+      "L12-REC-001 reconciliation business and durable-state authority"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_manifest_hc_rec_20260729.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "services/background_worker_health.py",
+      "services/reconciliation-drift/consumer.py",
+      "services/reconciliation-drift/scheduler_worker.py",
+      "services/reconciliation-drift/incident_listener.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_worker_health.py"
+    ],
+    "not_changing": ".orchestrator/config.json, deploy_nonprod_vm.sh worker inventory, reconciliation business authority or persistence, live-capital authority, canonical architecture policy, or hosted deployment state.",
+    "owned_layer": "Atomic process-local heartbeat publication, freshness/identity healthchecks, root Compose health probe wiring, and focused regression coverage for the three reconciliation drift workers."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "task_branch_anchor_ready_for_review",
+        "note": "Worker source, root Compose wiring, task brief, and focused tests.",
+        "sha": "982f224a2953d948fcc46d0342c611f3d0b22389",
+        "subject": "L12-MANIFEST-HC-REC-20260729: anchor worker heartbeats"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/reconciliation-drift/tests services/foundation/tests/test_health.py",
+        "conclusion": "107 passed in 40.79s; one Starlette/httpx dependency deprecation warning.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/evolution/test_worker_health.py services/evolution/test_compose_activation.py services/training-session/tests/test_compose_activation.py",
+        "conclusion": "10 passed in 2.70s; adjacent background-worker and Compose contracts did not regress.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_worker_health.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/reconciliation-drift/tests/test_reconciliation_drift_worker_resilience.py",
+        "conclusion": "11 passed in 1.60s.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/background_worker_health.py services/reconciliation-drift/consumer.py services/reconciliation-drift/scheduler_worker.py services/reconciliation-drift/incident_listener.py && docker compose config --quiet",
+        "conclusion": "Both commands exited 0.",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose config --format json, then assert healthcheck.test exists for reconciliation-drift-consumer, reconciliation-drift-scheduler, and reconciliation-drift-incident-listener",
+        "conclusion": "Resolved commands are consumer.py healthcheck, scheduler_worker.py healthcheck, and incident_listener.py healthcheck respectively.",
+        "result": "pass"
+      },
+      {
+        "command": "Run each worker for one tick with a checkout-provisioned interpreter and deliberately unavailable 127.0.0.1:9 downstreams; invoke each script's healthcheck command as a separate process.",
+        "conclusion": "All three healthcheck commands exited 0 after one completed tick. Each JSON heartbeat retained worker_name, ticks=1, status=ok liveness, controller_status=failure|unhealthy, and the exact connection-refused reason.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0 before the implementation anchor.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-29T02:49:19Z",
+    "validated_base_sha": "6fe626252f19adf9223c5f35268ef43dc74ec445",
+    "validated_head_sha": "982f224a2953d948fcc46d0342c611f3d0b22389"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "task worktree and resolved root Compose candidate only",
+    "public_bff_base_url": "not_applicable_no_bff_change",
+    "publish_cut": {
+      "reason": "This workstream hands an integrable patch to L12-MANIFEST-001 and does not own the dev deployment.",
+      "status": "not_claimed"
+    },
+    "canonical_root_deploy": {
+      "reason": "Hosted container health and restart proof remain with L12-MANIFEST-001 and L12-HOSTED-001 after merge.",
+      "status": "pending_parent_integration"
+    },
+    "identity_admission": {
+      "proof": "The healthcheck accepts only the configured worker_name and rejects another worker's heartbeat file.",
+      "status": "pass_local_contract"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "hosted_activation_claimed": false,
+      "reason": "No hosted environment was mutated or probed by this source workstream.",
+      "status": "not_claimed"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Every heartbeat contains worker_name and the healthcheck rejects a mismatched identity.",
+        "Atomic os.replace prevents a concurrent probe from accepting a partially written document."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing, malformed, starting, zero-tick, wrong-worker, invalid-timing, and stale heartbeat cases fail closed.",
+        "The CLI probe preserved unavailable downstream truth in controller_status and last_failure_reason while proving the loop completed its tick."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "No request, receipt, reconciliation result, or downstream correlation contract changed; the heartbeat records the existing controller_status alongside process liveness."
+      ],
+      "status": "not_applicable_no_business_contract_change"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Each worker writes status=starting and ticks=0 before its first network call, invalidating a retained prior green file.",
+        "Freshness thresholds make a blocked worker unhealthy after 300 seconds for consumer/listener or 900 seconds for scheduler by default."
+      ],
+      "status": "pass_local_contract"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Reverting the task commit removes only process-local heartbeat code and the three Compose probes; no data migration or business-state compensation is required.",
+        "Existing durable consumer/listener state paths and reconciliation authority are unchanged."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree, local test processes, resolved Compose configuration, and 127.0.0.1:9 negative endpoints were exercised.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "No operator authentication or MFA surface changed.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "No broker, allocation, capital, runtime binding, or live-write setting changed or was contacted.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "No authorization setting, credential, token, or role check changed.",
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "proof": "No tenant data or business state is added to the process-local health authority; existing controller results remain unchanged.",
+      "status": "not_applicable_no_business_state_change"
+    },
+    "two_person_approval": {
+      "proof": "Canonical owner Codex2 and reviewer Codex are distinct. Independent reviewer approval is still pending and must be appended before done.",
+      "status": "pending_independent_review"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/consumer.py#healthcheck",
+        "docker-compose.yml#reconciliation-drift-consumer",
+        "validation.commands[0]",
+        "validation.commands[5]"
+      ],
+      "id": "AC1",
+      "statement": "reconciliation-drift-consumer health heartbeat gap is closed or waived.",
+      "status": "pass_owner_evidence_ready"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/scheduler_worker.py#healthcheck",
+        "docker-compose.yml#reconciliation-drift-scheduler",
+        "validation.commands[0]",
+        "validation.commands[5]"
+      ],
+      "id": "AC2",
+      "statement": "reconciliation-drift-scheduler health heartbeat gap is closed or waived.",
+      "status": "pass_owner_evidence_ready"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/incident_listener.py#healthcheck",
+        "docker-compose.yml#reconciliation-drift-incident-listener",
+        "validation.commands[0]",
+        "validation.commands[5]"
+      ],
+      "id": "AC3",
+      "statement": "reconciliation-drift-incident-listener health heartbeat gap is closed or waived.",
+      "status": "pass_owner_evidence_ready"
+    },
+    {
+      "evidence_refs": [
+        "scope.composes_with",
+        "deployment.canonical_root_deploy",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/README.md"
+      ],
+      "id": "AC4",
+      "statement": "Workstream output is integrable by the L12-MANIFEST-001 owner without editing .orchestrator/config.json.",
+      "status": "pass_owner_evidence_ready"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery.required_checks",
+        "security_and_safety.two_person_approval",
+        "record_log"
+      ],
+      "id": "AC5",
+      "statement": "PR checks, independent review, merge to dev, and governed closeout are complete.",
+      "status": "pending",
+      "blocking_until": "Task PR checks pass, Codex appends an approved review record, the PR merges to dev, and Codex2 runs governed closeout."
+    }
+  ],
+  "residual_risks": {
+    "HOSTED_REC_HEALTH_001": {
+      "blocking_for_this_task": false,
+      "containment": "Do not claim hosted health or restart proof from this workstream. L12-MANIFEST-001 must integrate the merged commit and L12-HOSTED-001 must capture container health/restart readback.",
+      "description": "The task proves source, resolved Compose, worker-loop heartbeat, and separate CLI probe behavior, but does not deploy or kill/restart hosted containers.",
+      "expiry": "Before L12-MANIFEST-001 or L12-HOSTED-001 asserts hosted manifest acceptance.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "Merged task commit is selected by a dev deployment candidate.",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "README.md",
+      "evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The manifest names the companion checksum but does not embed its own digest.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_cut",
+      "recorded_at": "2026-07-29T02:49:19Z",
+      "reference": "982f224a2953d948fcc46d0342c611f3d0b22389",
+      "sequence": 1,
+      "sha": "982f224a2953d948fcc46d0342c611f3d0b22389",
+      "status": "ready_for_independent_review"
+    }
+  ]
+}
