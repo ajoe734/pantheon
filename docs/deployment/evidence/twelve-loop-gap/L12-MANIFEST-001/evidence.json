@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-MANIFEST-001 product-level runtime manifest evidence admission.",
-    "note": "Owner evidence cut v1.0.1. v1.0.0 replaced the prior 34-line evidence.json committed as a106af4251782c1672b9fb5db056f925ae4dbee6, which asserted status review_approved with owner Antigravity and reviewer Claude2 while the canonical row was in_progress with owner Claude2 and reviewer Antigravity, and which carried no implementation diff. The manifest below records the real docker-compose.yml and scripts/deploy_nonprod_vm.sh change and the readbacks taken against the live dev stack. v1.0.1 is an owner-initiated correction, not new work: v1.0.0 read its kill-one probe as proof that the unless-stopped policy restarted the worker unaided, and the container's RestartCount reads 0, which refutes that. The claim is withdrawn and downgraded to not proven across validation, behavioral_proof, hosted_readback, integrity, and acceptance, and the gap is stated as residual risk auto_restart_policy_not_proven_end_to_end. No implementation file changed between v1.0.0 and v1.0.1. v1.0.2 is the approval and closeout cut. It adds nothing to the implementation claim set: docker-compose.yml and scripts/deploy_nonprod_vm.sh are unchanged from the reviewed head 6783e252adca302e2b5ef3363fa2b225b67f4c97, which merged to dev as 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff. What v1.0.2 adds is the independent Antigravity verdict, transcribed from the authoritative task-state event log rather than authored here, the required-check and external-status provenance of the reviewed head, and the reviewer's adjudication of the AC2 scope question that v1.0.1 left open. The withdrawn daemon-side auto-restart claim stays withdrawn.",
+    "note": "Owner evidence cut v1.1.0. Historical cuts v1.0.0 through v1.0.2 delivered and reviewed the runtime-manifest implementation, then were reopened when the closeout evidence proved internally inconsistent. This cut changes no implementation byte. It corrects the healthcheck count from 21/27 with six exceptions to 20/27 with seven, aligns owner/reviewer with canonical sequence 4298, preserves the Antigravity implementation verdict as historical provenance instead of current Codex approval, and replaces the bare commit binding with a content digest plus a check-backed delivery receipt. The daemon-side auto-restart trigger remains withdrawn and unproven.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,16 +16,16 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-29T01:21:37Z",
-    "evidence_cut_semantics": "Owner approval and closeout cut v1.0.2, taken after the reviewed delivery merged. Reviewed head 6783e252adca302e2b5ef3363fa2b225b67f4c97 carried v1.0.1; PR #4326 merged that exact head into dev as merge commit 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff at 2026-07-29T01:10:09Z, so docker-compose.yml and scripts/deploy_nonprod_vm.sh are now dev truth rather than branch truth. No implementation file changed in v1.0.2 and no proof claim was added, strengthened, or re-scoped; validated_head_sha still names 4cf8feed (historical) and the withdrawn daemon-side auto-restart trigger claim stays withdrawn and unproven. v1.0.2 closes the two gaps v1.0.1 deliberately left for the reviewer. First, overall_admission now records the approved state instead of a pending one. Second, record_log entry 6 carries the independent Antigravity verdict. That entry is a transcription, not an owner judgement: Antigravity issued it through the governed approve command, which recorded it at sequence 4264 of the authoritative task-state event log (committed_at 2026-07-29T01:08:43Z) and posted commit status 51260833640 'Pantheon canonical review gate' as success on 6783e252adca302e2b5ef3363fa2b225b67f4c97. Every field of entry 6 is re-derivable from those two sources; the owner-side act of transcribing it is itself logged as entry 7. The reviewer's adjudication of the AC2 scope question is carried into acceptance.AC2 and into residual risk auto_restart_policy_not_proven_end_to_end: Antigravity accepted the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2, which is the acceptance branch that risk's own expiry clause already named, so the risk stays open and non-blocking rather than being retired. One replay caveat is disclosed here rather than left for a later reader to rediscover. implementation_delivery.pull_request records merge_sha because that is the complete and checkable fact, and it is checkable today: git merge-base --is-ancestor 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff origin/dev succeeds. The done guard's own ancestry check does not fire on the canonical closeout path, because that check keys off a repository field the canonical task row does not carry; the row names the delivery repo as target_repo instead. It does fire on the evidence manifest replay path, which derives repository from this manifest, and that path resolves ancestry with git merge-base inside the pinned supervisor command root rather than a dev-tip checkout. While that pin sits behind the merge it will report 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff as not an ancestor of HEAD. That is a property of the pin, not of the delivery, and it clears once the command root advances past the merge.",
+    "evidence_cut_at": "2026-07-29T02:07:42Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.1.0. At canonical journal sequence 4298, task state is in_progress with owner Codex2 and reviewer Codex. PR #4326 merged the reviewed implementation head 6783e252adca302e2b5ef3363fa2b225b67f4c97 into dev as 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff; docker-compose.yml and scripts/deploy_nonprod_vm.sh remain byte-identical to that merged delivery. Cut v1.0.2 (historical) was reopened because its healthcheck inventory, canonical reviewer, approval prose, and delivery binding contradicted current truth. This cut corrects the bare Compose inventory to 20/27 healthchecks with seven exceptions, binds the unchanged implementation plus manifest-readback.md as content-digest:sha256:e28d0c2ea54fc1377cdd90500ed4fa012d1e93a13888103a7ff8110ac5c982f7, and names receipt f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984 whose PR #4329 checks passed. The Antigravity verdict at journal sequence 4264 (historical) remains implementation-review provenance only; it does not substitute for current reviewer Codex. The daemon-side auto-restart trigger remains withdrawn and unproven. Current Codex approval is intentionally not pre-written and remains required against the exact final evidence head.",
     "id": "L12-MANIFEST-001",
-    "overall_admission": "approved_independent_review_recorded_and_delivery_merged",
-    "owner": "Claude2",
+    "overall_admission": "accepted_merged_implementation_and_guard_compatible_evidence_recut",
+    "owner": "Codex2",
     "phase": "Twelve Loop Remediation / Runtime Integration",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
-    "reviewer": "Antigravity",
+    "reviewer": "Codex",
     "target_environment": "dev single-VM compose stack",
     "target_maturity": "reconciled",
     "task_branch": "task/L12-MANIFEST-001",
@@ -33,6 +33,7 @@
   },
   "authorities": {
     "actual_state": [
+      "At canonical journal sequence 4298, L12-MANIFEST-001 is in_progress with owner Codex2, reviewer Codex, review_file docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json, and implementation PR #4326 already merged; the current task is the bounded PR #4329 evidence repair observed at receipt head f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984.",
       "docker compose config --services resolution for a given profile set",
       "live pantheon project container state, restart policy, and healthcheck exit codes",
       "worker heartbeat files written by the running containers"
@@ -54,6 +55,7 @@
     ],
     "evidence_changed_files": [
       "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
       "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
     ],
     "implementation_changed_files": [
@@ -94,6 +96,14 @@
         "note": "Evidence-only commit carrying owner cut v1.0.1, which withdrew the unproven daemon-side auto-restart claim. This is the exact head Antigravity approved and the exact head PR #4326 merged; docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to 4cf8feed.",
         "sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
         "subject": "L12-MANIFEST-001: withdraw unproven auto-restart claim"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:e28d0c2ea54fc1377cdd90500ed4fa012d1e93a13888103a7ff8110ac5c982f7",
+        "delivery_state": "v1_1_guard_compatible_evidence_receipt",
+        "note": "Carries the finalized v1.1.0 manifest readback plus the unchanged merged docker-compose.yml and scripts/deploy_nonprod_vm.sh bytes. The evidence-only follow-up changes evidence.json and evidence.sha256, which remain outside the content digest.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984",
+        "subject": "L12-MANIFEST-001: anchor corrected evidence receipt"
       }
     ],
     "required_checks": [
@@ -143,6 +153,33 @@
         "run_id": 51260871216,
         "url": "https://github.com/ajoe734/pantheon/pull/4326",
         "workflow": "Pantheon root merge freeze 2026-07-27"
+      },
+      {
+        "completed_at": "2026-07-29T02:06:07Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984",
+        "run_id": 30415905227,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30415905227/job/90462246461",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-29T02:06:09Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984",
+        "run_id": 30415905227,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30415905227/job/90462246394",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-29T02:06:57Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984",
+        "run_id": 30415905227,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30415905227/job/90462309904",
+        "workflow": "Smoke acceptance"
       }
     ],
     "pull_request": {
@@ -165,7 +202,7 @@
       {
         "claim_scope": "current",
         "command": "docker compose -f docker-compose.yml --env-file /dev/null config --format json with no profile selected",
-        "conclusion": "Fifty services resolve. All twenty-seven required loop workers are present, every one carries restart: unless-stopped and stop_grace_period: 30s, and twenty-one carry a healthcheck. pantheon-paper-runtime does not resolve.",
+        "conclusion": "Fifty services resolve. All twenty-seven required loop workers are present, every one carries restart: unless-stopped and stop_grace_period: 30s, and twenty carry a healthcheck. The seven without one are alpha-replication-worker, policy-learning-shadow-eval-scheduler, paper-signal-producer, reconciliation-drift-consumer, reconciliation-drift-scheduler, reconciliation-drift-incident-listener, and search-index-scheduler. pantheon-paper-runtime does not resolve.",
         "result": "pass"
       },
       {
@@ -206,20 +243,42 @@
       },
       {
         "claim_scope": "current",
-        "command": ".venv/bin/python -m pytest -q over services/search/tests/test_service_activation_contract.py, services/policy-learning/tests/test_policy_learning_compose_activation.py, services/source_ingestion/test_compose_activation.py, services/evolution/test_compose_activation.py, services/training-session/tests/test_compose_activation.py, services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py, services/trade_journey/test_lifecycle_projector_compose.py, scripts/test_paper_runtime_topology_contract.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q over services/search/tests/test_service_activation_contract.py, services/policy-learning/tests/test_policy_learning_compose_activation.py, services/source_ingestion/test_compose_activation.py, services/evolution/test_compose_activation.py, services/training-session/tests/test_compose_activation.py, services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py, services/trade_journey/test_lifecycle_projector_compose.py, scripts/test_paper_runtime_topology_contract.py",
         "conclusion": "24 passed.",
         "result": "pass"
       },
       {
         "claim_scope": "current",
-        "command": ".venv/bin/python -m pytest -q over the twelve scripts/test_*deploy* / cutover / lease / watchdog / bootstrap contract modules that read scripts/deploy_nonprod_vm.sh",
-        "conclusion": "106 passed.",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q over the fourteen deploy, cutover, lease, watchdog, bootstrap, topology, diagnostics, and readiness contract modules that read scripts/deploy_nonprod_vm.sh",
+        "conclusion": "111 passed.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4329 --repo ajoe734/pantheon --json headRefOid,mergeStateStatus,statusCheckRollup,url and gh api repos/ajoe734/pantheon/commits/f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984/check-runs",
+        "conclusion": "Point-in-time receipt observation: PR #4329 at head f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984 passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance in pull-request run 30415905227. Merge remained blocked because exact-head Codex review had not yet been issued.",
+        "observations": [
+          {
+            "head_sha": "f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984",
+            "observed_at": "2026-07-29T02:07:42Z",
+            "pull_request": 4329,
+            "subject": "delivery receipt exact head and required checks",
+            "value": "Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance success; current independent review not yet issued"
+          }
+        ],
+        "observed_at": "2026-07-29T02:07:42Z",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json --json",
+        "conclusion": "All ten fail-closed evidence rules return zero rejections.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-29T00:20:00Z",
-    "validated_base_sha": "f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8",
-    "validated_head_sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e"
+    "validated_at": "2026-07-29T02:07:42Z",
+    "validated_base_sha": "6fe626252d10af27eed0aba79530506d192857ca",
+    "validated_head_sha": "content-digest:sha256:e28d0c2ea54fc1377cdd90500ed4fa012d1e93a13888103a7ff8110ac5c982f7"
   },
   "deployment": {
     "applicable": true,
@@ -229,7 +288,7 @@
     },
     "environment": "dev single-VM compose stack, docker compose project pantheon",
     "identity_admission": {
-      "proof": "The newly default-on policy-learning-shadow-eval-scheduler presents the same POLICY_LEARNING_SERVICE_TOKEN and POLICY_LEARNING_AGORA_TENANT_ID that policy-learning-svc authorizes; its live ticks returned status ok with no 401 or 403.",
+      "proof": "At canonical journal sequence 4298, the task is owned by Codex2 with reviewer Codex. The merged implementation proof remains valid: the newly default-on policy-learning-shadow-eval-scheduler presents the same POLICY_LEARNING_SERVICE_TOKEN and POLICY_LEARNING_AGORA_TENANT_ID that policy-learning-svc authorizes, and its live ticks returned status ok with no 401 or 403.",
       "status": "pass"
     },
     "public_bff_base_url": "not_applicable_for_runtime_manifest_slice",
@@ -260,7 +319,7 @@
       "proof": [
         "The deploy fails closed rather than degrading: a narrowed PANTHEON_DEV_COMPOSE_PROFILES that drops a required loop worker now aborts the deploy with the missing worker named, instead of silently deploying a stack with a dead loop.",
         "The two new healthchecks read a heartbeat file's freshness rather than a business status, so a single upstream failure marks the worker degraded only when it actually stops ticking. Both were shown to return 1 on an absent heartbeat and on a stale heartbeat.",
-        "The six required workers that still carry no healthcheck are listed in residual_risks; their liveness rests on restart: unless-stopped and on their dependencies' health conditions, and that limit is stated rather than papered over."
+        "The seven required workers that still carry no healthcheck are listed in residual_risks; their liveness rests on restart: unless-stopped and on their dependencies' health conditions, and that limit is stated rather than papered over."
       ],
       "status": "pass"
     },
@@ -315,7 +374,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Canonical owner is Claude2 and canonical reviewer is Antigravity; they are distinct. The independent reviewer verdict is not yet recorded and is the remaining gate before done.",
+      "proof": "At canonical journal sequence 4298, owner Codex2 and reviewer Codex are distinct. The Antigravity approval at sequence 4264 (historical) proves review of the merged implementation only; current reviewer Codex must independently review the corrected final evidence head before done.",
       "status": "pass"
     }
   },
@@ -338,8 +397,8 @@
       "id": "AC2",
       "statement": "Workers have restart, health, heartbeat, durable volumes, auth, and graceful-stop configuration.",
       "status": "pass",
-      "blocking_until": "Scope of this pass, stated so the reviewer can disagree with it. The criterion as worded is about configuration, and the configuration is proven: 27/27 required loop workers render restart: unless-stopped and stop_grace_period: 30s, 21/27 carry a healthcheck with the six exceptions recorded as a residual risk, durable volumes and service-token auth are rendered per the inventory table in manifest-readback.md, and docker inspect confirms unless-stopped and StopTimeout 30 reach the live runtime rather than only the file. Worker-side recovery after an abrupt termination was also observed clean. What is NOT proven is the daemon-side trigger — that the unless-stopped policy fires unaided — because the attempted probe used docker kill, which the daemon excludes from the restart policy by design, and RestartCount read back as 0. This owner cut treats that as outside the wording of AC2 and records it as residual risk auto_restart_policy_not_proven_end_to_end rather than folding it into this status. If the reviewer reads AC2 as requiring the runtime trigger too, this item is not a pass and the reviewer should withhold approval until an in-container PID 1 crash probe is authorised and RestartCount is read back as incremented.",
-      "reviewer_adjudication": "Resolved by the independent reviewer, not by the owner. Antigravity approved with the configuration reading of AC2 and did not withhold approval on the daemon-side trigger, verifying that 27/27 required workers render unless-stopped and StopTimeout 30, that the docker inspect readback matches, and that the residual-risk wording for the unproven trigger is reasonable. Recorded at sequence 4264 of the authoritative task-state event log, 2026-07-29T01:08:43Z, and as commit status 51260833640. AC2 therefore stands at pass on its configuration wording, and the unproven daemon-side trigger remains open as residual risk auto_restart_policy_not_proven_end_to_end."
+      "blocking_until": "Scope of this pass, stated so the reviewer can disagree with it. The criterion as worded is about configuration, and the configuration is proven: 27/27 required loop workers render restart: unless-stopped and stop_grace_period: 30s, 20/27 carry a healthcheck with the seven exceptions recorded as a residual risk, durable volumes and service-token auth are rendered per the inventory table in manifest-readback.md, and docker inspect confirms unless-stopped and StopTimeout 30 reach the live runtime rather than only the file. Worker-side recovery after an abrupt termination was also observed clean. What is NOT proven is the daemon-side trigger — that the unless-stopped policy fires unaided — because the attempted probe used docker kill, which the daemon excludes from the restart policy by design, and RestartCount read back as 0. This owner cut treats that as outside the wording of AC2 and records it as residual risk auto_restart_policy_not_proven_end_to_end rather than folding it into this status. If the current reviewer reads AC2 as requiring the runtime trigger too, this item is not a pass and the reviewer should withhold approval until an in-container PID 1 crash probe is authorised and RestartCount is read back as incremented.",
+      "reviewer_adjudication": "Historical implementation adjudication only. Antigravity approved with the configuration reading of AC2 at journal sequence 4264 (historical), verifying 27/27 restart and StopTimeout configuration plus the runtime inspect readback and accepting the residual-risk wording for the unproven trigger. Cut v1.1.0 corrects that reviewed inventory from 21/27 healthchecks with six exceptions to 20/27 with seven; current reviewer Codex must independently accept or reject the corrected evidence head. The unproven daemon-side trigger remains open as residual risk auto_restart_policy_not_proven_end_to_end."
     },
     {
       "evidence_refs": [
@@ -375,17 +434,17 @@
       "containment": "The configuration half is proven at the runtime and not merely in the file: docker inspect on the live container reports RestartPolicy unless-stopped and StopTimeout 30, and all twenty-seven required loop workers render both keys. The worker half is proven too: after an abrupt termination the worker resumed with startup_recovery status ok, reset_count 0, and a fresh authenticated tick, so an unattended restart would not require manual state repair. What is unproven is only the daemon-side trigger, and unless-stopped is Docker's own default-supervised behaviour rather than anything this task implements.",
       "description": "No probe in this slice demonstrates that Docker's unless-stopped policy restarts a required loop worker unaided. The attempted probe used docker kill, which the daemon records as explicit operator intent and therefore excludes from the restart policy; the observed RestartCount stayed 0 and the container came back only after operator action. A sound probe crashes the container's PID 1 from inside so the exit is unsolicited, and is confirmed by RestartCount incrementing, but that is a destructive action against the shared live dev stack and was not authorised in the owner slice.",
       "expiry": "When an in-container PID 1 crash probe is run against one required loop worker and RestartCount is read back as incremented, or when the reviewer accepts the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2.",
-      "owner": "Claude2 owner slice, adjudication delegated to reviewer Antigravity",
+      "owner": "Codex2 owner repair slice; historical implementation adjudication by Antigravity; current evidence review delegated to Codex",
       "recheck_trigger": "Any change to a required loop worker's restart or stop_grace_period setting, or authorisation to run a destructive in-container crash probe on the dev stack.",
       "severity": "medium",
       "reviewer_adjudication": "This risk's expiry offered two branches: run an in-container PID 1 crash probe and read RestartCount back as incremented, or have the reviewer accept the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2. Antigravity took the second branch at 2026-07-29T01:08:43Z. That settles the AC2 adjudication only. The daemon-side trigger is still not proven end to end, so the risk stays open and non-blocking, and the crash-probe branch of the expiry remains the only way to close it on evidence rather than on judgement."
     },
-    "six_workers_without_a_heartbeat_surface": {
+    "seven_workers_without_a_healthcheck_surface": {
       "blocking_for_this_task": false,
-      "containment": "All six carry restart: unless-stopped, a 30-second graceful stop, and a service_healthy dependency condition on the API they drive, so a crash is supervised even though a hung tick is not detected.",
-      "description": "alpha-replication-worker, policy-learning-shadow-eval-scheduler, paper-signal-producer, reconciliation-drift-consumer, reconciliation-drift-scheduler, and reconciliation-drift-incident-listener have no healthcheck because their worker modules publish no heartbeat file or healthcheck entry point. Adding one requires a service source change, which is outside this task's artifact scope of docker-compose.yml and scripts/deploy_nonprod_vm.sh.",
+      "containment": "All seven carry restart: unless-stopped, a 30-second graceful stop, and at least one service_healthy dependency condition on the API they drive. A crash is supervised even though a hung tick is not detected.",
+      "description": "alpha-replication-worker, policy-learning-shadow-eval-scheduler, paper-signal-producer, reconciliation-drift-consumer, reconciliation-drift-scheduler, reconciliation-drift-incident-listener, and search-index-scheduler have no healthcheck because their worker modules publish no heartbeat file or healthcheck entry point. Adding one requires a service source change, which is outside this task's artifact scope of docker-compose.yml and scripts/deploy_nonprod_vm.sh.",
       "expiry": "When each owning loop task adds a heartbeat surface, at which point the manifest can wire a healthcheck the same way it now does for strategy-distillation-worker and deployment-outbox-consumer.",
-      "owner": "L12-ALPHA-001, L12-IMIT-001, L12-CAP-001, L12-REC-001",
+      "owner": "L12-ALPHA-001, L12-IMIT-001, L12-CAP-001, L12-REC-001, and the shared search-index owner",
       "recheck_trigger": "Any change to those worker modules that adds a heartbeat file or a healthcheck subcommand.",
       "severity": "medium"
     },
@@ -400,12 +459,30 @@
     },
     "independent_review": {
       "blocking_for_this_task": false,
-      "containment": "The task remains in_progress and cannot reach done until the reviewer's verdict is recorded; the done guard independently refuses a manifest with no approved reviewer verdict in record_log.",
-      "description": "Antigravity has not yet reviewed this owner cut. No reviewer verdict is recorded in record_log.",
-      "expiry": "When Antigravity records an exact-head review decision on the task PR.",
-      "owner": "Antigravity",
+      "containment": "The task remains in_progress and cannot reach done until current reviewer Codex issues an exact-head verdict; the done guard independently refuses a manifest with no approved formal verdict by the current reviewer in record_log.",
+      "description": "At canonical journal sequence 4298, current reviewer Codex has not approved cut v1.1.0. The Antigravity verdict at sequence 4264 (historical) remains implementation provenance only and does not satisfy the current reviewer gate.",
+      "expiry": "When Codex records an exact-head review decision on the corrected evidence cut.",
+      "owner": "Codex",
       "recheck_trigger": "Any task branch head change or reviewer decision.",
       "severity": "medium"
+    },
+    "canonical_snapshot_age": {
+      "blocking_for_this_task": false,
+      "containment": "All current ownership, reviewer, status, and review-file claims are bounded to one authoritative journal snapshot instead of being inferred from the stale worktree copy of ai-status.json.",
+      "description": "At canonical journal sequence 4298, L12-MANIFEST-001 is in_progress with owner Codex2 and reviewer Codex. A newer governed task-state read requires an evidence recut only if one of those task-scoped facts changes before exact-head review.",
+      "expiry": "When Codex records the exact-head decision, the owner will transcribe that later journal event as review provenance without changing any digest-bound artifact.",
+      "owner": "Codex2",
+      "recheck_trigger": "A newer governed task-state read or reviewer decision.",
+      "severity": "low"
+    },
+    "delivery_receipt_intermediate_state": {
+      "blocking_for_this_task": false,
+      "containment": "The evidence-only commit changes only evidence.json and evidence.sha256; docker-compose.yml, scripts/deploy_nonprod_vm.sh, and manifest-readback.md remain byte-identical to the receipt tree.",
+      "description": "Delivery receipt f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984 carries the v1.1.0 bound implementation and readback bytes with all three required workflows green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
+      "expiry": "When the evidence-only commit lands on the task branch.",
+      "owner": "Codex2",
+      "recheck_trigger": "Any change to a digest-bound artifact.",
+      "severity": "low"
     }
   },
   "integrity": {
@@ -419,7 +496,7 @@
     "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
     "normalized_hosted_readback": {
       "all_required_loop_workers_default_on": true,
-      "duplicate_legacy_worker_resolved": false,
+      "duplicate_legacy_worker_resolved": true,
       "hosted_activation_claimed": false,
       "kill_one_restart_observed": false,
       "observed_container_restart_count": 0,
@@ -430,10 +507,11 @@
       "source_external_egress_default": "deny"
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "The companion checksum file seals the readback document; the manifest itself is sealed by the task commit rather than by a recursive self-hash.",
+    "self_hash_reason": "The v1.1.0 companion checksum seals this manifest, while delivery receipt f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984 binds the finalized docker-compose.yml, deploy script, and readback bytes without recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "docker-compose.yml@v1.0.0": "f110c57fbb67b7f2b3314817cb3e4524dd026accdf2352170237761037f49547",
-      "scripts/deploy_nonprod_vm.sh@v1.0.0": "968dea78a353bab66c0943f5cea2c8ff4da440e07a42259b53c7085a63f2a6d6"
+      "docker-compose.yml@v1.1.0": "f110c57fbb67b7f2b3314817cb3e4524dd026accdf2352170237761037f49547",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md@v1.1.0": "476608b16afe4b86936d09fe08a03efe106b78afd64bde8ce15dff5c65c264db",
+      "scripts/deploy_nonprod_vm.sh@v1.1.0": "968dea78a353bab66c0943f5cea2c8ff4da440e07a42259b53c7085a63f2a6d6"
     }
   },
   "record_log": [
@@ -499,6 +577,15 @@
       "sequence": 7,
       "sha": "2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff",
       "status": "owner_closeout_recorded"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_repair",
+      "recorded_at": "2026-07-29T02:07:42Z",
+      "reference": "Owner evidence cut v1.1.0 repairs the Codex2 reopen findings without changing the merged implementation: bare Compose inventory is corrected to 20/27 healthchecks with seven named exceptions; canonical snapshot sequence 4298 records owner Codex2 and reviewer Codex; current approval prose no longer contradicts the pending current-review fact; and receipt f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984 binds docker-compose.yml, scripts/deploy_nonprod_vm.sh, and manifest-readback.md through content-digest:sha256:e28d0c2ea54fc1377cdd90500ed4fa012d1e93a13888103a7ff8110ac5c982f7 with all required workflows green. Historical Antigravity approval remains implementation provenance only. The daemon auto-restart trigger remains withdrawn and unproven. Awaiting exact-head Codex review of the corrected evidence cut.",
+      "sequence": 8,
+      "sha": "f3d6aa1bd208a7c67cdd5e8edf77642bf5c3f984",
+      "status": "ready_for_independent_review"
     }
   ]
 }
