@@ -99,3 +99,45 @@ wait for checks, merge, and record merge/deploy evidence. Hosted tasks are not
 done until the accepted manifest and live readback prove the exact deployed
 SHAs. Runtime rescue may be performed first only when it is the smallest safe
 repair and the same change is delivered through the repository flow.
+
+## Closeout addendum — 2026-07-24 (Agora hosted exact pair)
+
+The hosted Agora exact-pair blocker recorded above (P0/P1 Agora product truth
+finding 6, replacement-VM reproof; and the `AG-HOSTED-CLOSE-001` block on
+`target_type=strategy_workshop` `422` / `APPROVAL_TARGET_TYPE_MISMATCH` `409` /
+`STRATEGY_SPEC_STRATEGY_ID_MISMATCH`) is **resolved and closed**:
+
+- Canonical `strategy_workshop` target type and distinct Registry/strategy
+  identity were repaired by `AG-GOV-WORKSHOP-CONTRACT-001` (PRs #4036, #4037).
+- The compatibility gate was regenerated and the exact accepted FE/BFF pair was
+  deployed with strict auth by `AG-GOV-WORKSHOP-COMPAT-DEPLOY-001`, which ran
+  the full hosted seed → approve → research → conclude → governed BFF restart →
+  readback repair probe on the replacement VM `35.201.204.12`.
+- Managed-dev lifecycle freshness was raised to 300 s and kept strict exact-SHA
+  `operator-bff` ready across the switch and restart
+  (`OPS-DEV-LIFECYCLE-FRESHNESS-001`, PR #4043).
+- `AG-HOSTED-CLOSE-002` archived the reviewer-consumable final closeout and an
+  as-of `2026-07-24T05:58Z` independent read-only re-probe confirming the pair
+  is still served, strict, read-only with safe write defaults, and `/readyz`
+  healthy.
+- The authoritative lifecycle archived `AG-HOSTED-CLOSE-002` as completed at
+  `2026-07-24T06:23:50Z` and records `AG-HOSTED-CLOSE-001` as its superseded
+  predecessor. The successor evidence merged through PR #4050 (`874103d1a`);
+  independent review state merged through PR #4051 (`cd4f42c4f`).
+
+Accepted hosted pair after this closeout (supersedes the pre-fix baseline in
+§ Current accepted dev baseline for the Agora Governance/Workshop surface):
+
+- Frontend `e4399e3ec68f882ace35d0349e6597cdd101525f`.
+- BFF `f71c1f8ba889ba64956006ef0f9159840be6d065`.
+- Pair ID `ec91a4aaaee16719f6db6a3d7b6edba048c08e676d789bfb9301df92913c3de2`;
+  compatibility manifest SHA-256
+  `d61e11cf2cead97d4a66ab153a2081ef4d633671ee4f962d271a7b3feeb86867`;
+  contract family `agora.v1.13`.
+
+Closeout evidence:
+
+- `docs/deployment/evidence/agora/ag-hosted-close-002.md`
+- `docs/deployment/evidence/agora/ag-hosted-close-002/` (as-of re-probe capture)
+- `docs/deployment/evidence/agora/ag-gov-workshop-compat-deploy-001.md`
+- `docs/deployment/evidence/agora/ag-gov-workshop-contract-001/README.md`

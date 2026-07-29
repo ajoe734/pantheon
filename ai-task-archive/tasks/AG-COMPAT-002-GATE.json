@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "task_id": "AG-COMPAT-002-GATE",
+  "archived_at": "2026-07-24T01:34:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-COMPAT-002-GATE.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-COMPAT-002-GATE.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "docs/contracts/agora/dev-compatibility-manifest.json",
+      "scripts/agora_compat_manifest.py",
+      ".github/workflows"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "AG-COMPAT-001-FE"
+    ],
+    "fleet_lane": "agora-compat-gate",
+    "id": "AG-COMPAT-002-GATE",
+    "last_update": "2026-07-24T01:34:31Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized reviewed delivery: PR #4026 merged to dev as be3cf913091279fc893846244c422cd50609505e; closeout commit b65ba05fe30bbd0e814e23809e0b686a54007422; manifest pytest 16 passed; exact FE/BFF verification returned ok; manifest SHA-256 494980f204f0af21effc018ebbba657c1027b3052e984577833dfa46ab360bb3; task worktree clean.",
+    "owner": "Codex",
+    "phase": "Agora Compatibility / Wave 4 acceptance gate",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "review_notes_zh": [
+      "獨立核對通過：manifest 精確配對、gate fail-closed、pre-switch 擋下 BFF drift、rollback 26/26、hosted 實測一致",
+      "非阻斷觀察：packet INDEX/brief 標頭仍寫 Owner Claude / Reviewer Codex（實際為 Codex/Claude2）；worktree 有 supervisor 重生的 task-brief 未提交 diff，dev 上的 Implementation Record 仍完整"
+    ],
+    "reviewer": "Claude2",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-COMPAT-002-GATE.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "把 pending/zero placeholder manifest 換成 exact FE/BFF pair，部署前驗證 commits/hashes/dev reachability，失配 gate-before-switch 並測 rollback。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Finalize Agora cross-repository compatibility gate",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T01:34:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-compat-002-gate",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-COMPAT-002-GATE",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "dadb5240df78cc3412f62ff91da11a8cb87de494",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-compat-002-gate",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "c6f5e59ea9189868dc59fe77395339b64109a2ca",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-COMPAT-002-GATE",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "be3cf913091279fc893846244c422cd50609505e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-23T02:24:42Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AG-COMPAT-002-GATE away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex2.",
+      "resolved_at": "2026-07-23T09:22:44Z",
+      "status": "done",
+      "task_id": "AG-COMPAT-002-GATE",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-23T09:43:41Z",
+      "from": "Codex2",
+      "message": "PR #4010 is open with auto-merge. Please review exact v1.13 FE/BFF handoff binding, dev reachability/Git-byte checks, fail-closed workflow ordering, tamper/no-switch/rollback tests, and docs. Verification: 47 focused tests, real clean execute-plans origin/dev deployment gate pass, deterministic manifest cmp, backend bundle/handoff verify.",
+      "resolved_at": "2026-07-23T10:15:28Z",
+      "status": "done",
+      "task_id": "AG-COMPAT-002-GATE",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-23T10:15:28Z",
+      "from": "Codex",
+      "message": "Reviewer changes required: (1) cryptographically bind the actual Pantheon deployment payload TARGET_SHA/tree to the accepted manifest pair; the workflow currently omits --backend-runtime-commit, so a later arbitrary dev payload passes even though manifest backend.runtime_commit is 6e08b040eebd2c317a9b44741d8badbf878e26ad. (2) Put the compatibility decision on the real execute-plans hosted switch path before deploy-dev-vm.sh, or supply equivalent immutable gate evidence consumed there; pantheon nonprod-deploy only guards the BFF VM path. Replace the synthetic no-switch/rollback tests that manually mutate symlinks inside the test with production release-harness coverage proving pending/rejected cannot change the hosted symlink/active manifest and rollback restores the prior accepted pair. Preserve the passing exact clean origin/dev gate and 47 focused tests.",
+      "resolved_at": "2026-07-23T10:15:28Z",
+      "status": "done",
+      "task_id": "AG-COMPAT-002-GATE",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T01:06:35Z",
+      "from": "Codex",
+      "message": "Ready for review: Pantheon PR #4016 pins FE e4399e3/BFF 00b38f4; integration gate 30003411349 attempt 3 and BFF restore 30056916386 passed; FE deploy 30056451511 attempt 1 safely rejected BFF drift without switch and attempt 2 passed; hosted deployment.json and /bff/version prove exact accepted live/strict read-only pair; rollback/no-switch harness 26/26; evidence PR #4020 merged as dd335e22809ee85ec9cc9a385fc30f6abae3197a.",
+      "resolved_at": "2026-07-24T01:15:17Z",
+      "status": "done",
+      "task_id": "AG-COMPAT-002-GATE",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-24T01:15:17Z",
+      "from": "Claude2",
+      "message": "Reviewer verified independently. (1) Manifest on dev (sha256 494980f204f0af21effc018ebbba657c1027b3052e984577833dfa46ab360bb3) pins exactly BFF 00b38f41ec51296762d502c4bd5732f95ccf2953 / FE e4399e3ec68f882ace35d0349e6597cdd101525f, status accepted, blocking_reasons empty, no zero/placeholder hashes; 'agora_compat_manifest.py verify' against real pantheon + /home/lupin/code/execute-plans returned ok. (2) Negative gate proven by me: pending status, zero generated_types_sha256, unreachable backend runtime_commit, and FE runtime mismatch each exit 1 and emit NO evidence file, so no downstream switch is possible; scripts/test_agora_compat_manifest.py 16 passed covers tampered generated types/openapi/bundle_index/contract_commit/placeholder handoff plus dev-reachability, and test_workflow_enforces_gate_before_any_deploy_switch asserts gate precedes deploy and forbids --allow-pending. --allow-pending exists only on the 'verify' subparser; verify_manifest forces deployment rules when deployment_gate=True. (3) Gate-before-switch proven live: execute-plans deploy 30056451511 attempt 1 failed at verify_bff_identity pre_candidate ('live BFF identity differs from gated candidate identity'), which in deploy-dev-vm.sh runs before any candidate release dir or symlink change; hosted previousReleaseName chain (...-30006450427-1-... -> ...-30056451511-2-...) contains no attempt-1 release, confirming the hosted symlink/manifest were untouched. deploy-dev-vm.sh also fails closed (rc 2) on missing/symlinked evidence. (4) Rollback/no-switch harness in the sealed attempt-2 log: 'deploy contract harness: 26 passed, 0 failed', including pending/rejected/mismatched evidence cannot switch, manual rollback drill restores and re-probes exact previous release, and external live switch preserved by rollback CAS. (5) Runs confirmed via gh api: integration gate 30003411349 attempt 3 success on head e4399e3ec; pantheon BFF restore 30056916386 success; deploy 30056451511 attempt 2 success. (6) Live read-back: hosted deployment.json reports pairId 5b5d84cb24e4f7280a02924591d01f570f3d73d791f5761c98dc67a571e9a55f, manifest digest 494980f2... byte-matching dev, deploymentState accepted, profile read-only, VITE_BFF_MODE live, VITE_BFF_FALLBACK strict, real+stub writes false; /bff/version independently reports 00b38f41... with auth_mode strict and mfa_required true. (7) Delivery merged: PR #4016 -> e2f7e7356b517844a946b780b373492d98af8c30 and PR #4020 -> dd335e22809ee85ec9cc9a385fc30f6abae3197a, which is the current pantheon dev head. Non-blocking: packet INDEX.md row and AG-COMPAT-002-GATE.md header still show the pre-reassignment Owner Claude / Reviewer Codex instead of Codex / Claude2.",
+      "status": "done",
+      "task_id": "AG-COMPAT-002-GATE",
+      "to": "Codex",
+      "resolved_at": "2026-07-24T01:34:32Z"
+    }
+  ],
+  "blockers": []
+}

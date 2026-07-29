@@ -22,22 +22,53 @@ from fastapi.testclient import TestClient
 
 from bff.agora.dataset_extraction.extractor import AgoraDatasetStore
 from bff.agora.dataset_extraction.router import create_dataset_extraction_router
+from bff.models import OperatorIdentity
 
 
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
 
-def _make_client(store: AgoraDatasetStore | None = None) -> TestClient:
+def _identity(
+    *,
+    user_id: str = "user-test",
+    tenant_id: str = "tenant-test",
+    roles: list[str] | None = None,
+    allowed_tenants: list[str] | None = None,
+) -> OperatorIdentity:
+    return OperatorIdentity(
+        operator_id=user_id,
+        roles=roles or ["operator"],
+        claims={
+            "sub": user_id,
+            "tenant_id": tenant_id,
+            "allowed_tenants": allowed_tenants or [tenant_id],
+        },
+        token_kind="structured",
+    )
+
+
+def _make_client(
+    store: AgoraDatasetStore | None = None,
+    *,
+    identity: OperatorIdentity | None = None,
+) -> TestClient:
     if store is None:
         store = AgoraDatasetStore()  # fresh store per test for isolation
     app = FastAPI()
 
-    def _extract_identity(_auth: str | None) -> dict:
-        return {"user_id": "user-test", "tenant_id": "tenant-test"}
+    resolved_identity = identity or _identity()
 
-    def _require_read_role(_identity: dict) -> None:
-        pass
+    def _extract_identity(_auth: str | None) -> OperatorIdentity:
+        return resolved_identity
+
+    def _require_read_role(current: OperatorIdentity) -> None:
+        if not {"viewer", "operator", "reviewer", "approver", "admin"}.intersection(current.roles):
+            raise HTTPException(status_code=403, detail="read role required")
+
+    def _require_write_role(current: OperatorIdentity) -> None:
+        if not {"operator", "reviewer", "approver", "admin"}.intersection(current.roles):
+            raise HTTPException(status_code=403, detail="write role required")
 
     def _bff_error(status_code: int, code: object, message: str, reason: str, **kw) -> HTTPException:
         return HTTPException(status_code=status_code, detail={"code": str(code), "message": message, "reason": reason})
@@ -50,6 +81,7 @@ def _make_client(store: AgoraDatasetStore | None = None) -> TestClient:
     router = create_dataset_extraction_router(
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
+        require_write_role=_require_write_role,
         bff_error=_bff_error,
         utc_now=_utc_now,
         dataset_store=store,
@@ -279,11 +311,14 @@ class TestDatasetBacklogAndWorkerRoutes:
 
         # 2. Add an item directly to the store inbox (or through POST /bff/agora/interaction-evidence)
         # Note: POST triggers synchronous worker in extract_evidence, so to test backlog/DLQ we can manually insert to store._inbox
-        store._inbox["ev-pending-1"] = {
+        store._inbox[("tenant-test", "user-test", "ev-pending-1")] = {
             "evidence_id": "ev-pending-1", "tenant_id": "tenant-test", "user_id": "user-test",
+            "idempotency_key": "pending-key", "request_digest": "pending-digest",
             "interaction_kind": "ask", "persona_id": "p", "session_id": None,
             "content": {}, "source_refs": [], "learning_eligible": True,
             "captured_at": "2026", "status": "pending", "extracted_at": "2026",
+            "error_message": None, "created_at": "2026", "processed_at": None,
+            "lease_owner": None, "lease_token": None, "lease_expires_at": None, "attempt_count": 0,
         }
 
         # Verify backlog endpoint now returns 1 item
@@ -312,12 +347,15 @@ class TestDatasetBacklogAndWorkerRoutes:
         client = _make_client(store)
 
         # 1. Add failed item to DLQ
-        store._inbox["ev-fail-1"] = {
+        store._inbox[("tenant-test", "user-test", "ev-fail-1")] = {
             "evidence_id": "ev-fail-1", "tenant_id": "tenant-test", "user_id": "user-test",
+            "idempotency_key": "fail-key", "request_digest": "fail-digest",
             "interaction_kind": "invalid-kind", "persona_id": "p", "session_id": None,
             "content": {}, "source_refs": [], "learning_eligible": True,
             "captured_at": "2026", "status": "failed", "extracted_at": "2026",
             "error_message": "Some validation error",
+            "created_at": "2026", "processed_at": "2026",
+            "lease_owner": None, "lease_token": None, "lease_expires_at": None, "attempt_count": 1,
         }
 
         # Verify DLQ returns it
@@ -339,3 +377,167 @@ class TestDatasetBacklogAndWorkerRoutes:
         assert resp.json()["items"][0]["evidence_id"] == "ev-fail-1"
 
 
+class TestGovernedIdentityAndTenantBoundaries:
+    def test_real_operator_identity_attribute_path_succeeds(self) -> None:
+        client = _make_client(identity=_identity())
+        status, body = _submit(
+            client,
+            evidence_id="ev-real-identity",
+            idempotency_key="real-identity-key",
+        )
+        assert status == 201
+        assert body["data"]["tenant_id"] == "tenant-test"
+        assert body["data"]["user_id"] == "user-test"
+
+    def test_viewer_can_read_but_cannot_submit_process_or_replay(self) -> None:
+        store = AgoraDatasetStore()
+        writer = _make_client(store)
+        _submit(writer, evidence_id="ev-rbac", idempotency_key="rbac-writer-key")
+
+        viewer = _make_client(store, identity=_identity(roles=["viewer"]))
+        assert viewer.get("/bff/agora/interaction-evidence/ev-rbac").status_code == 200
+        assert _submit(
+            viewer,
+            evidence_id="ev-rbac-denied",
+            idempotency_key="rbac-viewer-key",
+        )[0] == 403
+        assert viewer.post("/bff/agora/dataset-worker/process").status_code == 403
+        assert (
+            viewer.post("/bff/agora/dataset-worker/dlq/ev-rbac/replay").status_code
+            == 403
+        )
+
+    def test_scoped_get_does_not_disclose_other_tenant_or_user(self) -> None:
+        store = AgoraDatasetStore()
+        tenant_a = _make_client(
+            store,
+            identity=_identity(
+                user_id="user-a",
+                tenant_id="tenant-a",
+                allowed_tenants=["tenant-a"],
+            ),
+        )
+        tenant_b = _make_client(
+            store,
+            identity=_identity(
+                user_id="user-b",
+                tenant_id="tenant-b",
+                allowed_tenants=["tenant-b"],
+            ),
+        )
+        assert _submit(
+            tenant_a,
+            evidence_id="ev-private",
+            idempotency_key="tenant-a-key",
+        )[0] == 201
+        assert tenant_b.get("/bff/agora/interaction-evidence/ev-private").status_code == 404
+        assert tenant_b.get("/bff/agora/datasets/observe").json()["total"] == 0
+        assert tenant_b.get("/bff/agora/dataset-worker/handoffs").json()["total"] == 0
+
+    def test_requested_tenant_must_be_bound_to_identity(self) -> None:
+        client = _make_client(
+            identity=_identity(tenant_id="tenant-a", allowed_tenants=["tenant-a"])
+        )
+        response = client.get(
+            "/bff/agora/datasets/observe",
+            headers={"X-Tenant-Id": "tenant-b"},
+        )
+        assert response.status_code == 403
+
+    def test_same_idempotency_key_with_different_payload_returns_409(self) -> None:
+        client = _make_client()
+        assert _submit(
+            client,
+            evidence_id="ev-idem-a",
+            captured_at="2026-06-27T01:00:00Z",
+            idempotency_key="stable-key",
+        )[0] == 201
+        status, body = _submit(
+            client,
+            evidence_id="ev-idem-b",
+            captured_at="2026-06-27T02:00:00Z",
+            idempotency_key="stable-key",
+        )
+        assert status == 409
+        assert "different" in str(body).lower()
+
+    def test_same_evidence_id_with_changed_payload_returns_409(self) -> None:
+        client = _make_client()
+        assert _submit(
+            client,
+            evidence_id="ev-digest",
+            captured_at="2026-06-27T01:00:00Z",
+            idempotency_key="digest-key-a",
+        )[0] == 201
+        assert _submit(
+            client,
+            evidence_id="ev-digest",
+            captured_at="2026-06-27T02:00:00Z",
+            idempotency_key="digest-key-b",
+        )[0] == 409
+
+
+class TestDownstreamHandoffAcknowledgement:
+    def test_acknowledgement_is_exactly_once_and_authority_limited(self) -> None:
+        store = AgoraDatasetStore()
+        client = _make_client(store)
+        _, created = _submit(
+            client,
+            evidence_id="ev-ack",
+            idempotency_key="ack-submit-key",
+        )
+        handoff = client.get("/bff/agora/dataset-worker/handoffs").json()["items"][0]
+        payload = {
+            "acknowledgement_id": "ack-001",
+            "dataset_version_id": created["data"]["dataset_version_id"],
+            "downstream_ref": "imitation-dataset://observe/42",
+        }
+        first = client.post(
+            f"/bff/agora/dataset-worker/handoffs/{handoff['handoff_id']}/ack",
+            json=payload,
+            headers={"Idempotency-Key": "ack-key"},
+        )
+        assert first.status_code == 200
+        assert first.json()["status"] == "acknowledged"
+        assert first.json()["data"]["authority_limit"] == "Observe/Learn"
+
+        second = client.post(
+            f"/bff/agora/dataset-worker/handoffs/{handoff['handoff_id']}/ack",
+            json=payload,
+            headers={"Idempotency-Key": "ack-key"},
+        )
+        assert second.status_code == 200
+        assert second.json()["status"] == "exists"
+        assert second.json()["idempotent"] is True
+
+        conflict = client.post(
+            f"/bff/agora/dataset-worker/handoffs/{handoff['handoff_id']}/ack",
+            json={**payload, "acknowledgement_id": "ack-002"},
+            headers={"Idempotency-Key": "ack-key-2"},
+        )
+        assert conflict.status_code == 409
+
+    def test_ack_requires_matching_dataset_version_and_write_role(self) -> None:
+        store = AgoraDatasetStore()
+        writer = _make_client(store)
+        _submit(writer, evidence_id="ev-ack-rbac", idempotency_key="ack-rbac-submit")
+        handoff = writer.get("/bff/agora/dataset-worker/handoffs").json()["items"][0]
+        payload = {
+            "acknowledgement_id": "ack-rbac",
+            "dataset_version_id": "dsv-wrong",
+            "downstream_ref": "imitation-dataset://observe/43",
+        }
+        mismatch = writer.post(
+            f"/bff/agora/dataset-worker/handoffs/{handoff['handoff_id']}/ack",
+            json=payload,
+            headers={"Idempotency-Key": "ack-rbac-key"},
+        )
+        assert mismatch.status_code == 409
+
+        viewer = _make_client(store, identity=_identity(roles=["viewer"]))
+        denied = viewer.post(
+            f"/bff/agora/dataset-worker/handoffs/{handoff['handoff_id']}/ack",
+            json={**payload, "dataset_version_id": handoff["dataset_version_id"]},
+            headers={"Idempotency-Key": "ack-viewer-key"},
+        )
+        assert denied.status_code == 403

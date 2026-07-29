@@ -13,6 +13,11 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
+_AUTH_HEADERS = {
+    "Authorization": "Bearer dep002-test:operator,service",
+    "X-Tenant-Id": "tenant-dep002-test",
+}
+
 
 @pytest.fixture()
 def dep002_client(tmp_path):
@@ -40,7 +45,7 @@ def dep002_client(tmp_path):
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app)
+        yield TestClient(module.app, headers=_AUTH_HEADERS)
     finally:
         for key, value in env_backup.items():
             if value is None:

@@ -3,12 +3,40 @@
 `training-session-svc` owns the trainer teaching-session write surface used by
 the BFF trainer workbench.
 
+## Inbound Authority And Tenant Boundary
+
+Every `/api/training/*` request is authenticated before route execution.
+Health and metrics routes remain probe-readable. The caller must provide
+`Authorization: Bearer <verified service JWT>`, `X-Pantheon-Service`, and
+`X-Tenant-Id`.
+
+The service header must match a verified token service identity, the token must
+carry the `training-service` role, and the requested tenant must be present in
+the verified tenant claims. Cross-tenant identifiers return `404` rather than
+disclosing another tenant's records. Replay commit and discard additionally
+require verified MFA.
+
+Primary configuration:
+
+```text
+TRAINING_SESSION_AUTH_MODE=strict
+TRAINING_SESSION_JWT_SECRET=<secret>
+# or TRAINING_SESSION_JWKS_URI / TRAINING_SESSION_OIDC_DISCOVERY_URL
+TRAINING_SESSION_ALLOWED_CALLER_SERVICES=control-plane-bff,training-session-preview-worker
+TRAINING_SESSION_ALLOWED_ROLES=training-service
+TRAINING_SESSION_MFA_REQUIRED=true
+```
+
+`TRAINING_SESSION_AUTH_DISABLED=true` is test-only and is rejected in an
+enforced staging or production persistence posture.
+
 ## TeachingSession
 
 `teaching_session.schema.json` defines the persona-scoped teaching session
 record:
 
-- identity and scope: `session_id`, `persona_id`, `opened_by`, `trace_id`
+- identity and scope: `session_id`, `persona_id`, `tenant_id`, `opened_by`,
+  `trace_id`
 - lifecycle: `mode`, `status`, `started_at`, `ended_at`
 - trainer context: `objective`, `topic`, `context_refs`, `current_control_state_ref`
 - replay/read-model fields: `events`, `outcomes`, `replay_resolution`, `artifacts`
@@ -27,8 +55,25 @@ The service emits `session_type=trainer` and current runtime statuses
 - timestamps: canonical `timestamp` plus BFF-compatible `emitted_at`
 
 The event model rejects timestamp alias drift and duplicate event ids in a
-session. It does not launch rapid eval, mutate live persona state, or publish
-registry artifacts; those remain downstream TRN/IMT responsibilities.
+session. Every event carries the same required `tenant_id` as its session. It
+does not launch rapid eval, mutate live persona state, or publish registry
+artifacts; those remain downstream TRN/IMT responsibilities.
+
+## Authoritative HA Store
+
+`TRAINING_SESSION_EVENT_STORE_BACKEND=postgres` activates the complete training
+authority store, not only the former event-log pilot. The service-owned
+`training_session.authority_records` table durably stores sessions, controls,
+preview bundles, preview jobs, replay decisions, and latest functional
+results; `training_session.teaching_events` remains append-only.
+
+Preview-job and replay mutations acquire a transaction-scoped Postgres advisory
+lock around their read/decide/write sequence. Two API/worker instances cannot
+both claim one job or both pass one replay decision. Persona-target commit
+remains an idempotent owner-API operation: after a crash, a restarted worker
+reuses the same idempotency key and accepts only exact terminal authoritative
+readback. JSON/JSONL is a single-node development fallback; staging and
+production persistence posture require Postgres.
 
 ## BFF Trainer Session Surface
 
@@ -74,6 +119,17 @@ durable `training-session-data` volume, and health-checks a recent worker alive
 marker. The service, rather than the worker request, owns the trusted evaluation
 clock used by freshness admission.
 
+The worker sends its own service token and tenant on both poll and run calls:
+
+```text
+TRAINING_SESSION_WORKER_TOKEN=<service JWT>
+TRAINING_SESSION_TENANT_ID=<tenant>
+TRAINING_SESSION_WORKER_SERVICE_ID=training-session-preview-worker
+```
+
+Its marker is written only after a tick with zero failed jobs and includes the
+functional result; exception and failed-job ticks do not refresh it.
+
 ## Authoritative Evaluation Data
 
 The default Compose path evaluates with the pinned upstream vectorbt backend
@@ -114,3 +170,16 @@ Commit is fail-closed unless the replay candidate points to a completed preview
 with an evaluation proof whose governance gate state is `passed`. Successful
 commits copy the evaluation proof ref and governance gate state into the replay
 resolution, decision event, and lineage audit artifact.
+
+Persona, approval, target-write, and terminal-readback records must match the
+same `tenant_id`. Outbound authority calls include `X-Tenant-Id`, and tenant is
+part of the digest-bound evaluation proof and committed target binding.
+
+## Functional Health
+
+`/healthz` and `/readyz` report persistence posture, storage connectivity,
+inbound-authority configuration, and the latest durable evaluation/commit
+result per tenant. A failed or governance-rejected evaluation, or a commit
+without exact terminal readback, marks functional health `degraded`;
+`/readyz` returns `503`. A later successful result for that operation and
+tenant is the only path back to `ok`.

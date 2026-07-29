@@ -210,6 +210,26 @@ class LineageGraph:
             if self._node_key(node_type, nid) in self.nodes
         ]
 
+    def scoped_to_tenant(self, tenant_id: str) -> "LineageGraph":
+        """Return a graph containing only explicitly matching tenant records.
+
+        A lineage record without a tenant is legacy-unscoped and is omitted.
+        Edges survive only when both endpoints are in scope, preventing a
+        tenant-visible target from traversing into another or unknown tenant.
+        """
+        normalized_tenant_id = str(tenant_id).strip()
+        scoped = LineageGraph()
+        for node in self.nodes.values():
+            if str(node.data.get("tenant_id") or "").strip() == normalized_tenant_id:
+                scoped.add_node(node.node_type, node.node_id, node.data)
+        for edge in self.edges:
+            if (
+                scoped.get_node(edge.from_type, edge.from_id) is not None
+                and scoped.get_node(edge.to_type, edge.to_id) is not None
+            ):
+                scoped.add_edge(edge)
+        return scoped
+
 
 # ---------------------------------------------------------------------------
 # Iterative graph traverser
@@ -676,7 +696,12 @@ class ProjectionBuilder:
         visited_ids: set[str] = set()
 
         # --- Upstream: follow FK edges from plan to its dependencies ---------
-        if plan_node:
+        if plan_node is None:
+            conflict_markers.append({
+                "code": "node_not_found",
+                "node_key": f"{NODE_DEPLOYMENT_PLAN}:{plan_id}",
+            })
+        else:
             # Pool
             pool_id = plan_node.data.get("capital_pool_id")
             if pool_id:
@@ -3161,7 +3186,12 @@ class LineageReadService:
                 and binding is not None
                 and self.graph.get_node(NODE_RUNTIME_BINDING, binding_id) is None
             ):
-                _admit_runtime_binding_node(self.graph, binding_id, binding)
+                _admit_runtime_binding_node(
+                    self.graph,
+                    binding_id,
+                    binding,
+                    tenant_id=event.get("tenant_id"),
+                )
 
             if self.graph.get_node(NODE_TELEMETRY_EVENT, event_id) is not None:
                 return
@@ -3212,6 +3242,7 @@ class LineageReadService:
         event_id: Optional[str] = None,
         plan_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Execute a lineage query by family name.
@@ -3232,6 +3263,9 @@ class LineageReadService:
             Deployment plan ID (for forensic_plan_trace).
         trace_id : str, optional
             Distributed trace ID (for source_runtime_telemetry_trace).
+        tenant_id : str, optional
+            When present, query only explicitly tenant-scoped nodes. Unscoped
+            legacy records and other tenants are excluded fail-closed.
 
         Returns
         -------
@@ -3239,31 +3273,45 @@ class LineageReadService:
             Projection payload matching the LIN-001A corpus shape.
         """
         with self._lock:
+            traverser = self.traverser
+            if tenant_id is not None:
+                normalized_tenant_id = str(tenant_id).strip()
+                if not normalized_tenant_id:
+                    raise ValueError("tenant_id must be non-empty")
+                traverser = LineageTraverser(
+                    self.graph.scoped_to_tenant(normalized_tenant_id)
+                )
             if query_family == "runtime_binding_projection":
                 if not binding_id:
                     raise ValueError("binding_id required for runtime_binding_projection")
-                return self.projection.runtime_binding_projection(self.traverser, binding_id)
+                return self.projection.runtime_binding_projection(traverser, binding_id)
             if query_family == "capital_pool_projection":
                 if not pool_id:
                     raise ValueError("pool_id required for capital_pool_projection")
-                return self.projection.capital_pool_projection(self.traverser, pool_id)
+                return self.projection.capital_pool_projection(traverser, pool_id)
             if query_family == "telemetry_event_trace":
                 if not event_id:
                     raise ValueError("event_id required for telemetry_event_trace")
-                return self.projection.telemetry_event_trace(self.traverser, event_id)
+                return self.projection.telemetry_event_trace(traverser, event_id)
             if query_family == "forensic_plan_trace":
                 if not plan_id:
                     raise ValueError("plan_id required for forensic_plan_trace")
-                return self.projection.forensic_plan_trace(self.traverser, plan_id)
+                return self.projection.forensic_plan_trace(traverser, plan_id)
             if query_family == "source_runtime_telemetry_trace":
                 if not trace_id:
                     raise ValueError("trace_id required for source_runtime_telemetry_trace")
-                return self.projection.source_runtime_telemetry_trace(self.traverser, trace_id)
+                return self.projection.source_runtime_telemetry_trace(traverser, trace_id)
 
             raise ValueError(f"Unknown query family: {query_family}")
 
 
-def _admit_runtime_binding_node(graph: LineageGraph, binding_id: str, binding: Any) -> None:
+def _admit_runtime_binding_node(
+    graph: LineageGraph,
+    binding_id: str,
+    binding: Any,
+    *,
+    tenant_id: Any = None,
+) -> None:
     """Admit a thin runtime_binding node from an already-resolved binding record.
 
     Accepts a dict, a dataclass/namespace with attribute access (e.g. the
@@ -3277,6 +3325,7 @@ def _admit_runtime_binding_node(graph: LineageGraph, binding_id: str, binding: A
 
     data = {
         "binding_id": binding_id,
+        "tenant_id": _field("tenant_id") or tenant_id,
         "runtime_id": _field("runtime_id"),
         "capital_pool_id": _field("capital_pool_id"),
         "artifact_id": _field("artifact_id"),

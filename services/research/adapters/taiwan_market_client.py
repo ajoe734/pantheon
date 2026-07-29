@@ -13,9 +13,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 
 def _utc_now_iso() -> str:
@@ -529,9 +529,9 @@ class TaiwanMarketClient:
             "User-Agent": "pantheon-research-adapter/0.1",
             **dict(headers or {}),
         }
-        request = Request(guard_external_url(url, caller="research.taiwan_market_client"), headers=request_headers)
+        request = Request(url, headers=request_headers)
         self._last_request_time = time.time()
-        with urlopen(request, timeout=15) as response:
+        with open_external_url(request, caller="research.taiwan_market_client", timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def post_json(
@@ -552,13 +552,13 @@ class TaiwanMarketClient:
 
         request_headers = {"Content-Type": "application/json", **dict(headers or {})}
         request = Request(
-            guard_external_url(url, caller="research.taiwan_market_client"),
+            url,
             data=body,
             method="POST",
             headers=request_headers,
         )
         self._last_request_time = time.time()
-        with urlopen(request, timeout=15) as response:
+        with open_external_url(request, caller="research.taiwan_market_client", timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def mops_route_inventory(self, *, index_js_text: str | None = None) -> tuple[MopsRouteSpec, ...]:

@@ -1,0 +1,381 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-AGORA-001 product-level independent-review gate.",
+    "note": "Schema-normalized evidence for governed, tenant-safe, leased Agora dataset extraction. Codex independently approved the merged implementation and bounded residuals.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T13:39:22Z",
+    "evidence_cut_semantics": "Independent reviewer evidence after PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c and the implementation was revalidated on dev integration tip 902584bef7448b92cbf0686fd9c655481763b2bd. No hosted deployment, maturity promotion, or runtime authority is claimed.",
+    "id": "L12-AGORA-001",
+    "overall_admission": "review_approved",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Agora",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-AGORA-001",
+    "title": "Make Agora extraction governed, tenant-safe, and leased"
+  },
+  "authorities": {
+    "actual_state": [
+      "Agora evidence inbox",
+      "DatasetVersion",
+      "learning handoff and DLQ"
+    ],
+    "desired_state": [
+      "authenticated Agora interaction evidence",
+      "dataset extraction policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-AGORA-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for the Agora interaction evidence inbox, tenant-scoped extraction leases, DatasetVersion projection, Observe/Learn handoff, acknowledgement, and task evidence",
+    "composes_with": [
+      "L12-IMIT-001 governed dataset consumption",
+      "Codex independent review",
+      "L12-MANIFEST-001 and L12-HOSTED-001 deployment proof"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_agora_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "scripts/agora_workshop_restart_persistence_smoke.py",
+      "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/models.py",
+      "services/control-plane/bff/agora/dataset_extraction/router.py",
+      "services/control-plane/bff/agora/dataset_extraction/test_extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/test_router.py",
+      "services/control-plane/bff/agora/router.py"
+    ],
+    "not_changing": "RuntimeBinding write ownership, artifact promotion, deployment authority, capital binding, broker or order routing, or loop-controller maturity truth.",
+    "owned_layer": "Typed OperatorIdentity scope, tenant-safe extraction storage, bounded leased claims, DatasetVersion and Observe/Learn handoffs, downstream acknowledgement, and focused regression proof"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged_via_pr_4177",
+        "hosted_cut_inclusion": false,
+        "sha": "fe6180d0080a60c540f4d24a953cec31de91348f",
+        "subject": "L12-AGORA-001: anchor governed extraction ownership"
+      },
+      {
+        "delivery_state": "merged_via_pr_4177",
+        "hosted_cut_inclusion": false,
+        "sha": "381e4373e40f1b56789b62cdc1a060a17f86cf0e",
+        "subject": "L12-AGORA-001: finalize leased extraction evidence"
+      },
+      {
+        "delivery_state": "merged_via_pr_4177",
+        "hosted_cut_inclusion": false,
+        "sha": "1eaf6f620f22cae27435eb580504e37fca03127a",
+        "subject": "L12-AGORA-001: record fresh extraction verification"
+      },
+      {
+        "delivery_state": "merged_via_pr_4177",
+        "hosted_cut_inclusion": false,
+        "sha": "8200b518edc18b5a43c922be1408b4c3dca09a63",
+        "subject": "L12-AGORA-001: refresh integrated verification"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "a55274f0c101798597cc77777cec662919bcdbc7",
+      "merge_sha": "3998d9d341546209d3c854b6ce716dba2456086c",
+      "merged_at": "2026-07-26T12:36:12Z",
+      "number": 4177,
+      "url": "https://github.com/ajoe734/pantheon/pull/4177"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "a55274f0c101798597cc77777cec662919bcdbc7",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30202347556,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30202347556",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "a55274f0c101798597cc77777cec662919bcdbc7",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30202350744,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30202350744",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "TEST_DATABASE_URL=postgresql://postgres:<redacted>@127.0.0.1:55432/pantheon_test /tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora/dataset_extraction -q",
+        "conclusion": "Independent reviewer rerun: 70 passed, 1 warning in 14.92s against an ephemeral localhost-only postgres:16-alpine container; the container was removed after the run.",
+        "result": "pass"
+      },
+      {
+        "command": "/tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q",
+        "conclusion": "Independent reviewer rerun: 27 passed, 7 warnings in 10.83s.",
+        "result": "pass"
+      },
+      {
+        "command": "TEST_DATABASE_URL=postgresql://postgres:<redacted>@127.0.0.1:55433/pantheon_test /tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora -q",
+        "conclusion": "163 passed and the same 5 adjacent trading-room WidgetPlacement schema-reference tests failed; no L12-AGORA-001 implementation or test file appeared in those traces.",
+        "result": "known_non_blocking_adjacent_failure"
+      },
+      {
+        "command": "/tmp/l12-agora-venv/bin/python -c '<validate evidence.json against schemas/product-evidence.schema.json>' && sha256sum -c evidence.sha256",
+        "conclusion": "ProductEvidenceManifest schema and companion checksum passed after recording the independent verdict.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m compileall -q services/control-plane/bff/agora/dataset_extraction services/control-plane/bff/agora/router.py scripts/agora_workshop_restart_persistence_smoke.py",
+        "conclusion": "Independent reviewer rerun exited 0 on dev integration tip 902584bef7448b92cbf0686fd9c655481763b2bd.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0 after integrating current dev.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T13:39:22Z",
+    "validated_base_sha": "902584bef7448b92cbf0686fd9c655481763b2bd",
+    "validated_head_sha": "902584bef7448b92cbf0686fd9c655481763b2bd"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "Hosted activation belongs to L12-MANIFEST-001 and L12-HOSTED-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "The focused BFF tests exercise the real bff.models.OperatorIdentity attribute path and the canonical Agora tenant/user scope resolver.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_no_hosted_claim",
+    "publish_cut": {
+      "reason": "This owner packet proves the local PostgreSQL contract and does not claim a hosted publication cut.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Replacement-dev deployment and hosted restart readback are downstream responsibilities; this packet records task-worktree PostgreSQL integration proof only.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Concurrent duplicate submission binds Idempotency-Key to the canonical scoped request digest and returns one durable inbox entry.",
+        "Concurrent processors use bounded PostgreSQL SELECT FOR UPDATE SKIP LOCKED claims and create one DatasetVersion and one handoff per evidence record."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Changed payloads under a reused Idempotency-Key or evidence ID fail closed with HTTP 409 IDEMPOTENCY_CONFLICT.",
+        "Cross-tenant and cross-user reads return the scoped absence semantics, and failed extraction records remain available through the scoped DLQ and replay path."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "The scoped evidence digest deterministically binds the inbox record, stable dataset_version_id, and one Observe/Learn-only handoff.",
+        "Acknowledgement requires the exact dataset_version_id and digest, then persists one acknowledgement_id without creating runtime, deployment, broker, or capital authority."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "PostgreSQL integration tests prove an expired processing lease is reclaimed by a new worker after interruption and the stale lease token cannot commit.",
+        "The schema-migration test upgrades prior global primary keys to tenant/user-scoped keys while preserving recoverable inbox state."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Lease-token comparison rejects stale completion, leaving the current owner as the only writer of processed or failed state.",
+        "Stable request digests and one-time acknowledgement make replay compensating and idempotent instead of duplicating DatasetVersion or handoff effects."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Verification used a localhost-only ephemeral PostgreSQL container and did not activate shared or hosted runtime state.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "The implementation imports no runtime, capital, broker, order, promotion, or deployment writer and handoffs are explicitly Observe/Learn only.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Viewer reads remain allowed while submit, process, DLQ replay, and acknowledgement mutations require the injected write-role guard.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "All inbox, dataset, DLQ, replay, lease, handoff, and acknowledgement keys and predicates include the authenticated tenant_id and user_id.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "No runtime two-person mutation is applicable to this Observe/Learn slice; owner Codex2 and reviewer Codex remain distinct, and Codex independently approved merged PR #4177 after PostgreSQL, identity/router, schema, checksum, compile, and diff verification.",
+      "status": "not_applicable"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_real_operator_identity_attribute_path_succeeds",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_backlog_routes",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_dlq_and_replay_routes",
+        "services/control-plane/bff/tests/test_agora_router.py"
+      ],
+      "id": "AC1",
+      "statement": "Real OperatorIdentity submit, process, read, and replay paths use typed identity access.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_scoped_get_does_not_disclose_other_tenant_or_user",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_requested_tenant_must_be_bound_to_identity",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_processing_one_scope_does_not_drain_another_tenant",
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_prior_global_primary_keys_migrate_to_tenant_user_scope"
+      ],
+      "id": "AC2",
+      "statement": "Every read, mutation, claim, and replay is tenant and user scoped.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_viewer_can_read_but_cannot_submit_process_or_replay",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_same_idempotency_key_with_different_payload_returns_409",
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_same_evidence_id_with_changed_payload_returns_409",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_concurrent_duplicate_extraction_returns_one_version_without_500_window"
+      ],
+      "id": "AC3",
+      "statement": "Mutations require write authority and stable idempotency conflicts fail closed.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_claim_is_bounded_and_exclusive",
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_expired_claim_is_recovered_and_stale_owner_cannot_commit",
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_concurrent_processors_create_one_version_and_handoff_each",
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_concurrent_processors_use_postgres_skip_locked"
+      ],
+      "id": "AC4",
+      "statement": "Concurrent processors use bounded leases and cannot double-own or stale-commit work.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_acknowledgement_is_exactly_once_and_authority_limited",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py::test_ack_requires_matching_dataset_version_and_write_role",
+        "services/control-plane/bff/agora/dataset_extraction/test_extractor.py::test_expired_claim_is_recovered_and_stale_owner_cannot_commit"
+      ],
+      "id": "AC5",
+      "statement": "DatasetVersion and Observe/Learn handoff are acknowledged once without runtime authority.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "No hosted or maturity claim is made; the task remains dev-integration evidence until the deployment lanes consume the merged implementation.",
+      "description": "Replacement-dev activation and restart readback remain downstream deployment proof.",
+      "expiry": "When L12-MANIFEST-001 and L12-HOSTED-001 record an accepted deployment cut and restart readback.",
+      "owner": "L12-MANIFEST-001 and L12-HOSTED-001",
+      "recheck_trigger": "Before any hosted Agora extraction maturity promotion.",
+      "severity": "medium"
+    },
+    "adjacent_agora_schema_failures": {
+      "blocking_for_this_task": false,
+      "containment": "The focused 70-test extraction suite and 27 parent identity/router tests pass; no task-owned file appears in the five adjacent failure traces.",
+      "description": "The broader Agora suite has five pre-existing trading-room WidgetPlacement JSON-schema reference failures.",
+      "expiry": "When the Agora trading-room schema owner repairs WidgetPlacement reference resolution.",
+      "owner": "Agora trading-room",
+      "recheck_trigger": "Before claiming a fully green aggregate Agora suite.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "localhost_postgresql_integration": true,
+      "real_operator_identity_path": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "extractor": "61cecd6181f2b26f0bef7f5a7cc4ca6d35be97e3ff6af4a6b30b366bdeda175b",
+      "models": "6152e2c3e49047229cec3d771385c66947f51e16b43ad92e45d9f00bbc94d2a8",
+      "parent_router": "bcf4ed369e7e352593103b765667da25addabee1a547cd51992cc2b19b6fd18b",
+      "router": "960c5da7bdda22bfe9bc0c08f0264c220dd8494b4b1df427c1d8139a1e5c0acc",
+      "restart_smoke": "fee1096f7c2bc58011c69b03857eb4a649e2fa359e42e3d7e82f0f12cc56c97b",
+      "test_extractor": "27c67b5e5218a85207c465afcc53e8f432bad00ff42162718f5c02a370710f2d",
+      "test_router": "2502cbf3413e4fff0beccdc417686972506ce2c0f0abb5a4d78648ef1234322c"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T12:25:29Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json",
+      "sequence": 1,
+      "sha": "8200b518edc18b5a43c922be1408b4c3dca09a63",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T13:39:22Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4177",
+      "sequence": 2,
+      "sha": "3998d9d341546209d3c854b6ce716dba2456086c",
+      "status": "review_approved"
+    }
+  ]
+}

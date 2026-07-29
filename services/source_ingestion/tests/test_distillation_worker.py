@@ -27,6 +27,7 @@ from services.source_ingestion.distillation_worker import (
     _stable_job_id,
     _synthesize_evidence_bundle,
     _synthesize_evidence_item,
+    source_version_digest,
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -78,6 +79,10 @@ def _make_worker(tmp_path: Path) -> tuple[DistillationWorker, DistillationJobQue
     return worker, queue, seed_store
 
 
+def _versioned_bundle_id(source: SourceRecord) -> str:
+    return _stable_bundle_id(source.source_id, source_version_digest(source))
+
+
 # ---------------------------------------------------------------------------
 # AC-1: New normalized sources enqueue distillation jobs
 # ---------------------------------------------------------------------------
@@ -91,7 +96,10 @@ class TestEnqueueFromSourceRecord:
 
         assert job.status == DistillationJobStatus.PENDING
         assert job.source_id == "src-tw-001"
-        assert job.job_id == _stable_job_id("src-tw-001")
+        # Job identity is per source *version*, not per source id.
+        digest = source_version_digest(source)
+        assert job.source_digest == digest
+        assert job.job_id == _stable_job_id("src-tw-001", digest)
 
     def test_enqueue_twice_returns_same_job(self, tmp_path: Path) -> None:
         worker, queue, _ = _make_worker(tmp_path)
@@ -107,7 +115,7 @@ class TestEnqueueFromSourceRecord:
         worker, _, _ = _make_worker(tmp_path)
         source = _rejected_source()
 
-        with pytest.raises(DistillationError, match="Rejected source"):
+        with pytest.raises(DistillationError, match="Only normalized source"):
             worker.enqueue_from_source_record(source)
 
     def test_run_pending_processes_enqueued_job(self, tmp_path: Path) -> None:
@@ -132,19 +140,19 @@ class TestEnqueueFromSourceRecord:
 
         worker.run_pending({source.source_id: source})
 
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         assert len(seeds) == 1
         seed = seeds[0]
         assert seed.status == StrategySpecSeedStatus.DRAFT
         assert "momentum" in seed.feature_hints or "lightgbm" in " ".join(seed.feature_hints).lower()
 
-    def test_run_pending_missing_source_marks_failed(self, tmp_path: Path) -> None:
+    def test_legacy_run_pending_missing_source_marks_failed(self, tmp_path: Path) -> None:
         worker, queue, _ = _make_worker(tmp_path)
         source = _normalized_source()
-        worker.enqueue_from_source_record(source)
+        queue.enqueue(source.source_id)
 
-        result = worker.run_pending({})  # empty lookup map
+        result = worker.run_pending({})  # legacy jobs still require caller lookup
 
         assert result.processed == 1
         assert result.failed == 1
@@ -186,7 +194,7 @@ class TestMutableDraftOnly:
 
         assert result2.processed == 1
         assert result2.refreshed == 1
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         assert len(seeds) == 1
         assert seeds[0].status == StrategySpecSeedStatus.DRAFT
@@ -201,7 +209,7 @@ class TestMutableDraftOnly:
         worker.run_pending(records_map)
 
         # Advance the seed to ACCEPTED
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         seed = seeds[0]
         seed_store.record_review_decision(
@@ -230,7 +238,7 @@ class TestMutableDraftOnly:
         worker.enqueue_from_source_record(source)
         worker.run_pending(records_map)
 
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         seed_store.record_review_decision(
             seeds[0].seed_id,
@@ -274,7 +282,7 @@ class TestIdempotency:
         result2 = worker.run_pending(records_map)
 
         assert result2.processed == 0
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         assert len(seed_store.list_by_bundle(bundle_id)) == 1
 
     def test_catch_up_is_idempotent(self, tmp_path: Path) -> None:
@@ -317,8 +325,8 @@ class TestIdempotency:
         worker, queue, seed_store = _make_worker(tmp_path)
         source = _normalized_source()
 
-        # First run with missing source map → fail
-        worker.enqueue_from_source_record(source)
+        # A legacy unversioned job still depends on the caller map.
+        queue.enqueue(source.source_id)
         worker.run_pending({})  # fails
 
         failed = [j for j in queue.list_all() if j.status == DistillationJobStatus.FAILED]

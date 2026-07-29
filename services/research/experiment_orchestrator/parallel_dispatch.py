@@ -252,6 +252,8 @@ def _assert_run_preserves_task_pins(run: ExperimentRun, task: ExperimentTask) ->
         "task_id": task.task_id,
         "strategy_id": task.strategy_id,
         "strategy_spec_version": task.strategy_spec_version,
+        "tenant_id": task.tenant_id,
+        "strategy_spec_id": task.strategy_spec_id,
         "dataset_version_id": task.dataset_version_id,
         "code_version": task.code_version,
     }
@@ -279,6 +281,8 @@ def _failed_experiment_run(
         task_id=task.task_id,
         strategy_id=task.strategy_id,
         strategy_spec_version=task.strategy_spec_version,
+        tenant_id=task.tenant_id,
+        strategy_spec_id=task.strategy_spec_id,
         backend_id=backend_id,
         runtime_env="research",
         status="failed",
@@ -332,6 +336,8 @@ def _completed_experiment_run(
         task_id=task.task_id,
         strategy_id=task.strategy_id,
         strategy_spec_version=task.strategy_spec_version,
+        tenant_id=task.tenant_id,
+        strategy_spec_id=task.strategy_spec_id,
         backend_id=backend_id,
         runtime_env="research",
         status="completed",
@@ -368,6 +374,7 @@ def _run_vectorbt_backend(task: ExperimentTask, backend_id: str) -> ExperimentRu
     source_strategy_spec_id = _first_text(
         registry_lineage.get("source_strategy_spec_id"),
         payload.get("source_strategy_spec_id"),
+        task.strategy_spec_id,
         _mapping(task.metadata).get("source_strategy_spec_id"),
         f"{task.strategy_id}@{task.strategy_spec_version}",
     )
@@ -441,6 +448,8 @@ def _run_qlib_backend(task: ExperimentTask, backend_id: str) -> ExperimentRun:
             "task_id": task.task_id,
             "strategy_id": task.strategy_id,
             "strategy_spec_version": task.strategy_spec_version,
+            "tenant_id": task.tenant_id,
+            "strategy_spec_id": task.strategy_spec_id,
             "backend_id": backend_id,
             "dataset_version_id": task.dataset_version_id,
             "code_version": task.code_version,

@@ -16,7 +16,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -66,6 +67,14 @@ try:
         build_capital_pool_store,
     )
     from .write_authority import is_authorized, matrix_as_list
+    from .inbound_authority import (
+        CapitalInboundAuthorityError,
+        authenticate_capital_request,
+        authority_configuration_health,
+        bind_capital_mutation,
+        reset_current_authority,
+        set_current_authority,
+    )
 except ImportError:
     from models import (  # type: ignore
         ActivateBindingRequest,
@@ -100,6 +109,14 @@ except ImportError:
         build_capital_pool_store,
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
+    from inbound_authority import (  # type: ignore
+        CapitalInboundAuthorityError,
+        authenticate_capital_request,
+        authority_configuration_health,
+        bind_capital_mutation,
+        reset_current_authority,
+        set_current_authority,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -450,6 +467,14 @@ class CapitalBoundaryService:
         stage = str(cls._line_value(line, "stage") or "").strip().lower()
         return cls._STAGE_DEPLOYMENT_SCOPE.get(stage)
 
+    @classmethod
+    def _line_is_paper_scope(cls, line: Any) -> bool:
+        return (
+            cls._line_deployment_scope(line) == "paper"
+            and str(cls._line_value(line, "capital_scope") or "").strip().lower()
+            == "paper_ledger"
+        )
+
     def _binding_is_rebalance_eligible(
         self,
         binding: PersonaCapitalBinding,
@@ -513,7 +538,7 @@ class CapitalBoundaryService:
                     f"CapitalPool {pool_id!r} must be active for a risk-increasing rebalance"
                 )
             sleeve_id = self._normalized_sleeve_id(line.get("capital_sleeve_id"))
-            if sleeve_id is None:
+            if sleeve_id is None and not self._line_is_paper_scope(line):
                 raise AllocationAuthorityConflict(
                     "A risk-increasing rebalance line requires capital_sleeve_id"
                 )
@@ -559,11 +584,15 @@ class CapitalBoundaryService:
             for index, line in enumerate(body.lines):
                 increases_risk = self._line_increases_risk(line)
                 sleeve_id = self._normalized_sleeve_id(line.capital_sleeve_id)
-                if increases_risk and sleeve_id is None:
+                if (
+                    increases_risk
+                    and sleeve_id is None
+                    and not self._line_is_paper_scope(line)
+                ):
                     raise CapitalServiceError(
                         "A risk-increasing rebalance line requires capital_sleeve_id"
                     )
-                if sleeve_id is None:
+                if sleeve_id is None and not increases_risk:
                     continue
                 candidates = self.binding_store.list(
                     persona_id=line.persona_id,
@@ -915,7 +944,12 @@ app = FastAPI(
 register_fastapi_health_routes(
     app,
     "pantheon-capital",
-    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
+    dependencies=lambda: {
+        "persistence": PERSISTENCE_POSTURE.to_dict(),
+        "inbound_authority": authority_configuration_health(
+            persistence_enforced=PERSISTENCE_POSTURE.enforced
+        ),
+    },
     metrics=lambda: {
         "capital_pool_count": len(get_capital_service().list_pools()),
         "binding_count": len(get_capital_service().list_bindings()),
@@ -930,6 +964,31 @@ register_fastapi_health_routes(
 )
 
 
+@app.middleware("http")
+async def enforce_capital_mutation_authority(request: Request, call_next):
+    if (
+        not request.url.path.startswith("/api/")
+        or request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}
+    ):
+        return await call_next(request)
+    try:
+        authority = authenticate_capital_request(
+            authorization=request.headers.get("Authorization"),
+            tenant_id=request.headers.get("X-Tenant-Id"),
+            actor_service=request.headers.get("X-Pantheon-Service"),
+            persistence_enforced=PERSISTENCE_POSTURE.enforced,
+        )
+    except CapitalInboundAuthorityError as exc:
+        return JSONResponse(exc.to_dict(), status_code=exc.status_code)
+    token = set_current_authority(authority)
+    try:
+        response = await call_next(request)
+        response.headers["X-Pantheon-Tenant"] = authority.tenant_id
+        return response
+    finally:
+        reset_current_authority(token)
+
+
 def get_capital_service() -> CapitalBoundaryService:
     return CapitalBoundaryService(
         pool_store=pool_store,
@@ -941,6 +1000,8 @@ def get_capital_service() -> CapitalBoundaryService:
 
 
 def _raise_http_error(exc: Exception) -> None:
+    if isinstance(exc, CapitalInboundAuthorityError):
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
     if isinstance(exc, PermissionError):
         raise HTTPException(status_code=403, detail=str(exc))
     explicit_status = getattr(exc, "status_code", None)
@@ -959,6 +1020,7 @@ CAPITAL_HTTP_ERRORS = (
     AllocationAuthorityError,
     ValueError,
     PermissionError,
+    CapitalInboundAuthorityError,
 )
 
 
@@ -981,6 +1043,7 @@ def _binding_body(
 def create_capital_pool(body: CreateCapitalPoolRequest) -> CapitalPoolBody:
     service = get_capital_service()
     try:
+        body = bind_capital_mutation(body)
         pool, replayed = service.create_pool(body)
         return _pool_body(pool, idempotent_replay=replayed)
     except CAPITAL_HTTP_ERRORS as exc:
@@ -1011,6 +1074,7 @@ def update_capital_pool_status(
 ) -> CapitalPoolBody:
     service = get_capital_service()
     try:
+        body = bind_capital_mutation(body)
         return _pool_body(service.update_pool_status(pool_id, body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
@@ -1051,6 +1115,7 @@ def binding_admissibility(
 def create_binding(body: CreateBindingRequest) -> PersonaCapitalBindingBody:
     service = get_capital_service()
     try:
+        body = bind_capital_mutation(body)
         binding, replayed = service.create_binding(body)
         return _binding_body(binding, idempotent_replay=replayed)
     except CAPITAL_HTTP_ERRORS as exc:
@@ -1085,6 +1150,7 @@ def get_binding(binding_id: str) -> PersonaCapitalBindingBody:
 def activate_binding(binding_id: str, body: ActivateBindingRequest) -> PersonaCapitalBindingBody:
     service = get_capital_service()
     try:
+        body = bind_capital_mutation(body)
         return _binding_body(service.activate_binding(binding_id, body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
@@ -1097,6 +1163,7 @@ def update_binding_status(
 ) -> PersonaCapitalBindingBody:
     service = get_capital_service()
     try:
+        body = bind_capital_mutation(body)
         return _binding_body(service.update_binding_status(binding_id, body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
@@ -1115,6 +1182,7 @@ def _allocation_list_response(records: List[Dict[str, Any]]) -> AllocationListRe
 @app.post("/api/rebalances", response_model=RebalanceBody, status_code=201)
 def create_rebalance(body: CreateRebalanceRequest) -> RebalanceBody:
     try:
+        body = bind_capital_mutation(body)
         return RebalanceBody(**get_capital_service().create_rebalance(body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
@@ -1149,6 +1217,7 @@ def apply_rebalance(
     body: ApplyRebalanceRequest,
 ) -> RebalanceApplyReceipt:
     try:
+        body = bind_capital_mutation(body)
         return RebalanceApplyReceipt(
             **get_capital_service().apply_rebalance(rebalance_id, body)
         )
@@ -1204,6 +1273,7 @@ def list_pool_allocations(
 @app.post("/api/containments", response_model=ContainmentBody, status_code=201)
 def create_containment(body: CreateContainmentRequest) -> ContainmentBody:
     try:
+        body = bind_capital_mutation(body)
         return ContainmentBody(**get_capital_service().create_containment(body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)

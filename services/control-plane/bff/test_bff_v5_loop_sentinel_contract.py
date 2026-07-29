@@ -1,12 +1,17 @@
 """Focused BFF contract tests for v5 loop/sentinel/health/control-room routes (SEM-004)."""
 from __future__ import annotations
 
+import asyncio
+import http.server
+import json
 import os
 import sys
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +20,19 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
+import downstream_health_monitor as health_module  # noqa: E402
+from downstream_health_monitor import (  # noqa: E402
+    DownstreamHealthMonitor,
+    DownstreamProbeResult,
+)
 from read_store import ReadSurfaceStore, ServiceBackedReadAdapter  # noqa: E402
+from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
+import services.telemetry.main as telemetry_main  # noqa: E402
+from services.telemetry.ingest_svc import TelemetryIngestService  # noqa: E402
+from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore  # noqa: E402
+from services.telemetry.test_infrastructure_health_ingest import (  # noqa: E402
+    _DurableFileBroker,
+)
 
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
 
@@ -474,3 +491,609 @@ def test_v5_loop_runs_empty_incidents_source_not_missing(monkeypatch):
     surface = payload.get("meta", {}).get("surfaces", {}).get("loop_runs", {})
     assert surface.get("source") != "missing", f"source must not be 'missing', got: {surface}"
     assert payload.get("items") == [], "empty incidents should produce empty items list"
+
+
+# ---------------------------------------------------------------------------
+# L12-BFF-001 durable infrastructure-health controller
+# ---------------------------------------------------------------------------
+
+
+def _health_monitor(tmp_path: Path, **overrides) -> DownstreamHealthMonitor:
+    defaults = {
+        "telemetry_url": "http://telemetry:8083",
+        "incidents_url": "http://incidents:8090",
+        "telemetry_service_jwt": "service-jwt",
+        "tenant_id": "tenant-alpha",
+        "producer": "control-plane-bff",
+        "state_path": str(tmp_path / "downstream-health.sqlite3"),
+        "probe_interval_seconds": 60,
+        "failure_threshold": 2,
+        "delivery_max_attempts": 2,
+        "delivery_backoff_seconds": 0.1,
+    }
+    defaults.update(overrides)
+    return DownstreamHealthMonitor(**defaults)
+
+
+def _probe(
+    *,
+    ok: bool,
+    checked_at: str = "2026-07-27T18:40:00Z",
+    consecutive_failures: int = 0,
+    target_name: str = "telemetry",
+) -> DownstreamProbeResult:
+    return DownstreamProbeResult(
+        target_name=target_name,
+        ok=ok,
+        status_code=200 if ok else 503,
+        latency_ms=12.5,
+        checked_at=checked_at,
+        failure_reason=None if ok else "HTTP 503",
+        consecutive_failures=consecutive_failures,
+        window_started_at=checked_at,
+    )
+
+
+def test_l12_bff_strict_infrastructure_event_has_no_fake_runtime_binding(
+    tmp_path,
+):
+    monitor = _health_monitor(tmp_path, incidents_url="")
+    captured = []
+
+    def accept(url, body, timeout):
+        captured.append(
+            {
+                "url": url,
+                "body": body,
+                "headers": dict(health_module._POST_HEADERS.get()),
+            }
+        )
+        return True, 202
+
+    with patch.object(health_module, "_post_json", side_effect=accept):
+        event_id = monitor._emit_telemetry_sync(_probe(ok=False))
+
+    assert event_id and event_id.startswith("infra-health-")
+    assert len(captured) == 1
+    request = captured[0]
+    assert request["url"].endswith("/api/v1/telemetry/infrastructure-health")
+    assert request["headers"]["Authorization"] == "Bearer service-jwt"
+    assert request["headers"]["X-Tenant-Id"] == "tenant-alpha"
+    event = request["body"]
+    assert event["schema_version"] == "pantheon.infrastructure-health/1"
+    assert event["event_type"] == "infrastructure_health"
+    assert event["component"]["service_name"] == "telemetry"
+    assert event["observation"]["probe_kind"] == "interval_probe"
+    forbidden = {
+        "binding_id",
+        "runtime_id",
+        "capital_pool_id",
+        "artifact_id",
+        "artifact_version",
+        "deployment_stage",
+        "execution_mode",
+        "plan_id",
+        "persona_capital_binding_id",
+    }
+    assert forbidden.isdisjoint(event)
+
+    schema_document = json.loads(
+        (Path(__file__).parents[2] / "telemetry" / "telemetry_event.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    jsonschema = pytest.importorskip("jsonschema")
+    jsonschema.validate(
+        event,
+        schema=schema_document["definitions"]["InfrastructureHealthEvent"],
+    )
+
+
+def test_l12_bff_monitor_event_is_admitted_by_real_strict_telemetry_route(
+    tmp_path,
+):
+    secret = "l12-bff-strict-route-secret"
+    tenant = "tenant-alpha"
+    producer = "control-plane-bff"
+    token = encode_jwt_hs256(
+        {
+            "sub": "bff-health-probe",
+            "roles": ["service"],
+            "allowed_tenants": [tenant],
+            "allowed_producers": [producer],
+        },
+        secret=secret,
+    )
+    storage_dir = tmp_path / "telemetry"
+    storage_dir.mkdir()
+    loop = asyncio.new_event_loop()
+
+    def run_loop():
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    thread = threading.Thread(target=run_loop, daemon=True)
+    thread.start()
+    service = TelemetryIngestService(
+        schema_path=str(
+            Path(__file__).parents[2] / "telemetry" / "telemetry_event.schema.json"
+        ),
+        storage_dir=str(storage_dir),
+        buffer=_DurableFileBroker(str(storage_dir / "broker.jsonl")),
+        batch_size=10,
+        batch_interval=60,
+        runtime_summary_store=RuntimeSummaryProjectionStore(
+            heartbeat_stale_after_seconds=10_000_000_000
+        ),
+    )
+    asyncio.run_coroutine_threadsafe(service.start(), loop).result(timeout=10)
+    original_loop = telemetry_main._loop
+    original_service = telemetry_main._svc
+    telemetry_main._loop = loop
+    telemetry_main._svc = service
+    client = telemetry_main.app.test_client()
+    monitor = _health_monitor(
+        tmp_path,
+        incidents_url="",
+        telemetry_service_jwt=token,
+        tenant_id=tenant,
+        producer=producer,
+    )
+
+    def real_route(url, body, timeout):
+        response = client.post(
+            "/api/v1/telemetry/infrastructure-health",
+            json=body,
+            headers=health_module._POST_HEADERS.get(),
+        )
+        return 200 <= response.status_code < 300, response.status_code
+
+    strict_env = {
+        "PANTHEON_TELEMETRY_AUTH_MODE": "strict",
+        "PANTHEON_TELEMETRY_JWT_SECRET": secret,
+        "PANTHEON_TELEMETRY_INFRA_PRODUCERS": producer,
+    }
+    try:
+        with patch.dict(os.environ, strict_env, clear=False):
+            with patch.object(health_module, "_post_json", side_effect=real_route):
+                event_id = monitor._emit_telemetry_sync(_probe(ok=False))
+        assert service._infrastructure_health_ledger.is_committed(event_id)
+        [delivery] = monitor.list_delivery_records(event_id=event_id)
+        assert delivery["status"] == "delivered"
+        assert delivery["body"]["tenant_id"] == tenant
+        assert "binding_id" not in delivery["body"]
+    finally:
+        asyncio.run_coroutine_threadsafe(
+            service.stop(graceful=True),
+            loop,
+        ).result(timeout=10)
+        telemetry_main._svc = original_service
+        telemetry_main._loop = original_loop
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+
+
+def test_l12_bff_stable_event_id_dedupes_restart_and_two_replicas(
+    tmp_path,
+):
+    state_path = str(tmp_path / "shared.sqlite3")
+    replica_a = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        instance_id="replica-a",
+        incidents_url="",
+    )
+    replica_b = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        instance_id="replica-b",
+        incidents_url="",
+    )
+    result = _probe(ok=False, consecutive_failures=1)
+    posted = []
+
+    def accept(url, body, timeout):
+        posted.append(body["event_id"])
+        return True, 202
+
+    with patch.object(health_module, "_post_json", side_effect=accept):
+        first = replica_a._emit_telemetry_sync(result)
+        duplicate = replica_b._emit_telemetry_sync(
+            _probe(ok=False, consecutive_failures=1)
+        )
+
+    assert first == duplicate
+    assert posted == [first]
+    assert len(replica_b.list_delivery_records(event_id=first)) == 1
+
+    asyncio.run(replica_a._handle_probe_result(result))
+    restarted = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        instance_id="restarted",
+        incidents_url="",
+    )
+    state = restarted.get_state()
+    assert state["targets"]["telemetry"]["ok"] is False
+    assert state["durability"]["shared_replica_state"] is True
+
+
+def test_l12_bff_delivery_409_enters_dlq_and_replays_same_event(
+    tmp_path,
+):
+    monitor = _health_monitor(tmp_path, incidents_url="")
+    result = _probe(ok=False)
+
+    with patch.object(health_module, "_post_json", return_value=(False, 409)):
+        event_id = monitor._emit_telemetry_sync(result)
+
+    [dead] = monitor.list_delivery_records(event_id=event_id)
+    assert dead["status"] == "dead_letter"
+    assert dead["body"]["event_id"] == event_id
+
+    replayed_bodies = []
+
+    def accept(url, body, timeout):
+        replayed_bodies.append(body)
+        return True, 202
+
+    with patch.object(health_module, "_post_json", side_effect=accept):
+        replay = monitor.replay_dead_letters(
+            actor_id="operator-test",
+            approval_ref="approval://l12-bff-001/replay",
+            reason="retry the exact reviewed infrastructure event",
+            event_id=event_id,
+        )
+
+    assert replay["replayed"] == 1
+    assert replay["delivered_now"] == 1
+    assert replayed_bodies[0]["event_id"] == event_id
+    [delivered] = monitor.list_delivery_records(event_id=event_id)
+    assert delivered["status"] == "delivered"
+
+
+def test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monitor = _health_monitor(tmp_path, incidents_url="")
+    with patch.object(health_module, "_post_json", return_value=(False, 409)):
+        event_id = monitor._emit_telemetry_sync(_probe(ok=False))
+    original = bff_main.downstream_health_monitor
+    bff_main.downstream_health_monitor = monitor
+    try:
+        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        missing_approval = client.post(
+            "/bff/v5/downstream-health/dlq/replay",
+            headers=HEADERS,
+            json={"event_id": event_id},
+        )
+        assert missing_approval.status_code == 422
+
+        with patch.object(health_module, "_post_json", return_value=(True, 202)):
+            response = client.post(
+                "/bff/v5/downstream-health/dlq/replay",
+                headers=HEADERS,
+                json={
+                    "event_id": event_id,
+                    "approval_ref": "approval://l12-bff-001/route-replay",
+                    "reason": "operator reviewed the exact dead letter",
+                },
+            )
+    finally:
+        bff_main.downstream_health_monitor = original
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["replayed"] == 1
+    [audit] = monitor._store.list_replay_audit()
+    assert audit["actor_id"] == "op-execute-plans"
+    assert audit["approval_ref"] == "approval://l12-bff-001/route-replay"
+    assert audit["replayed_count"] == 1
+
+
+def test_l12_bff_complete_registry_and_error_rate_spike(
+    tmp_path,
+    monkeypatch,
+):
+    expected_targets = set()
+    for index, (name, env_names) in enumerate(
+        health_module._DEFAULT_TARGET_SPECS,
+        start=1,
+    ):
+        expected_targets.add(name)
+        monkeypatch.setenv(
+            env_names[0],
+            f"http://127.0.0.1:{20_000 + index}",
+        )
+    monkeypatch.setenv("PANTHEON_NEW_OWNER_API_URL", "http://127.0.0.1:29999")
+    expected_targets.add("new-owner")
+    monitor = _health_monitor(
+        tmp_path,
+        incidents_url="",
+        error_rate_window_seconds=300,
+        error_rate_threshold=2 / 3,
+        error_rate_min_samples=3,
+    )
+    registry = monitor._resolve_target_registry()
+    assert expected_targets.issubset(registry)
+    assert len({target.base_url for target in registry.values()}) == len(registry)
+
+    posted = []
+
+    def accept(url, body, timeout):
+        posted.append(body)
+        return True, 202
+
+    with patch.object(health_module, "_post_json", side_effect=accept):
+        assert monitor.record_downstream_outcome(
+            target_name="source-ingest",
+            ok=True,
+            status_code=200,
+            observed_at="2026-07-27T18:40:01Z",
+        ) is None
+        assert monitor.record_downstream_outcome(
+            target_name="source-ingest",
+            ok=False,
+            status_code=503,
+            detail="first failure",
+            observed_at="2026-07-27T18:40:02Z",
+        ) is None
+        threshold = monitor.record_downstream_outcome(
+            target_name="source-ingest",
+            ok=False,
+            status_code=503,
+            detail="spike",
+            observed_at="2026-07-27T18:40:03Z",
+        )
+
+    assert threshold is not None
+    error_events = [
+        body
+        for body in posted
+        if body.get("observation", {}).get("probe_kind") == "error_rate"
+    ]
+    assert len(error_events) == 1
+    assert error_events[0]["observation"]["sample_count"] == 3
+    assert error_events[0]["observation"]["failure_count"] == 2
+    assert error_events[0]["observation"]["error_rate"] == pytest.approx(2 / 3)
+
+
+def test_l12_bff_real_target_stop_and_recovery_resolves_durable_mapping(
+    tmp_path,
+    monkeypatch,
+):
+    class ReusableServer(http.server.ThreadingHTTPServer):
+        allow_reuse_address = True
+
+    class HealthyHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+
+        def log_message(self, format, *args):
+            return
+
+    server = ReusableServer(("127.0.0.1", 0), HealthyHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv(
+        "PANTHEON_BFF_HEALTH_TARGETS_JSON",
+        json.dumps(
+            {
+                "real-target": {
+                    "url": f"http://127.0.0.1:{port}",
+                    "health_path": "/",
+                }
+            }
+        ),
+    )
+    monitor = _health_monitor(
+        tmp_path,
+        failure_threshold=1,
+        http_timeout=0.3,
+        delivery_max_attempts=1,
+    )
+    posted_channels = []
+
+    def accept(url, body, timeout):
+        posted_channels.append(
+            (
+                "telemetry"
+                if url.endswith("/api/v1/telemetry/infrastructure-health")
+                else "incident"
+            )
+        )
+        return True, 202
+
+    try:
+        with patch.object(health_module, "_post_json", side_effect=accept):
+            healthy = asyncio.run(
+                monitor._probe_one(
+                    "real-target",
+                    f"http://127.0.0.1:{port}",
+                    health_path="/",
+                    checked_at="2026-07-27T18:40:00Z",
+                    window_started_at="2026-07-27T18:40:00Z",
+                )
+            )
+            asyncio.run(monitor._handle_probe_result(healthy))
+            assert healthy.ok is True
+
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+            stopped = asyncio.run(
+                monitor._probe_one(
+                    "real-target",
+                    f"http://127.0.0.1:{port}",
+                    health_path="/",
+                    checked_at="2026-07-27T18:41:00Z",
+                    window_started_at="2026-07-27T18:41:00Z",
+                )
+            )
+            assert stopped.ok is False
+            asyncio.run(monitor._handle_probe_result(stopped))
+            assert monitor.get_state()["incidents"]["real-target"]["status"] == "open"
+
+            server = ReusableServer(("127.0.0.1", port), HealthyHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            recovered = asyncio.run(
+                monitor._probe_one(
+                    "real-target",
+                    f"http://127.0.0.1:{port}",
+                    health_path="/",
+                    checked_at="2026-07-27T18:42:00Z",
+                    window_started_at="2026-07-27T18:42:00Z",
+                )
+            )
+            assert recovered.ok is True
+            asyncio.run(monitor._handle_probe_result(recovered))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    final_state = monitor.get_state()
+    assert final_state["targets"]["real-target"]["ok"] is True
+    assert final_state["incidents"]["real-target"]["status"] == "resolved"
+    assert posted_channels.count("telemetry") == 3
+    assert posted_channels.count("incident") == 2
+
+
+def test_l12_bff_incident_mapping_survives_failure_restart_and_recovery(
+    tmp_path,
+):
+    state_path = str(tmp_path / "incident-shared.sqlite3")
+    monitor = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+
+    def fail_incident_create(url, body, timeout):
+        if url.endswith("/api/v1/telemetry/infrastructure-health"):
+            return True, 202
+        if url.endswith("/api/incidents/consume-infrastructure-health"):
+            return False, 503
+        return True, 200
+
+    with patch.object(
+        health_module,
+        "_post_json",
+        side_effect=fail_incident_create,
+    ):
+        asyncio.run(
+            monitor._handle_probe_result(
+                _probe(ok=False, consecutive_failures=1)
+            )
+        )
+
+    incident = monitor.get_state()["incidents"]["telemetry"]
+    opening_event_id = incident["opening_event_id"]
+    incident_id = incident["incident_id"]
+    assert incident["status"] == "opening"
+    opening_deliveries = monitor.list_delivery_records(event_id=opening_event_id)
+    assert {item["status"] for item in opening_deliveries} == {
+        "delivered",
+        "dead_letter",
+    }
+
+    restarted = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        instance_id="replica-after-restart",
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+    assert restarted.get_state()["incidents"]["telemetry"]["incident_id"] == incident_id
+
+    with patch.object(health_module, "_post_json", return_value=(True, 202)):
+        asyncio.run(
+            restarted._handle_probe_result(
+                _probe(ok=True, checked_at="2026-07-27T18:41:00Z")
+            )
+        )
+
+    # Recovery stays pending because its durable dependency (incident create)
+    # is still dead-lettered; the mapping is not falsely cleared.
+    assert restarted.get_state()["incidents"]["telemetry"]["status"] == "resolving"
+    assert "telemetry" in restarted._open_incident_ids
+
+    with patch.object(health_module, "_post_json", return_value=(True, 202)):
+        replay = restarted.replay_dead_letters(
+            actor_id="operator-test",
+            approval_ref="approval://l12-bff-001/recovery",
+            reason="recover the exact dead-lettered incident create",
+            event_id=opening_event_id,
+        )
+        assert replay["replayed"] == 1
+        restarted._deliver_due_sync()
+
+    resolved = restarted.get_state()["incidents"]["telemetry"]
+    assert resolved["status"] == "resolved"
+    assert resolved["incident_id"] == incident_id
+    assert "telemetry" not in restarted._open_incident_ids
+
+
+def test_l12_bff_recovery_survives_delivered_history_retention(
+    tmp_path,
+):
+    state_path = str(tmp_path / "incident-retention.sqlite3")
+    monitor = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+
+    with patch.object(health_module, "_post_json", return_value=(True, 202)):
+        asyncio.run(
+            monitor._handle_probe_result(
+                _probe(ok=False, consecutive_failures=1)
+            )
+        )
+
+    incident = monitor.get_state()["incidents"]["telemetry"]
+    opening_delivery_id = incident["create_delivery_id"]
+    assert incident["status"] == "open"
+    with monitor._store._connect() as connection:
+        connection.execute(
+            """
+            UPDATE delivery_outbox
+            SET updated_at='2026-01-01T00:00:00Z'
+            WHERE status='delivered'
+            """
+        )
+
+    pruned = monitor._store.prune_retained_history(
+        delivery_history_seconds=60,
+    )
+    retained_ids = {
+        item["delivery_id"] for item in monitor.list_delivery_records()
+    }
+    assert pruned["delivery_outbox"] == 1
+    assert opening_delivery_id in retained_ids
+
+    restarted = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        instance_id="replica-after-retention",
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+    with patch.object(health_module, "_post_json", return_value=(True, 202)):
+        asyncio.run(
+            restarted._handle_probe_result(
+                _probe(ok=True, checked_at="2026-07-27T18:41:00Z")
+            )
+        )
+
+    resolved = restarted.get_state()["incidents"]["telemetry"]
+    assert resolved["status"] == "resolved"
+    assert resolved["incident_id"] == incident["incident_id"]
+    assert restarted.get_state()["delivery"]["backlog"] == 0

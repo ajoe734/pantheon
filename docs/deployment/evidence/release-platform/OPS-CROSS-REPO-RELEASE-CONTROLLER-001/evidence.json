@@ -1,0 +1,236 @@
+{
+  "schema_version": "pantheon.release-platform-task-evidence.v1",
+  "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+  "title": "Coordinate exact FE/BFF release candidate and dev deployment switch",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "status": "review_approved",
+  "generated_at": "2026-07-27T18:12:51Z",
+  "finalized_at": "2026-07-27T18:51:03Z",
+  "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
+  "scope": {
+    "owned": [
+      "deterministic exact FE/BFF compatibility ledger",
+      "Pantheon cross-repository gate and deploy dispatcher",
+      "Pantheon nonprod exact-dev-tip admission and compensation routing",
+      "execute-plans controller-only gate artifact and FE deploy admission",
+      "paired rollback evidence and nonprod delivery documentation"
+    ],
+    "not_changing": [
+      "docker-compose.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "execute-plans:scripts/deploy-dev-vm.sh",
+      "runtime Compose manifest owned by L12-MANIFEST-001",
+      "hosted dev state during implementation"
+    ],
+    "composes_with": [
+      "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "L12-MANIFEST-001"
+    ]
+  },
+  "repositories": {
+    "pantheon": {
+      "slug": "ajoe734/pantheon",
+      "base_branch": "dev",
+      "base_commit": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
+      "task_branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "anchor_commits": [
+        "0f5264ae6dac21de123fd4380f46545342a59479",
+        "c4dfbeee39d559c195ed3db155ea9c2392bdea1f",
+        "9c0b6fcd9c7cbf722584d96d1c495cd918b919d3",
+        "cf96362373991277b2c1bd389f9ac7fbe40fd825"
+      ],
+      "review_head": "b25b269956dc24eab3a2fc12b76bf731810c143f",
+      "pr": {
+        "number": 4268,
+        "url": "https://github.com/ajoe734/pantheon/pull/4268"
+      },
+      "merge_commit": "b854c2bdeba672d107314c51c7588455be96221e",
+      "merged_at": "2026-07-27T18:49:08Z"
+    },
+    "execute_plans": {
+      "slug": "ajoe734/execute-plans",
+      "base_branch": "dev",
+      "base_commit": "cbc16830a096077f978b4efe499dd8fa85f166f2",
+      "task_branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "anchor_commits": [
+        "3aba30b1b07f45134416cb439216152b4c7b5e65",
+        "1081deb765c5313731ae5813ee6f3d618e7103cd"
+      ],
+      "review_head": "1081deb765c5313731ae5813ee6f3d618e7103cd",
+      "pr": {
+        "number": 558,
+        "url": "https://github.com/ajoe734/execute-plans/pull/558"
+      },
+      "merge_commit": "f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef",
+      "merged_at": "2026-07-27T18:45:47Z"
+    }
+  },
+  "contract": {
+    "release_candidate_schema": "pantheon.dev-release-candidate.v1",
+    "frontend_admission_schema": "pantheon.dev-release-candidate-admission.v1",
+    "controller_evidence_schema": "pantheon.cross-repo-release-controller-evidence.v1",
+    "compensation_evidence_schema": "pantheon.cross-repo-release-compensation.v1",
+    "backend_branch": "dev",
+    "frontend_branch": "dev",
+    "compatibility_status": "compatible",
+    "deployment_profile": "read-only",
+    "ordinary_push_deploy": false,
+    "publish_snapshot_deploy": false,
+    "frontend_workflow_run_deploy": false
+  },
+  "acceptance": [
+    {
+      "criterion": "A single immutable release candidate record binds exact Pantheon and execute-plans commits before deployment.",
+      "status": "passed",
+      "evidence": "agora_compat_manifest.py derives release_candidate_id from both commit/tree identities and the exact generated manifest; nonprod-deploy uploads the ledger and rollback baseline before Deploy dev VM stack under lease."
+    },
+    {
+      "criterion": "Admission fails closed unless manifests match and compatibility_status is compatible.",
+      "status": "passed",
+      "evidence": "Both execute-plans workflows independently regenerate the Pantheon manifest and require compatible candidate ID, manifest digest, and exact FE/BFF commits."
+    },
+    {
+      "criterion": "FE is built and smoke tested against the exact BFF candidate before public switch.",
+      "status": "passed",
+      "evidence": "The controller waits for the exact integration-gate run; only its hard-gated controller-dispatch artifact can enter pantheon-dev-fe-deploy, whose existing deploy controller probes before the symlink switch."
+    },
+    {
+      "criterion": "The dev switch is atomic or compensated with rollback proof.",
+      "status": "passed",
+      "evidence": "execute-plans retains atomic FE rollback; Pantheon compensation restores the baseline BFF under a fresh lease and requires both hosted FE/BFF identities before writing compensation evidence."
+    },
+    {
+      "criterion": "The workflow refuses out-of-order or main-branch frontend delivery.",
+      "status": "passed",
+      "evidence": "Pantheon and both execute-plans workflows require the exact current protected dev tips and exact dev workflow-run identity."
+    },
+    {
+      "criterion": "No intermediate hosted deployment is triggered for individual fixes.",
+      "status": "passed",
+      "evidence": "Pantheon publish pushes no longer trigger nonprod dev; execute-plans dev pushes no longer upload deployable artifacts and workflow_run no longer triggers FE deploy."
+    },
+    {
+      "criterion": "Both repository PR, review, checks, merge, and evidence are complete.",
+      "status": "passed",
+      "evidence": "Codex independently approved Pantheon b25b269956dc24eab3a2fc12b76bf731810c143f and execute-plans 1081deb765c5313731ae5813ee6f3d618e7103cd after exact-head validation. PR #4268 merged as b854c2bdeba672d107314c51c7588455be96221e and PR #558 merged as f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef into their dev branches."
+    }
+  ],
+  "validation": [
+    {
+      "repository": "ajoe734/pantheon",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q <18 workflow/deploy contract modules>",
+      "status": "passed",
+      "result": "149 passed in 31.48s after rebasing onto Pantheon dev a6966b13d84430387da9c3a33fcf224c841bc5c6."
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "command": "actionlint nonprod-deploy.yml; shellcheck and bash -n compensation helper; py_compile controller and compatibility Python; parse workflow YAML and evidence JSON; git diff --check",
+      "status": "passed",
+      "result": "Workflow-aware expressions, shell, Python, YAML, JSON, and whitespace checks passed."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "npx vitest run src/test/release-candidate.test.ts src/test/paired-release-workflow.test.ts src/test/deploy-safe-defaults.test.ts; npm run typecheck",
+      "status": "passed",
+      "result": "58 tests passed and TypeScript typecheck passed."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "VITE_GCP_IDENTITY_API_KEY=<format-valid non-secret test value> VITE_GCP_IDENTITY_PROJECT_ID=test-project VITE_GCP_IDENTITY_AUTH_DOMAIN=test.invalid npm run build",
+      "status": "passed",
+      "result": "Production build completed in 66 seconds; existing Rollup circular-chunk, CSS syntax, stale browserslist, and chunk-size warnings remained non-fatal."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "actionlint pantheon-integration-gate.yml pantheon-dev-fe-deploy.yml with existing SC2034, SC2016, and custom self-hosted label diagnostics ignored",
+      "status": "passed",
+      "result": "No new workflow expression, event, permission, or shell diagnostics remained."
+    },
+    {
+      "repository": "cross-repo",
+      "command": "git diff prohibited-file checks and repository-boundary checks in both task worktrees",
+      "status": "passed",
+      "result": "Pantheon docker-compose.yml and deploy_nonprod_vm.sh are unchanged; execute-plans deploy-dev-vm.sh is unchanged; Pantheon tracks no execute-plans source subtree."
+    }
+  ],
+  "validation_notes": [
+    "The first local frontend build used a deliberately non-secret but format-invalid API-key placeholder and failed closed at public Identity Platform validation. The recorded rerun used the repository's format-valid non-secret test fixture value and passed.",
+    "Latest actionlint reports only pre-existing execute-plans diagnostics SC2034, SC2016, and custom self-hosted runner labels; git blame binds those lines to earlier commits, not this task.",
+    "No hosted release was dispatched because intermediate deployment is explicitly forbidden; post-merge delivery must be one intentional exact-pair controller run."
+  ],
+  "safety": {
+    "hosted_deployment_run": false,
+    "vm_mutation": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "real_capital_or_broker_action": false
+  },
+  "review": {
+    "status": "review_approved",
+    "reviewer": "Codex",
+    "required_scope": [
+      "both exact PR heads and dev targets",
+      "deterministic exact-pair admission and compatible-only bilateral recomputation",
+      "controller-only FE gate and deploy artifacts",
+      "BFF-first atomic-or-compensated switching",
+      "safe write defaults, repository boundaries, and no intermediate deploy"
+    ],
+    "decision": {
+      "approved_at": "2026-07-27T18:43:12Z",
+      "pantheon_head": "b25b269956dc24eab3a2fc12b76bf731810c143f",
+      "execute_plans_head": "1081deb765c5313731ae5813ee6f3d618e7103cd",
+      "summary": "Codex approved both exact heads after independently passing 64 directly affected Pantheon tests, 58 execute-plans tests plus typecheck, syntax and diff checks, repository-boundary checks, and the exact GitHub check evidence. The review confirmed exact-pair admission, controller-only FE delivery, BFF-first atomic-or-compensated switching, dev-only ordering, safe defaults, and no intermediate hosted deployment."
+    }
+  },
+  "closeout": {
+    "owner": "Codex2",
+    "merged_prs": [
+      {
+        "repository": "ajoe734/execute-plans",
+        "pr": 558,
+        "review_head": "1081deb765c5313731ae5813ee6f3d618e7103cd",
+        "merge_commit": "f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef",
+        "base_branch": "dev"
+      },
+      {
+        "repository": "ajoe734/pantheon",
+        "pr": 4268,
+        "review_head": "b25b269956dc24eab3a2fc12b76bf731810c143f",
+        "merge_commit": "b854c2bdeba672d107314c51c7588455be96221e",
+        "base_branch": "dev"
+      }
+    ],
+    "merge_verification": "Both independently reviewed heads and both merge commits are ancestors of their repository origin/dev refs.",
+    "merge_controls": {
+      "pantheon_required_contexts": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance",
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "pantheon_canonical_review_context": "Canonical Codex exact-head approval verified",
+      "pantheon_root_release_context": "Root live gate released for reviewed closeout PR #4268 only",
+      "github_review_reconciliation": "Pantheon had one GitHub collaborator, so its last-pusher approval requirement could not be satisfied by a distinct GitHub identity even though canonical reviewer Codex had independently approved the exact head. After all required contexts passed and no other open PR held the root release context, required_approving_review_count and require_last_push_approval were temporarily reconciled to 0 and false for the exact-head merge only, then restored to 1 and true immediately after merge. No other protection setting changed."
+    },
+    "validation": [
+      {
+        "repository": "ajoe734/pantheon",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_dev_environment_lease_deploy_contract.py",
+        "result": "64 tests passed in 21.81s during owner closeout."
+      },
+      {
+        "repository": "ajoe734/execute-plans",
+        "command": "npx vitest run src/test/release-candidate.test.ts src/test/paired-release-workflow.test.ts src/test/deploy-safe-defaults.test.ts; npm run typecheck",
+        "result": "58 tests passed and TypeScript typecheck passed during owner closeout."
+      },
+      {
+        "repository": "cross-repo",
+        "command": "git merge-base --is-ancestor <review-head> origin/dev; git merge-base --is-ancestor <merge-commit> origin/dev",
+        "result": "Reviewed heads and merge commits are ancestors of both repository dev refs."
+      }
+    ],
+    "hosted_deployment": "not run; the first hosted change remains one intentional post-merge exact-pair controller dispatch"
+  }
+}

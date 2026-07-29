@@ -12,6 +12,7 @@ routes.
 
 The service can now:
 
+- authenticate every deployment API caller and isolate records by tenant
 - create validated deployment plans
 - dry-run stage-transition validation
 - check stage-planner rules without requiring registry / approval payloads
@@ -21,6 +22,7 @@ The service can now:
 - record binding-created and runtime-active saga progress
 - record failures and finalize compensation
 - inspect pending outbox events and durable inbox receipts
+- claim pending outbox events through exclusive expiring leases
 - read a strategy-scoped deployment read model
 - run a pool/runtime compatibility preflight before DeploymentPlan approval
 - read DEP-003 deployment projections that join plan, approval, runtime, saga,
@@ -31,7 +33,9 @@ The service can now:
 | File | Purpose |
 |---|---|
 | `models.py` | Pydantic request / response models for plans, stage planner checks, sagas, outbox, inbox |
+| `auth.py` | Shared bearer-authenticated actor and explicit tenant boundary |
 | `service.py` | FastAPI app plus file-backed planner / orchestration service |
+| `outbox_lease.py` | Process-safe durable outbox claim / ack / recovery ledger |
 | `outbox_consumer_worker.py` | Default dispatcher, authoritative runtime/controller readback, retry/DLQ/replay, and compensation execution |
 | `test_service.py` | In-process API coverage via `TestClient` |
 | `smoke_test.py` | HTTP smoke test against a live server |
@@ -49,6 +53,7 @@ The service persists to:
 
 - `${DEPLOYMENT_DATA_DIR}/deployment_plans.json`
 - `${DEPLOYMENT_DATA_DIR}/deployment_sagas.json`
+- `${DEPLOYMENT_DATA_DIR}/deployment_outbox_leases.json`
 - or the same filenames under `${PANTHEON_GOVERNANCE_DATA_DIR}`
 - or `/tmp/pantheon/governance/`
 
@@ -78,6 +83,23 @@ DEP-003 projection lookups read RuntimeBinding rows from
 `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, or
 `/tmp/pantheon/runtime-manager/bindings.json`.
 
+## Authentication and tenant boundary
+
+Every `/api/deployment/*` request requires:
+
+- `Authorization: Bearer <token>` for an authenticated service or operator role
+- `X-Tenant-Id: <tenant>` for the one tenant addressed by the request
+
+DeploymentPlan, saga, projection, outbox, and inbox reads are filtered by the
+persisted tenant. Cross-tenant object lookups return `404`; writes with a tenant
+that differs from their authoritative ApprovalDecision or DeploymentPlan fail
+closed. Caller-authored actor fields do not become authority: the authenticated
+actor is persisted instead.
+
+The service uses `PANTHEON_DEPLOYMENT_AUTH_*` settings and otherwise follows
+the shared BFF/runtime inbound-auth settings. Promotion mutation routes use the
+same boundary with `PANTHEON_PROMOTION_AUTH_*`.
+
 ## Default dispatcher safety
 
 `deployment-outbox-consumer` is part of the default Compose service set.  It
@@ -96,6 +118,22 @@ from starting.  A terminal or exhausted binding/load failure is first handed
 durably to saga compensation, then its predecessor receipt is written so the
 compensation event is not sequence-blocked.  The predecessor is never DLQ'd
 after that handoff; a lost receipt response is retried.
+
+The dispatcher must be provisioned with
+`PANTHEON_DEPLOYMENT_SERVICE_TOKEN` and
+`PANTHEON_DEPLOYMENT_TENANT_ID`. It claims work through
+`POST /api/deployment/outbox/claim`; an event is exclusively owned until its
+lease is acknowledged, released after a delivery failure, or recovered after
+idle expiry. `DEPLOYMENT_OUTBOX_CONSUMER_LEASE_SECONDS` defaults to 60 and
+`DEPLOYMENT_OUTBOX_CONSUMER_CLAIM_LIMIT` defaults to 25. Missing credentials
+fail closed. Compose/environment activation for these settings is owned by the
+manifest integration task and is not silently defaulted here.
+
+The worker health receipt distinguishes successful idle polling from failure.
+A clean poll, including an empty poll, restores `status=ok`; recovery is
+observable through `last_idle_success`, `last_recovered_at`, and
+`recovery_count`. The Deployment service health dependency also exposes active,
+acknowledged, released, and recovered outbox lease counts.
 
 Forward dispatch does not accept caller- or plan-authored loader booleans as
 proof.  Before dispatch it reads and binds four canonical authorities: the
@@ -141,6 +179,7 @@ projection cannot be mistaken for successful convergence.
 
 ```bash
 pytest services/deployment/test_service.py -v
+pytest services/deployment/test_l12_dep_001_dispatcher.py -v
 pytest services/deployment/test_dep002_rebaseline_stage_planner.py -v
 python3 services/deployment/smoke_test.py
 ```

@@ -18,7 +18,7 @@
     "event_log": ".orchestrator/task-state-events.jsonl"
   },
   "coordination": {
-    "enabled": true
+    "enabled": false
   },
   "permission_broker": {
     "allowed_workspace_roots": [
@@ -135,6 +135,7 @@
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
       "review_ready_dispatch",
+      "github_retry",
       "chair_review:*"
     ]
   },
@@ -586,11 +587,12 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
+        "model": "gemini-3.6-flash-low",
         "print_timeout": "15m"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "",
+        "primary": "gemini-3.6-flash-low",
         "fallback": "Claude Sonnet 4.6 (Thinking)",
         "cooldown_seconds": 900
       },
@@ -602,7 +604,8 @@
         "fallback_mode": null
       },
       "auth_probe": {
-        "failed_probe_interval_seconds": 3600
+        "probe_timeout_seconds": 120,
+        "failed_probe_interval_seconds": 60
       }
     },
     "antigravity2": {
@@ -893,7 +896,6 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Claude2",
       "Antigravity2",
       "Copilot"
     ],
@@ -934,7 +936,7 @@
     },
     "target_workload": {
       "Claude": 5,
-      "Claude2": 0,
+      "Claude2": 5,
       "Antigravity": 5,
       "Antigravity2": 0,
       "Codex": 30,
@@ -943,7 +945,7 @@
     },
     "max_tasks_per_agent_by_agent": {
       "Claude": 1,
-      "Claude2": 0,
+      "Claude2": 1,
       "Antigravity": 1,
       "Antigravity2": 0,
       "Codex": 4,

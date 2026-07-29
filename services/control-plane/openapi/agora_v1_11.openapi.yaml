@@ -1,0 +1,242 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.11 Workshop Operation Lifecycle Extension
+  version: "1.11.0"
+  description: |
+    Additive durable lifecycle contract over the exact v1.10 bundle for the
+    three Workshop operations deferred by AG-GAP-005: research-run dispatch,
+    consultation opening, and workshop conclusion. Research and consultation
+    state stay downstream-owned; the workshop persists durable command
+    receipts with authoritative downstream IDs, and the conclusion commits the
+    terminal transition atomically.
+
+    All three routes are governed writes with tenant/user isolation, MFA,
+    If-Match CAS, Idempotency-Key, X-Request-Id, and authoritative readback.
+    Duplicate requests replay the recorded receipt without re-dispatching.
+    Conclusion refuses missing, incomplete, or unselected final versions and
+    stale ETags. These routes do not deploy, submit orders, bind runtime or
+    capital, or promote lifecycle.
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_10.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v12/capability_manifest_v1_11.json"
+  x-implementation-status: implemented
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    WorkshopId:
+      name: workshop_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^W/"workshop:.+:v[0-9]+"$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XMfaToken:
+      name: X-MFA-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema: {type: string, minLength: 1}
+  schemas:
+    WorkshopResearchRunRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopResearchRunRequest"
+    WorkshopConsultationRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopConsultationRequest"
+    WorkshopConcludeRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopConcludeRequest"
+    WorkshopResearchRunEnvelope:
+      $ref: "../specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopResearchRunEnvelope"
+    WorkshopConsultationEnvelope:
+      $ref: "../specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConsultationEnvelope"
+    WorkshopConcludeEnvelope:
+      $ref: "../specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConcludeEnvelope"
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+      additionalProperties: false
+  responses:
+    BadRequest:
+      description: Required command headers or request payload are invalid
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Unauthorized:
+      description: Authentication or MFA proof is missing
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Forbidden:
+      description: Role, tenant, user, or approval-actor scope is denied
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    NotFound:
+      description: Workshop is not visible in the actor scope
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Conflict:
+      description: Stale ETag, idempotency mismatch, unselected or incomplete final version, previously failed key, or terminal workshop
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    UpstreamInvalid:
+      description: Authoritative downstream readback is invalid or incomplete
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    DependencyUnavailable:
+      description: Canonical downstream service or durable workshop store is unavailable; the failed receipt is durable and a new Idempotency-Key may retry
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+paths:
+  /bff/agora/workshops/{workshop_id}/research-runs:
+    post:
+      operationId: dispatchDurableAgoraWorkshopResearchRun
+      summary: Dispatch one governed research run bound to a durable workshop version
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopResearchRunRequest"}
+      responses:
+        "202":
+          description: Durable receipt with authoritative research task/run readback; truthful non-terminal downstream status
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopResearchRunEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: Request body invalid or research targets a forbidden environment
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "502": {$ref: "#/components/responses/UpstreamInvalid"}
+        "503": {$ref: "#/components/responses/DependencyUnavailable"}
+  /bff/agora/workshops/{workshop_id}/consultations:
+    post:
+      operationId: openDurableAgoraWorkshopConsultation
+      summary: Open one governed consultation bound to the selected workshop version
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopConsultationRequest"}
+      responses:
+        "201":
+          description: Durable receipt with authoritative consultation readback; workshop commit failure cancels the downstream request
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopConsultationEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: Request body or consultation type is invalid
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "502": {$ref: "#/components/responses/UpstreamInvalid"}
+        "503": {$ref: "#/components/responses/DependencyUnavailable"}
+  /bff/agora/workshops/{workshop_id}/conclude:
+    post:
+      operationId: concludeDurableAgoraWorkshop
+      summary: Atomically conclude the workshop on its complete selected final version
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopConcludeRequest"}
+      responses:
+        "200":
+          description: Terminal workshop state with two-person proof, digest-validated final version, and no-direct-action proof
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopConcludeEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422":
+          description: Request body is invalid
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "502": {$ref: "#/components/responses/UpstreamInvalid"}
+        "503": {$ref: "#/components/responses/DependencyUnavailable"}

@@ -17,7 +17,9 @@ from services.source_ingestion.controller_state import (
 from services.source_ingestion.controller_worker import (
     ControllerConfig,
     ControllerTickError,
+    RECONCILE_ONLY_MODE,
     _personas_from_payload,
+    _validate_due_state_readback,
     _validate_terminal_readback as _validate_terminal_readback_impl,
     run_controller_tick,
 )
@@ -53,7 +55,14 @@ def _state(**overrides: Any) -> ControllerState:
     return ControllerState(**values)
 
 
-def _config(tmp_path: Path, *, truth_level: str = FINAL_TRUTH_LEVEL) -> ControllerConfig:
+def _config(
+    tmp_path: Path,
+    *,
+    truth_level: str = FINAL_TRUTH_LEVEL,
+    mode: str = controller_worker.RECONCILE_AND_PULL_MODE,
+    force_connector_ids: tuple[str, ...] = (),
+    exclusive_connector_ids: tuple[str, ...] = (),
+) -> ControllerConfig:
     return ControllerConfig(
         api_url="http://source-ingest.test:8097",
         database_url="postgresql://unused",
@@ -66,6 +75,9 @@ def _config(tmp_path: Path, *, truth_level: str = FINAL_TRUTH_LEVEL) -> Controll
         lease_seconds=120,
         truth_level=truth_level,
         controller_token="controller-test-token-that-is-at-least-32-characters",
+        mode=mode,
+        force_connector_ids=force_connector_ids,
+        exclusive_connector_ids=exclusive_connector_ids,
     )
 
 
@@ -340,7 +352,13 @@ def _call(writer: RecordingWriter, name: str) -> dict[str, Any]:
     return next(call for call in writer.calls if call["name"] == name)
 
 
-def _patch_successful_tick(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
+def _patch_successful_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[str],
+    *,
+    expected_force_connector_ids: list[str] | None = None,
+    expected_exclusive_connector_ids: list[str] | None = None,
+) -> None:
     def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
         assert timeout_seconds == 5.0
         events.append("load_desired_state")
@@ -353,7 +371,8 @@ def _patch_successful_tick(monkeypatch: pytest.MonkeyPatch, events: list[str]) -
 
     def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
         assert kwargs["max_concurrency"] == 2
-        assert kwargs["force_connector_ids"] == []
+        assert kwargs["force_connector_ids"] == (expected_force_connector_ids or [])
+        assert kwargs["exclusive_connector_ids"] == (expected_exclusive_connector_ids or [])
         assert kwargs["controller_token"] == "controller-test-token-that-is-at-least-32-characters"
         events.append("run_schedule_tick")
         return _schedule()
@@ -373,6 +392,85 @@ def _patch_successful_tick(monkeypatch: pytest.MonkeyPatch, events: list[str]) -
     monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
     monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
     monkeypatch.setattr(controller_worker, "_validate_terminal_readback", validate_terminal_readback)
+
+
+def _patch_successful_reconcile_only_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[str],
+) -> None:
+    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        assert timeout_seconds == 5.0
+        events.append("load_desired_state")
+        return _personas(), _desired_meta()
+
+    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["personas"] == _personas()
+        events.append("reconcile_desired_state")
+        return _reconcile()
+
+    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
+        events.append("read_actual_state")
+        return _actual_readback()
+
+    original_validate = controller_worker._validate_due_state_readback
+
+    def validate_due_state_readback(**kwargs: Any) -> None:
+        events.append("validate_due_state_readback")
+        original_validate(**kwargs)
+
+    def forbidden_provider_tick(**kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("reconcile-only controller must not execute provider schedules")
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
+    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
+    monkeypatch.setattr(controller_worker, "_validate_due_state_readback", validate_due_state_readback)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", forbidden_provider_tick)
+
+
+def test_config_allows_unbounded_reconcile_only_without_provider_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", "reconcile_only")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", "scheduled_tick")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", raising=False)
+    monkeypatch.setattr(
+        controller_worker,
+        "load_controller_token",
+        lambda **kwargs: "controller-test-token-that-is-at-least-32-characters",
+    )
+
+    config = controller_worker.config_from_env()
+
+    assert config.mode == "reconcile_only"
+    assert config.max_ticks == 0
+    assert config.force_connector_ids == ()
+    assert config.exclusive_connector_ids == ()
+
+
+def test_config_rejects_unbounded_provider_pull_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", "reconcile_and_pull")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", "reconciled_live_proof")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
+
+    with pytest.raises(ValueError, match="MAX_TICKS between 1 and 24"):
+        controller_worker.config_from_env()
+
+
+def test_config_rejects_provider_selection_in_reconcile_only_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", "reconcile_only")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", "scheduled_tick")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", CONNECTOR_ID)
+
+    with pytest.raises(ValueError, match="must not select provider"):
+        controller_worker.config_from_env()
 
 
 def test_controller_state_store_round_trips_all_restart_truth(tmp_path: Path) -> None:
@@ -501,6 +599,42 @@ def test_terminal_readback_accepts_fresh_matching_provenance_rich_connector() ->
         schedule=_schedule(),
         actual=_actual_readback(),
     )
+
+
+def test_due_state_readback_accepts_connector_schedule_without_provider_proof() -> None:
+    actual = _actual_readback()
+    actual["connectors"][0]["latest_source_record"] = None
+    actual["connectors"][0]["source_health"] = None
+    actual["source_record_count"] = 0
+    pre_actual = deepcopy(actual)
+
+    _validate_due_state_readback(
+        reconcile=_reconcile(),
+        pre_actual=pre_actual,
+        actual=actual,
+        expected_controller_id="source-ingestion-test:generation-test",
+        expected_sequence_no=1,
+        expected_deployment=_deployment(),
+    )
+
+
+@pytest.mark.parametrize("field", ["source_record_count", "dlq_count", "frontier_backlog"])
+def test_due_state_readback_rejects_provider_side_effects(field: str) -> None:
+    pre_actual = _actual_readback()
+    actual = deepcopy(pre_actual)
+    actual[field] += 1
+
+    with pytest.raises(ControllerTickError, match="reconcile-only tick changed") as raised:
+        _validate_due_state_readback(
+            reconcile=_reconcile(),
+            pre_actual=pre_actual,
+            actual=actual,
+            expected_controller_id="source-ingestion-test:generation-test",
+            expected_sequence_no=1,
+            expected_deployment=_deployment(),
+        )
+
+    assert raised.value.stage == "provider_boundary"
 
 
 def test_terminal_readback_accepts_resolved_historical_dead_letters() -> None:
@@ -760,6 +894,73 @@ def test_run_controller_tick_orders_terminal_success_after_readback_validation(
     assert _call(writer, "tick")["truth_level"] == "scheduled_tick"
     assert _call(writer, "success")["truth_level"] == FINAL_TRUTH_LEVEL
     assert _call(writer, "success")["kwargs"]["dlq_count"] == 0
+
+
+def test_run_controller_tick_reconcile_only_never_executes_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        truth_level="scheduled_tick",
+        mode=RECONCILE_ONLY_MODE,
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    _patch_successful_reconcile_only_tick(monkeypatch, events)
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert result["status"] == "ok"
+    assert result["controller_mode"] == "reconcile_only"
+    assert result["provider_egress_attempted"] is False
+    assert result["schedule_summary"] == {
+        "total_reconciled_connectors": 1,
+        "total_provider_pulls": 0,
+    }
+    assert events == [
+        "store.tick_started",
+        "writer.heartbeat",
+        "writer.tick",
+        "read_actual_state",
+        "load_desired_state",
+        "reconcile_desired_state",
+        "read_actual_state",
+        "validate_due_state_readback",
+        "writer.success",
+        "store.success",
+    ]
+    success = _call(writer, "success")
+    assert success["truth_level"] == "scheduled_tick"
+    assert success["kwargs"]["payload"]["provider_egress_attempted"] is False
+
+
+def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        force_connector_ids=("unrelated-force",),
+        exclusive_connector_ids=(CONNECTOR_ID,),
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    _patch_successful_tick(
+        monkeypatch,
+        events,
+        expected_force_connector_ids=[CONNECTOR_ID],
+        expected_exclusive_connector_ids=[CONNECTOR_ID],
+    )
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert result["status"] == "ok"
+    assert events.count("run_schedule_tick") == 1
 
 
 def test_run_controller_tick_persists_explicit_failure_with_nonterminal_truth(

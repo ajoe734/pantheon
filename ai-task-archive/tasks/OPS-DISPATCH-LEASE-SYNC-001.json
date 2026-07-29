@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "OPS-DISPATCH-LEASE-SYNC-001",
+  "archived_at": "2026-07-22T17:15:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-DISPATCH-LEASE-SYNC-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-DISPATCH-LEASE-SYNC-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [],
+    "fleet_lane": "ops-dispatch-lease",
+    "id": "OPS-DISPATCH-LEASE-SYNC-001",
+    "last_update": "2026-07-22T17:15:44Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: canonical repair PR #3948 and evidence PR #3956 are merged; final closeout PR #3957 merged to dev as 52d9ed234af280fc239459bfeddf76886ae35f08. Verified supervisor 320/320, status 103/103, focused lease/root 6/6, runtime lease progress events 145-146, and no validation bypass.",
+    "owner": "Codex",
+    "phase": "Pantheon/Agora Recovery / Wave 0 control",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "review_file": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-DISPATCH-LEASE-SYNC-001.md",
+    "review_notes_zh": [
+      "審查通過：#3948 為唯一 canonical repair（merge b9da659f），#3936 已以 supersession comment 關閉；實作只在 supervisor 兩個 call site 傳遞 ORCH_RUN_ID、無 run id 時清除繼承值，未鬆動 validate_active_status_command_lease。",
+      "Reviewer 獨立重跑 supervisor 320/320、status 103/103、focused lease 6/6 全綠；live runtime bbac7fcbee 經 ancestry 驗證含 repair 與 #3955。",
+      "Journal sequence 145/146 由 lease-backed run codex-20260722T165521Z-a31dd02a 提交 owner progress，無 missing-lease/lock-wait 退出；本次 review_ready_dispatch 亦為修復後路徑的實證。",
+      "後續：Owner Codex 依 task-closeout-finalization 將本 branch evidence/tests PR merge 進 dev 後才可 done。"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-DISPATCH-LEASE-SYNC-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "收斂 #3936/#3948，讓 supervisor 把已啟動 worker run id 以 ORCH_RUN_ID 傳給 governed status command，並以完整 lifecycle smoke 證明不再因缺 lease 反覆退出。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Restore governed dispatch status sync",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T17:15:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/claude-1002/-home-lupin-pantheon/b70d724f-dc4e-401e-a4b3-410db99b9cf7/scratchpad/wt-lease-fix",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-DISPATCH-LEASE-SYNC-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "46638a7e7e5e9b81afcc2e20c09d124bdaa9f550",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/claude-1002/-home-lupin-pantheon/b70d724f-dc4e-401e-a4b3-410db99b9cf7/scratchpad/wt-lease-fix",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "ae5ec019f85a7c99aacffe054bb0c1d299399942",
+      "commit_subject": "OPS-DISPATCH-LEASE-SYNC-001: remove runtime artifacts",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "cleanup of supervisor-generated closeout artifacts.",
+        "Not changing": "task evidence, supervisor behavior, or lease validation.",
+        "Composes with": "the preceding task closeout evidence commit.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-DISPATCH-LEASE-SYNC-001",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; task suites passed in preceding closeout commit"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52d9ed234af280fc239459bfeddf76886ae35f08",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:01:58Z",
+      "from": "Codex",
+      "message": "Review pushed branch HEAD 3fc25c62496cde6ad1711bc83d2fed4c48f674b0. Canonical repair #3948 merged; duplicate #3936 closed; runtime bbac7fcbee contains repair plus #3955 lock-order fix; supervisor 320/320 and status 103/103 pass; lease-backed owner progress committed at events 145-146. Please approve or reopen with concrete findings.",
+      "resolved_at": "2026-07-22T17:07:08Z",
+      "status": "done",
+      "task_id": "OPS-DISPATCH-LEASE-SYNC-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T17:07:08Z",
+      "from": "Claude",
+      "message": "Review approved: verified #3948 canonical repair merged with #3936 superseded, ORCH_RUN_ID lease propagation is narrow with no validation bypass, reviewer re-ran supervisor 320/320 + status 103/103 + focused lease 6/6, live runtime bbac7fcbee contains the repair, and journal events 145-146 prove lease-backed owner progress. Returned to Codex for finalization; done requires this branch's evidence/tests PR merged to dev.",
+      "status": "done",
+      "task_id": "OPS-DISPATCH-LEASE-SYNC-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-22T17:15:45Z"
+    }
+  ],
+  "blockers": []
+}

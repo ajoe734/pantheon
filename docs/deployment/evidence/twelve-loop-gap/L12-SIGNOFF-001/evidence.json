@@ -1,0 +1,820 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-SIGNOFF-001 protected product-closeout admission.",
+    "note": "Owner evidence for the protected Human/Ops verdict implementation, revalidated by the current Codex owner after the sequence-9 remediation merged as PR #4210 and re-composed for a fresh exact-head review in sequence 17 after strict branch protection refused the stale sequence-12 head and later non-overlapping supervisor and release evidence PRs advanced dev.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-27T18:57:03Z",
+    "evidence_cut_semantics": "Sequence-17 owner exact-head revalidation after strict branch protection refused the sequence-12 reviewed head and release-controller evidence finalization PR #4272 advanced origin/dev to 5a2fc69a3b432e0d1bc528981d66a2ee32defa71. The current Codex owner composed that base normally, confirmed its three task brief and evidence files do not overlap this task, re-proved all nine protected-verdict source hashes and the canonical catalog digest unchanged, and re-ran the focused suites before preparing one new immutable post-commit head for Codex2 review. Sequence-12 remains append-only historical approval and is not reusable for the new head.",
+    "id": "L12-SIGNOFF-001",
+    "overall_admission": "pass_owner_evidence_ready",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Protected Closeout Authority",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "product-level",
+    "task_branch": "task/L12-SIGNOFF-001",
+    "title": "Install protected Human-Ops closeout verdict enforcement"
+  },
+  "authorities": {
+    "actual_state": [
+      "protected verdict ledger",
+      "transition-time guard decision",
+      "revocation and nonce state"
+    ],
+    "desired_state": [
+      "catalog-bound completion authority",
+      "authorized Human-Ops verdict request"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "The product closeout verdict service owns signed issuance, revocation, consumption, and ledger state; ai_status owns guarded task lifecycle mutation.",
+    "composes_with": [
+      "PR #4173 governed live-journal mutation guard",
+      "L12-BFF-001 application route composition",
+      "L12-MANIFEST-001 external policy, ledger, and deployment configuration",
+      "L12-CLOSE-001 protected program closeout"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_signoff_001.md",
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/governance/product_closeout_verdict.py",
+      "services/control-plane/governance/product_closeout_verdict.schema.json",
+      "services/control-plane/governance/test_product_closeout_verdict.py",
+      "services/control-plane/bff/product_closeout_verdict.py",
+      "services/control-plane/bff/test_product_closeout_verdict.py",
+      "scripts/loop_done_guardrail.py",
+      "scripts/test_loop_done_guardrail.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "not_changing": "Verdict issuance, signing, revocation, and consumption semantics; the BFF principal classification layer; the catalog binding fields; BFF application router mounting; live Human/Ops policy or private-key provisioning; deployment manifests; hosted activation; capital authority; and the issuance of an actual Human/Ops verdict.",
+    "owned_layer": "Protected closeout verdict schema and ledger, authenticated BFF issuance boundary, and fail-closed review-approved/done transition enforcement"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "195df06a239292acef62e820fc15d17fd2fc3c6d",
+        "subject": "L12-SIGNOFF-001: anchor protected verdict core"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "3168a11f15bd58a6859438606258abfbf5696dfd",
+        "subject": "L12-SIGNOFF-001: anchor recovered verdict tests"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "1866661ce84f439d96733cf4befcc261b4362333",
+        "subject": "L12-SIGNOFF-001: anchor protected transition recovery"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "1cae908941194c6ef5075c3e840726ef4a3abcb7",
+        "subject": "L12-SIGNOFF-001: anchor competing-decision and principal-class fixes"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "c1cbfabada11f763dac295297168d96931e376cd",
+        "subject": "L12-SIGNOFF-001: anchor split-root protected manifest resolution"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "ab3eb581acad0a5af1e93b0e208d6428f3c1d6cb",
+        "subject": "L12-SIGNOFF-001: anchor split-root verifier authority boundary"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "20638790f4b3332ef60a8faf39195e1307dc0b7a",
+        "subject": "L12-SIGNOFF-001: anchor canonical lease authority source"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "2a281de8b9f8c621e515d6cb9f207607ebecc29f",
+        "subject": "L12-SIGNOFF-001: anchor owner dispatch sync"
+      }
+    ],
+    "required_checks": [],
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "6ba7ed0aac020ec83fe5af2bce17ca7b1a7132e7",
+        "merge_sha": "fe28595bcca266561ef44cff6d6a484494c76b71",
+        "merged_at": "2026-07-26T15:07:20Z",
+        "number": 4183,
+        "url": "https://github.com/ajoe734/pantheon/pull/4183"
+      },
+      {
+        "base": "dev",
+        "head_sha": "77b36ec0183202015b34cd92dd5ceb1a9d893658",
+        "merge_sha": "d54e1510ae64f4e8b0c3a5e20058a9ec93270939",
+        "merged_at": "2026-07-26T17:30:29Z",
+        "number": 4205,
+        "url": "https://github.com/ajoe734/pantheon/pull/4205"
+      },
+      {
+        "base": "dev",
+        "head_sha": "33808e48cca56e2b5f3385aaf0020707baf97184",
+        "merge_sha": "51c1e9fc39748b1c781b34ba55c2235083502808",
+        "merged_at": "2026-07-26T18:24:24Z",
+        "number": 4206,
+        "url": "https://github.com/ajoe734/pantheon/pull/4206"
+      },
+      {
+        "base": "dev",
+        "head_sha": "449a8d495838e3ee5b6055b8b08bccedfedf5b0e",
+        "merge_sha": "03389c0c7fca98b543ee8329e11042f99ed5a0f6",
+        "merged_at": "2026-07-26T19:11:40Z",
+        "number": 4210,
+        "url": "https://github.com/ajoe734/pantheon/pull/4210"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py",
+        "conclusion": "275 tests passed with 31 passing subtests and one known Starlette deprecation warning at this head. The count rose from 269 in the sequence-5 cut by six authority-boundary regressions added here, which contribute eight of the subtests: forbidden-root coverage, ledger-under-worktree rejection, policy-under-worktree rejection, revoked-verdict tail truncation, consumed-verdict tail truncation, and binding validation ordering.",
+        "result": "pass"
+      },
+      {
+        "command": "python probe: two concurrent distinct decisions (approved/rejected, distinct verdict_id and nonce) for one exact binding",
+        "conclusion": "outcomes=['conflict', 'issued'], issued_records=1, surviving decision=approved. Replaying the same probe against head 4731eb2c returned outcomes=['issued', 'issued'] and issued_records=2, which is the rejecting review finding.",
+        "result": "pass"
+      },
+      {
+        "command": "python probe: MFA-verified JWT admin sessions with missing, blank, unknown, and self-conflicting principal classification claims",
+        "conclusion": "All four are refused with 403 and an empty ledger; only an explicit human classification issues. Replaying the same probe against head 4731eb2c returned 201 for all four, which is the rejecting review finding.",
+        "result": "pass"
+      },
+      {
+        "command": "PATH=/home/lupin/pantheon/.venv/bin:$PATH PYTHON=/home/lupin/pantheon/.venv/bin/python scripts/run-acceptance.sh smoke",
+        "conclusion": "Stage-0 validation and smoke baseline passed, including data-plane, promotion-gate, governance-saga, runtime-binding, telemetry, lineage, and BFF checks. Recorded at the sequence-3 head 896cd99410c5f21afa7626c90cd978505b3871cb and inherited here; this cut does not re-assert the smoke baseline at the new head, whose delta is confined to protected closeout forbidden-root derivation in scripts/loop_done_guardrail.py and its tests.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/control-plane/governance/product_closeout_verdict.py services/control-plane/bff/product_closeout_verdict.py scripts/loop_done_guardrail.py scripts/ai_status.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "pre-fix replay: git worktree add --detach <scratch> origin/dev (403e30bd985ea9b0c166180103a0ab64e4e35d4f); copy only scripts/test_loop_done_guardrail.py and scripts/test_ai_status.py from this head; /home/lupin/pantheon/.venv/bin/pytest -q scripts/test_loop_done_guardrail.py scripts/test_ai_status.py",
+        "conclusion": "9 failed, 198 passed, 23 subtests passed. Eight are the new split-root behaviours and one is the pre-existing parent-traversal test failing on the renamed resolver symbol. The end-to-end case test_approve_protected_task_end_to_end_across_split_roots fails with exactly the reported reviewer defect: 'Protected Human/Ops verdict rejected for L12-CLOSE-001 review_approved transition: RuntimeError: closeout review_file is missing or not regular'. Recorded at the sequence-5 head and retained as the sequence-4 proof.",
+        "result": "pass"
+      },
+      {
+        "command": "pre-fix replay of the sequence-6 rejection: git worktree add --detach <scratch> origin/dev (d54e1510ae64f4e8b0c3a5e20058a9ec93270939, the merge of PR #4205); copy only scripts/test_loop_done_guardrail.py from this head; /home/lupin/pantheon/.venv/bin/pytest -q scripts/test_loop_done_guardrail.py",
+        "conclusion": "8 failed, 82 passed, 2 subtests passed. Every failure is an authority-boundary case: both worker-binding subtests of the ledger-under-worktree and policy-under-worktree rejections, both worker-binding subtests of the revoked-verdict truncation case, the consumed-verdict truncation case, and the forbidden-root coverage assertion. Inside test_candidate_tail_truncation_cannot_restore_revoked_verdict the pre-fix run still asserts successfully that truncating the candidate-owned JSONL ledger back to the signed issue record restores approval verification, which is the reviewer's candidate_tail_truncation_restores_approval=true finding reproduced verbatim; only the bound-root rejection that closes it is absent. The binding-ordering case passes pre-fix because manifest lookup already raised there; it is retained to pin the ordering against refactors. The same suite passes at this head, so the regressions bind the fix.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/control-plane/governance/product_closeout_verdict.py services/control-plane/bff/product_closeout_verdict.py scripts/loop_done_guardrail.py scripts/ai_status.py  # re-run at this head",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check  # re-run at this head",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # re-run at this head",
+        "conclusion": "285 tests passed with 33 passing subtests and the one known Starlette deprecation warning. The count rises from 275 tests and 31 subtests because this cut adds six guardrail regressions and three ai_status regressions for the canonical lease authority source, one of which carries two subtests.",
+        "result": "pass"
+      },
+      {
+        "command": "live authority-source probe on the real dispatch lease: env -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH AI_NAME=Claude python3 -c 'import ai_status; ai_status.validate_active_status_command_lease(\"progress\", [\"L12-SIGNOFF-001\", \"authority-source probe\"])', run once against the merged command root $PANTHEON_COMMAND_ROOT and once against this worktree",
+        "conclusion": "Pre-fix (merged dev command root): ACCEPTED — the live ORCH_RUN_ID passed lease validation with both workspace variables erased, which is the reviewer's sequence-8 bypass reproduced verbatim on the real lease rather than on a fixture. Post-fix (this worktree): active_lease_workspace_roots recovered the leased worktree /tmp/pantheon-worker-worktrees/pantheon/l12-signoff-001 from supervisor runtime state with the environment still erased, and validation was REJECTED with 'status command workspace binding is required'. The probe only validates; it mutates no canonical state.",
+        "result": "pass"
+      },
+      {
+        "command": "pre-fix replay of the sequence-8 rejection: git worktree add --detach <scratch> origin/dev (5b8addf628c09f88ff8199080ab68429dbe7b531, which contains the merge of PR #4206); copy only scripts/test_loop_done_guardrail.py and scripts/test_ai_status.py from this head; /home/lupin/pantheon/.venv/bin/pytest -q scripts/test_loop_done_guardrail.py scripts/test_ai_status.py",
+        "conclusion": "9 failed, 214 passed, 31 subtests passed, plus both subtests of the erased-binding case reported as SUBFAILED. Every failure is a lease-authority case: the six guardrail regressions (leased root in forbidden_roots without an environment binding, ledger and policy under the leased root, revoked and consumed tail truncation, and the unresolvable-lease fail-closed ordering) and the three ai_status regressions (missing and blank workspace variables under a valid run lease, the worktree-lease-only authority case, and active_lease_workspace_roots surviving an erased environment). The same tests pass at this head, so the regressions bind the fix rather than restating it.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/control-plane/governance/product_closeout_verdict.py services/control-plane/bff/product_closeout_verdict.py scripts/loop_done_guardrail.py scripts/ai_status.py  # re-run at this head",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check  # re-run at this head",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "PATH=/home/lupin/pantheon/.venv/bin:$PATH PYTHON=/home/lupin/pantheon/.venv/bin/python scripts/run-acceptance.sh smoke  # re-run at this head",
+        "conclusion": "exit 0; stage0-baseline passed and acceptance mode='smoke' completed.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u ORCH_RUN_ID python3 scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root . --status-file $PANTHEON_STATUS_ROOT/ai-status.json",
+        "conclusion": "Exactly one gap for L12-SIGNOFF-001: 'missing reviewer verdict: no approved formal reviewer verdict recorded in record_log'. The re-cut manifest is otherwise done-eligible, and the absent formal Codex2 verdict is the intended remaining gate.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-10 revalidation after integrating origin/dev 6ae436c546942df1ba0a762d7167b456dfedabc8",
+        "conclusion": "294 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The canonical lease, forbidden-root, revocation, consumption, and ledger-tail regressions remain green after the later compatible ai_status integration changes.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH AI_NAME=Codex PYTHONPATH=scripts python3 -c '<read-only active_lease_workspace_roots and validate_active_status_command_lease probe>'",
+        "conclusion": "active_lease_workspace_roots recovered /tmp/pantheon-worker-worktrees/pantheon/l12-signoff-001 from supervisor runtime state while both candidate workspace variables were erased; validate_active_status_command_lease rejected the mutation with 'status command workspace binding is required'.",
+        "result": "pass"
+      },
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/l12-signoff-001/.venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-11 exact-head revalidation after integrating origin/dev 4974824687ef5c3acf665fa22a4306e5d3d664f1",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact binding, and exactly-once transition regressions remain green after the compatible task-state lock latency changes to ai_status.",
+        "result": "pass"
+      },
+      {
+        "command": "jsonschema.validate evidence.json; sha256sum -c evidence.sha256; verify source_artifact_sha256_by_epoch[2026-07-27-codex-exact-head-revalidation]; env -u ORCH_RUN_ID .venv-pantheon/bin/python3 scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root . --status-file $PANTHEON_STATUS_ROOT/ai-status.json",
+        "conclusion": "Product-evidence schema, companion checksum, and all nine file-backed source hashes passed. The closeout replay reported exactly one L12-SIGNOFF-001 gap: the intentionally absent formal Codex2 reviewer verdict.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-13 revalidation after integrating origin/dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The protected-verdict implementation and all canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact-binding, and exactly-once regressions remain green; the nine source artifacts are byte-identical to sequence 11.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile services/control-plane/governance/product_closeout_verdict.py services/control-plane/bff/product_closeout_verdict.py scripts/loop_done_guardrail.py scripts/ai_status.py; jsonschema.validate evidence.json; sha256sum -c evidence.sha256; verify source_artifact_sha256_by_epoch[2026-07-27-codex-stale-base-revalidation]; git diff --check",
+        "conclusion": "Python compilation, product-evidence schema, companion checksum, canonical catalog digest, all nine file-backed source hashes, and whitespace validation passed on the sequence-13 cut.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u ORCH_RUN_ID .venv-pantheon/bin/python3 scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root . --status-file /home/lupin/pantheon/ai-status.json",
+        "conclusion": "The target row passed as '[OK] L12-SIGNOFF-001 (pass_owner_evidence_ready)'. The aggregate command exited 1 because 26 unrelated repository evidence sources remain incomplete (19/45 passed); no unrelated failure was attributed to L12-SIGNOFF-001. Fresh Codex2 exact-head review remains a canonical PR gate outside this task-scoped evidence replay.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-14 revalidation after integrating origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The new base adds only L12-IMIT closeout reconciliation docs; the protected-verdict implementation and all canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact-binding, and exactly-once regressions remain green.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-15 revalidation after integrating origin/dev a6966b13d84430387da9c3a33fcf224c841bc5c6",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The new base adds only three SUP-TASK-STATE-LOCK-LATENCY-001 task brief and evidence files; the protected-verdict implementation and all canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact-binding, and exactly-once regressions remain green.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-16 revalidation after integrating origin/dev b854c2bdeba672d107314c51c7588455be96221e",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The new base adds only cross-repository release workflow, controller, documentation, test, and task-evidence files; the protected-verdict implementation and all canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact-binding, and exactly-once regressions remain green.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-17 revalidation after integrating origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The new base adds only the release-controller task brief and evidence finalization; the protected-verdict implementation and all canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact-binding, and exactly-once regressions remain green.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-27T18:57:03Z",
+    "validated_base_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
+    "validated_head_sha": "6b6bab3b2392fb9a5f03e5cc6586cbcef78f2872"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "This task installs the closeout authority and transition guard; root BFF route composition and protected policy provisioning remain delegated to L12-BFF-001 and L12-MANIFEST-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "Every verdict request binds the canonical catalog digest, task, closeout manifest, target environment, frontend SHA, and backend SHA before signing and again before consumption.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_no_hosted_activation_claim",
+    "publish_cut": {
+      "reason": "No hosted publish or service restart is part of this task-scoped implementation.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "task worktree and dev-integration test process",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-26T15:04:00Z",
+      "status": "pass",
+      "terminal_readback": "The protected verdict implementation and transition guards passed focused and full smoke acceptance before external route and policy activation."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Issuance serializes decisions with an exclusive ledger lock and refuses a second decision while an active one exists for the same exact seven-field binding, so two concurrent decisions with distinct verdict IDs and distinct nonces still admit exactly one durable verdict regardless of whether they agree.",
+        "A decision leaves the active set only through explicit revocation or its own expiry, so an exact replacement is admitted in those two cases and refused otherwise; an unreadable expiry is treated as active so the guard fails closed.",
+        "Consumption derives a deterministic idempotency key for the same logical transition retry while rejecting a distinct attempt as replay."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing or invalid policy, caller-controlled policy substitution, unauthorized role, fleet actor identity, missing MFA, rejected decision, revoked verdict, expiry, staleness, signature tamper, binding mismatch, unsafe path, and ledger symlink all fail closed.",
+        "Deleting mutable loop_ids or non_goals cannot remove the canonical protected-closeout audit.",
+        "Protected manifest resolution searches the supervisor-bound task worktree, the command root, and the status root in that order, but every root keeps containment and per-component symlink rejection: a conflicting PANTHEON_WORKTREE_ROOT / ORCH_WORKSPACE_PATH pair, a relative binding, a parent-traversal review_file, a symlinked manifest, and a manifest that is absent from every trusted root all fail closed before or during resolution.",
+        "The verifier policy and ledger forbidden-root set is derived from the same validated split-root bindings that resolve the manifest, so every root a worker can write — the supervisor-bound task worktree under either binding, the command root, and the status root — is refused as a location for verifier state. Both the literal and the symlink-resolved spelling of each root are forbidden, because containment is evaluated without resolving the protected path.",
+        "That boundary is what makes the ledger tamper-evident. A hash-chained JSONL ledger stays internally consistent under any prefix, so a candidate with write access can truncate a revocation or a consumption record away and restore a dead approval; the regressions assert that this restoration does happen when the ledger is reachable, and that binding the worktree refuses the configuration outright under either worker binding.",
+        "Forbidden roots are derived before any manifest, policy, or ledger access, so a relative or conflicting workspace binding fails closed rather than silently narrowing what counts as candidate-controlled.",
+        "The authority boundary itself is not read from the candidate. PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH live in the worker's own environment, so a worker holding a valid ORCH_RUN_ID could unset both and drop its worktree out of forbidden_roots while every other check still passed, which restored the tail-truncation bypass above. The leased worktree is now taken from supervisor runtime state — the worker record's workspace_path and the worker_worktrees lease path, both written outside every task worktree — and merged into the bound roots, so erasing the environment cannot shrink the set. An active run whose lease cannot be resolved raises before any manifest, policy, or ledger access instead of degrading to no boundary.",
+        "The governed status command fails closed on the same erasure: when the lease declares a worktree, validate_active_status_command_lease requires a matching environment binding and rejects a missing or blank one, so an active worker mutation cannot proceed with an unbounded workspace. The worker_worktrees lease path enforces this independently of the worker record's workspace_path."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Canonical JSON signing binds catalog digest, task ID, closeout manifest SHA, target environment, frontend deployment SHA, backend deployment SHA, decision, issuer, key ID, nonce, issuance time, and expiry.",
+        "Task state records the consumed ledger record ID, verdict digest, and idempotency key; the closeout guard compares all three with the authoritative consumption record.",
+        "Search order across trusted roots is not a trust decision: the resolved manifest bytes are hashed into closeout_manifest_sha256, which the Human/Ops signature covers, so a worker-authored copy that was not signed over fails the binding check instead of being admitted."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "A new ProductCloseoutVerdictService instance reloads the external fsynced JSONL ledger and preserves issued, revoked, nonce, and consumed state across process restart.",
+        "The same terminal operation can retry after restart using its deterministic idempotency key, and a consumed verdict remains auditable after issuance TTL at the recorded consumption time."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "An authorized Human/Ops actor can revoke an unconsumed verdict; a consumed verdict cannot be revoked or reused.",
+        "A later exact valid verdict can supersede an expired or revoked task reference without weakening validation of the replacement."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "The repository contains no live key, policy, ledger, credential, or verdict; absent protected external configuration fails closed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "The BFF and governance layers require the authenticated MFA value to be exactly true before issuance or revocation.",
+      "status": "pass"
+    },
+    "no_live_capital": {
+      "proof": "The implementation controls task closeout only and grants no broker, allocation, deployment, runtime-control, or capital mutation authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Only configured Human/Ops roles can issue or revoke, known fleet identities are denied independently of claimed role, and the BFF requires an explicit trusted human principal classification instead of inferring one: a session whose classification claim is missing, blank, unknown, or self-conflicting is refused even when it carries an admin role and verified MFA.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The closeout verdict is a global program-control record rather than tenant data; tenant isolation is outside this task's data boundary.",
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex and reviewer Codex2 are distinct and match the current canonical task row and supervisor dispatch. Historical owner records remain append-only; sequence 10 is the current owner admission. Owner evidence does not count as the formal reviewer verdict, and the guard requires an approved Codex2 record before done.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/product_closeout_verdict.py",
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/bff/test_product_closeout_verdict.py"
+      ],
+      "id": "AC1",
+      "statement": "Only an authenticated authorized Human or Ops actor can issue the final verdict.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/product_closeout_verdict.schema.json",
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/governance/test_product_closeout_verdict.py"
+      ],
+      "id": "AC2",
+      "statement": "The verdict binds the exact program catalog, task, closeout manifest, target, frontend, and backend identities.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/loop_done_guardrail.py",
+        "scripts/ai_status.py",
+        "scripts/test_loop_done_guardrail.py",
+        "scripts/test_ai_status.py"
+      ],
+      "id": "AC3",
+      "statement": "Review-approved and done transitions fail closed for missing, rejected, revoked, replayed, stale, expired, tampered, unconsumed, or mismatched verdicts.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/bff/product_closeout_verdict.py",
+        "services/control-plane/governance/test_product_closeout_verdict.py",
+        "scripts/test_loop_done_guardrail.py"
+      ],
+      "id": "AC4",
+      "statement": "Fleet workers and candidate-controlled files or task metadata cannot self-sign or bypass protected authority.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/test_product_closeout_verdict.py",
+        "services/control-plane/bff/test_product_closeout_verdict.py",
+        "scripts/test_loop_done_guardrail.py",
+        "scripts/test_ai_status.py"
+      ],
+      "id": "AC5",
+      "statement": "Tamper, replay, wrong-role, wrong-task, wrong-SHA, expiry, revocation, concurrent-decision, direct-state-edit, and alternate-transition negatives pass.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "external_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Missing router composition, policy, key, or ledger configuration leaves protected closeout transitions fail closed; no permissive repository default exists.",
+      "description": "Live BFF route mounting and protected Human/Ops policy and ledger provisioning remain downstream integration responsibilities.",
+      "expiry": "When L12-BFF-001 and L12-MANIFEST-001 activate and validate the route and protected configuration.",
+      "owner": "L12-BFF-001 and L12-MANIFEST-001",
+      "recheck_trigger": "Before dev or hosted closeout activation.",
+      "severity": "medium"
+    },
+    "independent_review": {
+      "blocking_for_this_task": false,
+      "containment": "The owner admission is explicitly non-final and the governed closeout guard still requires a distinct approved Codex2 record.",
+      "description": "Codex2 approved sequence 11 in the append-only sequence-12 record, but strict branch protection refused that exact head after dev advanced. Sequence 17 carries no inherited approval and requires a new exact-head verdict.",
+      "expiry": "At formal Codex2 approval or changes-requested verdict.",
+      "owner": "Codex2",
+      "recheck_trigger": "Immediately after PR and evidence handoff.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "focused_tests_passed": 296,
+      "focused_subtests_passed": 39,
+      "smoke_acceptance_passed": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-07-26-owner-evidence": {
+        "catalog_canonical_json": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+        "services/control-plane/governance/product_closeout_verdict.py": "b67a7c448d8b333e8d73f0c836942e02fe4bfc65261cf360536337c0bc309c9d",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "ed0ccf26238e100452a4e2fa7ad02cfe1eb85428f4f97b373a431b764e0f3bfd",
+        "services/control-plane/bff/product_closeout_verdict.py": "7686ecdb87ad5034394dcdfcfe18981190a1945473e88790708e4eb2843e775b",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "aaab37a70ab5b6046aa9574838d6f1db6fd8b2c3dbfd26eec87dbf2bb97a358e",
+        "scripts/loop_done_guardrail.py": "51af9d0a92202ba6edf4dad92ea84643760708c8c9fdbbb8d48e191b720573bc",
+        "scripts/test_loop_done_guardrail.py": "6582aa323f2b428253340583d57a084885c05eeaf02a816dbf5cd21e3410632c",
+        "scripts/ai_status.py": "979c7149da6f201f09c7aabac3882de2108246e137af4ab4e44d901eb3dc866a",
+        "scripts/test_ai_status.py": "7fd38502dc5714f2fd3988751228aa7d2ef1f2b0825a774f944280ecbdb046ab"
+      },
+      "2026-07-26-review-remediation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "51af9d0a92202ba6edf4dad92ea84643760708c8c9fdbbb8d48e191b720573bc",
+        "scripts/test_loop_done_guardrail.py": "6582aa323f2b428253340583d57a084885c05eeaf02a816dbf5cd21e3410632c",
+        "scripts/ai_status.py": "526a297a516fbdf0d07675ad31e02c615d9331c206ec27c62a71799103fd450e",
+        "scripts/test_ai_status.py": "a947c4b7b8c716b09b1eb71ea553b6c0e0151b6429d5baf577cb238ad79acc01"
+      },
+      "2026-07-26-split-root-remediation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "f00183c3e9d9a81989c3182ed39978e6f8542b839ee74481f39cdad142d057e6",
+        "scripts/test_loop_done_guardrail.py": "22d9c10c6e211965862345c7a9df0c906a3ffee426704513d17744955b4f6288",
+        "scripts/ai_status.py": "526a297a516fbdf0d07675ad31e02c615d9331c206ec27c62a71799103fd450e",
+        "scripts/test_ai_status.py": "5c1c85e4a74529ecfd2e342bc76c05c8b85c81b23d4e806515f7567facd7fd42"
+      },
+      "2026-07-26-authority-boundary-remediation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "0afdba8e4b06f7e523b4118d3f2d814a6771b4e3ed127f84dce316c2635a9525",
+        "scripts/test_loop_done_guardrail.py": "fbfd30e427b619c310bc9403035083f2c50d7a280ae2971c6f4047f02383cdfe",
+        "scripts/ai_status.py": "526a297a516fbdf0d07675ad31e02c615d9331c206ec27c62a71799103fd450e",
+        "scripts/test_ai_status.py": "5c1c85e4a74529ecfd2e342bc76c05c8b85c81b23d4e806515f7567facd7fd42"
+      },
+      "2026-07-26-lease-authority-remediation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "c1d061a427bc28c694c9a90fdb96e3456eac21d7274c0bbc0de004295d473d6c",
+        "scripts/test_ai_status.py": "ee62ec403d32de3b2e6ece61e7153bb6f3b8f458d8ad9d6b6bf96122f557c949"
+      },
+      "2026-07-27-codex-owner-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "283293d4ee743c829aa833d717a1820d546e349fa1a5b162b04ad18d7ed3dcb6",
+        "scripts/test_ai_status.py": "f73f325a0bb402b762f4678a33c12e947a6e04f9a5763884079de5713e809c34"
+      },
+      "2026-07-27-codex-exact-head-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      },
+      "2026-07-27-codex-stale-base-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      },
+      "2026-07-27-codex-final-base-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      },
+      "2026-07-27-codex-current-base-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      },
+      "2026-07-27-codex-release-base-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      },
+      "2026-07-27-codex-release-evidence-base-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T13:08:12Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 1,
+      "sha": "47b78c0f348eb6ad87df569289427175251f2d97",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Rejected the sequence-1 cut on PR #4183: issuance admitted two competing decisions for one binding, the BFF defaulted an unclassified principal to human, and the evidence owner did not match the canonical assignment.",
+      "recorded_at": "2026-07-26T14:16:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4183",
+      "sequence": 2,
+      "sha": "47b78c0f348eb6ad87df569289427175251f2d97",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-2 findings remediated and re-cut under the reconciled owner. Both defects were first reproduced against head 4731eb2c and then shown closed at this head.",
+      "recorded_at": "2026-07-26T15:05:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 3,
+      "sha": "896cd99410c5f21afa7626c90cd978505b3871cb",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Rejected the merged PR #4183 delivery: loop_done_guardrail._load_product_closeout_binding resolved review_file only under PANTHEON_STATUS_ROOT, so a governed reviewer holding a valid Human/Ops-signed verdict was refused because the reviewed manifest lives in the bound task worktree. Required worktree/command-root resolution with the existing traversal, symlink, and conflicting-root protections, an end-to-end split-root command_approve regression, a re-cut evidence checksum, and a follow-up PR.",
+      "recorded_at": "2026-07-26T16:20:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4183",
+      "sequence": 4,
+      "sha": "6ba7ed0aac020ec83fe5af2bce17ca7b1a7132e7",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-4 split-root defect remediated and re-cut. The defect was first reproduced against origin/dev 403e30bd985ea9b0c166180103a0ab64e4e35d4f with only the new tests copied in, then shown closed at this head.",
+      "recorded_at": "2026-07-26T17:30:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 5,
+      "sha": "4f2dc9dc526e1b8705106cfd6cc1713c730e2665",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Rejected the merged PR #4183 plus follow-up PR #4205 delivery on one blocking split-root authority-boundary defect: loop_done_guardrail.validate_protected_closeout_transition passed only the immutable command ROOT and PANTHEON_STATUS_ROOT to load_verifier_service as forbidden_roots, omitting the supervisor-bound PANTHEON_WORKTREE_ROOT / ORCH_WORKSPACE_PATH even though that worktree is candidate-controlled. An independent temp probe accepted an external protected policy whose ledger_path was inside the task worktree; revocation initially failed verification as expected, but truncating the candidate-owned JSONL ledger back to the signed issue record restored approval verification (candidate_tail_truncation_restores_approval=true). Supplying the worktree as a forbidden root rejected the same configuration. Required forbidden roots derived from the validated split-root bindings, fail-closed handling of conflicting or relative bindings before policy or ledger access, regressions for both worker bindings and for tail truncation against revoked and consumed verdicts, the four focused suites re-run, a re-cut evidence checksum, and a follow-up PR.",
+      "recorded_at": "2026-07-26T17:52:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4205",
+      "sequence": 6,
+      "sha": "77b36ec0183202015b34cd92dd5ceb1a9d893658",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-6 authority-boundary defect remediated and re-cut. The reviewer's probe was reproduced as regressions against origin/dev d54e1510ae64f4e8b0c3a5e20058a9ec93270939 with only the new test file copied in, including the truncation-restores-approval assertion, and then shown closed at this head.",
+      "recorded_at": "2026-07-26T18:05:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 7,
+      "sha": "ab3eb581acad0a5af1e93b0e208d6428f3c1d6cb",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Rejected the sequence-7 cut and merged PR #4206 on one blocking active-lease authority-source bypass. loop_done_guardrail._protected_forbidden_roots derived the candidate worktree only from PANTHEON_WORKTREE_ROOT / ORCH_WORKSPACE_PATH, but ai_status.validate_active_status_command_lease treated workspace_root as optional: with a current valid ORCH_RUN_ID, unsetting both workspace variables passed command-runtime, status-root, and active-lease validation. In an independent temp replay an external policy whose ledger was under that omitted leased worktree was accepted; after revocation, truncating the candidate-owned JSONL tail to the signed issue record restored review_approved verification (candidate_tail_truncation_restores_approval=true). Owner suites still passed at 275 tests and 31 subtests, demonstrating missing coverage. Required the workspace authority sourced from canonical supervisor lease and runtime metadata or fail-closed active worker mutations, the canonical leased path in forbidden_roots before manifest, policy, or ledger access, governed-command regressions for a valid ORCH_RUN_ID with both workspace variables missing or blank plus the revoked and consumed tail-truncation cases, the focused suites re-run, re-cut evidence and source hashes, and a follow-up PR.",
+      "recorded_at": "2026-07-26T18:40:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4206",
+      "sequence": 8,
+      "sha": "33808e48cca56e2b5f3385aaf0020707baf97184",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-8 authority-source bypass remediated and re-cut. The bypass was first reproduced on the live dispatch lease against the merged command root, where erasing both workspace variables under a valid ORCH_RUN_ID was accepted, and as regressions against origin/dev 5b8addf628c09f88ff8199080ab68429dbe7b531 with only the two test files copied in; both are closed at this head.",
+      "recorded_at": "2026-07-26T19:10:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 9,
+      "sha": "1f3cc21db3fa555083722444f844fa87a9b4287c",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-10 owner revalidation after supervisor reassignment. Integrated current origin/dev 6ae436c546942df1ba0a762d7167b456dfedabc8, confirmed merged PR #4210, refreshed the two changed ai_status source hashes, and re-ran the four focused suites at 294 tests and 39 subtests. This is owner evidence and carries no inherited Codex2 verdict.",
+      "recorded_at": "2026-07-27T16:33:47Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 10,
+      "sha": "c58f98360be421c8344ddf7a0f3236fd70080698",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-11 exact-head revalidation after Codex2 rejected the stale PR binding. Integrated origin/dev 4974824687ef5c3acf665fa22a4306e5d3d664f1, refreshed the compatible ai_status source hashes, and re-ran the four focused suites at 296 tests and 39 subtests. This is owner evidence and carries no inherited or self-issued Codex2 verdict.",
+      "recorded_at": "2026-07-27T16:59:46Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 11,
+      "sha": "44fe5e742601c7478d4fd741087e0b52e6180709",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Approved sequence-11 at PR #4261 exact immutable head ea628cac729fbd3a3240145940fa78518ba02782. Independently verified merged delivery PRs #4183, #4205, #4206, and #4210 and their dev ancestry; PR #4261 head/base and eight green required checks; 296 focused tests with 39 passing subtests; product-evidence schema, companion checksum, canonical catalog digest, nine source hashes, and git diff --check. Security review confirmed explicit Human/Ops JWT or cookie principal classification, MFA and role enforcement, exact catalog/manifest/target/FE/BFF binding, candidate and fleet self-sign rejection, canonical supervisor lease recovery with erased workspace bindings, pre-access forbidden-root validation, revoked and consumed ledger-tail containment, competing-decision serialization, and exactly-once done consumption.",
+      "recorded_at": "2026-07-27T17:14:48Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4261",
+      "sequence": 12,
+      "sha": "ea628cac729fbd3a3240145940fa78518ba02782",
+      "status": "approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-13 stale-base revalidation after strict branch protection refused the sequence-12 reviewed head when supervisor PR #4257 advanced origin/dev to 4580fc5d19b5bff8c0014006324c56d6368ec5dc. The owner composed that base normally, confirmed all nine protected-verdict source artifacts and the canonical catalog digest are byte-identical to sequence 11, and re-ran the four focused suites at 296 tests and 39 subtests. Sequence-12 remains append-only historical approval and must not be reused for the new head.",
+      "recorded_at": "2026-07-27T17:32:37Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 13,
+      "sha": "d27b4b515502d25904a6ca4014c5e0bf1429c9b5",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-14 final-base revalidation after the pre-push ancestry gate caught L12-IMIT closeout reconciliation PR #4265 advancing origin/dev to 4688bd252911b91ea0459a38a694c5faa53e3bbd. The owner composed that base normally, confirmed the two new docs do not overlap this task, re-proved all nine protected-verdict source artifacts and the canonical catalog digest byte-identical to sequence 11, and repeated the four focused suites at 296 tests and 39 subtests. Sequence-12 remains append-only historical approval and must not be reused for the new head.",
+      "recorded_at": "2026-07-27T17:39:49Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 14,
+      "sha": "9d7abd7ef478b3247bf0176cf6d692ee63282d45",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-15 current-base revalidation after supervisor task-state lock latency PR #4266 advanced origin/dev to a6966b13d84430387da9c3a33fcf224c841bc5c6. The owner composed that base normally, confirmed its three supervisor task brief and evidence files do not overlap this task, re-proved all nine protected-verdict source artifacts and the canonical catalog digest byte-identical to sequence 11, and repeated the four focused suites at 296 tests and 39 subtests. Sequence-12 remains append-only historical approval and must not be reused for the new head.",
+      "recorded_at": "2026-07-27T18:45:16Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 15,
+      "sha": "fd80c17aa5947b115c16161e462c4ecbb79d3bdc",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-16 release-base revalidation after cross-repository release controller PR #4268 advanced origin/dev to b854c2bdeba672d107314c51c7588455be96221e. The owner composed that base normally, confirmed its 13 release workflow, controller, documentation, test, and task-evidence files do not overlap this task, re-proved all nine protected-verdict source artifacts and the canonical catalog digest byte-identical to sequence 11, and repeated the four focused suites at 296 tests and 39 subtests. Sequence-12 remains append-only historical approval and must not be reused for the new head.",
+      "recorded_at": "2026-07-27T18:51:33Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 16,
+      "sha": "4cc44cdff60c45597874105d00047c1dd407cc2a",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-17 release-evidence-base revalidation after release-controller evidence finalization PR #4272 advanced origin/dev to 5a2fc69a3b432e0d1bc528981d66a2ee32defa71. The owner composed that base normally, confirmed its three task brief and evidence files do not overlap this task, re-proved all nine protected-verdict source artifacts and the canonical catalog digest byte-identical to sequence 11, and repeated the four focused suites at 296 tests and 39 subtests. Sequence-12 remains append-only historical approval and must not be reused for the new head.",
+      "recorded_at": "2026-07-27T18:57:03Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 17,
+      "sha": "6b6bab3b2392fb9a5f03e5cc6586cbcef78f2872",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Approved sequence-17 at PR #4261 exact immutable owner head f5d6191afccf82b342e12b3282e6b5ba66d0a782 against origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71 with zero base-only commits. Independently verified merged delivery PRs #4183, #4205, #4206, and #4210 and their dev ancestry; eight green PR checks with auto-merge disabled; 296 focused tests with 39 passing subtests; product-evidence schema, companion checksum, canonical catalog digest, nine source hashes, py_compile, task-scoped guardrail, and git diff --check. Security review reconfirmed explicit Human/Ops JWT or cookie principal classification, MFA and role enforcement, exact catalog/manifest/target/FE/BFF binding, candidate and fleet self-sign rejection, canonical supervisor lease recovery with erased workspace bindings, pre-access forbidden-root validation, revoked and consumed ledger-tail containment, competing-decision serialization, and exactly-once done consumption. Sequence-12 was treated only as append-only history and was not reused.",
+      "recorded_at": "2026-07-27T19:19:05Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4261",
+      "sequence": 18,
+      "sha": "f5d6191afccf82b342e12b3282e6b5ba66d0a782",
+      "status": "approved"
+    }
+  ]
+}

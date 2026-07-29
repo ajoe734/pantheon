@@ -35,11 +35,88 @@ def _controller_status(row: Dict[str, Any], *, now: datetime) -> tuple[str, str 
         return "degraded", "controller heartbeat is in the future"
     if row.get("lease_expires_at") and lease_expires is None:
         return "degraded", "controller lease timestamp is invalid"
+    if lease_expires is not None and not str(row.get("lease_token") or "").strip():
+        return "degraded", "controller lease fencing token is missing"
     if last_failure is not None and (last_success is None or last_failure > last_success):
         return "unhealthy", row.get("last_failure_reason") or "latest controller event failed"
     if lease_expires is not None and lease_expires <= now:
         return "degraded", "controller lease expired"
     return "healthy", None
+
+
+def _mapping(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return dict(decoded) if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _desired_state_presence(row: Dict[str, Any]) -> Dict[str, Any]:
+    observed = _mapping(row.get("desired_state"))
+    checked_at = observed.get("checked_at")
+    if observed and checked_at:
+        present = bool(observed.get("present"))
+        return {
+            "status": "present" if present else "absent",
+            "present": present,
+            "authoritative": True,
+            "source": observed.get("source"),
+            "summary": observed.get("summary"),
+            "checked_at": (
+                checked_at.isoformat()
+                if isinstance(checked_at, datetime)
+                else checked_at
+            ),
+            "sources": list(observed.get("sources") or []),
+            "query": row.get("desired_state_query"),
+        }
+    return {
+        "status": (
+            "configured_unobserved"
+            if row.get("desired_state_query")
+            else "missing"
+        ),
+        "present": None,
+        "authoritative": False,
+        "source": "controller_store" if row.get("desired_state_query") else "missing",
+        "summary": row.get("desired_state_query"),
+        "checked_at": None,
+        "sources": [],
+        "query": row.get("desired_state_query"),
+    }
+
+
+def _downstream_actual_state(row: Dict[str, Any]) -> Dict[str, Any]:
+    observed = _mapping(row.get("downstream_actual_state"))
+    checked_at = observed.get("checked_at")
+    if observed and checked_at:
+        return {
+            "status": observed.get("status") or "unknown",
+            "authoritative": True,
+            "source": observed.get("source"),
+            "summary": observed.get("summary"),
+            "checked_at": (
+                checked_at.isoformat()
+                if isinstance(checked_at, datetime)
+                else checked_at
+            ),
+            "sources": list(observed.get("sources") or []),
+            "query": row.get("actual_state_query"),
+        }
+    return {
+        "status": "unobserved",
+        "authoritative": False,
+        "source": "controller_store" if row.get("actual_state_query") else "missing",
+        "summary": row.get("actual_state_query"),
+        "checked_at": None,
+        "sources": [],
+        "query": row.get("actual_state_query"),
+    }
 
 
 def project_controller_record_to_bff(
@@ -91,6 +168,7 @@ def project_controller_record_to_bff(
         "last_tick_at": last_tick_at,
         "liveness_metric": "heartbeat",
         "degraded_reason": degraded_reason,
+        "lease_fenced": bool(str(row.get("lease_token") or "").strip()),
     }
 
     last_success = None
@@ -113,15 +191,6 @@ def project_controller_record_to_bff(
             "evidence_refs": evidence_refs,
         }
 
-    downstream_actual_state = None
-    if row.get("actual_state_query"):
-        downstream_actual_state = {
-            "status": "unobserved",
-            "source": "controller_store",
-            "summary": row.get("actual_state_query"),
-            "checked_at": None,
-        }
-
     # Format expected by services/control-plane/bff/loop_inventory.py
     projected = {
         "loop_id": row.get("loop_id"),
@@ -140,7 +209,8 @@ def project_controller_record_to_bff(
         "last_heartbeat_at": last_heartbeat_at,
         "last_success": last_success,
         "last_failure": last_failure,
-        "downstream_actual_state": downstream_actual_state,
+        "desired_state_presence": _desired_state_presence(row),
+        "downstream_actual_state": _downstream_actual_state(row),
         "evidence_packet": {
             "truth_level": row.get("truth_level"),
             "highest_truth_level": row.get("truth_level"),
@@ -149,6 +219,9 @@ def project_controller_record_to_bff(
             "captured_at": last_tick_at or last_heartbeat_at,
         },
         "lease_expires_at": to_iso(row.get("lease_expires_at")),
+        "lease_fenced": bool(str(row.get("lease_token") or "").strip()),
+        "desired_state_query": row.get("desired_state_query"),
+        "actual_state_query": row.get("actual_state_query"),
         "backlog": row.get("backlog"),
         "lag": row.get("lag"),
         "dlq_count": row.get("dlq_count"),

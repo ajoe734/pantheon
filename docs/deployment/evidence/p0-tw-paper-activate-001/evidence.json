@@ -1,0 +1,61 @@
+{
+  "task_id": "P0-TW-PAPER-ACTIVATE-001",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "review_approved": true,
+  "review_status": "Independent review approved by Codex; Codex2 owner closeout in progress",
+  "review_decision": {
+    "status": "review_approved",
+    "reviewer": "Codex",
+    "reviewed_at": "2026-07-27T14:45:55Z",
+    "pantheon_head": "6d1c8e04a146a21babfdcd8b6b5a8d3205857be5",
+    "execute_plans_head": "90bf8623761aaaf28aee3f83cbaf6e00dbeec120",
+    "source": "governed ai-status task row",
+    "notes_zh": [
+      "Track A 驗收通過：BFF 不再把 training_improvement_pct 投影為交易績效，TW 預設列明確回傳 perfDelta=null、hasTradingTelemetry=false 與 seed flags，前端顯示 Seed Fixture 且不建立歸因連結。",
+      "Track C packet 與 contract-only proof 已核對 canonical StrategyArtifact、Governance、Capital、Deployment、Runtime authority routes/models；維持 NO-GO，未執行 production write。",
+      "獨立驗證：backend focused 47 passed；frontend 92 passed、typecheck 與 scoped ESLint passed；擴大 BFF baseline failures 已在 origin/dev 同樣重現，非本 task regression。"
+    ]
+  },
+  "summary": "Track A removes training-improvement fallback from trading performance, marks display-only market defaults, and gates attribution on explicit telemetry. Track C now enumerates the canonical StrategyArtifact, Governance ApprovalDecision, Capital, DeploymentPlan dispatch, Runtime Manager MFA, and authoritative readback chain; it remains a decision packet only and zero registry, governance, capital, runtime, or trading writes were performed.",
+  "verification_commands": [
+    "/home/lupin/pantheon/.venv/bin/python -m pytest services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/runtime-manager/test_deploy_authority.py services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py -q",
+    "/home/lupin/pantheon/.venv/bin/python -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/runtime-manager/deploy_authority.py",
+    "cd /home/lupin/code/execute-plans && npx vitest run src/lib/bff-v1/__tests__/management.test.ts src/management/pages/oversight/_core.test.ts src/management/pages/oversight/PersonaFleetPage.test.tsx",
+    "cd /home/lupin/code/execute-plans && npm run typecheck",
+    "cd /home/lupin/code/execute-plans && npx eslint src/lib/bff-v1/management.ts src/lib/bff-v1/__tests__/management.test.ts src/management/pages/oversight/personaFleetLinks.ts src/management/pages/oversight/_core.tsx src/management/pages/oversight/_core.test.ts src/management/pages/oversight/PersonaFleetPage.test.tsx"
+  ],
+  "verification_results": {
+    "backend_authority_and_honesty": "47 passed, 11 deprecation warnings",
+    "python_compile": "passed",
+    "evidence_json": "passed",
+    "frontend": "92 passed; typecheck and scoped ESLint passed on execute-plans PR #553"
+  },
+  "closeout_verification_commands": [
+    "python3 scripts/dev/provision_python_distribution.py",
+    ".venv-pantheon/bin/python3 -m pytest services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/runtime-manager/test_deploy_authority.py services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py -q",
+    ".venv-pantheon/bin/python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/control-plane/bff/test_p0_tw_paper_activate_honesty.py services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py services/runtime-manager/deploy_authority.py",
+    "cd /home/lupin/code/execute-plans && npx vitest run src/lib/bff-v1/__tests__/management.test.ts src/management/pages/oversight/_core.test.ts src/management/pages/oversight/PersonaFleetPage.test.tsx",
+    "cd /home/lupin/code/execute-plans && npm run typecheck",
+    "cd /home/lupin/code/execute-plans && npx eslint src/lib/bff-v1/management.ts src/lib/bff-v1/__tests__/management.test.ts src/management/pages/oversight/personaFleetLinks.ts src/management/pages/oversight/_core.tsx src/management/pages/oversight/_core.test.ts src/management/pages/oversight/PersonaFleetPage.test.tsx"
+  ],
+  "closeout_verification_results": {
+    "backend_authority_and_honesty": "47 passed, 11 deprecation warnings",
+    "python_compile": "passed",
+    "frontend": "92 passed; typecheck and scoped ESLint passed"
+  },
+  "track_c_packet": "docs/deployment/evidence/p0-tw-paper-activate-001/track_c_gonogo_packet.md",
+  "track_c_contract_proof": "services/runtime-manager/test_p0_tw_paper_activate_authority_contract.py",
+  "historical_review": "docs/deployment/evidence/p0-tw-paper-activate-001/independent_review_claude.md",
+  "artifacts": [
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/read_store.py",
+    "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+    "frontend-checkout:src/management/pages/oversight/personaFleetLinks.ts",
+    "frontend-checkout:src/management/pages/oversight/_core.tsx",
+    "frontend-checkout:src/management/pages/oversight/_core.test.ts",
+    "frontend-checkout:src/management/pages/oversight/PersonaFleetPage.test.tsx",
+    "frontend-checkout:src/lib/bff-v1/management.ts",
+    "docs/deployment/evidence/p0-tw-paper-activate-001/track_c_gonogo_packet.md"
+  ]
+}

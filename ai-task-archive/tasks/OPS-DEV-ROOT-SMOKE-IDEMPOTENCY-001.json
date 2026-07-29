@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+  "archived_at": "2026-07-24T05:04:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Every smoke run uses collision-free connector identities",
+      "The configured failure enters DLQ on repeated runs against persistent state",
+      "Existing bounded egress and replay assertions remain intact",
+      "Relevant tests and the bounded compose smoke pass",
+      "Change is delivered through PR checks and merge to dev"
+    ],
+    "artifacts": [
+      "scripts/smoke_source_search_bounded.py",
+      "services/source_ingestion/test_compose_activation.py"
+    ],
+    "auto_created_by": "operator-continuation-20260724",
+    "declared_scope": [
+      "scripts/smoke_source_search_bounded.py",
+      "services/source_ingestion/test_compose_activation.py"
+    ],
+    "delivery_layer": "integration",
+    "depends_on": [],
+    "fleet_lane": "dev-deploy-reliability",
+    "id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+    "last_update": "2026-07-24T05:04:57Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized: implementation PR #4042 (9b97aa71a16124dbb4577464d68c1d0e4ea23ba1) and closeout PR #4044 (7300b59a689c794fc54596c102a850bf48eca37e) merged to dev; py_compile, pytest 2 passed, compose config, required CI, and reviewer persistent-volume bounded smoke x2 green.",
+    "owner": "Codex",
+    "phase": "Dev deployment reliability",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "reviewer": "Codex2",
+    "source_ref": {
+      "failed_run": "30065717086",
+      "failure": "persistent connector attempt state bypassed configured DLQ failure"
+    },
+    "status": "done",
+    "summary_zh": "修正 dev full-root 重跑時 source/search bounded smoke 因固定 connector ID 與持久化 attempt state 而無法再次產生 DLQ 的問題，確保同一持久環境可重複驗證。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Make hosted source-search smoke repeatable",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T05:04:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-dev-root-smoke-idempotency-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-dev-root-smoke-idempotency-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "abe3c693d5988d624d047229b7dfef38625dac5a",
+      "commit_subject": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout evidence for the approved smoke idempotency delivery.",
+        "Not changing": "source-ingest runtime, DLQ semantics, search behavior, or canonical architecture.",
+        "Composes with": "merged implementation PR #4042 and governed owner finalization.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+        "Reviewer": "Codex2",
+        "Verified": "py_compile; pytest 2 passed; docker compose config --quiet; PR #4042 checks and reviewer persistent-volume smoke x2 green"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7300b59a689c794fc54596c102a850bf48eca37e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T04:32:17Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001 away from unavailable lane Claude, Antigravity (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex, reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-07-24T04:37:10Z",
+      "status": "done",
+      "task_id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T04:35:58Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex.",
+      "resolved_at": "2026-07-24T04:37:10Z",
+      "status": "done",
+      "task_id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T04:46:01Z",
+      "from": "Codex",
+      "message": "PR #4042 is ready for review. Please verify UUID-scoped static/feed/replay/scheduled connector identities, exclusive scheduled selection, regression assertions, and persistent-volume bounded compose smoke x2 evidence (two replay identities, each 2 failed + 1 successful attempts).",
+      "resolved_at": "2026-07-24T04:48:10Z",
+      "status": "done",
+      "task_id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T04:48:10Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-07-24T04:54:01Z",
+      "status": "done",
+      "task_id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T04:54:01Z",
+      "from": "Codex2",
+      "message": "Independent review approved: PR #4042 merged to dev at 9b97aa71a16124dbb4577464d68c1d0e4ea23ba1 with Commit trailers, Runtime mirror guard, and Smoke acceptance green. Diff is limited to the two declared artifacts. Reviewer passed py_compile, direct compose contract tests, adapter checks, compose config, and two bounded smokes against the same persistent volumes; readback showed 8 disjoint UUID-scoped connector IDs and both replay connectors at 3 attempts (2 failed, 1 successful), preserving bounded egress, DLQ replay, scheduled frontier, search refresh, and access-filter assertions. Reviewer Compose project and volumes were removed.",
+      "status": "done",
+      "task_id": "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-24T05:04:58Z"
+    }
+  ],
+  "blockers": []
+}

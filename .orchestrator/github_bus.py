@@ -33,7 +33,13 @@ from coordination_file_watcher import queue_coordination_dispatch
 from cross_repo_issue_mapper import coordination_issue_body, coordination_issue_labels, coordination_issue_title
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
-from multi_repo_registry import coordination_enabled, matching_repo_id, repository_slug, resolve_worker_kind
+from multi_repo_registry import (
+    coordination_enabled,
+    matching_repo_id,
+    repository_slug,
+    resolve_repository,
+    resolve_worker_kind,
+)
 from runtime_state import enqueue_event
 from watch_events import render_wakeup_message
 
@@ -177,30 +183,50 @@ def infer_repo_slug(config: dict[str, Any], bus_state: dict[str, Any]) -> str | 
     return None
 
 
-def default_branch(config: dict[str, Any]) -> str:
+def delivery_base_branch(config: dict[str, Any], repo: str) -> str:
+    """Resolve the integration branch that receives task delivery PRs.
+
+    ``github_bus.default_branch`` predates the per-task branch workflow and may
+    still name the production branch. ReviewBus must not use that legacy value
+    as a PR base because doing so turns an integrated ``dev`` task into a broad
+    promotion diff.
+    """
+
     bus_cfg = config.get("github_bus", {}) or {}
-    configured = bus_cfg.get("default_branch")
-    if configured:
-        return str(configured)
-    proc = run_command(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=ROOT)
-    if proc.returncode == 0:
-        ref = (proc.stdout or "").strip()
-        if "/" in ref:
-            return ref.rsplit("/", 1)[-1]
-    return "main"
+    repo_id = matching_repo_id(config, repo)
+    overrides = bus_cfg.get("delivery_base_branches") or {}
+    if isinstance(overrides, dict):
+        for key in (repo, repo_id):
+            value = overrides.get(key) if key else None
+            if str(value or "").strip():
+                return str(value).strip()
 
+    explicit = str(bus_cfg.get("delivery_base_branch") or "").strip()
+    if explicit:
+        return explicit
 
-def current_branch() -> str | None:
-    proc = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT)
-    if proc.returncode != 0:
-        return None
-    branch = (proc.stdout or "").strip()
-    return branch or None
+    # The primary Pantheon bus follows the same configured delivery branch as
+    # task_finalize.sh. This remains authoritative even when the legacy
+    # github_bus.default_branch value still says ``master``.
+    workflow_base = str((config.get("branch_workflow") or {}).get("dev_branch") or "").strip()
+    if workflow_base and (repo_id in {None, "pantheon"}):
+        return workflow_base
 
+    if repo_id and repo_id != "pantheon":
+        repo_config = resolve_repository(config, repo_id)
+        repository_base = str(
+            repo_config.get("delivery_branch") or repo_config.get("default_branch") or ""
+        ).strip()
+        if repository_base:
+            return repository_base
 
-def branch_exists(branch: str) -> bool:
-    proc = run_command(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT)
-    return proc.returncode == 0
+    legacy = str(bus_cfg.get("default_branch") or "").strip()
+    legacy_note = f" Legacy github_bus.default_branch is `{legacy}` and is not a delivery-base authority." if legacy else ""
+    raise GitHubBusError(
+        f"No ReviewBus delivery base is configured for `{repo}`. Set "
+        "github_bus.delivery_base_branches or branch_workflow.dev_branch."
+        f"{legacy_note}"
+    )
 
 
 def branch_head_sha(branch: str) -> str | None:
@@ -209,6 +235,19 @@ def branch_head_sha(branch: str) -> str | None:
         return None
     sha = (proc.stdout or '').strip()
     return sha or None
+
+
+def remote_branch_head_sha(branch: str, remote: str = "origin") -> str | None:
+    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
+    if proc.returncode != 0:
+        return None
+    expected_ref = f"refs/heads/{branch}"
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == expected_ref:
+            sha = parts[0].strip()
+            return sha or None
+    return None
 
 
 def branch_has_diff(base: str, branch: str) -> bool:
@@ -222,10 +261,7 @@ def branch_has_diff(base: str, branch: str) -> bool:
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
-    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
+    return remote_branch_head_sha(branch, remote) is not None
 
 
 def run_gh_process(
@@ -380,22 +416,20 @@ def edit_label_args(labels: list[str]) -> list[str]:
 
 
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
+    del status
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return None
+    prefix = str((config.get("branch_workflow") or {}).get("task_branch_prefix") or "task/")
+    expected = f"{prefix}{task_id}"
     meta = task.get("github") or {}
-    explicit = meta.get("head_branch")
-    if explicit and branch_exists(str(explicit)):
-        return str(explicit)
-
-    owner = task.get("owner")
-    for agent in status.get("agents", []):
-        if agent.get("name") == owner:
-            branch = agent.get("branch")
-            if branch and branch_exists(str(branch)):
-                return str(branch)
-
-    branch = current_branch()
-    if branch and branch != default_branch(config):
-        return branch
-    return None
+    explicit = str(meta.get("head_branch") or "").strip()
+    if explicit and explicit != expected:
+        raise GitHubBusError(
+            f"ReviewBus task `{task_id}` declares head branch `{explicit}`, but the "
+            f"configured exact task branch is `{expected}`. Refusing a broad or cross-task review."
+        )
+    return expected
 
 
 def parse_number_from_url(url: str) -> int | None:
@@ -412,15 +446,147 @@ def find_existing_issue(repo: str, task_id: str) -> dict[str, Any] | None:
     return None
 
 
-def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, Any] | None:
-    search = f'"[ReviewBus] {task_id}" in:title'
-    args = ["pr", "list", "--repo", repo, "--state", "open", "--search", search, "--json", "number,title,url,headRefName,state"]
-    if branch:
-        args.extend(["--head", branch])
-    data = gh_json(args)
-    if isinstance(data, list) and data:
-        return data[0]
-    return None
+def find_task_pr_candidates(repo: str, branch: str) -> list[dict[str, Any]]:
+    data = gh_json(
+        [
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "all",
+            "--head",
+            branch,
+            "--limit",
+            "100",
+            "--json",
+            "number,title,url,state,isDraft,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,createdAt,closedAt",
+        ]
+    )
+    if not isinstance(data, list):
+        return []
+    return [
+        item
+        for item in data
+        if isinstance(item, dict) and str(item.get("headRefName") or "") == branch
+    ]
+
+
+def _pr_merge_commit(pr: dict[str, Any]) -> str | None:
+    merge_commit = pr.get("mergeCommit")
+    if not isinstance(merge_commit, dict):
+        return None
+    value = str(merge_commit.get("oid") or "").strip()
+    return value or None
+
+
+def _select_task_pr_evidence(
+    candidates: list[dict[str, Any]],
+    *,
+    task_id: str,
+    branch: str,
+    base: str,
+    head_sha: str | None,
+) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    scoped = [item for item in candidates if str(item.get("headRefName") or "") == branch]
+    if head_sha:
+        matching_head = [
+            item for item in scoped if str(item.get("headRefOid") or "") == head_sha
+        ]
+        if scoped and not matching_head:
+            details = ", ".join(
+                f"#{item.get('number')} @ {item.get('headRefOid') or '(missing)'}"
+                for item in scoped
+            )
+            return None, "skipped_head_mismatch", (
+                f"ReviewBus found task PR evidence for `{branch}`, but none matches exact "
+                f"task head `{head_sha}` ({details}). Refusing stale or cross-commit review evidence."
+            )
+        scoped = matching_head
+
+    matching_base = [item for item in scoped if str(item.get("baseRefName") or "") == base]
+    if not head_sha:
+        candidate_heads = {
+            str(item.get("headRefOid") or "").strip()
+            for item in matching_base
+            if str(item.get("headRefOid") or "").strip()
+        }
+        if len(candidate_heads) > 1:
+            raise GitHubBusError(
+                f"ReviewBus found multiple commits for `{branch}` -> `{base}` while resolving "
+                f"`{task_id}` and has no exact published/task head SHA. Preserve explicit task "
+                "commit evidence before requesting review."
+            )
+        missing_head = [item for item in matching_base if not str(item.get("headRefOid") or "").strip()]
+        if missing_head:
+            numbers = ", ".join(f"#{item.get('number')}" for item in missing_head)
+            return None, "skipped_no_head_sha", (
+                f"ReviewBus found task PR evidence ({numbers}) for `{branch}` -> `{base}` "
+                "without an exact head SHA. Refusing unscoped review evidence."
+            )
+
+    incomplete_merged = [
+        item
+        for item in matching_base
+        if str(item.get("state") or "").upper() == "MERGED"
+        and (not item.get("mergedAt") or not _pr_merge_commit(item))
+    ]
+    if incomplete_merged:
+        numbers = ", ".join(f"#{item.get('number')}" for item in incomplete_merged)
+        return None, "skipped_incomplete_merge_evidence", (
+            f"ReviewBus found merged task PR evidence ({numbers}) for `{branch}` -> `{base}` "
+            "without both merge time and merge commit. Refusing incomplete delivery evidence."
+        )
+
+    merged = [
+        item
+        for item in matching_base
+        if str(item.get("state") or "").upper() == "MERGED"
+        and item.get("mergedAt")
+        and _pr_merge_commit(item)
+    ]
+    if len(merged) == 1:
+        return merged[0], None, None
+    if len(merged) > 1:
+        numbers = ", ".join(f"#{item.get('number')}" for item in merged)
+        raise GitHubBusError(
+            f"ReviewBus found multiple merged PRs ({numbers}) for exact task commit "
+            f"`{head_sha or '(unknown)'}` on `{branch}` -> `{base}`. Refusing ambiguous review evidence."
+        )
+
+    open_prs = [item for item in matching_base if str(item.get("state") or "").upper() == "OPEN"]
+    if len(open_prs) == 1:
+        return open_prs[0], None, None
+    if len(open_prs) > 1:
+        numbers = ", ".join(f"#{item.get('number')}" for item in open_prs)
+        raise GitHubBusError(
+            f"ReviewBus found multiple open PRs ({numbers}) for `{branch}` -> `{base}`. "
+            "Refusing ambiguous review scope."
+        )
+
+    mismatched = [item for item in scoped if str(item.get("baseRefName") or "") != base]
+    if mismatched:
+        details = ", ".join(
+            f"#{item.get('number')} -> {item.get('baseRefName') or '(missing)'}"
+            for item in mismatched
+        )
+        return None, "skipped_base_mismatch", (
+            f"ReviewBus found exact task branch evidence on the wrong base ({details}); "
+            f"expected delivery base `{base}`. Refusing to create a synthetic integration PR."
+        )
+
+    closed = [
+        item
+        for item in matching_base
+        if str(item.get("state") or "").upper() == "CLOSED"
+    ]
+    if closed:
+        numbers = ", ".join(f"#{item.get('number')}" for item in closed)
+        return None, "skipped_closed_pr", (
+            f"ReviewBus found closed, unmerged task PR evidence ({numbers}) for "
+            f"`{branch}` -> `{base}`. Refusing to replace it with a synthetic PR."
+        )
+    return None, None, None
 
 
 def find_existing_coordination_issue(repo: str, feature_id: str) -> dict[str, Any] | None:
@@ -647,9 +813,200 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         )
         return True
 
-    base = default_branch(config)
+    base = delivery_base_branch(config, repo)
     title = f"[ReviewBus] {task['id']} {task['title']}"
-    head_sha = branch_head_sha(branch)
+    task_github = task.get("github") or {}
+    explicit_head_sha = str(task_github.get("head_sha") or "").strip() or None
+    local_head_sha = branch_head_sha(branch)
+    prior_head_sha = None
+    if isinstance(pr_ref, dict) and pr_ref.get("branch") == branch:
+        prior_head_sha = str(pr_ref.get("head_sha") or "").strip() or None
+    candidates = find_task_pr_candidates(repo, branch)
+    matching_candidate_heads = {
+        str(item.get("headRefOid") or "").strip()
+        for item in candidates
+        if str(item.get("baseRefName") or "") == base
+        and str(item.get("headRefOid") or "").strip()
+    }
+
+    preliminary_head_sha = explicit_head_sha or prior_head_sha or local_head_sha
+    preliminary_skip_hash = json.dumps(
+        {
+            "state": "skipped_unpublished_branch",
+            "task_id": task["id"],
+            "branch": branch,
+            "base": base,
+            "head_sha": preliminary_head_sha,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    previous_unpublished = (
+        not candidates
+        and isinstance(pr_ref, dict)
+        and pr_ref.get("state") == "skipped_unpublished_branch"
+        and pr_ref.get("branch") == branch
+        and pr_ref.get("head_sha") == preliminary_head_sha
+        and entry.get("last_review_hash") == preliminary_skip_hash
+    )
+    if previous_unpublished:
+        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
+        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
+            return False
+
+    published_head_sha = remote_branch_head_sha(branch) if not explicit_head_sha else None
+    if explicit_head_sha:
+        head_sha = explicit_head_sha
+    elif published_head_sha:
+        # A task branch can carry more than one merged PR when a follow-up is
+        # required. Its published head disambiguates the current immutable
+        # delivery from older PRs for the same exact task branch.
+        head_sha = published_head_sha
+    elif len(matching_candidate_heads) == 1:
+        # A task integrator may update the remote PR branch after the worker's
+        # local ref was created. The unique PR head on the configured delivery
+        # base is the immutable review identity in that case.
+        head_sha = next(iter(matching_candidate_heads))
+    elif candidates:
+        # Let the selector diagnose multiple heads or base mismatch without a
+        # stale local ref silently filtering the relevant PR evidence.
+        head_sha = None
+    else:
+        head_sha = published_head_sha or prior_head_sha or local_head_sha
+
+    if (
+        isinstance(pr_ref, dict)
+        and pr_ref.get("evidence_kind") == "merged_task_pr"
+        and pr_ref.get("branch") == branch
+        and pr_ref.get("base_branch") == base
+        and pr_ref.get("head_sha")
+        and pr_ref.get("merge_commit")
+        and (not head_sha or pr_ref.get("head_sha") == head_sha)
+    ):
+        return False
+
+    selected_pr, diagnostic_state, diagnostic = _select_task_pr_evidence(
+        candidates,
+        task_id=task["id"],
+        branch=branch,
+        base=base,
+        head_sha=head_sha,
+    )
+    if selected_pr:
+        selected_state = str(selected_pr.get("state") or "").upper()
+        selected_head = str(selected_pr.get("headRefOid") or "").strip() or head_sha
+        merge_commit = _pr_merge_commit(selected_pr)
+        evidence_kind = "merged_task_pr" if selected_state == "MERGED" else "open_task_pr"
+        review_hash = json.dumps(
+            {
+                "state": selected_state,
+                "task_id": task["id"],
+                "branch": branch,
+                "base": base,
+                "head_sha": selected_head,
+                "pr_number": selected_pr.get("number"),
+                "merge_commit": merge_commit,
+                "merged_at": selected_pr.get("mergedAt"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if entry.get("last_review_hash") == review_hash and pr_ref:
+            return False
+        entry["review_pr"] = {
+            "number": selected_pr.get("number"),
+            "url": selected_pr.get("url"),
+            "title": selected_pr.get("title") or title,
+            "branch": branch,
+            "base_branch": base,
+            "state": selected_state.lower(),
+            "head_sha": selected_head,
+            "merge_commit": merge_commit,
+            "merged_at": selected_pr.get("mergedAt"),
+            "evidence_kind": evidence_kind,
+            "last_remote_branch_check_at": utc_now(),
+        }
+        entry["last_review_hash"] = review_hash
+        if evidence_kind == "merged_task_pr":
+            message = (
+                f"ReviewBus bound {task['id']} to merged PR #{selected_pr.get('number')} "
+                f"for exact task commit `{selected_head}` and merge commit `{merge_commit}` "
+                f"on `{base}`."
+            )
+        else:
+            message = (
+                f"ReviewBus bound {task['id']} to open task PR #{selected_pr.get('number')} "
+                f"for exact task commit `{selected_head}` on `{base}`."
+            )
+        write_activity_log(
+            config,
+            {
+                "type": "github_review_pr_bound",
+                "task_id": task["id"],
+                "message": message,
+                "github_url": entry["review_pr"].get("url"),
+                "head_sha": selected_head,
+                "merge_commit": merge_commit,
+                "base_branch": base,
+            },
+        )
+        return True
+
+    if diagnostic_state and diagnostic:
+        candidate_evidence = [
+            {
+                "number": item.get("number"),
+                "url": item.get("url"),
+                "state": str(item.get("state") or "").lower(),
+                "branch": item.get("headRefName"),
+                "base_branch": item.get("baseRefName"),
+                "head_sha": item.get("headRefOid"),
+                "merge_commit": _pr_merge_commit(item),
+            }
+            for item in candidates
+            if diagnostic_state == "skipped_head_mismatch"
+            or not head_sha
+            or str(item.get("headRefOid") or "") == head_sha
+        ]
+        diagnostic_hash = json.dumps(
+            {
+                "state": diagnostic_state,
+                "task_id": task["id"],
+                "branch": branch,
+                "base": base,
+                "head_sha": head_sha,
+                "candidates": candidate_evidence,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if entry.get("last_review_hash") == diagnostic_hash and pr_ref:
+            return False
+        entry["review_pr"] = {
+            "number": None,
+            "url": None,
+            "title": title,
+            "branch": branch,
+            "base_branch": base,
+            "state": diagnostic_state,
+            "head_sha": head_sha,
+            "evidence_kind": "fail_closed",
+            "diagnostic": diagnostic,
+            "candidates": candidate_evidence,
+        }
+        entry["last_review_hash"] = diagnostic_hash
+        write_activity_log(
+            config,
+            {
+                "type": "github_review_pr_skipped",
+                "task_id": task["id"],
+                "message": diagnostic,
+                "base_branch": base,
+                "head_sha": head_sha,
+            },
+        )
+        return True
+
     skip_hash = json.dumps(
         {
             "state": "skipped_unpublished_branch",
@@ -668,12 +1025,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         and pr_ref.get("head_sha") == head_sha
         and entry.get("last_review_hash") == skip_hash
     )
-    if previous_unpublished:
-        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
-        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
-            return False
-
-    if not remote_branch_exists(branch):
+    if not published_head_sha:
         checked_at = utc_now()
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
@@ -696,6 +1048,47 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             },
         )
         return True
+
+    if not head_sha:
+        diagnostic = (
+            f"ReviewBus found remote task branch `{branch}` but could not bind an exact head SHA. "
+            "Refusing to create an unscoped review PR."
+        )
+        no_sha_hash = json.dumps(
+            {
+                "state": "skipped_no_head_sha",
+                "task_id": task["id"],
+                "branch": branch,
+                "base": base,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if entry.get("last_review_hash") == no_sha_hash and pr_ref:
+            return False
+        entry["review_pr"] = {
+            "number": None,
+            "url": None,
+            "title": title,
+            "branch": branch,
+            "base_branch": base,
+            "state": "skipped_no_head_sha",
+            "head_sha": None,
+            "evidence_kind": "fail_closed",
+            "diagnostic": diagnostic,
+        }
+        entry["last_review_hash"] = no_sha_hash
+        write_activity_log(
+            config,
+            {
+                "type": "github_review_pr_skipped",
+                "task_id": task["id"],
+                "message": diagnostic,
+                "base_branch": base,
+            },
+        )
+        return True
+
     variables = {
         "marker": COMMENT_MARKER,
         "task_id": task["id"],
@@ -716,14 +1109,16 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     if entry.get("last_review_hash") == pr_hash and pr_ref:
         return False
 
-    if not branch_has_diff(base, branch):
+    if not branch_has_diff(f"origin/{base}", branch):
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
             "url": (pr_ref or {}).get("url"),
             "title": title,
             "branch": branch,
+            "base_branch": base,
             "state": "skipped_no_commits",
             "head_sha": head_sha,
+            "evidence_kind": "fail_closed",
         }
         entry["last_review_hash"] = pr_hash
         write_activity_log(
@@ -738,26 +1133,15 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
 
     body_file = ensure_temp_body(body)
     try:
-        if pr_ref and pr_ref.get("number"):
-            number = int(pr_ref["number"])
-            run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
-            pr = dict(pr_ref)
-        else:
-            found = find_existing_pr(repo, task["id"], branch)
-            if found:
-                number = int(found["number"])
-                run_gh(["pr", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)])
-                pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
-            else:
-                create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]
-                if labels:
-                    create_args.extend(create_label_args(labels))
-                if (config.get("github_bus", {}) or {}).get("auto_request_reviewers", True):
-                    for handle in reviewer_handles(config, task):
-                        create_args.extend(["--reviewer", handle])
-                proc = run_gh(create_args)
-                url = (proc.stdout or "").strip().splitlines()[-1]
-                pr = {"number": parse_number_from_url(url), "url": url, "title": title, "headRefName": branch}
+        create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]
+        if labels:
+            create_args.extend(create_label_args(labels))
+        if (config.get("github_bus", {}) or {}).get("auto_request_reviewers", True):
+            for handle in reviewer_handles(config, task):
+                create_args.extend(["--reviewer", handle])
+        proc = run_gh(create_args)
+        url = (proc.stdout or "").strip().splitlines()[-1]
+        pr = {"number": parse_number_from_url(url), "url": url, "title": title, "headRefName": branch}
     finally:
         body_file.unlink(missing_ok=True)
 
@@ -766,7 +1150,10 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         "url": pr.get("url"),
         "title": title,
         "branch": branch,
+        "base_branch": base,
         "state": "open",
+        "head_sha": head_sha,
+        "evidence_kind": "created_review_pr",
         "last_remote_branch_check_at": utc_now(),
     }
     entry["last_review_hash"] = pr_hash
@@ -893,7 +1280,7 @@ def apply_bus_command(
             "reopen",
             task_id,
             f"GitHub retry requested via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.",
-            actor=owner or reviewer,
+            actor="Human/Ops",
         )
         queue_resume_for_task(config, target_task)
         reply = f"Queued retry for `{task_id}`."
@@ -1100,25 +1487,26 @@ def queue_coordination_command(
 
 def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
     target_agent = task.get("owner")
-    if not target_agent:
+    task_id = str(task.get("id") or "").strip()
+    if not target_agent or not task_id:
         return False
     event = {
-        "key": f"github-resume:{task['id']}:{target_agent}:{utc_now()}",
-        "task_id": task.get("id"),
+        "key": f"github-resume:{task_id}:{target_agent}:{utc_now()}",
+        "task_id": task_id,
         "target_agent": target_agent,
         "reason": "github_retry",
         "task": {
-            "id": task.get("id"),
+            "id": task_id,
             "artifacts": task.get("artifacts") or [],
             "next": task.get("next"),
         },
     }
     message = render_wakeup_message(config, event, target_agent)
     payload = {
-        "event_id": f"github-{task['id']}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
+        "event_id": f"github-{task_id}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
         "created_at": utc_now(),
         "event_key": event["key"],
-        "task_id": task.get("id"),
+        "task_id": task_id,
         "target_agent": agent_config_for(config, target_agent)["id"],
         "target_display_name": target_agent,
         "provider": agent_config_for(config, target_agent).get("provider", target_agent),
@@ -1126,14 +1514,19 @@ def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
         "message": message,
         "context_files": execution_context_files(config, task.get("id")),
         "target_files": task.get("artifacts") or [],
-        "metadata": {"task": {"id": task.get("id")}},
+        "metadata": {
+            "task": {"id": task_id},
+            "workspace_task_id": task_id,
+            "require_isolated_worktree": True,
+            "explicit_retry_source": "github_bus",
+        },
     }
     enqueue_event(config, payload)
     write_activity_log(
         config,
         {
             "type": "github_resume_queued",
-            "task_id": task.get("id"),
+            "task_id": task_id,
             "target_agent": target_agent,
             "message": "Queued resume wake-up from GitHub approval bus.",
             "queue_event_id": payload["event_id"],

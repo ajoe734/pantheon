@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-29-twelve-loop-current-gap-drain",
+  "generated_at": "2026-07-29T01:00:00Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0100Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "root checkout supervisor command path",
+    "dependency-blocked bulk wake events",
+    "same-author GitHub independent approval"
+  ],
+  "live_supervisor": {
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "status_root": "/home/lupin/pantheon"
+  },
+  "current_blocker": {
+    "task_id": "L12-MANIFEST-001",
+    "status": "review",
+    "owner": "Claude2",
+    "reviewer": "Antigravity",
+    "pr": 4326,
+    "head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+    "merge_state": "BLOCKED",
+    "missing": [
+      "exact-head governed Antigravity review binding",
+      "GitHub canonical review gate status on head",
+      "root merge-freeze or equivalent branch-protection status on head",
+      "merge to dev and archive"
+    ]
+  },
+  "waves": [
+    {
+      "wave": 0,
+      "parallel": true,
+      "purpose": "Unblock #4326 and clean stale closeout/fleet ambiguity.",
+      "tasks": [
+        {
+          "id": "SUP-L12-MANIFEST-REVIEW-BIND-20260729",
+          "canonical_task": "L12-MANIFEST-001",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "depends_on": [],
+          "target_prs": [
+            4326
+          ],
+          "target_head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+            "ai-status.json#L12-MANIFEST-001",
+            "GitHub PR #4326 status contexts"
+          ],
+          "acceptance": [
+            "Governed review/approve is bound to REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+            "Governed review/approve is bound to REVIEW_PR=4326",
+            "Governed review/approve is bound to REVIEW_HEAD_SHA=6783e252adca302e2b5ef3363fa2b225b67f4c97",
+            "GitHub canonical review gate status appears on head 6783e252adca302e2b5ef3363fa2b225b67f4c97 or the exact blocker is recorded",
+            "The reviewer does not restate the withdrawn destructive auto-restart-trigger claim"
+          ]
+        },
+        {
+          "id": "SUP-L12-ROOT-GATE-4326-20260729",
+          "canonical_task": "L12-MANIFEST-001",
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Human/Ops",
+            "Antigravity",
+            "Claude2"
+          ],
+          "reviewer_preference": [
+            "Human/Ops",
+            "Claude2",
+            "Antigravity"
+          ],
+          "depends_on": [
+            "SUP-L12-MANIFEST-REVIEW-BIND-20260729"
+          ],
+          "target_prs": [
+            4326
+          ],
+          "target_head_sha": "6783e252adca302e2b5ef3363fa2b225b67f4c97",
+          "scope": [
+            "GitHub PR #4326 branch protection",
+            "Pantheon root merge freeze 2026-07-27 status context"
+          ],
+          "acceptance": [
+            "The required root-freeze status context is present on the #4326 head or exact missing authority is recorded",
+            "The PR author's GitHub identity is not used as an independent approval",
+            "gh pr view #4326 shows no stale missing-status blocker after the context is supplied"
+          ]
+        },
+        {
+          "id": "SUP-L12-STALE-CLOSEOUT-PR-DRAIN-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex"
+          ],
+          "depends_on": [],
+          "target_prs": [
+            4323,
+            4313,
+            4311,
+            4297
+          ],
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap",
+            "ai-task-archive/tasks",
+            ".orchestrator/task-briefs"
+          ],
+          "acceptance": [
+            "Each stale L12 closeout PR is categorized as rebase, supersede, close, or still-blocked",
+            "No stale PR is counted as accepted twelve-loop proof",
+            "Any required exact-head review/root gate is recorded with PR number and head SHA",
+            "No unrelated config or runtime-state files are modified"
+          ]
+        },
+        {
+          "id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/state.json",
+            ".orchestrator/worker-runtime",
+            ".orchestrator/assistant-dev-packets",
+            "ai-activity-log.jsonl"
+          ],
+          "acceptance": [
+            "Live supervisor process uses /home/lupin/pantheon-ci-deploy/dev-root",
+            "Assistant dev packet drain is verified through pending, processed, receipt, or archive records",
+            "Antigravity and Claude2 readiness are read from live worker-runtime facts",
+            "Any repeated failure loop is recorded without editing .orchestrator/config.json"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 1,
+      "parallel": false,
+      "purpose": "Complete manifest and truth surfaces after #4326 is review-bound and mergeable or merged.",
+      "tasks": [
+        {
+          "id": "L12-MANIFEST-001",
+          "canonical_task": "L12-MANIFEST-001",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex"
+          ],
+          "depends_on": [
+            "SUP-L12-MANIFEST-REVIEW-BIND-20260729",
+            "SUP-L12-ROOT-GATE-4326-20260729"
+          ],
+          "acceptance": [
+            "PR #4326 is merged to dev",
+            "Accepted manifest identity is readable from origin/dev",
+            "Task reaches terminal archive state"
+          ]
+        },
+        {
+          "id": "L12-TRUTH-001",
+          "canonical_task": "L12-TRUTH-001",
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex"
+          ],
+          "depends_on": [
+            "L12-MANIFEST-001"
+          ],
+          "acceptance": [
+            "Backend/controller/operator truth exposes desired state, actual state, failures, degraded state, provenance, and deployment identity",
+            "Truth routes do not overstate loop maturity",
+            "Route/controller tests and live readback pass"
+          ]
+        },
+        {
+          "id": "L12-FE-TRUTH-001",
+          "canonical_task": "L12-FE-TRUTH-001",
+          "target_repo": "ajoe734/execute-plans",
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "acceptance": [
+            "Frontend consumes the BFF truth contract from execute-plans dev branch",
+            "Desktop and mobile browser evidence show desired, actual, failure, and provenance state",
+            "Build uses live BFF mode and strict fallback"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "parallel": true,
+      "purpose": "Run product verifiers once truth surfaces exist.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-KNOW-001",
+          "canonical_task": "L12-VERIFY-KNOW-001",
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "acceptance": [
+            "Real Source/Distillation/Alpha drill evidence is archived"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-LEARN-001",
+          "canonical_task": "L12-VERIFY-LEARN-001",
+          "depends_on": [
+            "L12-TRUTH-001"
+          ],
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "acceptance": [
+            "Real Teaching/Agora/Imitation/Consultation drill evidence is archived"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-RUNTIME-001",
+          "canonical_task": "L12-VERIFY-RUNTIME-001",
+          "depends_on": [
+            "L12-MANIFEST-001",
+            "L12-TRUTH-001"
+          ],
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "acceptance": [
+            "Real Deployment/Capital/runtime drill evidence is archived",
+            "No live-capital activation occurs"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-OBS-001",
+          "canonical_task": "L12-VERIFY-OBS-001",
+          "depends_on": [
+            "L12-BFF-001",
+            "L12-TRUTH-001"
+          ],
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "acceptance": [
+            "Real Telemetry/Reconciliation/Evolution/BFF observability drill evidence is archived"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "parallel": false,
+      "purpose": "Hosted acceptance and protected final closeout.",
+      "tasks": [
+        {
+          "id": "L12-HOSTED-001",
+          "canonical_task": "L12-HOSTED-001",
+          "depends_on": [
+            "L12-FE-TRUTH-001",
+            "L12-VERIFY-KNOW-001",
+            "L12-VERIFY-LEARN-001",
+            "L12-VERIFY-RUNTIME-001",
+            "L12-VERIFY-OBS-001"
+          ],
+          "owner_preference": [
+            "Antigravity",
+            "Claude2",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex"
+          ],
+          "acceptance": [
+            "Hosted FE/BFF manifest binds exact accepted commits",
+            "Restart, recovery, no-duplicate-effect, auth, tenant, safety, desktop, and mobile evidence is archived"
+          ]
+        },
+        {
+          "id": "L12-CLOSE-001",
+          "canonical_task": "L12-CLOSE-001",
+          "depends_on": [
+            "L12-HOSTED-001",
+            "L12-TRUTH-001",
+            "L12-SIGNOFF-001"
+          ],
+          "owner_preference": [
+            "Claude2",
+            "Antigravity",
+            "Codex2"
+          ],
+          "reviewer_preference": [
+            "Human/Ops",
+            "Claude2",
+            "Antigravity"
+          ],
+          "status": "do_not_dispatch_until_all_upstream_terminal",
+          "acceptance": [
+            "Protected final closeout consumes exact catalog, manifest, deployment identities, verifier artifacts, and Human/Ops verdict",
+            "No final done claim occurs before hosted, truth, verifier, and signoff evidence are terminal"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -87,6 +87,7 @@ class DeploymentPlanBody(BaseModel):
     runtime_action: str
     status: str
     created_at: str
+    tenant_id: Optional[str] = None
     created_by: Optional[str] = None
     sponsor_persona_id: Optional[str] = None
     runtime_config_ref: Optional[str] = None
@@ -267,6 +268,34 @@ class OutboxRecordBody(BaseModel):
     retry_policy: Optional[Dict[str, Any]] = None
 
 
+class ClaimOutboxEventsRequest(BaseModel):
+    consumer_name: str = Field(min_length=1)
+    lease_seconds: int = Field(default=60, ge=1, le=3600)
+    limit: int = Field(default=25, ge=1, le=250)
+    aggregate_id: Optional[str] = None
+
+
+class ClaimedOutboxRecordBody(OutboxRecordBody):
+    tenant_id: str
+    consumer_name: str
+    claim_token: str
+    lease_status: str
+    claimed_at: str
+    lease_expires_at: str
+    recovery_count: int = 0
+
+
+class OutboxLeaseHealthBody(BaseModel):
+    status: str
+    active_claim_count: int
+    acknowledged_claim_count: int
+    released_claim_count: int
+    recovered_claim_count: int
+    recovered_this_check: int
+    oldest_active_claimed_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class InboxReceiptBody(BaseModel):
     consumer_name: str
     event_id: str
@@ -303,6 +332,7 @@ class DeploymentSagaBody(BaseModel):
     current_stage: str
     target_stage: str
     runtime_action: str
+    tenant_id: Optional[str] = None
     rollback_action_type: Optional[str] = None
     status: SagaStatusBody
     current_step: SagaStepBody
@@ -444,6 +474,7 @@ class RecordSagaFailureRequest(BaseModel):
 
 class RecordOutboxFailureRequest(BaseModel):
     consumer_name: str
+    claim_token: Optional[str] = None
     reason: str
     retryable: bool = True
     max_attempts: Optional[int] = None
@@ -466,6 +497,7 @@ class FinalizeCompensationRequest(BaseModel):
 
 class ConsumeOutboxEventRequest(BaseModel):
     consumer_name: str
+    claim_token: Optional[str] = None
 
 
 class PoolCompatibilityRequest(BaseModel):

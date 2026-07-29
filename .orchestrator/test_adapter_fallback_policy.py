@@ -508,10 +508,14 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 "antigravity": {
                     "delivery_mode": "antigravity",
                     "allow_inbox_fallback": False,
-                    "antigravity": {"cli": "agy", "print_timeout": "15m"},
+                    "antigravity": {
+                        "cli": "agy",
+                        "model": "gemini-3.6-flash-low",
+                        "print_timeout": "15m",
+                    },
                     "model_rotation": {
                         "enabled": True,
-                        "primary": "",
+                        "primary": "gemini-3.6-flash-low",
                         "fallback": "Claude Sonnet 4.6 (Thinking)",
                         "cooldown_seconds": 900,
                     },
@@ -541,7 +545,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             result = adapter.deliver(request)
         return result, spawn
 
-    def test_antigravity_rotation_uses_primary_default_when_nothing_cooling(self) -> None:
+    def test_antigravity_rotation_pins_available_primary_when_nothing_cooling(self) -> None:
         import model_rotation
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -550,8 +554,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             result, spawn = self._deliver_antigravity(config, root)
 
         self.assertTrue(result.ok)
-        # Empty primary => no --model override, so agy keeps its default (Gemini).
-        self.assertNotIn("--model", result.command)
+        self.assertIn("--model", result.command)
+        self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-3.6-flash-low")
         self.assertEqual(spawn.call_args.kwargs["env"]["ORCH_MODEL_ROTATION_SLOT"], model_rotation.SLOT_PRIMARY)
 
     def test_antigravity_rotation_switches_to_fallback_when_primary_cooling(self) -> None:

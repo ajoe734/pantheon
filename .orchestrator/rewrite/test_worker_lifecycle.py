@@ -64,6 +64,11 @@ class ConfirmKillTests(unittest.TestCase):
         self.assertTrue(self._run(proc))
         self.assertEqual(proc.signals, [signal.SIGTERM])  # no escalation needed
 
+    def test_pre_sent_sigterm_is_not_sent_twice(self) -> None:
+        proc = FakeProcess(dies_on=signal.SIGKILL)
+        self.assertTrue(self._run(proc, term_already_sent=True))
+        self.assertEqual(proc.signals, [signal.SIGKILL])
+
     def test_escalates_to_sigkill(self) -> None:
         proc = FakeProcess(dies_on=signal.SIGKILL)
         self.assertTrue(self._run(proc))

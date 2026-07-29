@@ -1120,6 +1120,47 @@ class TestExtractIdentityJwks:
         identity = self._call(f"Bearer {token}")
         assert identity.mfa_verified is True
 
+    def test_gcp_identity_totp_claim_satisfies_mfa(self):
+        token = _make_rs256_jwt(
+            sub="gcp-user",
+            roles=["operator"],
+            extra={
+                "email_verified": True,
+                "firebase": {
+                    "sign_in_provider": "password",
+                    "sign_in_second_factor": "totp",
+                },
+            },
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_MFA_REQUIRED": "true",
+                "PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED": "true",
+            },
+        )
+        assert identity.operator_id == "gcp-user"
+        assert identity.mfa_verified is True
+
+    def test_gcp_identity_unverified_email_is_rejected(self):
+        from fastapi import HTTPException
+
+        token = _make_rs256_jwt(
+            sub="gcp-user",
+            roles=["viewer"],
+            extra={
+                "email_verified": False,
+                "firebase": {"sign_in_provider": "password"},
+            },
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(
+                f"Bearer {token}",
+                env_overrides={"PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED": "true"},
+            )
+        assert exc_info.value.status_code == 401
+        assert "AUTH_EMAIL_UNVERIFIED" in json.dumps(exc_info.value.detail)
+
     def test_mfa_not_verified_without_any_claim(self):
         """Token without amr/acr/mfa claims and without X-MFA-Token header is not MFA-verified."""
         token = _make_rs256_jwt(sub="op-nomfa", roles=["operator"])

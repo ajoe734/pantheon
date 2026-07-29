@@ -1,0 +1,119 @@
+{
+  "manifest_version": "1.10",
+  "extends": "v1.9",
+  "description": "Additive authoritative Strategy Performance and durable Workshop version contracts. Both capabilities are scoped, governed, restart-persistent, and execution-authority-free.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_10.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "strategy_performance_truth",
+      "name": "agora.performance.truth.v1",
+      "version": "1.0",
+      "description": "User-private per-strategy/per-period compliance, intervention, canonical execution identity, warning, and governed adjustment-suggestion truth with explicit freshness and availability.",
+      "schemas": [
+        "SourceAvailability",
+        "ComplianceMetric",
+        "InterventionRecord",
+        "ExecutionHistoryRow",
+        "PerformanceWarning",
+        "SuggestionProvenance",
+        "AdjustmentSuggestion",
+        "StrategyPerformanceProjection",
+        "PerformanceProjectionEnvelope",
+        "SuggestionActionRequest",
+        "SuggestionActionReceipt",
+        "SuggestionActionEnvelope"
+      ],
+      "routes": [
+        "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
+        "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
+        "GET /bff/agora/performance/action-receipts/{receipt_id}"
+      ],
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "durable_workshop_versions",
+      "name": "agora.workshop.versions.durable.v1",
+      "implementation_status": "implemented",
+      "routes": [
+        "GET /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select"
+      ],
+      "authoritative_sources": {
+        "strategy_spec_json": "strategy_registry",
+        "version_link_and_selection": "strategy_workshop_postgres"
+      },
+      "durability": {
+        "backend": "postgres",
+        "restart_persistent": true,
+        "legacy_active_pointer_backfill": "deterministic"
+      },
+      "concurrency": {
+        "create_idempotency_key_required": true,
+        "select_idempotency_key_required": true,
+        "select_if_match_required": true,
+        "select_atomic_cas": true
+      },
+      "isolation": {
+        "tenant_scoped": true,
+        "user_scoped": true,
+        "registry_scope_readback_validated_when_present": true
+      },
+      "execution_authority": "none"
+    }
+  ],
+  "required_definition_checksums": {
+    "SourceAvailability": "ea6786ca80d701d32e42d14df83d3890aa7c3e8f191d01b22f9d026057ecb543",
+    "ComplianceMetric": "b43047bee764f740e4fc7c6748ab1416a50222b548d2b09e818820536bfbd63c",
+    "InterventionRecord": "cb6d47a6d063574e21314757dfcaaee6ba324928021ebadccdcc601fe2994821",
+    "ExecutionHistoryRow": "1cca8915e988748e56df6603893364212eb035956c141a9e45ee2c33c996a590",
+    "PerformanceWarning": "40fc759d5a57e00e2a8ad7d53458b76ede3ac8367e0c0c1786c389507f6350ce",
+    "SuggestionProvenance": "56c09b2ecde3f96ed3988b7d4fdae5df60c76d8c354ebdf4d31a3fea7c83f47a",
+    "AdjustmentSuggestion": "4beb66a7c297d6fc8471687e8656c3e56725e54259b182b28c4ac749de0cc362",
+    "StrategyPerformanceProjection": "45cba7ea036748885279dab02fe72ac0f77080fc235b5112c49b08dfb8d22e6a",
+    "PerformanceProjectionEnvelope": "4c75bae6d277d2e29811c58f96d8f359448aad1792a3989fb65a30883c6d31ae",
+    "SuggestionActionRequest": "db7af82a71071b0f904b8ed105689b7abce2fdee71ef7aaa18bc3003968e6022",
+    "SuggestionActionReceipt": "cef31a45bd53e84263fa8f62dc3f3c2d58affbdd39607492abc1edd99e2efe4f",
+    "SuggestionActionEnvelope": "6b55f84cb4bee233ee136edbcc0bda6f5183a8f8dfc0d5121a1510b8f2f66f10",
+    "WorkshopVersionLink": "a2488b6b367bb0b3ea21217f904a3246974a595123d46084d8665dbd907fc8a6",
+    "AuthoritativeStrategySpecReadback": "b0268fb83c46067c6a56c235ab0fd08ba08caf81684b185445ceaaeb567be47a",
+    "WorkshopVersionResource": "772e2e763ea8f0e14417b4a44460accdde542d64f4c990bd2d1accf80e44b716",
+    "WorkshopVersionListEnvelope": "167666ab48c6ca012aec3869c69fb2ce15f9b381c59557feb2be00487a2d2b40",
+    "WorkshopVersionCreateEnvelope": "a6f40d565138cb4cf757967b99e6d728477c56a337215600c020f5ffbf130873",
+    "WorkshopVersionSelectResource": "ec774c2ea5868b67a91f8fa30cc5ed3bd14e540888e8c95b6c4a7b612637e889",
+    "WorkshopVersionSelectEnvelope": "b0a7c22b8010a34758ab898889b1a24437dc3b4ef5899df87783560da906393a",
+    "LegacyVersionBackfillRule": "39a7fb43d285f56c0088015bdee1fb5112c20765673c4f1742b8c4a266dd2f6b"
+  },
+  "storage_ownership": {
+    "lifecycle_execution_projection": "canonical_trade_journey_projector",
+    "compliance_intervention_warning_payloads": "source_owned_fields_on_canonical_lifecycle_events",
+    "suggestion_source_and_disposition": "agora_performance_sqlite",
+    "action_receipt": "agora_performance_sqlite",
+    "audit_event": "agora_performance_sqlite",
+    "workshop_version_link_and_selection": "strategy_workshop_postgres",
+    "strategy_spec_json": "strategy_registry",
+    "frontend": "cache_only_no_authority"
+  },
+  "migration": {
+    "legacy_rows_preserve_existing_payload_fields": true,
+    "lock_version_unchanged": true,
+    "updated_at_unchanged": true,
+    "selected_aliases_only_populated_when_null": true
+  },
+  "safety_boundary": {
+    "missing_data_fabrication": false,
+    "local_toast_is_receipt": false,
+    "direct_order_route": false,
+    "broker_call": false,
+    "capital_binding": false,
+    "runtime_binding_write": false,
+    "live_capital_change": false,
+    "execution_authority": "none"
+  },
+  "task_ids": [
+    "AG-PERF-TRUTH-001-BE",
+    "AG-WS-OPS-001"
+  ],
+  "note": "Combined additive v1.10 repository contract. Existing v1.2/v1.8/v1.9 bytes remain unchanged; hosted availability still requires later compatibility and deployment acceptance."
+}

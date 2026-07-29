@@ -1,0 +1,755 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-DIST-001 product-level review-file admission gate.",
+    "note": "Owner repair cut for PR #4286 committed-replay lineage plus the owner-closeout transcription of Codex's governed independent approval of exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-28T12:35:45Z",
+    "evidence_cut_semantics": "Owner evidence cut v6.0.0. At authoritative journal sequence 3186, Codex2 repaired PR #4286 so Registry delivery is a pure projection of the transactionally committed SourceRecord and exact request seed/evidence lineage, including deterministic created_at across replay. Delivery receipt 2ebabea2ad774dc59fe785f811025de1f6837956 binds the nine finalized artifacts at content-digest:sha256:8c1591d06178fa08acb59919d7fbefe982a7071c8bf05d10943d0d8332452d16. PR #4286 at head 2ebabea2ad774dc59fe785f811025de1f6837956 had all required push and pull-request receipt checks successful when observed at 2026-07-28T12:13:56Z. Codex independently approved the evidence follow-up exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 at 2026-07-28T12:30:03Z after rerunning the complete acceptance set; this owner-closeout append transcribes that governed verdict without changing the digest-bound runtime artifacts.",
+    "id": "L12-DIST-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Distillation",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev integration with a real in-process registry service over real HTTP",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-DIST-001",
+    "title": "Make source-to-draft distillation transactional and replayable"
+  },
+  "authorities": {
+    "actual_state": [
+      "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl (append-only authoritative task-state journal; this cut verified through sequence 3186 at 2026-07-28T12:02:22Z)",
+      "StrategySpec mutable draft",
+      "Registry terminal readback",
+      "distillation DLQ"
+    ],
+    "desired_state": [
+      "normalized versioned SourceRecord"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DIST-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Distillation worker for the versioned source ledger, outbox/inbox, lease fencing, retry/DLQ, and the Registry sink that acknowledges only after terminal readback",
+    "composes_with": [
+      "L12-SRC-001 normalized SourceRecord contract",
+      "services/registry StrategySpec facade",
+      "services/research/strategy_spec seed conversion"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_dist_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/registry/service.py",
+      "services/registry/test_service.py",
+      "services/source_ingestion/distillation_controller.py",
+      "services/source_ingestion/distillation_worker.py",
+      "services/source_ingestion/registry/jsonl_store.py",
+      "services/source_ingestion/tests/test_distillation_controller.py",
+      "services/source_ingestion/tests/test_distillation_worker.py",
+      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py"
+    ],
+    "not_changing": "The StrategySpecSeed schema and materializer API, the Registry HTTP contract, the source ingestion controller surface owned by L12-SRC-001, canonical architecture policy, hosted deployment admission, and live-capital authority.",
+    "owned_layer": "Source-to-draft distillation: versioned source admission and immutable materialization identity, durable outbox/inbox and dead-letter ledger, lease fencing across processes and at terminal expiry, truthful degraded Registry delivery, and read-modify-write safety of the shared JSONL registry store"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "79f4bb8384a03eeef4ee41feb17c2957b57b24c6",
+        "subject": "L12-DIST-001: anchor transactional distillation ledger"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "71037a977565515edf1a37f7256301754e486769",
+        "subject": "L12-DIST-001: recover preempted controller WIP"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "3a48fff770536a97423b5444dfd443e38dabed19",
+        "subject": "L12-DIST-001: anchor registry sync lineage contract"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "0656206f1592ffd266068e1ba06482e6f6735e99",
+        "subject": "L12-DIST-001: anchor transactional acceptance proof"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "0a554876dcd7e4532d962ac6e40557128511b1e9",
+        "subject": "L12-DIST-001: anchor reassigned task brief"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "fc84612bb1481904ce47b806b90bc247b6072152",
+        "subject": "L12-DIST-001: anchor lease and identity fences"
+      },
+      {
+        "delivery_state": "receipt_base_dev_merge",
+        "sha": "6bfc48bd7e46d8b163947a0081de9590192982a6",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:ece9041afe982c57014cfa40a1a72cb50eac8585ec3cc24eda927117e70ab4d9",
+        "delivery_state": "superseded_by_current_owner_receipt",
+        "note": "Historical corrective receipt. It carried the v2 owner bytes and passed all required Branch CI jobs before the current dev refresh.",
+        "sha": "dd70dbc4a9bf2c1d8a0359cc7c7968d153a61326",
+        "subject": "L12-DIST-001: bind corrective delivery receipt"
+      },
+      {
+        "delivery_state": "post_receipt_dev_refresh_merge",
+        "note": "Merged dev tip b79d3a540a797fe69851f4dbb3a119ddb647cf9a after receipt checks. The incoming delta touched only L12-IMIT-001 evidence and changed none of the seven digest-bound artifacts.",
+        "sha": "b8a53799d88410a18c2ce3213ba2f2661eec78ba",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "delivery_state": "superseded_refresh_receipt",
+        "note": "Historical refresh receipt that carried the prior owner narrative and passed Branch CI before the task was resumed onto a newer dev tip.",
+        "sha": "d7b0817cba4c825303a78d416fed821c5455c902",
+        "subject": "L12-DIST-001: bind refreshed delivery receipt"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "d52e2bd3fef66c67a89abcf44cdda9b992de64a9",
+        "subject": "L12-DIST-001: anchor resumed reviewer refresh"
+      },
+      {
+        "delivery_state": "current_receipt_base_dev_merge",
+        "note": "Merged dev 4580fc5d18a13ec70dcc18952646c584bec74bcc before the complete acceptance rerun.",
+        "sha": "f3caca2742b7454e1224dfb5f9b284507476a162",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "delivery_state": "current_receipt_final_dev_merge",
+        "note": "Merged final dev 4688bd252911b91ea0459a38a694c5faa53e3bbd; the incoming delta only added unrelated L12-IMIT closeout evidence and changed none of the task-bound implementation artifacts.",
+        "sha": "014c9b9fa6bc56c061fe1acaed8adfa45140170f",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:2feb5dbc40c9e0d3a878d6eb4e9fcd9edb0f6b5d6edb38615e58ab3c532a4bb5",
+        "delivery_state": "superseded_by_reviewer_correction_receipt",
+        "note": "Historical v3 receipt. Independent review of a later exact head exposed the Registry TOCTOU overwrite and caller-map snapshot substitution defects.",
+        "sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
+        "subject": "L12-DIST-001: bind current owner receipt"
+      },
+      {
+        "delivery_state": "current_manifest_anchor",
+        "note": "Records the v3 manifest and checksum that bind the green current owner receipt.",
+        "sha": "911617e11faa4ee35ba7897e0fab68c5d1352df6",
+        "subject": "L12-DIST-001: anchor current receipt manifest"
+      },
+      {
+        "delivery_state": "post_current_receipt_dev_refresh_merge",
+        "note": "Merged dev a6966b13d84430387da9c3a33fcf224c841bc5c6 after the receipt checks. The incoming delta touched only SUP-TASK-STATE-LOCK-LATENCY-001 evidence and changed none of the seven digest-bound artifacts.",
+        "sha": "4f76d97bc879e4fb1ca942c248e75e911847e9ea",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "delivery_state": "superseded_reviewer_rejected_head",
+        "note": "Independent review reproduced an approve-before-POST overwrite and a v1 job processing v2 caller-map content; both findings are fixed by the later correction receipt.",
+        "sha": "5934ed6d8e4dc797fb5dbd34a8fc9636b3acdb1c",
+        "subject": "L12-DIST-001: finalize exact-head review handoff"
+      },
+      {
+        "delivery_state": "reviewer_correction_anchor",
+        "note": "Introduces atomic StrategySpec create-if-absent delivery, committed-snapshot replay, and the exact negative regressions.",
+        "sha": "77cd3a0214956b3c52145af24c46015260e03b74",
+        "subject": "L12-DIST-001: anchor atomic Registry and snapshot fences"
+      },
+      {
+        "delivery_state": "current_receipt_base_dev_merge",
+        "note": "Merged current dev 7f545a33bf41e5682dc67f50333c84b42f09d17e before the final complete acceptance rerun.",
+        "sha": "a1aca8d522227e364bbafaf2bc789f319f93d566",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:08d60a275e0e784a8f3c393455d7bfcb03627bafe95ead4c577e46385e9e2d65",
+        "delivery_state": "superseded_by_merged_repair_receipt",
+        "note": "Historical v4 receipt. Codex later rejected two conflicting-content replay paths; PR #4193 exact head 1a32aeb86e59a79a0ea7be7f3f1c36e839931f80 repaired both before merge.",
+        "sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+        "subject": "L12-DIST-001: bind final correction delivery receipt"
+      },
+      {
+        "delivery_state": "merged_final_repair_head",
+        "note": "Carries the two corrections from Codex's exact-head rejection: same-id StrategySpec conflict refusal and complete draft/candidate Registry readback validation.",
+        "sha": "1a32aeb86e59a79a0ea7be7f3f1c36e839931f80",
+        "subject": "L12-DIST-001: reject conflicting registry replays"
+      },
+      {
+        "delivery_state": "implementation_merge_commit",
+        "note": "PR #4193 merged exact repair head 1a32aeb86e59a79a0ea7be7f3f1c36e839931f80 to dev at 2026-07-27T22:10:42Z.",
+        "sha": "1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86",
+        "subject": "Merge pull request #4193 from ajoe734/task/L12-DIST-001"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:db803d3d9f5027c9c2d6bf9ddf28f057fe752c2c5315d19ce50f96604a3133c7",
+        "delivery_state": "superseded_by_committed_replay_repair_receipt",
+        "note": "Historical v5 receipt. Codex's later negative proof found that Registry delivery still re-read mutable same-id production-note bytes instead of using the committed request lineage.",
+        "sha": "f8ddd0a255e910b96400fe2fcbbcad1f4c18cdaa",
+        "subject": "L12-DIST-001: anchor merged closeout receipt"
+      },
+      {
+        "delivery_state": "committed_replay_review_boundary_anchor",
+        "note": "Durably records Codex's exact PR #4286 committed-replay lineage rejection before implementation resumed.",
+        "sha": "cc847a15c684dc2d37106e116dd7353fe000f759",
+        "subject": "L12-DIST-001: anchor replay-lineage review boundary"
+      },
+      {
+        "delivery_state": "committed_replay_runtime_anchor",
+        "note": "Removes mutable production-note resolution from Registry delivery, validates request lineage coherence, preserves replay timestamps, and adds the two exact negative regressions.",
+        "sha": "d642eec8bd9c436f2dce52932d86551f2bdc622d",
+        "subject": "L12-DIST-001: anchor committed replay lineage"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:0382bda420fca2472160922d09eec3372791942ea8fb9ff43ab2eff1b85cab3a",
+        "delivery_state": "superseded_by_boundary_aligned_receipt",
+        "note": "Historical first v6 receipt. The validator required the digest-bound README journal boundary to advance from sequence 3156 to the manifest's sequence 3186.",
+        "sha": "16655204b629619bb2f893bf755343483d3e5653",
+        "subject": "L12-DIST-001: bind committed replay repair receipt"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:8c1591d06178fa08acb59919d7fbefe982a7071c8bf05d10943d0d8332452d16",
+        "delivery_state": "current_receipt_checks_green",
+        "note": "Carries the committed-replay repair README with aligned journal boundary plus the eight implementation/test artifacts. Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision are green on both push and pull-request runs; the later evidence pair is outside the content digest.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+        "subject": "L12-DIST-001: refresh replay evidence boundary"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "c1c3ee0d1fd122df409c53e0fc038fde1ef6a965",
+      "number": 4286,
+      "url": "https://github.com/ajoe734/pantheon/pull/4286"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "1a32aeb86e59a79a0ea7be7f3f1c36e839931f80",
+        "merge_sha": "1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86",
+        "merged_at": "2026-07-27T22:10:42Z",
+        "number": 4193,
+        "url": "https://github.com/ajoe734/pantheon/pull/4193"
+      }
+    ],
+    "required_checks": [
+      {
+        "completed_at": "2026-07-28T12:12:38Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+        "run_id": 30357939837,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30357939837",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-28T12:12:47Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+        "run_id": 30357939837,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30357939837",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-28T12:13:43Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+        "run_id": 30357939837,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30357939837",
+        "workflow": "Smoke acceptance"
+      },
+      {
+        "completed_at": "2026-07-28T12:13:05Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+        "run_id": 30357939837,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30357939837",
+        "workflow": "Python packaging provision"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestConcurrentWorkers::test_expired_lease_cannot_commit_any_terminal_outcome_before_reclaim services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestCrashReplay services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_registry_outage_fails_the_tick_and_parks_a_durable_retry services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_registry_recovery_replays_the_parked_job_to_done services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_outage_replay_keeps_identity_across_an_intervening_revision services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService::test_real_service_outage_then_recovery_replays_once -q",
+        "claim_scope": "historical",
+        "conclusion": "8 passed. Exact expiry, crash-before/after, simulated and real outage recovery, and intervening-revision identity regressions.",
+        "historical_note": "Historical focused selection from the v3.0.0 cut; every selected test was included in the current complete focused suite.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion -q",
+        "claim_scope": "current",
+        "conclusion": "760 passed, 2 skipped, 3 warnings on the committed-replay repair receipt bytes.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/registry services/research/strategy_spec -q",
+        "claim_scope": "current",
+        "conclusion": "231 passed, 17 warnings. Regression cover includes conflicting same-id StrategySpec refusal, atomic approval preservation, the shared JsonlRegistryStore lease, and the seed conversion path.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+        "claim_scope": "current",
+        "conclusion": "115 passed, 3 warnings, including valid same-id production-note conflict and cross-timestamp note-mutation replay with identical payload/checksum/seed/bundle/item lineage and already_terminal readback.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range 11858f4d445565064e630cce9b89ea8b475a6598..2ebabea2ad774dc59fe785f811025de1f6837956 --skip-merge",
+        "claim_scope": "current",
+        "conclusion": "Passed for the full committed-replay repair receipt range.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest 'services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestConcurrentWorkers::test_two_processes_produce_one_terminal_draft_per_source' -q (repeated 3x)",
+        "claim_scope": "historical",
+        "conclusion": "1 passed on each of three consecutive runs; the two-process proof is stable.",
+        "historical_note": "Historical stability proof from the v4.0.0 cut; the same test passed once inside the current complete source-ingestion suite.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_multi_process_source_reconciliation.py::test_two_process_workers_create_one_connector_schedule_run_and_source_record -q (repeated 3x after one full-suite race failure)",
+        "claim_scope": "historical",
+        "conclusion": "1 passed on each of three consecutive isolated runs. The test and its reconciler are unchanged by this task, and the subsequent complete source-ingestion rerun was green.",
+        "historical_note": "Historical stability follow-up from the v3.0.0 cut; the current complete source-ingestion suite passed without a retry.",
+        "result": "pass"
+      },
+      {
+        "command": "Negative control: same two-process scenario with exclusive_file_lock stubbed to a no-op, 40 sources, 3 runs",
+        "claim_scope": "historical",
+        "conclusion": "39, 39, and 38 of 40 seeds persisted, with both processes reporting real work (20/20, 20/20, 18/22). Confirms the concurrency proof is not vacuous and that the lease is load bearing.",
+        "historical_note": "Historical negative control from the v1.0.0 cut; retained to show the file lock is load bearing.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4286 --json headRefOid,state,mergeStateStatus,autoMergeRequest,statusCheckRollup && gh run view 30357938343 --repo ajoe734/pantheon --json event,headSha,jobs,conclusion && gh run view 30357939837 --repo ajoe734/pantheon --json event,headSha,jobs,conclusion",
+        "conclusion": "PR #4286 exact receipt head 2ebabea2ad774dc59fe785f811025de1f6837956 remained OPEN and BLOCKED with auto-merge enabled; Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision were successful on both the push run 30357938343 and pull-request run 30357939837.",
+        "observations": [
+          {
+            "head_sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+            "observed_at": "2026-07-28T12:13:56Z",
+            "pull_request": 4286,
+            "subject": "PR #4286 boundary-aligned committed-replay receipt and Branch CI Gate runs 30357938343/30357939837"
+          }
+        ],
+        "observed_at": "2026-07-28T12:13:56Z",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4286 --repo ajoe734/pantheon --json headRefOid,state,mergeStateStatus,statusCheckRollup && gh run view 30358319073 --repo ajoe734/pantheon --json event,headSha,jobs,conclusion && gh run view 30358320994 --repo ajoe734/pantheon --json event,headSha,jobs,conclusion",
+        "conclusion": "PR #4286 exact reviewed head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 was OPEN and BEHIND only because newer dev work touched no L12-DIST-001 artifact; Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision were successful on both push run 30358319073 and pull-request run 30358320994 before Codex recorded the independent review_approved decision.",
+        "observations": [
+          {
+            "head_sha": "c1c3ee0d1fd122df409c53e0fc038fde1ef6a965",
+            "observed_at": "2026-07-28T12:30:03Z",
+            "pull_request": 4286,
+            "subject": "PR #4286 exact independently reviewed evidence-follow-up head and Branch CI Gate runs 30358319073/30358320994"
+          }
+        ],
+        "observed_at": "2026-07-28T12:30:03Z",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-28T12:13:56Z",
+    "validated_base_sha": "11858f4d445565064e630cce9b89ea8b475a6598",
+    "validated_head_sha": "content-digest:sha256:8c1591d06178fa08acb59919d7fbefe982a7071c8bf05d10943d0d8332452d16"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or restart is part of L12-DIST-001; root distillation wiring and hosted admission remain outside this slice.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "At authoritative journal sequence 3186, only normalized SourceRecord versions are admitted to the ledger; a rejected record is refused and leaves no outbox row. Job identity is the content digest of the normalized version, and a contradicting payload under the same identity aborts the whole admission transaction.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_distillation_worker",
+    "publish_cut": {
+      "reason": "Hosted admission remains delegated to L12-HOSTED-001.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "real services/registry FastAPI app served over real HTTP on a loopback port",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-27T16:41:30Z",
+      "registry_entry_readback_http": 200,
+      "registry_entries_written": 1,
+      "status": "pass",
+      "terminal_readback": "A full controller tick drove a normalized SourceRecord through the real registry service. The registered entry was read back over HTTP at artifact_state draft, and metadata.distillation retained source_id, source_digest, and source_event_version across the round trip.",
+      "test_ref": "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Job identity is the SHA-256 content digest of the normalized source version, so admitting the same content twice returns one job and one committed version row.",
+        "Run-local correlation fields (ingest_run_id, source_ingest_run_id, trace_id) are excluded from the digest, so an identical re-crawl in a later run resolves to the committed version instead of creating a second job or failing admission.",
+        "Revised content produces a distinct digest, a distinct job, and a distinct versioned Registry draft; two revisions of one source yielded exactly two Registry entries.",
+        "A versioned job always derives its evidence item, bundle, and seed lineage from its admission-time digest, so a Registry outage followed by an intervening revision replays to the original seed identity.",
+        "Registry payload construction never resolves mutable production-note files by source id; a valid same-id note with conflicting title and hypothesis cannot replace the committed source, seed, evidence bundle/item, or checksum.",
+        "Repeated controller ticks after terminal success perform no further Registry write and leave one job and one seed."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "A Registry write failure raises DistillationControllerError at stage registry_sync; the controller records a failure tick and no success, and consecutive_failures increments.",
+        "The failed job is parked as retry_wait with a backoff next_attempt_at and the failure reason, rather than being acknowledged.",
+        "After the attempt budget is exhausted the job becomes dead_letter and a durable dead-letter row retains the committed payload, so it stays redrivable.",
+        "A real connection failure against a port with nothing listening produces the same truthful degraded outcome as the simulated outage."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "A job is acknowledged only after a terminal Registry readback; the write response alone never completes the job.",
+        "The source snapshot is committed in the same transaction as the outbox event, and versioned jobs always reload that snapshot, so a caller map containing a later revision cannot substitute the event's payload.",
+        "Materialization identity is digest-keyed at admission and does not depend on the later source version count.",
+        "Before conversion, the Registry sink fail-closed validates the job digest and version key plus exact seed, bundle, item, and source identity as one coherent request lineage.",
+        "metadata.distillation carries source_id, source_digest, source_event_version, and distillation_job_id into the Registry entry, preserving source-to-draft lineage.",
+        "The Registry sink receives the exact evidence item and bundle the seed was materialized from, keeping the registered artifact inside the StrategySpecSeed lineage."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "A worker that claims a job and dies before reaching the Registry leaves an expired lease; the lease is recovered to pending and a later tick replays it to exactly one terminal draft with exactly one Registry write.",
+        "A Registry write that lands while its acknowledgement is lost is replayed by versioned readback: the second pass reaches done with no second Registry entry, one job, and one seed.",
+        "A completion presented with a stale lease token is rejected, so a resurrected worker cannot overwrite the outcome of the worker that superseded it.",
+        "A completion or terminal failure presented after lease_expires_at is rejected even before another worker reclaims the job; done, failed, skipped, and dead-letter transitions all fail closed at expiry.",
+        "A Registry outage followed by an intervening source revision replays the original job with the same evidence bundle and seed identity, while the revision receives a distinct identity.",
+        "A write-ack-loss replay after mutable same-id note mutation and a crossed timestamp boundary preserves the original seed created_at, rebuilds the identical payload and checksum, returns already_terminal, reaches done, and creates no dead letter.",
+        "Recovery is exercised through the real lease ledger and real spawned OS processes, and the replay outcome is asserted from the persisted ledger rather than from an in-test substitute."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Admission is a single BEGIN IMMEDIATE transaction: a contradicting payload under an existing version identity rolls back, leaving the committed version and outbox unchanged.",
+        "Exhausted delivery compensates into a durable dead-letter table that retains the committed payload and supports operator redispatch, which clears the dead letter with redrive attribution.",
+        "Registry artifacts in approved or retired state are never mutated; StrategySpec creation is atomic create-if-absent, and the job is marked skipped even when approval lands after the controller probe but before its POST.",
+        "This slice grants no broker, deployment, runtime-control, or live-capital mutation authority."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only merged Pantheon dev integration, focused service acceptance, and a bounded loopback registry service were exercised. No external network egress, no hosted activation, and no real provider crawl are claimed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This internal worker lane changes no interactive operator authentication or MFA policy.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Distillation produces reviewable StrategySpec drafts only. It has no broker or capital authority and no live-capital path was enabled.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "No authorization surface is added or relaxed. Registry writes continue to go through the existing StrategySpec facade, and the approval gate is unchanged.",
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "proof": "The distillation ledger is keyed by source identity within a single service-owned store; this slice introduces no cross-tenant read or write path.",
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "proof": "At authoritative journal sequence 3186, owner Codex2 and reviewer Codex are distinct. Codex independently approved PR #4286 exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 at 2026-07-28T12:30:03Z and bound this manifest as review_file through the governed review_approved transition.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestVersionedAdmission"
+      ],
+      "id": "AC1",
+      "statement": "A committed normalized SourceRecord transactionally enqueues exactly one versioned distillation job.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/registry/jsonl_store.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestConcurrentWorkers"
+      ],
+      "id": "AC2",
+      "statement": "Concurrent workers claim under an exclusive lease, terminal transitions fail closed at expiry, and duplicate or revised content is resolved by source digest.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_controller.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestCommittedReplayLineage"
+      ],
+      "id": "AC3",
+      "statement": "Registry failure records controller failure plus a durable retry or dead letter, is never recorded as success, and preserves the original committed seed/evidence payload across revisions, mutable same-id notes, and retries.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/registry/service.py",
+        "services/registry/test_service.py::TestFastAPIEndpoints::test_strategy_spec_same_id_registration_never_overwrites_approval",
+        "services/source_ingestion/distillation_controller.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestApprovedArtifactsAreImmutable"
+      ],
+      "id": "AC4",
+      "statement": "Approved immutable artifacts remain unchanged, including when approval lands after the controller probe but before its atomic create-if-absent POST.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestCrashReplay",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestCommittedReplayLineage"
+      ],
+      "id": "AC5",
+      "statement": "A crash before or after the Registry write replays to exactly one terminal draft with an identical checksum, source seed, evidence bundle/item lineage, and already_terminal readback.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService",
+        "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md"
+      ],
+      "id": "AC6",
+      "statement": "The packet's four required proofs are met, including a real source-to-Registry service test over real HTTP and a genuine two-process concurrency test.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "jsonl_seed_store_tier": {
+      "blocking_for_this_task": false,
+      "containment": "Read-modify-write mutations now hold a cross-process flock lease, proven by a negative control that loses seeds without it. The job ledger itself is already SQLite-transactional.",
+      "description": "The StrategySpecSeed draft store remains a dev-tier JSONL file rather than Postgres, so it relies on a filesystem lease rather than database transactions.",
+      "expiry": "When the seed store is migrated to the shared Postgres tier.",
+      "owner": "Source ingestion storage lane",
+      "recheck_trigger": "Before running distillation workers across hosts that do not share a filesystem.",
+      "severity": "medium"
+    },
+    "registry_sink_single_writer": {
+      "blocking_for_this_task": false,
+      "containment": "Registry identity is the versioned registry_id, and atomic create-if-absent returns any existing entry unchanged; terminal readback resolves a concurrent duplicate into already_terminal rather than a second draft.",
+      "description": "Two workers processing two versions of the same source can call the Registry concurrently; ordering between versions is not serialized.",
+      "expiry": "When per-source ordering is required by a downstream consumer.",
+      "owner": "L12-DIST-001 follow-up",
+      "recheck_trigger": "If a consumer begins depending on strict per-source version ordering of Registry drafts.",
+      "severity": "low"
+    },
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "The task-owned acceptance is fail closed and does not claim hosted behavior.",
+      "description": "Hosted deployment of the distillation controller remains a downstream responsibility.",
+      "expiry": "When L12-HOSTED-001 completes.",
+      "owner": "L12-HOSTED-001",
+      "recheck_trigger": "Before hosted distillation activation.",
+      "severity": "informational"
+    },
+    "independent_review": {
+      "blocking_for_this_task": false,
+      "containment": "Codex independently reran the complete focused, source_ingestion, Registry plus StrategySpec, schema, checksum, ten-rule, trailer, diff, and exact-head CI verification before approval.",
+      "description": "At authoritative journal sequence 3186, Codex2 remained owner and Codex remained the distinct reviewer. Codex approved PR #4286 exact head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 at 2026-07-28T12:30:03Z after proving committed SourceRecord and exact request lineage authority across valid same-id note mutation and lost-ack replay.",
+      "expiry": "Satisfied by the governed Codex review_approved decision at 2026-07-28T12:30:03Z.",
+      "owner": "Codex",
+      "recheck_trigger": "Re-review is required if the digest-bound runtime or test artifacts change after c1c3ee0d1fd122df409c53e0fc038fde1ef6a965.",
+      "severity": "informational"
+    },
+    "canonical_snapshot_age": {
+      "blocking_for_this_task": false,
+      "containment": "The digest-bound owner narrative remains fixed at its declared boundary, while record_log appends the later governed reviewer event without rewriting the reviewed runtime proof.",
+      "description": "This owner cut is bounded at authoritative journal sequence 3186; Codex's later exact-head approval is transcribed separately and changed neither owner/reviewer identity nor the digest-bound runtime artifacts.",
+      "expiry": "Satisfied for this closeout by the exact-head review observation.",
+      "owner": "Codex2",
+      "recheck_trigger": "Any ownership, reviewer, runtime-artifact, or acceptance-claim change.",
+      "severity": "informational"
+    },
+    "delivery_receipt_intermediate_state": {
+      "blocking_for_this_task": false,
+      "containment": "Receipt 2ebabea2ad774dc59fe785f811025de1f6837956 carries the nine digest-bound artifacts with all required checks green; exact evidence-follow-up head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 also passed all push and pull-request checks before Codex approval.",
+      "description": "PR #4286 evidence-follow-up head c1c3ee0d1fd122df409c53e0fc038fde1ef6a965 has all exact-head Branch CI checks green and the governed Codex review_approved verdict; only owner closeout composition, merge, and done remain.",
+      "expiry": "When PR #4286 merges after owner closeout composition.",
+      "owner": "Codex2",
+      "recheck_trigger": "Any digest-bound runtime artifact change or failed closeout check.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "pr_4193_merged_to_dev": true,
+      "real_registry_service_http_proof": true,
+      "registry_entry_readback_http": 200,
+      "two_process_concurrency_proof": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The nine finalized artifacts are bound by a non-circular content digest carried by receipt 2ebabea2ad774dc59fe785f811025de1f6837956; evidence.json and its companion checksum are deliberately outside that digest so the manifest does not hash itself.",
+    "source_artifact_sha256_by_epoch": {
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md@v6.0.0": "703054675695ba52c40df40a7026bb7606ef3b548680a7d8f2c068ef24fabc56",
+      "services/registry/service.py@v6.0.0": "852a3ccc520f97884d6264ec87af4c07ed79b7223dbb8a549243581c79b8bed1",
+      "services/registry/test_service.py@v6.0.0": "1fd0ec647f04316169379e6272b9ab2cd9a6d3161b2870e84ba56c0cfc6dbab2",
+      "services/source_ingestion/distillation_controller.py@v6.0.0": "28bb4c9d36e0b3f5cf2b8a26d4a9aa37f31ef41556c17e949f895105542a222c",
+      "services/source_ingestion/distillation_worker.py@v6.0.0": "df50601becffe767a2ecaf34bb1e357f67f80a2d4c64613fa5aab7c8c3dab8ac",
+      "services/source_ingestion/registry/jsonl_store.py@v6.0.0": "58934030133aa59da3b46f5aa31b3da8ed14f9a91eb9befa42349ccc2e6d3c65",
+      "services/source_ingestion/tests/test_distillation_controller.py@v6.0.0": "3da51b3b5f846f6db4413be93a161be3e651724e5dffbb09b9a6d941dc725e58",
+      "services/source_ingestion/tests/test_distillation_worker.py@v6.0.0": "f81f97335869dafdf8ca445bbf8df22a3a3be7576cbe1b2179b417c58314c8ce",
+      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py@v6.0.0": "438a63ea1ba136bb343086e984b93a66813deec9466dd61592d79d8a4a3f7b6a"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T15:10:26Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 1,
+      "sha": "0ecc331e924f5ca4b2482891d0e2bd8c003c60ad",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_corrective_evidence_ready",
+      "recorded_at": "2026-07-27T16:48:11Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 2,
+      "sha": "dd70dbc4a9bf2c1d8a0359cc7c7968d153a61326",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_refresh_evidence_ready",
+      "recorded_at": "2026-07-27T17:48:10Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 3,
+      "sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_reviewer_corrections_ready",
+      "recorded_at": "2026-07-27T21:17:37Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 4,
+      "sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_returned",
+      "note": "Rejected exact head 62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50 because same-id StrategySpec and draft/candidate Registry replay accepted conflicting content or lineage as terminal idempotent success.",
+      "recorded_at": "2026-07-27T21:27:09Z",
+      "reference": "ai-status-event-551e1f52108cf27de4432b75b7f8214dd8b2e575faed5c18e078aa3c41172889",
+      "sequence": 5,
+      "sha": "62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50",
+      "status": "fail"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "repaired_implementation_merged",
+      "note": "PR #4193 exact head 1a32aeb86e59a79a0ea7be7f3f1c36e839931f80 fixed both Codex blockers, passed local and GitHub gates, and merged to dev as 1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86. This is delivery evidence, not the missing Codex governed approval.",
+      "recorded_at": "2026-07-27T22:10:42Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 6,
+      "sha": "1aa7e38ae1e713d4f01e8166a821d9c5b85dbf86",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_merged_closeout_evidence_ready",
+      "note": "Revalidated the merged task bytes, sealed the updated README with an exact green receipt, and left the formal Codex reviewer verdict intentionally absent.",
+      "recorded_at": "2026-07-28T11:34:43Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4286",
+      "sequence": 7,
+      "sha": "f8ddd0a255e910b96400fe2fcbbcad1f4c18cdaa",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_returned",
+      "note": "Rejected exact head 12ec4214ea431e74cfd4c1a222d30f8d2512f5a4 because Registry delivery re-resolved mutable same-id production-note Markdown instead of using the transactionally committed RegistrySyncRequest lineage.",
+      "recorded_at": "2026-07-28T11:53:45Z",
+      "reference": ".orchestrator/task-briefs/l12_dist_001.md",
+      "sequence": 8,
+      "sha": "12ec4214ea431e74cfd4c1a222d30f8d2512f5a4",
+      "status": "fail"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_committed_replay_repair_ready",
+      "note": "Removed mutable filesystem resolution from Registry delivery, digest-bound exact request lineage, stabilized replay timestamps, added the two requested negative regressions, and obtained green push and pull-request checks on the first repair receipt.",
+      "recorded_at": "2026-07-28T12:07:52Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4286",
+      "sequence": 9,
+      "sha": "16655204b629619bb2f893bf755343483d3e5653",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_boundary_aligned_receipt_ready",
+      "note": "Aligned the digest-bound README to authoritative journal sequence 3186 and obtained fresh green push and pull-request checks on the replacement receipt.",
+      "recorded_at": "2026-07-28T12:13:56Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4286",
+      "sequence": 10,
+      "sha": "2ebabea2ad774dc59fe785f811025de1f6837956",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approved",
+      "note": "Approved PR #4286 exact head after proving committed SourceRecord and exact seed/evidence lineage remain authoritative after valid same-id note mutation; lost-ack replay is payload/checksum/seed/bundle/item-identical, returns already_terminal, performs one write, and creates no DLQ. Independently reran focused 115 passed, source_ingestion 760 passed with 2 skipped, Registry plus StrategySpec 231 passed, ProductEvidence schema/checksum/ten-rule validator/trailers/diff, and exact-head CI.",
+      "recorded_at": "2026-07-28T12:30:03Z",
+      "reference": "ai-status-event-e9150c23cd2a7349ea70132cead977a4e930442a6ae496f330fc8841db498567",
+      "sequence": 11,
+      "sha": "c1c3ee0d1fd122df409c53e0fc038fde1ef6a965",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_closeout_manifest_recut",
+      "note": "Transcribed Codex's governed exact-head approval into the already bound review_file, advanced overall_admission and the independent-review residual to review_approved, and left the digest-bound runtime/test artifacts unchanged. PR merge and governed done remain pending.",
+      "recorded_at": "2026-07-28T12:35:45Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+      "sequence": 12,
+      "status": "review_approved"
+    }
+  ]
+}

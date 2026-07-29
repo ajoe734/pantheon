@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+  "archived_at": "2026-07-24T05:28:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Dev deploy forwards an explicit lifecycle freshness budget",
+      "Default compose safety remains fail-closed outside configured dev deploys",
+      "BFF-only deploy never rebuilds or restarts lifecycle projector",
+      "Strict auth and exact source SHA checks remain intact",
+      "Relevant tests pass and the change merges to dev"
+    ],
+    "artifacts": [
+      "scripts/deploy_nonprod_vm.sh",
+      ".github/workflows/nonprod-deploy.yml",
+      "services/trade_journey/test_lifecycle_projector_compose.py"
+    ],
+    "auto_created_by": "operator-continuation-20260724",
+    "declared_scope": [
+      "scripts/deploy_nonprod_vm.sh",
+      ".github/workflows/nonprod-deploy.yml",
+      "services/trade_journey/test_lifecycle_projector_compose.py"
+    ],
+    "delivery_layer": "deployment",
+    "depends_on": [],
+    "fleet_lane": "dev-deploy-reliability",
+    "id": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+    "last_update": "2026-07-24T05:28:10Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "PR #4047 merged to dev as cb4cfc88d18a7eaebd67be7ebe2708c89ac8a0c4 after all Branch CI checks passed. Persistent implementation PR #4043 merged as 406abcad90421bc262961adb6cb3b6ab89c04962; 58 related tests, bash syntax, compose validation, strict-auth/source-SHA invariants, 300s managed-dev freshness forwarding, and BFF-only no-deps isolation were independently reviewed by Antigravity.",
+    "owner": "Claude2",
+    "phase": "Dev deployment reliability",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "failed_fe_run": "30066014879",
+      "failed_root_run": "30065717086",
+      "temporary_live_threshold_seconds": 300
+    },
+    "status": "done",
+    "summary_zh": "把 lifecycle projector 在大型 dev 資料量下的 150 到 180 秒輪詢納入受管 dev readiness 設定；只重建 BFF 時不得重啟 projector，並避免 FE gate 因 120 秒過短窗口反覆 503。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Persist managed-dev lifecycle freshness budget",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T05:28:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-dev-lifecycle-freshness-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-DEV-LIFECYCLE-FRESHNESS-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-dev-lifecycle-freshness-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "b0777839c0b6ae8a69344a2689be7d3e1f93f38a",
+      "commit_subject": "OPS-DEV-LIFECYCLE-FRESHNESS-001: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout evidence for the approved managed-dev",
+        "Not changing": "generic compose 120-second safety default, projector",
+        "Composes with": "merged implementation PR #4043 and governed owner",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+        "Reviewer": "Antigravity",
+        "Verified": "pytest 6 passed (test_lifecycle_projector_compose.py); bash -n; git diff --check; PR #4043 checks green"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cb4cfc88d18a7eaebd67be7ebe2708c89ac8a0c4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T04:51:36Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-24T04:53:00Z",
+      "status": "done",
+      "task_id": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T04:59:54Z",
+      "from": "Codex2",
+      "message": "PR #4043 merged to dev as 406abcad90421bc262961adb6cb3b6ab89c04962. Please review managed 300-second dev freshness forwarding, unchanged generic 120-second compose defaults, and BFF-only operator-bff --no-deps isolation. Validation: 58 related tests passed with one pre-existing stale strict-auth occurrence-count assertion deselected (origin/dev and task both count 3), plus bash -n, compose config, diff check, and all 7 GitHub checks green.",
+      "resolved_at": "2026-07-24T05:02:42Z",
+      "status": "done",
+      "task_id": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T05:02:42Z",
+      "from": "Antigravity",
+      "message": "Reviewed 530c5697d3b671410387fb5a1beae872f68cc0e5: 300s dev freshness forwarding configured in workflow & deploy script, compose 120s generic default preserved, bff-only operator-bff --no-deps isolation verified, and test_lifecycle_projector_compose.py assertions confirmed green.",
+      "resolved_at": "2026-07-24T05:17:31Z",
+      "status": "done",
+      "task_id": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T05:17:31Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "status": "done",
+      "task_id": "OPS-DEV-LIFECYCLE-FRESHNESS-001",
+      "to": "Claude2",
+      "resolved_at": "2026-07-24T05:28:10Z"
+    }
+  ],
+  "blockers": []
+}

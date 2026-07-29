@@ -23,9 +23,10 @@ publish/v<YYYY>.<MM>.<DD>.<N> ── immutable snapshots from dev
    ▲
    │ nightly-publish-cut.yml  (cron hourly :00 UTC)
    │
-dev      ── PR-only ── integration line, every task PR auto-merges here
+dev      ── PR-only ── integration line, every task PR lands here
    ▲                       ↑
-   │ PR (auto-merge)   hotfix/<topic> ── dual-PR back to dev + master
+   │ PR (CI + review   hotfix/<topic> ── dual-PR back to dev + master
+   │      gate, § 2.3.1)
    │
 task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 ```
@@ -111,14 +112,101 @@ Equivalent to:
 
 ```bash
 git push -u origin task/<TASK-ID>
-gh pr create --base dev --head task/<TASK-ID> --label auto-merge \
+gh pr create --base dev --head task/<TASK-ID> \
   --title "<TASK-ID>: <subject>" --body-file /tmp/<TASK-ID>-pr-body.md
-gh pr merge task/<TASK-ID> --auto --merge
+# merge authority comes from the canonical task contract, see § 2.3.1
 ```
 
-Auto-merge holds until `dev` branch protection's required status checks
-(see § 7) turn green; then GitHub merges and **auto-deletes the
-`task/<TASK-ID>` branch**.
+Merge and **auto-delete of the `task/<TASK-ID>` branch** still happen on
+GitHub, but only once both CI and the review gate are satisfied.
+
+#### 2.3.1 Review-before-merge gate
+
+`scripts/git/task_review_merge_gate.py` resolves merge authority from
+canonical task state alone — the task row in the bound status root plus
+the immutable `review_approved` activity record. No label, helper flag,
+or PR field can open it.
+
+| Canonical contract | Policy | What the helper does |
+|--------------------|--------|----------------------|
+| independent reviewer assigned (the normal task) | `review_before_merge` | opens the PR with auto-merge **off** and revokes any auto-merge request found on the head |
+| row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | `--label auto-merge` + `gh pr merge --auto --merge`, unchanged |
+| task row missing, unreadable, or gate error | `review_before_merge` | fail closed: auto-merge is never enabled |
+
+Under `review_before_merge` the approval must name the exact head it
+covers, and the merge is performed afterwards by the integrator:
+
+```bash
+AI_NAME=<reviewer> REVIEW_PR=<pr-number> REVIEW_HEAD_SHA=<40-hex head oid> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve <TASK-ID> "<review evidence>"
+python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>
+```
+
+`approve` records that PR number, head sha, expected base (`REVIEW_BASE`,
+default `dev`) and head branch as a `review_binding` on both the immutable
+`review_approved` audit event and the task row; `task_finalize.sh` and
+`safe_pr.sh` print the command with the values already filled in. The gate
+compares each identity against the PR standing at merge time. An approval
+that carries no binding cannot open the gate — the merge blocks with
+`approval_head_binding_missing` and the reviewer re-approves naming the
+head.
+
+The integrator merges only the exact head the assigned reviewer approved
+(`gh pr merge --match-head-commit <oid>`), never enables auto-merge, and
+never force-pushes a rebase over the reviewed head. Reviewer rejection, a
+head change after approval, a head *replaced* with an older commit, an
+approval by anyone other than the assigned reviewer, missing canonical
+state, and two open PRs on one task branch all fail closed.
+
+Six further rules come from the 2026-07-26 live regressions on PRs #4201,
+#4217, #4222, #4225, #4226, #4227 and #4230:
+
+- **Every entry point, not just `--auto`.** #4217 landed through a plain
+  `gh pr merge` with no auto-merge request at all. Merge authority is denied
+  from canonical task state regardless of which GitHub call would perform
+  the merge.
+- **Green CI is not review.** #4230 merged with all three required checks
+  `SUCCESS` and `reviewDecision` empty. CI proves the delivery builds; the
+  canonical `review_approved` record from the assigned reviewer is the only
+  thing that proves it was reviewed.
+- **An auto-merge request is itself the grant.** #4222 enabled auto-merge
+  and merged 67 seconds later. Enabling it is what the gate refuses; waiting
+  until merge time is too late.
+- **A stale base is not protection.** PR #4201 sat `BEHIND` with auto-merge
+  armed and no approval; it would have merged the moment the base caught up.
+  The integrator revokes a standing request on any gated PR immediately after
+  the gate decision, before the CI and merge-state probes, so a PR that
+  resolves to `blocked` or `waiting` cannot keep one.
+- **An auto-merge request must never outlive its head.** #4227 enabled
+  auto-merge at 23:10:54Z, the head moved at 23:13:21Z, and GitHub merged
+  that newer head at 23:14:41Z. A gated PR therefore has any standing
+  auto-merge request revoked before its exact-head merge, and an approved
+  head is refused outright while a request that predates it is still armed.
+- **Every revocation attempt is read back.** The
+  `gh pr merge --disable-auto` exit status is not merge authority: zero can
+  leave the server-side grant armed, while nonzero can race with another actor
+  that already turned it off. The integrator re-reads `autoMergeRequest` after
+  every attempted revocation and blocks before emitting any merge call when
+  that read is unavailable or still armed — including on the approved path.
+- **Risk and payload claims waive nothing.** #4227 was Stage-1
+  docs-and-evidence only with the live swap still blocked. A `risk`,
+  `payload`, `docs_only`, or `review_waived` field on the task row is
+  recorded in the decision as an *ignored* claim; it never changes the
+  policy.
+
+All Pantheon agents push through one GitHub account, so a GitHub approving
+review, the identity that pressed merge, and the identity that enabled
+auto-merge prove nothing about independent review. Only the canonical
+reviewer's `review_approved` record does. An explicit `do not merge` /
+`changes required` note in the activity audit revokes a standing approval,
+the same as a `reopen` or `blocker`.
+
+The gate binds every repository path to merge: `task_finalize.sh`,
+`safe_pr.sh`, `auto_integrator.py`, auto-merge creation, and auto-merge
+finalization. It cannot stop a human holding the GitHub credential from
+pressing merge in the web UI — that would need branch protection to require
+a review — but no Pantheon tooling grants the authority, and the canonical
+state at merge time stays auditable.
 
 ### 2.4 Lifetime guarantee
 
@@ -201,11 +289,10 @@ strategy.
    - Creates `publish/v<YYYY>.<MM>.<DD>.<N>` from `origin/dev` HEAD.
    - Pushes the branch.
    - Tags `release/v<YYYY>.<MM>.<DD>.<N>` (annotated).
-   - Explicitly dispatches `nonprod-deploy.yml` (environment=dev) for the new
-     snapshot so the dev VM redeploys. NOTE: the `on: push: publish/*` trigger
-     does **not** fire here — branches pushed with `GITHUB_TOKEN` do not start
-     downstream workflow runs, so the cut job calls the deploy via
-     `workflow_dispatch` (which is exempt from that suppression).
+   - Does **not** dispatch a deployment. A publish snapshot is an immutable
+     promotion input, not proof that the exact Pantheon/execute-plans pair is
+     admitted for dev. Dev delivery is a separate governed operation and keeps
+     its own exact-pair gate before any switch.
 3. If `dev` has not advanced, no-op.
 
 ### 3.1 Version format `vYYYY.MM.DD.N`
@@ -394,9 +481,14 @@ Provided by `.github/workflows/branch-ci.yml`:
 | `publish/*`| n/a        | runs                               | blocked    | blocked|
 | `hotfix/*` | n/a        | runs (required by the PR itself)   | allowed    | allowed (auto-deleted on merge) |
 
-Approvals required: **0**. Bots auto-merge after status checks pass.
-This is intentional: gating discipline is in CI, not in human review
-(which doesn't scale to dozens of AI-generated PRs/day).
+GitHub *branch protection* approvals required: **0**. Human code review
+does not scale to dozens of AI-generated PRs/day, so CI carries the
+mechanical gate.
+
+Independent review is not therefore optional: it is enforced off GitHub,
+by the canonical review-before-merge gate (§ 2.3.1). A task PR whose
+canonical row assigns an independent reviewer gets no auto-merge and is
+merged only at the exact head that reviewer approved.
 
 ---
 
@@ -405,10 +497,10 @@ This is intentional: gating discipline is in CI, not in human review
 | File                                       | Trigger                                                                 | Purpose                                                  |
 |--------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------|
 | `.github/workflows/branch-ci.yml`          | push/PR on `task/**`, `hotfix/**`, `dev`, `publish/**`, `master`         | Trailer check + mirror guard + smoke acceptance gate     |
-| `.github/workflows/nightly-publish-cut.yml`| cron `0 3 * * *` + `workflow_dispatch`                                    | Cut `publish/v<YYYY>.<MM>.<DD>.<N>` from `dev` if it advanced and release discipline passes |
+| `.github/workflows/nightly-publish-cut.yml`| cron `0 * * * *` + `workflow_dispatch`                                    | Cut an immutable publish snapshot only; never dispatch deployment |
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
-| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Auto-deploy dev from publish and staging-live from master |
+| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Fail-closed nonprod deploy with exact-pair admission before dev switch |
 | `.github/workflows/orchestrator-sync.yml`  | push/tag/PR labeled                                                      | POST git event to orchestrator webhook (no-op without SYNC_URL) |
 
 ---
@@ -417,16 +509,17 @@ This is intentional: gating discipline is in CI, not in human review
 
 | Environment      | Tracks ref                              | Auto-deploy trigger                          | Operator role |
 |------------------|------------------------------------------|----------------------------------------------|---------------|
-| **dev**          | latest `publish/v<latest>`               | push on `publish/v*`                          | observe       |
+| **dev**          | exact admitted Pantheon/execute-plans pair | separate governed deploy after pair admission | observe       |
 | **staging-live** | `master` HEAD (post-promote)             | push on `master` (every promote / hotfix merge) | smoke / sign-off |
 | **production**   | a chosen `prod/v<...>` tag (locked)      | never auto                                    | sign + manual workflow_dispatch |
 
-dev is the **CI-gate environment** — every nightly publish snapshot
-auto-deploys here and `publish-promote.yml` only opens a promote PR
-once branch-ci is green. staging-live is the post-promote
-pre-production rehearsal — `master` push automatically redeploys both
-`pantheon-lupin-staging-{control,exec}` VMs. Production is
-operator-locked.
+dev is the **CI-gate environment**, but a nightly snapshot does not by itself
+authorize a switch. The deploy lane must first admit the exact backend/frontend
+pair; inadmissible snapshots remain promotion inputs without creating a deploy
+dispatch. `publish-promote.yml` still opens promote PRs only after its publish
+criteria pass. staging-live is the post-promote pre-production rehearsal —
+`master` push automatically redeploys both
+`pantheon-lupin-staging-{control,exec}` VMs. Production is operator-locked.
 
 ---
 

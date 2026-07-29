@@ -36,6 +36,12 @@
       "type": "string",
       "minLength": 1
     },
+    "tenant_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "strategy_spec_id": {
+      "$ref": "#/definitions/nullableString"
+    },
     "backend_id": {
       "type": "string",
       "minLength": 1

@@ -1,0 +1,377 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CONS-001 product-level owner closeout gate.",
+    "note": "Owner closeout manifest over the merged Consultation implementation, task verification record, and independent reviewer verdict.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Append-only after the closeout manifest PR merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T10:52:09Z",
+    "evidence_cut_semantics": "Owner closeout packaging over PR #4145 and independently approved task evidence; no shared Compose activation or hosted deployment is claimed.",
+    "id": "L12-CONS-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Consultation",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-CONS-001",
+    "title": "Deploy a real durable Consultation workflow executor"
+  },
+  "authorities": {
+    "actual_state": [
+      "ConsultRequest workflow state",
+      "qualified participant contributions",
+      "ConsultMemo",
+      "governance handoff acknowledgement"
+    ],
+    "desired_state": [
+      "ConsultRequest",
+      "committee and red-team workflow policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CONS-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for Consultation API, executor, durable workflow coordination, and task evidence",
+    "composes_with": [
+      "L12-MANIFEST-001 runtime activation and secret provisioning",
+      "L12-VERIFY-LEARN-001 hosted product drill"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/consultation/Dockerfile",
+      "services/consultation/auth.py",
+      "services/consultation/consult_request.schema.json",
+      "services/consultation/main.py",
+      "services/consultation/models.py",
+      "services/consultation/provider.py",
+      "services/consultation/store.py",
+      "services/consultation/supervisor.py",
+      "services/consultation/test_compose_activation.py",
+      "services/consultation/test_models.py",
+      "services/consultation/test_workflow_executor.py",
+      "services/consultation/workflow_executor.py",
+      "services/consultation/workflow_state.py"
+    ],
+    "not_changing": "Shared Compose activation, canonical loop aggregation, governance or deployment decision authority, broker authority, or live capital authority.",
+    "owned_layer": "Authenticated tenant-scoped Consultation API, durable leased workflow executor, real contribution provider boundary, bounded dead-letter recovery, exact handoff acknowledgement, and container-local supervision"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged",
+        "sha": "6af7788a83e5a0104886a072fc216637f206f8ce",
+        "subject": "L12-CONS-001: anchor durable workflow coordination"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "56746d96cfa080148da3536c861c6636bbbdc359",
+        "subject": "L12-CONS-001: anchor executor service integration"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "107b99943b6bcfec179c4b157afe31055c4fdab0",
+        "subject": "L12-CONS-001: record durable executor acceptance"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "238b4bf32e8f7061fe383670529110b89044c803",
+        "subject": "L12-CONS-001: finalize validation record"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "64974e4ccee76f396bc38a5ff268210c45ee929d",
+      "merge_sha": "45735b401cd3e99f0ff6da88dda05def5f607949",
+      "merged_at": "2026-07-26T09:59:11Z",
+      "number": 4145,
+      "url": "https://github.com/ajoe734/pantheon/pull/4145"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "64974e4ccee76f396bc38a5ff268210c45ee929d",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30197404360,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30197404360",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "64974e4ccee76f396bc38a5ff268210c45ee929d",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30197402669,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30197402669",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/consultation -q",
+        "conclusion": "56 passed, 11 warnings in 53.41s during owner finalization",
+        "result": "pass"
+      },
+      {
+        "command": "PATH=/home/lupin/pantheon/.venv/bin:$PATH PYTHON=/home/lupin/pantheon/.venv/bin/python scripts/run-acceptance.sh smoke",
+        "conclusion": "stage0 validate and stage0 baseline passed",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check 45735b401cd3e99f0ff6da88dda05def5f607949^1 45735b401cd3e99f0ff6da88dda05def5f607949 -- services/consultation docs/deployment/evidence/twelve-loop-gap/L12-CONS-001",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile services/consultation/auth.py services/consultation/provider.py services/consultation/supervisor.py services/consultation/workflow_executor.py services/consultation/workflow_state.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m json.tool docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T10:52:09Z",
+    "validated_base_sha": "77ce7f909d0b765f847eb97420602c0bab96ad4f",
+    "validated_head_sha": "64974e4ccee76f396bc38a5ff268210c45ee929d"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Shared Compose activation and provider secret provisioning remain delegated to L12-MANIFEST-001."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "This task proves the service and worker boundary locally and through merged CI; it does not claim a hosted Consultation deployment."
+    },
+    "public_bff_base_url": "not_applicable_internal_consultation_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "No hosted publication is claimed by this Consultation-owned slice."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Hosted activation is delegated to L12-MANIFEST-001 and the product drill to L12-VERIFY-LEARN-001.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Two executors raced over one durable SQLite state database and produced one provider turn, participant, memo, and handoff.",
+        "Participant, transcript event, evidence, memo, and handoff writes use deterministic idempotency keys."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing or unqualified provider contributions fail closed without synthesizing a successful participant.",
+        "Repeated blocked work exhausts a bounded attempt budget and enters the visible dead_letter state."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "The qualified provider response is durably recorded before Consultation API side effects.",
+        "Completion requires the downstream sink to acknowledge the exact handoff and persists status=acknowledged."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Eight phase-specific crash cases recover after lease expiry without duplicate provider or handoff effects.",
+        "Container-local supervision restarts a failed executor and fails the container when the API or repeatedly failing executor cannot remain alive."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Lease token and epoch compare-and-set fencing prevents an expired worker from advancing or acknowledging stale work.",
+        "Service credentials cannot replay dead-letter work; an operator credential can replay it after provider recovery."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree and merged Pantheon dev integration were exercised; shared activation remains outside this task.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Consultation remains advisory and has no deployment, broker, or capital authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Strict mode separates service and operator bearer roles; dead-letter replay requires the operator role.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Requests bind to X-Pantheon-Tenant-Id and cross-tenant reads return 404.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex and independent reviewer Codex2 remained distinct; Codex2 recorded an approved verdict after rerunning acceptance.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/consultation/provider.py",
+        "services/consultation/test_workflow_executor.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.real_provider_service_boundary"
+      ],
+      "id": "AC1",
+      "statement": "Executor obtains real qualified committee or red-team contributions.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/consultation/auth.py",
+        "services/consultation/main.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.strict_service_operator_auth"
+      ],
+      "id": "AC2",
+      "statement": "API and worker enforce service/operator identity and tenant scope.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/consultation/workflow_state.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.durable_claim_lease_fencing",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.bounded_blocked_to_dlq"
+      ],
+      "id": "AC3",
+      "statement": "Pending work uses durable claim lease and bounded blocked attempts.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/consultation/workflow_executor.py",
+        "services/consultation/test_workflow_executor.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.unique_participant_memo_handoff"
+      ],
+      "id": "AC4",
+      "statement": "Participant memo publish and handoff uniqueness survive concurrent workers.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/consultation/test_workflow_executor.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.phase_crash_recovery_count",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/verification.json#proofs.operator_only_dlq_replay"
+      ],
+      "id": "AC5",
+      "statement": "Crash retry, dead-letter replay, and downstream acknowledgement are proved.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "shared_runtime_activation": {
+      "blocking_for_this_task": false,
+      "containment": "The worker fails closed when provider credentials are absent and cannot synthesize a successful participant.",
+      "description": "Shared Compose activation, provider endpoint selection, and secret provisioning are not part of this Consultation-owned task.",
+      "expiry": "When L12-MANIFEST-001 completes.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "Before hosted Consultation activation.",
+      "severity": "medium"
+    },
+    "hosted_product_drill": {
+      "blocking_for_this_task": false,
+      "containment": "Local real HTTP service boundaries, merged CI, concurrency, crash, and auth negatives prove the task-owned reconciler behavior.",
+      "description": "The cross-service hosted product drill is intentionally owned by the later verification slice.",
+      "expiry": "When L12-VERIFY-LEARN-001 completes.",
+      "owner": "L12-VERIFY-LEARN-001",
+      "recheck_trigger": "After shared runtime activation.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "pr_4145_merged_to_dev": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "reviewed_readme": "acf0b5cbe27aba5dfa0d5afb71b2622a231b1421142ad13b95d46642972d2298",
+      "reviewed_verification": "4dcb7cc2b6a8b352f7f98bf4ea7da764bae0509e0909189967fe0a4fb35018e8"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T10:01:33Z",
+      "reference": "ai-status-event-3bb0698edbc4039ff8c726cd2954fc5fe3b0eef9c5306eae231ea4deb5230f16",
+      "sequence": 1,
+      "sha": "64974e4ccee76f396bc38a5ff268210c45ee929d",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T10:36:00Z",
+      "reference": "ai-status-event-9c2246be4bd6579fa4bf857df8d8cc3cefd4765661b2da96516fe71086b0819f",
+      "sequence": 2,
+      "sha": "45735b401cd3e99f0ff6da88dda05def5f607949",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T10:52:09Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4145",
+      "sequence": 3,
+      "sha": "45735b401cd3e99f0ff6da88dda05def5f607949",
+      "status": "pass"
+    }
+  ]
+}

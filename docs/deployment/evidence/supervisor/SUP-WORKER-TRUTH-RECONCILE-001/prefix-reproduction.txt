@@ -1,0 +1,660 @@
+SUP-WORKER-TRUTH-RECONCILE-001 prefix reproduction
+Round 2 follow-up, after the Codex2 rejection of PR #4212 and the Codex2 audit
+of anchor 051eef7c0 that required squash-merge support.
+
+Prefix under test : origin/dev f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b
+                    (contains the merged round-1 delivery, PR #4212 / 8703d1f5d)
+Method            : copy the task worktree .orchestrator/ into a scratch tree, then
+                    overwrite supervisor.py with the merged origin/dev version and run
+                    THIS branch's test_supervisor.py against it.
+
+  git show origin/dev:.orchestrator/supervisor.py > <scratch>/orch/supervisor.py
+  env -C <scratch>/orch python3 -m unittest \
+    test_supervisor.OwnerlessInProgressReconciliationTests \
+    test_supervisor.MergedDeliveryEvidenceTests \
+    test_supervisor.SquashMergedDeliveryEvidenceTests \
+    test_supervisor.MergedPullRequestLookupTests \
+    test_supervisor.WorkerDeliveryIdentityTests
+
+Reading the result: a FAIL on a loop fixture is the false positive Codex2 rejected --
+the merged code moved the row to review on unbound evidence. An ERROR is the merged
+code not having the binding entry point at all (TypeError on the keyword-only
+delivery_head/since arguments, or AttributeError on a helper that does not exist yet).
+
+================================ PREFIX RUN ================================
+....FE.F.F....FFFEEEEEEEE.EEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+======================================================================
+ERROR: test_reconciled_evidence_records_the_bound_delivery (test_supervisor.OwnerlessInProgressReconciliationTests.test_reconciled_evidence_records_the_bound_delivery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13005, in test_reconciled_evidence_records_the_bound_delivery
+    self.assertEqual(evidence["delivery_head_commit"], "a" * 40)
+                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'delivery_head_commit'
+
+======================================================================
+ERROR: test_branch_moved_past_the_delivery_head_reports_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_branch_moved_past_the_delivery_head_reports_unmerged_commits)
+Deleted remote branch, local branch carrying newer unpushed work.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13155, in test_branch_moved_past_the_delivery_head_reports_unmerged_commits
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
+
+======================================================================
+ERROR: test_deleted_task_branch_reports_no_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_deleted_task_branch_reports_no_unmerged_commits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13120, in test_deleted_task_branch_reports_no_unmerged_commits
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
+
+======================================================================
+ERROR: test_delivery_head_not_merged_into_the_base_is_not_evidence (test_supervisor.MergedDeliveryEvidenceTests.test_delivery_head_not_merged_into_the_base_is_not_evidence)
+Unpushed work, with no merged PR metadata to fall back on.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13075, in test_delivery_head_not_merged_into_the_base_is_not_evidence
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_fast_forward_merge_without_a_merge_commit_still_binds (test_supervisor.MergedDeliveryEvidenceTests.test_fast_forward_merge_without_a_merge_commit_still_binds)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13107, in test_fast_forward_merge_without_a_merge_commit_still_binds
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_git_log_failure_fails_closed (test_supervisor.MergedDeliveryEvidenceTests.test_git_log_failure_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13086, in test_git_log_failure_fails_closed
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_missing_delivery_head_or_since_fails_closed (test_supervisor.MergedDeliveryEvidenceTests.test_missing_delivery_head_or_since_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13094, in test_missing_delivery_head_or_since_fails_closed
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_older_only_merged_trailer_commits_are_not_this_delivery (test_supervisor.MergedDeliveryEvidenceTests.test_older_only_merged_trailer_commits_are_not_this_delivery)
+The reopened-task case: the id merged before, nothing merged since.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13066, in test_older_only_merged_trailer_commits_are_not_this_delivery
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_rev_list_failure_reports_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_rev_list_failure_reports_unmerged_commits)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13170, in test_rev_list_failure_reports_unmerged_commits
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
+
+======================================================================
+ERROR: test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence (test_supervisor.MergedDeliveryEvidenceTests.test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13037, in test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_ambiguous_duplicate_head_metadata_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_ambiguous_duplicate_head_metadata_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13318, in test_ambiguous_duplicate_head_metadata_fails_closed
+    evidence, _, _ = self._merged([self._pr(), self._pr(number=4214)])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_ancestry_shape_is_preferred_and_skips_the_pr_lookup (test_supervisor.SquashMergedDeliveryEvidenceTests.test_ancestry_shape_is_preferred_and_skips_the_pr_lookup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13352, in test_ancestry_shape_is_preferred_and_skips_the_pr_lookup
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_deleted_branch_with_no_merged_pr_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_deleted_branch_with_no_merged_pr_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13302, in test_deleted_branch_with_no_merged_pr_fails_closed
+    evidence, _, _ = self._merged([])
+                     ^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_github_lookup_failure_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_github_lookup_failure_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13306, in test_github_lookup_failure_fails_closed
+    evidence, _, _ = self._merged(None)
+                     ^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_live_4213_squash_shape_binds_through_pr_metadata (test_supervisor.SquashMergedDeliveryEvidenceTests.test_live_4213_squash_shape_binds_through_pr_metadata)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13234, in test_live_4213_squash_shape_binds_through_pr_metadata
+    evidence, lookup, capture = self._merged([self._pr()])
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_merge_before_the_worker_was_dispatched_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_merge_before_the_worker_was_dispatched_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13264, in test_merge_before_the_worker_was_dispatched_fails_closed
+    evidence, _, _ = self._merged([self._pr(mergedAt="2026-07-26T10:00:00Z")])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_merge_commit_without_this_tasks_trailer_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_merge_commit_without_this_tasks_trailer_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13294, in test_merge_commit_without_this_tasks_trailer_fails_closed
+    evidence, _, _ = self._merged([self._pr()], trailer="")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_missing_merge_commit_oid_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_missing_merge_commit_oid_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13298, in test_missing_merge_commit_oid_fails_closed
+    self.assertIsNone(self._merged([self._pr(mergeCommit=None)])[0])
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_multiple_prs_for_the_task_resolve_by_exact_head (test_supervisor.SquashMergedDeliveryEvidenceTests.test_multiple_prs_for_the_task_resolve_by_exact_head)
+Two merged PRs on the same task branch; only one delivered this head.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13312, in test_multiple_prs_for_the_task_resolve_by_exact_head
+    evidence, _, _ = self._merged([earlier, self._pr()])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_pr_not_actually_merged_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_pr_not_actually_merged_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13272, in test_pr_not_actually_merged_fails_closed
+    evidence, _, _ = self._merged([self._pr(state="OPEN", mergeCommit=None)])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_squash_delivery_does_not_require_branch_ancestry (test_supervisor.SquashMergedDeliveryEvidenceTests.test_squash_delivery_does_not_require_branch_ancestry)
+The surviving branch is never an ancestor of the base after a squash.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13329, in test_squash_delivery_does_not_require_branch_ancestry
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
+
+======================================================================
+ERROR: test_unmergeable_or_unparseable_merged_at_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_unmergeable_or_unparseable_merged_at_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13268, in test_unmergeable_or_unparseable_merged_at_fails_closed
+    self.assertIsNone(self._merged([self._pr(mergedAt=None)])[0])
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_unrelated_merge_commit_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_unrelated_merge_commit_fails_closed)
+The recorded mergeCommit is not on the integration base.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13281, in test_unrelated_merge_commit_fails_closed
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_wrong_base_branch_fails_closed (test_supervisor.SquashMergedDeliveryEvidenceTests.test_wrong_base_branch_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13260, in test_wrong_base_branch_fails_closed
+    evidence, _, _ = self._merged([self._pr(baseRefName="master")])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_wrong_pr_head_is_not_this_delivery (test_supervisor.SquashMergedDeliveryEvidenceTests.test_wrong_pr_head_is_not_this_delivery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13256, in test_wrong_pr_head_is_not_this_delivery
+    evidence, _, _ = self._merged([self._pr(headRefOid="f" * 40)])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13222, in _merged
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_disabled_lookup_fails_closed (test_supervisor.MergedPullRequestLookupTests.test_disabled_lookup_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13453, in test_disabled_lookup_fails_closed
+    with mock.patch.object(supervisor, "run_gh_process") as runner:
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'run_gh_process'
+
+======================================================================
+ERROR: test_missing_gh_binary_fails_closed (test_supervisor.MergedPullRequestLookupTests.test_missing_gh_binary_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13406, in test_missing_gh_binary_fails_closed
+    self._lookup(resolve_gh_binary=mock.patch.object(supervisor, "resolve_gh_binary", return_value=None))
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13383, in _lookup
+    stack.enter_context(patcher)
+  File "/usr/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'resolve_gh_binary'
+
+======================================================================
+ERROR: test_nonzero_exit_fails_closed (test_supervisor.MergedPullRequestLookupTests.test_nonzero_exit_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13420, in test_nonzero_exit_fails_closed
+    self._lookup(
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13383, in _lookup
+    stack.enter_context(patcher)
+  File "/usr/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'resolve_gh_binary'
+
+======================================================================
+ERROR: test_repository_slug_is_read_from_the_origin_remote (test_supervisor.MergedPullRequestLookupTests.test_repository_slug_is_read_from_the_origin_remote)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13468, in test_repository_slug_is_read_from_the_origin_remote
+    supervisor._repository_slug_from_remote(self.repo_root), "ajoe734/pantheon"
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute '_repository_slug_from_remote'
+
+======================================================================
+ERROR: test_successful_lookup_returns_the_records (test_supervisor.MergedPullRequestLookupTests.test_successful_lookup_returns_the_records)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13393, in test_successful_lookup_returns_the_records
+    records = self._lookup(
+              ^^^^^^^^^^^^^
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13383, in _lookup
+    stack.enter_context(patcher)
+  File "/usr/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'resolve_gh_binary'
+
+======================================================================
+ERROR: test_timeout_fails_closed (test_supervisor.MergedPullRequestLookupTests.test_timeout_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13429, in test_timeout_fails_closed
+    self._lookup(
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13383, in _lookup
+    stack.enter_context(patcher)
+  File "/usr/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'resolve_gh_binary'
+
+======================================================================
+ERROR: test_unknown_repository_fails_closed (test_supervisor.MergedPullRequestLookupTests.test_unknown_repository_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13411, in test_unknown_repository_fails_closed
+    self._lookup(
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13383, in _lookup
+    stack.enter_context(patcher)
+  File "/usr/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'resolve_gh_binary'
+
+======================================================================
+ERROR: test_unparseable_or_unexpected_json_fails_closed (test_supervisor.MergedPullRequestLookupTests.test_unparseable_or_unexpected_json_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13441, in test_unparseable_or_unexpected_json_fails_closed
+    self._lookup(
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13383, in _lookup
+    stack.enter_context(patcher)
+  File "/usr/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute 'resolve_gh_binary'
+
+======================================================================
+ERROR: test_delivery_head_requires_a_full_commit_sha (test_supervisor.WorkerDeliveryIdentityTests.test_delivery_head_requires_a_full_commit_sha)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13497, in test_delivery_head_requires_a_full_commit_sha
+    supervisor.worker_delivery_head_commit({"work_progress_snapshot": {"commit_sha": "C" * 40}}),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_delivery_head_commit'
+
+======================================================================
+ERROR: test_dispatch_start_prefers_the_lease_acquisition (test_supervisor.WorkerDeliveryIdentityTests.test_dispatch_start_prefers_the_lease_acquisition)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13526, in test_dispatch_start_prefers_the_lease_acquisition
+    supervisor._isoformat_utc(supervisor.worker_dispatch_started_at(worker)),
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_dispatch_started_at'
+
+======================================================================
+ERROR: test_logical_agent_id_resolves_the_dispatched_display_name (test_supervisor.WorkerDeliveryIdentityTests.test_logical_agent_id_resolves_the_dispatched_display_name)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13489, in test_logical_agent_id_resolves_the_dispatched_display_name
+    self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "Claude")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_target_agent_display_name'
+
+======================================================================
+ERROR: test_scraped_pr_url_is_never_the_delivery_binding (test_supervisor.WorkerDeliveryIdentityTests.test_scraped_pr_url_is_never_the_delivery_binding)
+Pinned from live .orchestrator/state.json at 2026-07-26T20:21Z.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13519, in test_scraped_pr_url_is_never_the_delivery_binding
+    supervisor.worker_delivery_head_commit(worker),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_delivery_head_commit'
+
+======================================================================
+ERROR: test_unregistered_agent_id_is_unresolved_not_echoed (test_supervisor.WorkerDeliveryIdentityTests.test_unregistered_agent_id_is_unresolved_not_echoed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13493, in test_unregistered_agent_id_is_unresolved_not_echoed
+    self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_target_agent_display_name'
+
+======================================================================
+FAIL: test_reassigned_owner_blocks_the_previous_owners_worker (test_supervisor.OwnerlessInProgressReconciliationTests.test_reassigned_owner_blocks_the_previous_owners_worker)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12876, in test_reassigned_owner_blocks_the_previous_owners_worker
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_rerun_without_commit_progress_is_not_evidence (test_supervisor.OwnerlessInProgressReconciliationTests.test_rerun_without_commit_progress_is_not_evidence)
+A reopened task re-dispatched over an already merged branch.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12898, in test_rerun_without_commit_progress_is_not_evidence
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_squash_merged_delivery_reconciles_and_skips_base_comparison (test_supervisor.OwnerlessInProgressReconciliationTests.test_squash_merged_delivery_reconciles_and_skips_base_comparison)
+The live #4213 shape, driven end to end through the phase.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12989, in test_squash_merged_delivery_reconciles_and_skips_base_comparison
+    self.assertEqual(branch_check.call_args.args[2], "")
+AssertionError: 'origin/dev' != ''
+- origin/dev
+
+
+======================================================================
+FAIL: test_unregistered_worker_identity_fails_closed (test_supervisor.OwnerlessInProgressReconciliationTests.test_unregistered_worker_identity_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12936, in test_unregistered_worker_identity_fails_closed
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_worker_without_a_delivery_head_fails_closed (test_supervisor.OwnerlessInProgressReconciliationTests.test_worker_without_a_delivery_head_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12909, in test_worker_without_a_delivery_head_fails_closed
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_worker_without_a_dispatch_timestamp_fails_closed (test_supervisor.OwnerlessInProgressReconciliationTests.test_worker_without_a_dispatch_timestamp_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12919, in test_worker_without_a_dispatch_timestamp_fails_closed
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 55 tests in 0.400s
+
+FAILED (failures=6, errors=38)
+
+================================ FIXED RUN =================================
+$ env -C .orchestrator python3 -m unittest <the five suites above>
+.......................................................
+----------------------------------------------------------------------
+Ran 55 tests in 0.036s
+
+OK
+
+============================== FULL SUITE ==================================
+$ env -C .orchestrator python3 -m unittest test_supervisor
+----------------------------------------------------------------------
+Ran 399 tests in 8.393s
+
+OK
+
+===================== LIVE BINDING AGAINST THIS REPOSITORY =================
+Not a mock. merged_delivery_commits was run against the real pantheon checkout
+and the real GitHub PR metadata for both delivery shapes.
+
+--- squash shape: PR #4213, head 9e484e252 squash-merged to 0410a89f0
+{
+  "base_ref": "origin/dev",
+  "commits": [
+    "0410a89f0e4ac3c53e7bc5192aebe6925423b4da"
+  ],
+  "delivery_head": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+  "merge_commit": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+  "trailer_commits_since": "2026-07-26T19:53:14Z",
+  "delivery_shape": "squash_pr_metadata",
+  "pull_request_number": 4213,
+  "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4213",
+  "pull_request_head_ref_oid": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+  "pull_request_base_ref_name": "dev",
+  "pull_request_merged_at": "2026-07-26T20:18:15Z"
+}
+
+--- squash negative: wrong delivery head
+None
+
+--- squash negative: worker dispatched after the merge
+None
+
+--- merge-ancestry shape: PR #4212, head 0ffc9404c merged as 8703d1f5d
+{
+  "base_ref": "origin/dev",
+  "commits": [
+    "0ffc9404c21585539d5aea6ef0a5525e1da2fa92",
+    "8d97da02a9384484831a6e4bdd1e7ee6382d4949"
+  ],
+  "delivery_head": "0ffc9404c21585539d5aea6ef0a5525e1da2fa92",
+  "merge_commit": "8703d1f5db76fc16f8c579177fc35dec4f526922",
+  "trailer_commits_since": "2026-07-26T18:00:00Z",
+  "delivery_shape": "merge_ancestry"
+}
+
+--- merge-ancestry negative: older-only merged commits for a later dispatch
+None
+

@@ -1,0 +1,54 @@
+{
+  "applied_at": "2026-07-22T17:45:13Z",
+  "branch_deletions": 0,
+  "mode": "explicit-allowlist",
+  "repository": "ajoe734/pantheon",
+  "results": [
+    {
+      "closed_at": "2026-07-22T17:45:03Z",
+      "comment_url": "https://github.com/ajoe734/pantheon/pull/3058#issuecomment-5049482817",
+      "head_sha": "8f51aadda2f2d29023fdb046ea80c584eb620426",
+      "number": 3058,
+      "replacement_evidence": [
+        "https://github.com/ajoe734/execute-plans/pull/218",
+        "https://github.com/ajoe734/pantheon/pull/3057"
+      ],
+      "state": "CLOSED"
+    },
+    {
+      "closed_at": "2026-07-22T17:45:06Z",
+      "comment_url": "https://github.com/ajoe734/pantheon/pull/3317#issuecomment-5049483353",
+      "head_sha": "19d6eda31e6012381ef05a43222f488043ccab1c",
+      "number": 3317,
+      "replacement_evidence": [
+        "https://github.com/ajoe734/pantheon/pull/3311",
+        "https://github.com/ajoe734/pantheon/pull/3316"
+      ],
+      "state": "CLOSED"
+    },
+    {
+      "closed_at": "2026-07-22T17:45:10Z",
+      "comment_url": "https://github.com/ajoe734/pantheon/pull/3334#issuecomment-5049483885",
+      "head_sha": "e1c5fbad40d947c7fba46c4107983dc986d78292",
+      "number": 3334,
+      "replacement_evidence": [
+        "https://github.com/ajoe734/pantheon/pull/3327",
+        "https://github.com/ajoe734/pantheon/pull/3332"
+      ],
+      "state": "CLOSED"
+    },
+    {
+      "closed_at": "2026-07-22T17:45:13Z",
+      "comment_url": "https://github.com/ajoe734/pantheon/pull/3372#issuecomment-5049484495",
+      "head_sha": "1647fbd8447bdf9be471edaa121c6dda68533828",
+      "number": 3372,
+      "replacement_evidence": [
+        "https://github.com/ajoe734/pantheon/pull/3418",
+        "https://github.com/ajoe734/pantheon/pull/3435"
+      ],
+      "state": "CLOSED"
+    }
+  ],
+  "schema_version": 1,
+  "task_id": "OPS-TASK-PR-TRIAGE-001"
+}

@@ -215,6 +215,7 @@ def _lineage(
         hints.get("source_strategy_spec_id"),
         hints.get("strategy_spec_id"),
         artifact.get("source_strategy_spec_id"),
+        run.strategy_spec_id,
         _mapping(run.metadata).get("source_strategy_spec_id"),
         f"{run.strategy_id}@{run.strategy_spec_version}",
     )

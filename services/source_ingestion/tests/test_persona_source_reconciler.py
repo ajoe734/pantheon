@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 
@@ -379,6 +380,30 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
     readback = client.get("/api/source-ingest/controller/readback")
     assert readback.status_code == 200, readback.text
     assert readback.json()["connectors"][0]["desired_state"]["dataset"] == "tw_price_daily"
+
+
+def test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule(persona_api) -> None:
+    client, module = persona_api
+    endpoint = "/api/source-ingest/persona-source-provisioning/reconcile"
+    headers = {"Authorization": f"Bearer {module.controller_token}"}
+    personas = [_persona()]
+    payload = {
+        "personas": personas,
+        "authoritative_snapshot": True,
+        "desired_state_sha256": module._desired_state_digest(personas),
+    }
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(lambda _worker: client.post(endpoint, headers=headers, json=payload), range(2)))
+
+    assert [response.status_code for response in responses] == [200, 200]
+    summaries = [response.json()["summary"] for response in responses]
+    assert sorted((summary["mutated"], summary["satisfied"]) for summary in summaries) == [(0, 1), (1, 0)]
+    assert _line_count(module.REQUIREMENT_STATE_PATH) == 1
+    assert _line_count(module.CONNECTOR_STORE_PATH) == 1
+    assert _line_count(module.CONNECTOR_SCHEDULE_CONFIG_PATH) == 1
+    assert len(module.connector_store.list_configs()) == 1
+    assert len(module.schedule_config_store.list_schedules()) == 1
 
 
 def test_authoritative_intent_is_durable_before_connector_mutation_and_retryable(

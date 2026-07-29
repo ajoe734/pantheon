@@ -437,6 +437,7 @@ def main() -> int:
         },
         "fetch": {
             "mode": "external_feed",
+            "network_scope": "internal_service",
             "url": source_feed_url,
             "allowed_url_prefixes": [source_feed_url.rsplit("/", 1)[0] + "/"],
             "timeout_seconds": 5,

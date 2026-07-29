@@ -19,8 +19,11 @@
 #   4. python3 scripts/git/worker_commit.py --task-id ... --scope ...
 #      --message-file ... --index-file /tmp/git-index-task-<TASK-ID>
 #   5. git push -u origin task/<TASK-ID>
-#   6. gh pr create --base dev --head task/<TASK-ID> --label auto-merge
-#   7. gh pr merge task/<TASK-ID> --auto --merge
+#   6. gh pr create --base dev --head task/<TASK-ID>
+#   7. resolve the canonical merge policy via
+#      scripts/git/task_review_merge_gate.py; enable --auto --merge only when
+#      the canonical task contract permits merge-then-review, otherwise leave
+#      auto-merge off until the assigned reviewer approves this exact head
 #   8. wait for the PR to merge before running scripts/ai-status.sh done
 #
 # Output is intentionally short: each step prints a single PASS / FAIL line.
@@ -89,11 +92,70 @@ fail() {
   exit 1
 }
 
+read_auto_merge_state() {
+  local target="$1"
+  local state
+  if ! state=$(gh pr view "$target" --json autoMergeRequest --jq \
+    'if .autoMergeRequest == null then "off" else "armed" end' 2>>"$LOG"); then
+    return 1
+  fi
+  case "$state" in
+    off|armed) printf '%s\n' "$state" ;;
+    *)
+      echo "unexpected autoMergeRequest state: $state" >>"$LOG"
+      return 1
+      ;;
+  esac
+}
+
+lookup_existing_pr() {
+  local result
+  if ! result=$(gh pr list \
+    --state open \
+    --head "$TASK_BRANCH" \
+    --base dev \
+    --limit 2 \
+    --json number \
+    --jq 'if length == 0 then "" elif length == 1 then (.[0].number | tostring) else "AMBIGUOUS" end' \
+    2>>"$LOG"); then
+    return 1
+  fi
+  case "$result" in
+    "") printf '\n' ;;
+    AMBIGUOUS) return 2 ;;
+    *[!0-9]*) return 1 ;;
+    *) printf '%s\n' "$result" ;;
+  esac
+}
+
+ensure_auto_merge_off() {
+  local target="$1"
+  local phase="$2"
+  local state
+  local revoke_rc=0
+  if ! state=$(read_auto_merge_state "$target"); then
+    fail "cannot verify autoMergeRequest $phase; refusing fail-open finalization"
+  fi
+  if [[ "$state" == "armed" ]]; then
+    gh pr merge "$target" --disable-auto >>"$LOG" 2>&1 || revoke_rc=$?
+    if ! state=$(read_auto_merge_state "$target"); then
+      fail "cannot verify autoMergeRequest after revocation $phase"
+    fi
+    if [[ "$state" == "armed" ]]; then
+      echo "auto-merge remains armed after revocation $phase (gh exit $revoke_rc)" >>"$LOG"
+      fail "auto-merge remains armed; refusing fail-open finalization"
+    fi
+    ok "standing auto-merge request revoked and verified off $phase"
+  else
+    ok "auto-merge was already off $phase"
+  fi
+}
+
 trap 'echo; echo "FAILED — see $LOG for full transcript"; exit 1' ERR
 
 # --- 1. Fetch dev (short, just refs)
 step "fetch dev"
-if git fetch origin dev --quiet >>"$LOG" 2>&1; then ok "ok"; else fail "git fetch dev failed"; fi
+if git fetch origin '+refs/heads/dev:refs/remotes/origin/dev' --quiet >>"$LOG" 2>&1; then ok "ok"; else fail "git fetch dev failed"; fi
 
 # --- 2. Create / move task branch
 step "checkout task branch"
@@ -131,44 +193,88 @@ else
   fail "worker_commit.py failed (likely scope leak or empty staging)"
 fi
 
-# --- 5. Push
+# --- 5. Resolve policy and revoke an existing PR before its head changes.
+step "merge policy"
+MERGE_POLICY=$(python3 scripts/git/task_review_merge_gate.py policy "$TASK_ID" 2>>"$LOG" | head -1 || true)
+if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
+  MERGE_POLICY="review_before_merge"
+fi
+ok "$MERGE_POLICY"
+
+LOOKUP_RC=0
+EXISTING_PR=$(lookup_existing_pr) || LOOKUP_RC=$?
+if [[ "$LOOKUP_RC" -ne 0 ]]; then
+  if [[ "$LOOKUP_RC" -eq 2 ]]; then
+    fail "multiple open PRs target $TASK_BRANCH"
+  fi
+  fail "cannot resolve existing PR; refusing to push"
+fi
+
+if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+  step "pre-push revoke"
+  ensure_auto_merge_off "$EXISTING_PR" "before push"
+fi
+
+# --- 6. Push
 step "push task branch"
 if git push -u origin "$TASK_BRANCH" >>"$LOG" 2>&1; then ok "pushed"; else fail "push failed"; fi
 
 if [[ "$DO_PR" -eq 0 ]]; then
+  if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+    step "post-push verify"
+    ensure_auto_merge_off "$EXISTING_PR" "after push"
+  fi
   echo "(--no-pr: skipping PR create + auto-merge)"
   exit 0
 fi
 
-# --- 6. Open PR (idempotent: skip if one already open)
+# --- 7. Open PR (idempotent: reuse the unique PR resolved before push)
 step "open PR"
 PR_BODY=$(mktemp -t pr-body-XXXX.md)
 git log -1 --format=%B HEAD > "$PR_BODY"
 TITLE="$(git log -1 --format=%s HEAD)"
 
-EXISTING_PR=$(gh pr list --head "$TASK_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+PR_CREATE_ARGS=(
+  pr create
+  --base dev
+  --head "$TASK_BRANCH"
+  --title "$TITLE"
+  --body-file "$PR_BODY"
+)
+if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
+  PR_CREATE_ARGS+=(--label auto-merge)
+fi
+
 if [[ -n "$EXISTING_PR" ]]; then
-  ok "PR #$EXISTING_PR already open; will enable auto-merge"
+  ok "PR #$EXISTING_PR already open"
 else
-  if gh pr create \
-       --base dev \
-       --head "$TASK_BRANCH" \
-       --title "$TITLE" \
-       --body-file "$PR_BODY" \
-       --label auto-merge >>"$LOG" 2>&1; then
-    EXISTING_PR=$(gh pr list --head "$TASK_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+  if gh "${PR_CREATE_ARGS[@]}" >>"$LOG" 2>&1; then
+    EXISTING_PR=$(gh pr view "$TASK_BRANCH" --json number -q '.number' 2>/dev/null || echo "")
+    if [[ -z "$EXISTING_PR" ]]; then
+      fail "PR opened but its number cannot be resolved"
+    fi
     ok "PR #$EXISTING_PR opened"
   else
-    fail "gh pr create failed"
+    LOOKUP_RC=0
+    EXISTING_PR=$(lookup_existing_pr) || LOOKUP_RC=$?
+    if [[ "$LOOKUP_RC" -ne 0 || -z "$EXISTING_PR" ]]; then
+      fail "gh pr create failed and no unique open PR can be resolved"
+    fi
+    ok "concurrent PR #$EXISTING_PR resolved after create returned nonzero"
   fi
 fi
 
-# --- 7. Enable auto-merge (non-fatal if repo doesn't allow it)
-step "enable auto-merge"
-if gh pr merge "$EXISTING_PR" --auto --merge >>"$LOG" 2>&1; then
-  ok "auto-merge enabled on PR #$EXISTING_PR"
+# --- 8. Merge authority (non-fatal if repo doesn't allow auto-merge)
+if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
+  step "enable auto-merge"
+  if gh pr merge "$EXISTING_PR" --auto --merge >>"$LOG" 2>&1; then
+    ok "auto-merge enabled on PR #$EXISTING_PR"
+  else
+    echo "⚠ auto-merge not enabled (check repo setting \`allow_auto_merge\`); PR is still open"
+  fi
 else
-  echo "⚠ auto-merge not enabled (check repo setting `allow_auto_merge`); PR is still open"
+  step "withhold auto-merge"
+  ensure_auto_merge_off "$EXISTING_PR" "after push/open"
 fi
 
 trap - ERR
@@ -177,4 +283,11 @@ echo
 echo "DONE — task $TASK_ID on $TASK_BRANCH"
 echo "  PR: https://github.com/ajoe734/pantheon/pull/${EXISTING_PR:-?}"
 echo "  log: $LOG"
+if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
+  # An approval that does not name this PR and head cannot open the gate.
+  echo "  next: assigned reviewer approves this exact head with"
+  echo "        AI_NAME=<reviewer> REVIEW_PR=${EXISTING_PR:-<pr-number>} REVIEW_HEAD_SHA=$(git rev-parse HEAD) \\"
+  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
+  echo "        then python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
+fi
 echo "  wait for the PR to merge before running scripts/ai-status.sh done"

@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-28-twelve-loop-current-gap-drain",
+  "generated_at": "2026-07-28T19:00:00Z",
+  "updated_at": "2026-07-28T20:30:00Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-28T1900Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "dependency-blocked bulk wake events",
+    "same-author GitHub approval"
+  ],
+  "waves": [
+    {
+      "wave": 0,
+      "parallel": true,
+      "purpose": "Drain active review, closeout, and PR gate blockers.",
+      "tasks": [
+        {
+          "id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-DRAIN-20260728",
+          "canonical_task": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "status": "blocked_until_antigravity_exact_head_review_and_root_gate",
+          "depends_on": [],
+          "target_prs": [4297],
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+            ".orchestrator/task-briefs/l12_fleet_status_sync_closeout_20260728.md"
+          ],
+          "acceptance": [
+            "Record PR #4297 exact-head canonical approval and GitHub/root-gate blocker",
+            "Prefer Antigravity for the independent exact-head review now that the canonical reviewer is Antigravity",
+            "Do not write status for L12-FLEET-STATUS-SYNC-001 from this worker",
+            "Produce task-scoped evidence and handoff or terminal closeout as allowed by upstream gate"
+          ]
+        },
+        {
+          "id": "L12-GAP-MERGE-QUEUE-REVIEW-DRAIN-20260728",
+          "canonical_task": "L12-GAP-MERGE-QUEUE-20260728",
+          "owner_preference": ["Antigravity", "Claude2", "Codex"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "status": "blocked_by_root_merge_freeze_after_internal_gate",
+          "depends_on": [],
+          "target_prs": [4311],
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/L12-GAP-MERGE-QUEUE-20260728",
+            ".orchestrator/task-briefs/l12_gap_merge_queue_20260728.md"
+          ],
+          "acceptance": [
+            "Review PR #4311 exact head 80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d",
+            "Verify referenced closeout PR heads and merge commits",
+            "Record whether branch protection remains blocked by independent GitHub/root gate"
+          ]
+        },
+        {
+          "id": "OPS-L12-PROVIDER-READINESS-REVIEW-DRAIN-20260728",
+          "canonical_task": "OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "status": "running_or_reviewing",
+          "depends_on": [],
+          "target_prs": [4312],
+          "scope": [
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PROVIDER-FIRST-READINESS-REFRESH-20260728",
+            ".orchestrator/task-briefs/ops_l12_provider_first_readiness_refresh_20260728.md"
+          ],
+          "acceptance": [
+            "Review PR #4312 exact head c213a7a657d6cf661ec67b1d09682250fbad0247 or the newer head if Antigravity pushes another repair",
+            "Repair or request repair for live-truth mismatches such as an Antigravity worker recorded as running after live completion",
+            "Preserve per-slot readiness truth: claude2 ready, aggregate claude/auth subslots not ready, Antigravity ready"
+          ]
+        },
+        {
+          "id": "OPS-L12-GITHUB-ROOT-GATE-UNBLOCK-20260728",
+          "canonical_task": null,
+          "owner_preference": ["Human/Ops", "independent-github-reviewer"],
+          "reviewer_preference": ["Human/Ops"],
+          "status": "external_authority_required",
+          "depends_on": [],
+          "target_prs": [4297, 4311],
+          "scope": [
+            "GitHub branch protection",
+            "Pantheon root merge-freeze status"
+          ],
+          "acceptance": [
+            "Provide independent GitHub approval for #4297 and #4311, or document why impossible",
+            "Provide root merge-freeze status if policy requires it",
+            "Do not use the PR author's GitHub identity to self-approve"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 1,
+      "parallel": true,
+      "purpose": "Restore provider readiness and BFF/root-gate unblock.",
+      "tasks": [
+        {
+          "id": "OPS-L12-OPENCLAW-GATEWAY-CONFIG-20260728",
+          "canonical_task": null,
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "status": "blocked_until_provider_scope_authorized",
+          "depends_on": ["OPS-L12-PROVIDER-READINESS-REVIEW-DRAIN-20260728"],
+          "scope": ["OpenClaw gateway runtime environment"],
+          "acceptance": [
+            "OPENCLAW_GATEWAY_URL is configured in the governed environment or explicitly declared unavailable",
+            "OpenClaw smoke/readiness probe rerun produces current evidence"
+          ]
+        },
+        {
+          "id": "OPS-L12-CLAUDE-CLI-READINESS-20260728",
+          "canonical_task": null,
+          "owner_preference": ["Claude2", "Antigravity", "Codex2"],
+          "reviewer_preference": ["Antigravity", "Claude2", "Codex"],
+          "status": "blocked_until_provider_scope_authorized",
+          "depends_on": ["OPS-L12-PROVIDER-READINESS-REVIEW-DRAIN-20260728"],
+          "scope": ["Claude CLI binary/auth runtime"],
+          "acceptance": [
+            "Aggregate Claude CLI binary and auth are verified by current supervisor probe, or aggregate Claude stays dispatch-paused with evidence",
+            "No task is assigned to aggregate Claude without a current passing readiness probe; healthy Claude2 may be used separately"
+          ]
+        },
+        {
+          "id": "L12-BFF-001",
+          "canonical_task": "L12-BFF-001",
+          "owner_preference": ["Antigravity", "Claude2", "Codex"],
+          "reviewer_preference": ["Antigravity", "Claude2", "Codex"],
+          "status": "review_approved_but_root_gate_blocked",
+          "depends_on": ["L12-CTRL-001", "L12-TEL-001", "PPL-ALLOC-009"],
+          "scope": [
+            "services/control-plane/bff",
+            "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001"
+          ],
+          "acceptance": [
+            "BFF health monitoring closeout evidence is current",
+            "Task reaches terminal done/archive only after PR #4316 exact-head root gate and merge acceptance",
+            "Hosted acceptance later binds the BFF source commit"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "parallel": false,
+      "purpose": "Activate manifest and truth in dependency order.",
+      "tasks": [
+        {
+          "id": "L12-MANIFEST-001",
+          "canonical_task": "L12-MANIFEST-001",
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "status": "dependency_blocked",
+          "depends_on": ["L12-BFF-001"],
+          "acceptance": [
+            "Unified twelve-loop manifest lists the required loop workers and safe runtime settings",
+            "Controller/readiness readback proves accepted manifest identity"
+          ]
+        },
+        {
+          "id": "L12-TRUTH-001",
+          "canonical_task": "L12-TRUTH-001",
+          "owner_preference": ["Antigravity", "Claude2", "Codex"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex2"],
+          "status": "dependency_blocked",
+          "depends_on": ["L12-MANIFEST-001"],
+          "acceptance": [
+            "Backend/controller/operator truth exposes desired, actual, failure, provenance, and exact deployment identity",
+            "No route overstates maturity or masks failed loops"
+          ]
+        },
+        {
+          "id": "L12-FE-TRUTH-001",
+          "canonical_task": "L12-FE-TRUTH-001",
+          "owner_preference": ["Antigravity", "Claude2", "Codex"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex2"],
+          "status": "dependency_blocked_cross_repo",
+          "depends_on": ["L12-TRUTH-001"],
+          "target_repo": "ajoe734/execute-plans",
+          "acceptance": [
+            "Frontend truth UI consumes BFF truth routes",
+            "Desktop and mobile browser evidence show honest desired/actual/failure/provenance state"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "parallel": true,
+      "purpose": "Run product verifier drills after truth is available.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-KNOW-001",
+          "canonical_task": "L12-VERIFY-KNOW-001",
+          "depends_on": ["L12-TRUTH-001"],
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "acceptance": ["Real Source/Distillation/Alpha drill evidence is archived"]
+        },
+        {
+          "id": "L12-VERIFY-LEARN-001",
+          "canonical_task": "L12-VERIFY-LEARN-001",
+          "depends_on": ["L12-TRUTH-001"],
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "acceptance": ["Real Teaching/Agora/Imitation/Consultation drill evidence is archived"]
+        },
+        {
+          "id": "L12-VERIFY-RUNTIME-001",
+          "canonical_task": "L12-VERIFY-RUNTIME-001",
+          "depends_on": ["L12-MANIFEST-001", "L12-TRUTH-001"],
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "acceptance": ["Real Deployment/Capital/runtime drill evidence is archived without live-capital activation"]
+        },
+        {
+          "id": "L12-VERIFY-OBS-001",
+          "canonical_task": "L12-VERIFY-OBS-001",
+          "depends_on": ["L12-BFF-001", "L12-TRUTH-001"],
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "acceptance": ["Real Telemetry/Reconciliation/Evolution/BFF observability drill evidence is archived"]
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "parallel": false,
+      "purpose": "Hosted acceptance and protected final closeout.",
+      "tasks": [
+        {
+          "id": "L12-HOSTED-001",
+          "canonical_task": "L12-HOSTED-001",
+          "depends_on": [
+            "L12-FE-TRUTH-001",
+            "L12-VERIFY-KNOW-001",
+            "L12-VERIFY-LEARN-001",
+            "L12-VERIFY-RUNTIME-001",
+            "L12-VERIFY-OBS-001"
+          ],
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex"],
+          "acceptance": [
+            "Hosted FE/BFF manifest binds exact current accepted commits",
+            "Restart/recovery/no-duplicate-effect/auth/tenant/safety/mobile/desktop evidence is archived"
+          ]
+        },
+        {
+          "id": "L12-CLOSE-001",
+          "canonical_task": "L12-CLOSE-001",
+          "depends_on": ["L12-HOSTED-001", "L12-TRUTH-001", "L12-SIGNOFF-001"],
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Human/Ops", "Claude2", "Antigravity"],
+          "status": "do_not_dispatch_until_all_upstream_terminal",
+          "acceptance": [
+            "Protected final closeout consumes exact catalog, manifest, deployment identities, verifier artifacts, and Human/Ops verdict",
+            "No final done claim occurs before hosted/truth/signoff evidence is terminal"
+          ]
+        }
+      ]
+    }
+  ]
+}

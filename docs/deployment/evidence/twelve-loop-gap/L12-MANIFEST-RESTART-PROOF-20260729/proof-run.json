@@ -1,0 +1,151 @@
+{
+  "record_type": "pantheon.manifest-isolated-restart-proof.v1",
+  "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+  "result": "pass",
+  "scope": {
+    "compose_project": "l12-manifest-restart-proof-20260729",
+    "isolated_from_shared_project": true,
+    "external_ports": [],
+    "shared_volumes": [],
+    "internal_network_only": true
+  },
+  "runtime": {
+    "started_at": "2026-07-29T02:49:56Z",
+    "finished_at": "2026-07-29T02:50:30Z",
+    "docker_server_version": "29.1.3",
+    "docker_server_name": "pantheon-lupin-dev.c.pantheon-lupin-dev-20260719.internal",
+    "image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+    "rendered_worker": {
+      "image": "pantheon-policy-learning-shadow-eval-scheduler:latest",
+      "command": [
+        "python",
+        "services/policy-learning/scheduler_worker.py"
+      ],
+      "restart": "unless-stopped",
+      "stop_grace_period": "30s",
+      "ports": [],
+      "volumes": [],
+      "networks": {
+        "proof": null
+      }
+    }
+  },
+  "unsolicited_pid1_crash": {
+    "command": "sudo -n kill -KILL <validated-isolated-worker-host-pid>",
+    "command_exit_code": 0,
+    "signal_origin": "host PID namespace",
+    "target_cgroup_before_signal": "0::/system.slice/docker-0bfa8fed6b258b96e506001a03fb0d05303375a679706cc66c0b946f54450082.scope",
+    "docker_stop_or_kill_api_used": false,
+    "docker_start_or_up_used_after_signal": false
+  },
+  "observed": {
+    "worker_before": {
+      "id": "0bfa8fed6b258b96e506001a03fb0d05303375a679706cc66c0b946f54450082",
+      "image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+      "name": "/l12-manifest-restart-proof-20260729-worker-1",
+      "project": "l12-manifest-restart-proof-20260729",
+      "service": "worker",
+      "status": "running",
+      "running": true,
+      "pid": 4186562,
+      "started_at": "2026-07-29T02:49:59.833495768Z",
+      "finished_at": "0001-01-01T00:00:00Z",
+      "exit_code": 0,
+      "restart_count": 0,
+      "restart_policy": "unless-stopped",
+      "stop_timeout_seconds": 30,
+      "networks": [
+        "l12-manifest-restart-proof-20260729_proof"
+      ]
+    },
+    "worker_after": {
+      "id": "0bfa8fed6b258b96e506001a03fb0d05303375a679706cc66c0b946f54450082",
+      "image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+      "name": "/l12-manifest-restart-proof-20260729-worker-1",
+      "project": "l12-manifest-restart-proof-20260729",
+      "service": "worker",
+      "status": "running",
+      "running": true,
+      "pid": 4188784,
+      "started_at": "2026-07-29T02:50:12.731108582Z",
+      "finished_at": "2026-07-29T02:50:12.676521254Z",
+      "exit_code": 0,
+      "restart_count": 1,
+      "restart_policy": "unless-stopped",
+      "stop_timeout_seconds": 30,
+      "networks": [
+        "l12-manifest-restart-proof-20260729_proof"
+      ]
+    },
+    "same_container_id": true,
+    "pid_changed": true,
+    "restart_count_delta": 1,
+    "worker_logs": "2026-07-29T02:50:00.421614773Z {\"startup_recovery\": {\"detail\": \"isolated restart proof: no product write performed\", \"status\": \"error\"}, \"worker_id\": \"shadow-eval-0bfa8fed6b25-1\"}\n2026-07-29T02:50:00.425878533Z {\"cycle\": {\"reason\": \"tick_failed\", \"status\": \"skipped\"}, \"last_failure_detail\": \"isolated restart proof: no product write performed\", \"last_failure_reason\": null, \"last_success_candidate_count\": null, \"result\": {\"detail\": \"isolated restart proof: no product write performed\", \"status\": \"error\"}, \"tick\": 1, \"worker_id\": \"shadow-eval-0bfa8fed6b25-1\"}\n2026-07-29T02:50:13.213029431Z {\"startup_recovery\": {\"detail\": \"isolated restart proof: no product write performed\", \"status\": \"error\"}, \"worker_id\": \"shadow-eval-0bfa8fed6b25-1\"}\n2026-07-29T02:50:13.215518761Z {\"cycle\": {\"reason\": \"tick_failed\", \"status\": \"skipped\"}, \"last_failure_detail\": \"isolated restart proof: no product write performed\", \"last_failure_reason\": null, \"last_success_candidate_count\": null, \"result\": {\"detail\": \"isolated restart proof: no product write performed\", \"status\": \"error\"}, \"tick\": 1, \"worker_id\": \"shadow-eval-0bfa8fed6b25-1\"}",
+    "stub_before": {
+      "id": "a6d0bf591cf4586008150321a700471ed8b617f5d1a963540c6357489056743b",
+      "image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+      "name": "/l12-manifest-restart-proof-20260729-api-stub-1",
+      "project": "l12-manifest-restart-proof-20260729",
+      "service": "api-stub",
+      "status": "running",
+      "running": true,
+      "pid": 4186238,
+      "started_at": "2026-07-29T02:49:58.08068776Z",
+      "finished_at": "0001-01-01T00:00:00Z",
+      "exit_code": 0,
+      "restart_count": 0,
+      "restart_policy": "no",
+      "stop_timeout_seconds": null,
+      "networks": [
+        "l12-manifest-restart-proof-20260729_proof"
+      ]
+    }
+  },
+  "shared_stack_guard": {
+    "target": "pantheon-policy-learning-shadow-eval-scheduler-1",
+    "before": {
+      "id": "0a68d104bd83fe5614b29202ddd947f72077053a4a50a6a4da690617e88f7b66",
+      "image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+      "name": "/pantheon-policy-learning-shadow-eval-scheduler-1",
+      "project": "pantheon",
+      "service": "policy-learning-shadow-eval-scheduler",
+      "status": "running",
+      "running": true,
+      "pid": 2997715,
+      "started_at": "2026-07-29T00:16:32.319332602Z",
+      "finished_at": "2026-07-29T00:14:50.962927635Z",
+      "exit_code": 0,
+      "restart_count": 0,
+      "restart_policy": "unless-stopped",
+      "stop_timeout_seconds": 30,
+      "networks": [
+        "pantheon_default"
+      ]
+    },
+    "after": {
+      "id": "0a68d104bd83fe5614b29202ddd947f72077053a4a50a6a4da690617e88f7b66",
+      "image_id": "sha256:95a8fd94d9b15e5e4d389cb41f96afe7015af8c697253b1743c415a779006f2c",
+      "name": "/pantheon-policy-learning-shadow-eval-scheduler-1",
+      "project": "pantheon",
+      "service": "policy-learning-shadow-eval-scheduler",
+      "status": "running",
+      "running": true,
+      "pid": 2997715,
+      "started_at": "2026-07-29T00:16:32.319332602Z",
+      "finished_at": "2026-07-29T00:14:50.962927635Z",
+      "exit_code": 0,
+      "restart_count": 0,
+      "restart_policy": "unless-stopped",
+      "stop_timeout_seconds": 30,
+      "networks": [
+        "pantheon_default"
+      ]
+    },
+    "byte_equivalent_snapshot": true
+  },
+  "cleanup": {
+    "isolated_project_removed": true,
+    "remaining_container_count": 0,
+    "remaining_network_count": 0
+  }
+}

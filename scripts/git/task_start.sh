@@ -41,7 +41,7 @@ TASK_BRANCH="${PREFIX}${TASK_ID}"
 INDEX_FILE="/tmp/git-index-task-${TASK_ID}"
 
 echo "→ fetch origin $DEV_BRANCH"
-git fetch origin "$DEV_BRANCH" --quiet
+git fetch origin "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}" --quiet
 
 # If we're already on the target branch with unrelated dirty staging,
 # abort to avoid sweeping someone else's index in.

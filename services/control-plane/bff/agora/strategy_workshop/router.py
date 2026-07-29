@@ -48,7 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
-from .store import make_workshop_store
+from .store import WorkshopVersionProjectionConflict, make_workshop_store
 
 _CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
 if str(_CONTROL_PLANE_DIR) not in sys.path:
@@ -58,6 +58,13 @@ from privacy.private_content_store import (  # noqa: E402
     EphemeralKeyProvider,
     MemoryPrivateContentStore,
 )
+
+
+class _StrategyVersionProjectionError(RuntimeError):
+    def __init__(self, reason: str, *, status_code: int = 409) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status_code = status_code
 
 
 # --------------------------------------------------------------------------- #
@@ -981,6 +988,51 @@ def create_strategy_workshop_router(
         private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
     router = APIRouter(tags=["agora-workshop"])
 
+    # Stores with claim_resumable_command also accept resolve_compensation on
+    # complete_command/fail_command, so adopting a lineage source and
+    # resolving it happen atomically with the successor's terminal write.
+    _supports_atomic_lineage = hasattr(store, "claim_resumable_command")
+
+    def _source_resolution(
+        resume: Mapping[str, Any],
+        *,
+        resolution: str,
+        resolved_by: str,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Transactional resolution payload for an adopted lineage source."""
+        return {
+            "operation": (resume["receipt"] or {}).get("operation"),
+            "idempotency_key": str(
+                (resume["receipt"] or {}).get("idempotency_key") or ""
+            ),
+            "resolution": {
+                "resolved_at": utc_now(),
+                "resolution": resolution,
+                "resolved_by_idempotency_key": resolved_by,
+                **dict(extra or {}),
+            },
+        }
+
+    def _source_claim_release(
+        resume: Mapping[str, Any],
+        *,
+        released_by: str,
+    ) -> Dict[str, Any]:
+        """Release an adoption claim without resolving the source lineage."""
+        return {
+            "operation": (resume["receipt"] or {}).get("operation"),
+            "idempotency_key": str(
+                (resume["receipt"] or {}).get("idempotency_key") or ""
+            ),
+            "resolution": {
+                "claimed_by_idempotency_key": None,
+                "claimed_at": None,
+                "claim_released_at": utc_now(),
+                "claim_released_by_idempotency_key": released_by,
+            },
+        }
+
     # Lazy import to avoid circular import at module load time
     def _scope(
         authorization: Optional[str],
@@ -1055,6 +1107,78 @@ def create_strategy_workshop_router(
 
     def _etag(workshop_id: str, lock_version: int) -> str:
         return f'W/"workshop:{workshop_id}:v{lock_version}"'
+
+    def _project_strategy_version(
+        *,
+        readback: Mapping[str, Any],
+        registry_id: str,
+        scope: Any,
+        expected_strategy_id: Optional[str] = None,
+        expected_workshop_id: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], str, str]:
+        from services.research.strategy_spec.patching import compute_document_sha256
+
+        entry = readback.get("entry")
+        if not isinstance(entry, Mapping):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_READBACK_MISSING",
+                status_code=502,
+            )
+        if str(entry.get("registry_id") or "") != registry_id:
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_REGISTRY_ID_MISMATCH",
+                status_code=502,
+            )
+        strategy_id = str(entry.get("strategy_id") or "")
+        if not strategy_id or (
+            expected_strategy_id and strategy_id != expected_strategy_id
+        ):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_STRATEGY_ID_MISMATCH"
+            )
+        metadata = entry.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        tenant_id = str(metadata.get("tenant_id") or "")
+        owner_user_id = str(metadata.get("owner_user_id") or "")
+        if (tenant_id and tenant_id != scope.tenant_id) or (
+            owner_user_id and owner_user_id != scope.user_id
+        ):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_SCOPE_MISMATCH",
+                status_code=403,
+            )
+        linked_workshop_id = str(metadata.get("workshop_id") or "")
+        if (
+            linked_workshop_id
+            and expected_workshop_id
+            and linked_workshop_id != expected_workshop_id
+        ):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_WORKSHOP_ID_MISMATCH"
+            )
+        document = metadata.get("strategy_spec")
+        if not isinstance(document, Mapping):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_DOCUMENT_REQUIRED",
+                status_code=502,
+            )
+        return dict(readback), compute_document_sha256(document), strategy_id
+
+    def _read_strategy_version(
+        *,
+        registry_id: str,
+        scope: Any,
+        expected_strategy_id: Optional[str] = None,
+        expected_workshop_id: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], str, str]:
+        readback = canonical.get_strategy_spec(registry_id)
+        return _project_strategy_version(
+            readback=readback,
+            registry_id=registry_id,
+            scope=scope,
+            expected_strategy_id=expected_strategy_id,
+            expected_workshop_id=expected_workshop_id,
+        )
 
     def _request_hash(payload: Mapping[str, Any]) -> str:
         canonical_payload = json.dumps(
@@ -1270,9 +1394,50 @@ def create_strategy_workshop_router(
         request_hash: str,
         error: CanonicalOperationError,
         compensation: Optional[Mapping[str, Any]] = None,
+        resume_digest: Optional[str] = None,
+        resume: Optional[Mapping[str, Any]] = None,
     ) -> None:
         from models import ErrorCode
 
+        partial_effects = {
+            key: value
+            for key, value in {
+                # An adopted source's recorded ids stay part of the lineage
+                # even when the failing downstream call reports none itself.
+                **dict((resume or {}).get("partial_effects") or {}),
+                **dict(getattr(error, "partial_effects", None) or {}),
+            }.items()
+            if value
+        }
+        compensation_payload = dict(compensation or {})
+        resumable = bool(resume_digest) and (bool(partial_effects) or error.retryable)
+        if resumable:
+            # Durable partial-effect lineage: a new-key retry of the same
+            # request body resumes these downstream resources (and reuses the
+            # recorded downstream idempotency digest) instead of duplicating.
+            compensation_payload["resumable"] = True
+            compensation_payload["downstream_idempotency_digest"] = resume_digest
+            if partial_effects:
+                compensation_payload["partial_effects"] = partial_effects
+        fail_kwargs: Dict[str, Any] = {}
+        if partial_effects:
+            fail_kwargs["canonical_refs"] = partial_effects
+        if resume is not None and _supports_atomic_lineage:
+            if resumable:
+                # The lineage moves onto this failed receipt in the same
+                # transaction, so exactly one receipt stays resumable.
+                fail_kwargs["resolve_compensation"] = _source_resolution(
+                    resume,
+                    resolution="superseded",
+                    resolved_by=idempotency_key,
+                )
+            else:
+                # This attempt cannot carry the lineage forward; release the
+                # claim so the recorded source stays adoptable by a retry.
+                fail_kwargs["resolve_compensation"] = _source_claim_release(
+                    resume,
+                    released_by=idempotency_key,
+                )
         store.fail_command(
             workshop_id=workshop_id,
             tenant_id=scope.tenant_id,
@@ -1286,7 +1451,8 @@ def create_strategy_workshop_router(
                 "status_code": error.status_code,
                 "retryable": error.retryable,
             },
-            compensation=dict(compensation or {}),
+            compensation=compensation_payload,
+            **fail_kwargs,
         )
         status_code = 503 if error.retryable else 502
         if error.status_code == 404:
@@ -1297,7 +1463,12 @@ def create_strategy_workshop_router(
             "Canonical downstream operation failed",
             error.reason,
             precondition_failed=error.authority,
-            suggestion="Refetch the workshop before retrying with a new command key",
+            suggestion=(
+                "Refetch the workshop and retry with a new command key; "
+                "recorded partial downstream effects will be resumed, not duplicated"
+                if resumable
+                else "Refetch the workshop before retrying with a new command key"
+            ),
         )
 
     def _fail_domain_command(
@@ -1312,7 +1483,11 @@ def create_strategy_workshop_router(
         message: str,
         reason: str,
         precondition_failed: str,
+        resolve_source: Optional[Mapping[str, Any]] = None,
     ) -> None:
+        fail_kwargs: Dict[str, Any] = {}
+        if resolve_source is not None and _supports_atomic_lineage:
+            fail_kwargs["resolve_compensation"] = dict(resolve_source)
         store.fail_command(
             workshop_id=workshop_id,
             tenant_id=scope.tenant_id,
@@ -1326,6 +1501,7 @@ def create_strategy_workshop_router(
                 "precondition_failed": precondition_failed,
             },
             compensation={"workshop_effect": "none"},
+            **fail_kwargs,
         )
         raise bff_error(
             status_code,
@@ -1389,8 +1565,51 @@ def create_strategy_workshop_router(
         version_link: Optional[Mapping[str, Any]] = None,
         session_updates: Optional[Mapping[str, Any]] = None,
         event: Optional[Mapping[str, Any]] = None,
+        downstream_digest: Optional[str] = None,
+        resume: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         from models import ErrorCode
+
+        def _commit_failure_compensation() -> Dict[str, Any]:
+            # The canonical downstream effect exists; only the local
+            # projection commit failed.  With a downstream digest the
+            # compensation is resumable: a new-key retry adopts the recorded
+            # downstream resources instead of dispatching duplicates.
+            compensation: Dict[str, Any] = {
+                "required": True,
+                "canonical_refs": dict(canonical_refs),
+            }
+            if downstream_digest:
+                compensation["resumable"] = True
+                compensation["downstream_idempotency_digest"] = downstream_digest
+                compensation["partial_effects"] = {
+                    key: value
+                    for key, value in dict(canonical_refs).items()
+                    if value
+                }
+            return compensation
+
+        def _lineage_kwargs(resolution: str) -> Dict[str, Any]:
+            # Adopted-source resolution rides the successor's terminal write
+            # so the transaction commits both or neither.
+            if resume is None or not _supports_atomic_lineage:
+                return {}
+            if resolution == "superseded" and not downstream_digest:
+                # This failed receipt carries no resumable lineage of its
+                # own; release the claim so the source stays adoptable.
+                return {
+                    "resolve_compensation": _source_claim_release(
+                        resume,
+                        released_by=idempotency_key,
+                    )
+                }
+            return {
+                "resolve_compensation": _source_resolution(
+                    resume,
+                    resolution=resolution,
+                    resolved_by=idempotency_key,
+                )
+            }
 
         try:
             completed = store.complete_command(
@@ -1405,6 +1624,7 @@ def create_strategy_workshop_router(
                 version_link=dict(version_link) if version_link else None,
                 session_updates=dict(session_updates or {}),
                 event=dict(event) if event else None,
+                **_lineage_kwargs("resumed"),
             )
         except Exception as exc:
             try:
@@ -1416,10 +1636,8 @@ def create_strategy_workshop_router(
                     idempotency_key=idempotency_key,
                     request_hash=request_hash,
                     failure={"reason": "WORKSHOP_COMMIT_EXCEPTION"},
-                    compensation={
-                        "required": True,
-                        "canonical_refs": dict(canonical_refs),
-                    },
+                    compensation=_commit_failure_compensation(),
+                    **_lineage_kwargs("superseded"),
                 )
             except Exception:
                 pass
@@ -1439,7 +1657,8 @@ def create_strategy_workshop_router(
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
                 failure={"reason": "WORKSHOP_COMMIT_FAILED"},
-                compensation={"required": True, "canonical_refs": dict(canonical_refs)},
+                compensation=_commit_failure_compensation(),
+                **_lineage_kwargs("superseded"),
             )
             raise bff_error(
                 503,
@@ -1457,6 +1676,92 @@ def create_strategy_workshop_router(
                 "COMMAND_RECEIPT_MISSING",
             )
         return receipt
+
+    def _resume_context(
+        *,
+        workshop_id: str,
+        scope: Any,
+        operation: str,
+        request_hash: str,
+        claimed_by: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Durable partial-effect lineage of the same logical request.
+
+        Matching by ``request_hash`` restricts resume to a retry of the same
+        request body; a genuinely different request never adopts another
+        command's downstream resources.  With a claim-capable store the find
+        and the claim are one atomic step, so concurrent new-key retries can
+        never both adopt the same source: the loser opens fresh downstream
+        resources under its own digest instead.
+        """
+
+        if _supports_atomic_lineage:
+            receipt = store.claim_resumable_command(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                request_hash=request_hash,
+                claimed_by_idempotency_key=claimed_by,
+            )
+        elif hasattr(store, "find_resumable_command"):
+            receipt = store.find_resumable_command(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                request_hash=request_hash,
+            )
+        else:
+            return None
+        if not receipt:
+            return None
+        compensation = receipt.get("compensation") or {}
+        return {
+            "receipt": receipt,
+            "digest": str(compensation.get("downstream_idempotency_digest") or ""),
+            "partial_effects": {
+                key: value
+                for key, value in dict(
+                    compensation.get("partial_effects") or {}
+                ).items()
+                if value
+            },
+        }
+
+    def _resolve_resumed_compensation(
+        *,
+        workshop_id: str,
+        scope: Any,
+        operation: str,
+        resume: Optional[Dict[str, Any]],
+        resolved_by_idempotency_key: str,
+    ) -> None:
+        # Legacy best-effort fallback only: an atomic-lineage store resolves
+        # the source inside the successor's completion transaction instead.
+        if (
+            resume is None
+            or _supports_atomic_lineage
+            or not hasattr(store, "resolve_command_compensation")
+        ):
+            return
+        try:
+            store.resolve_command_compensation(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                idempotency_key=str(resume["receipt"].get("idempotency_key") or ""),
+                resolution={
+                    "resolved_at": utc_now(),
+                    "resolution": "resumed",
+                    "resolved_by_idempotency_key": resolved_by_idempotency_key,
+                },
+            )
+        except Exception:
+            # Resolution is bookkeeping over an already-failed receipt; the
+            # new completed receipt remains the authoritative delivery truth.
+            pass
 
     @staticmethod
     def _approval_actor(record: Mapping[str, Any]) -> str:
@@ -1492,9 +1797,20 @@ def create_strategy_workshop_router(
                 exc.reason,
                 precondition_failed="approval_decision_id",
             ) from exc
-        outcome = str(decision.get("outcome") or decision.get("decision") or "").lower()
-        state = str(decision.get("state") or decision.get("decision_state") or "").lower()
-        if outcome not in {"approve", "approved", "accepted", "approved_with_conditions"}:
+        outcome_values = [
+            decision[field]
+            for field in ("decision", "outcome")
+            if field in decision
+        ]
+        state_values = [
+            decision[field]
+            for field in ("decision_state", "state")
+            if field in decision
+        ]
+        if not outcome_values or any(
+            value not in ("approved", "approved_with_conditions")
+            for value in outcome_values
+        ):
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1502,7 +1818,7 @@ def create_strategy_workshop_router(
                 "APPROVAL_NOT_APPROVED",
                 precondition_failed="approval_decision_id",
             )
-        if state and state not in {"decided", "approved", "completed"}:
+        if not state_values or any(value != "decided" for value in state_values):
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1522,7 +1838,7 @@ def create_strategy_workshop_router(
                 "APPROVAL_TENANT_MISMATCH",
                 precondition_failed="approval_scope",
             )
-        if owner_user_id and owner_user_id != scope.user_id:
+        if not owner_user_id or owner_user_id != scope.user_id:
             raise bff_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -1533,7 +1849,7 @@ def create_strategy_workshop_router(
         target_id = str(decision.get("target_id") or "").strip()
         target_version = str(decision.get("target_version") or "").strip()
         target_type = str(decision.get("target_type") or "").strip().lower()
-        if target_type not in {"strategy_workshop", "workshop"}:
+        if target_type != "strategy_workshop":
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1541,7 +1857,7 @@ def create_strategy_workshop_router(
                 "APPROVAL_TARGET_TYPE_MISMATCH",
                 precondition_failed="approval_binding",
             )
-        if target_id != workshop_id or (target_version and target_version != version_id):
+        if target_id != workshop_id or target_version != version_id:
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1625,6 +1941,50 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         scope = _scope(authorization, x_tenant_id, write=True)
+        initial_registry_id = str(body.strategy_spec_ref or "").strip()
+        initial_strategy_id: Optional[str] = None
+        if initial_registry_id:
+            try:
+                _, _, initial_strategy_id = _read_strategy_version(
+                    registry_id=initial_registry_id,
+                    scope=scope,
+                )
+            except CanonicalOperationError as exc:
+                from models import ErrorCode
+
+                if exc.status_code == 404:
+                    status_code = 404
+                    code = ErrorCode.RESOURCE_NOT_FOUND
+                elif exc.retryable:
+                    status_code = 503
+                    code = ErrorCode.DEPENDENCY_UNAVAILABLE
+                else:
+                    status_code = 502
+                    code = ErrorCode.UPSTREAM_ERROR
+                raise bff_error(
+                    status_code,
+                    code,
+                    "Referenced StrategySpec is unavailable",
+                    exc.reason,
+                    precondition_failed="strategy_spec_ref",
+                ) from exc
+            except _StrategyVersionProjectionError as exc:
+                from models import ErrorCode
+
+                code = (
+                    ErrorCode.FORBIDDEN
+                    if exc.status_code == 403
+                    else ErrorCode.UPSTREAM_ERROR
+                    if exc.status_code >= 500
+                    else ErrorCode.RESOURCE_CONFLICT
+                )
+                raise bff_error(
+                    exc.status_code,
+                    code,
+                    "Referenced StrategySpec projection is inconsistent",
+                    exc.reason,
+                    precondition_failed="strategy_spec_ref",
+                ) from exc
         # Idempotency-Key is mandatory for all write operations on this endpoint.
         if idempotency_key is None:
             from models import ErrorCode
@@ -1648,8 +2008,8 @@ def create_strategy_workshop_router(
             "workshop_id": workshop_id,
             "tenant_id": scope.tenant_id,
             "user_id": scope.user_id,
-            "strategy_id": body.strategy_spec_ref,
-            "active_strategy_spec_registry_id": body.strategy_spec_ref,
+            "strategy_id": initial_strategy_id,
+            "active_strategy_spec_registry_id": initial_registry_id or None,
             "status": "open",
         })
         try:
@@ -2221,11 +2581,26 @@ def create_strategy_workshop_router(
         session = _scoped_session(workshop_id, scope)
         etag = _etag(workshop_id, int(session.get("lock_version") or 1))
         response.headers["ETag"] = etag
-        versions: List[Dict[str, Any]] = []
-        for link in store.list_version_links(workshop_id):
-            registry_id = str(link.get("strategy_spec_registry_id") or "")
+        readbacks: Dict[str, tuple[Dict[str, Any], str, str]] = {}
+        active_registry_id = str(
+            session.get("active_strategy_spec_registry_id") or ""
+        )
+        if active_registry_id:
             try:
-                readback = canonical.get_strategy_spec(registry_id)
+                active_projection = _read_strategy_version(
+                    registry_id=active_registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(session.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+                readbacks[active_registry_id] = active_projection
+                active_readback, active_digest, active_strategy_id = active_projection
+                store.ensure_current_version_link(
+                    workshop_id=workshop_id,
+                    strategy_id=active_strategy_id,
+                    strategy_spec_registry_id=active_registry_id,
+                    document_sha256=active_digest,
+                )
             except CanonicalOperationError as exc:
                 from models import ErrorCode
                 raise bff_error(
@@ -2234,6 +2609,86 @@ def create_strategy_workshop_router(
                     "StrategySpec version readback is unavailable",
                     exc.reason,
                     precondition_failed="strategy_registry",
+                ) from exc
+            except _StrategyVersionProjectionError as exc:
+                from models import ErrorCode
+                code = (
+                    ErrorCode.FORBIDDEN
+                    if exc.status_code == 403
+                    else ErrorCode.UPSTREAM_ERROR
+                    if exc.status_code >= 500
+                    else ErrorCode.RESOURCE_CONFLICT
+                )
+                raise bff_error(
+                    exc.status_code,
+                    code,
+                    "StrategySpec version projection is inconsistent",
+                    exc.reason,
+                    precondition_failed="strategy_version_projection",
+                ) from exc
+            except WorkshopVersionProjectionConflict as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "Workshop version projection is inconsistent",
+                    "WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                    precondition_failed="workshop_version_projection",
+                ) from exc
+
+        # Backfill is additive and leaves lock_version/ETag unchanged.  Refresh
+        # the session so the response includes deterministic selected pointers.
+        session = store.get_session(workshop_id) or session
+        versions: List[Dict[str, Any]] = []
+        for link in store.list_version_links(workshop_id):
+            registry_id = str(link.get("strategy_spec_registry_id") or "")
+            try:
+                projected = readbacks.get(registry_id) or _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+                readback, digest, strategy_id = projected
+                link = store.ensure_version_link_digest(
+                    workshop_id=workshop_id,
+                    workshop_version_id=str(link["workshop_version_id"]),
+                    strategy_id=strategy_id,
+                    document_sha256=digest,
+                )
+            except CanonicalOperationError as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    503 if exc.retryable else 502,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE if exc.retryable else ErrorCode.UPSTREAM_ERROR,
+                    "StrategySpec version readback is unavailable",
+                    exc.reason,
+                    precondition_failed="strategy_registry",
+                ) from exc
+            except _StrategyVersionProjectionError as exc:
+                from models import ErrorCode
+                code = (
+                    ErrorCode.FORBIDDEN
+                    if exc.status_code == 403
+                    else ErrorCode.UPSTREAM_ERROR
+                    if exc.status_code >= 500
+                    else ErrorCode.RESOURCE_CONFLICT
+                )
+                raise bff_error(
+                    exc.status_code,
+                    code,
+                    "StrategySpec version projection is inconsistent",
+                    exc.reason,
+                    precondition_failed="strategy_version_projection",
+                ) from exc
+            except WorkshopVersionProjectionConflict as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "Workshop version projection is inconsistent",
+                    "WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                    precondition_failed="workshop_version_projection",
                 ) from exc
             versions.append({"version": link, "strategy_spec": readback})
         return {
@@ -2344,7 +2799,20 @@ def create_strategy_workshop_router(
                 precondition_failed="active_strategy_spec_registry_id",
             )
         try:
-            base_readback = canonical.get_strategy_spec(base_registry_id)
+            base_readback, base_document_sha256, base_strategy_id = (
+                _read_strategy_version(
+                    registry_id=base_registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(session.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            base_link = store.ensure_current_version_link(
+                workshop_id=workshop_id,
+                strategy_id=base_strategy_id,
+                strategy_spec_registry_id=base_registry_id,
+                document_sha256=base_document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -2353,6 +2821,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="StrategySpec version projection is inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Workshop version projection is inconsistent",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         base_entry = dict(base_readback["entry"])
         base_doc = dict((base_entry.get("metadata") or {}).get("strategy_spec") or {})
@@ -2370,7 +2871,7 @@ def create_strategy_workshop_router(
                 precondition_failed="strategy_spec",
             )
         try:
-            patched, _ = apply_patch_validated(
+            patched, patched_document_sha256 = apply_patch_validated(
                 base_doc,
                 body.patch,
                 expected_base_sha256=body.base_document_sha256,
@@ -2403,7 +2904,7 @@ def create_strategy_workshop_router(
         ).hexdigest()[:20]
         registry_id = f"reg-ws-{digest}"
         workshop_version_id = f"wsv-{digest}"
-        strategy_id = str(base_entry.get("strategy_id") or session.get("strategy_id") or "")
+        strategy_id = base_strategy_id
         try:
             registry_readback = canonical.create_strategy_spec(
                 {
@@ -2422,6 +2923,24 @@ def create_strategy_workshop_router(
                     "strategy_spec": patched,
                 }
             )
+            (
+                registry_readback,
+                authoritative_document_sha256,
+                authoritative_strategy_id,
+            ) = _project_strategy_version(
+                readback=registry_readback,
+                registry_id=registry_id,
+                scope=scope,
+                expected_strategy_id=strategy_id,
+                expected_workshop_id=workshop_id,
+            )
+            if (
+                authoritative_strategy_id != strategy_id
+                or authoritative_document_sha256 != patched_document_sha256
+            ):
+                raise _StrategyVersionProjectionError(
+                    "STRATEGY_SPEC_AUTHORITATIVE_DIGEST_MISMATCH"
+                )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -2431,16 +2950,36 @@ def create_strategy_workshop_router(
                 request_hash=request_hash,
                 error=exc,
             )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="Authoritative StrategySpec version is inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
         existing_links = store.list_version_links(workshop_id)
         link = {
             "workshop_version_id": workshop_version_id,
             "workshop_id": workshop_id,
             "strategy_id": strategy_id,
             "strategy_spec_registry_id": registry_id,
-            "parent_workshop_version_id": session.get("active_workshop_version_id")
-            or session.get("selected_version_id"),
+            "parent_workshop_version_id": base_link["workshop_version_id"],
             "source_event_id": f"wsevt-version-{digest}",
             "sequence_no": len(existing_links) + 1,
+            "document_sha256": authoritative_document_sha256,
             "created_by": scope.user_id,
             "created_at": utc_now(),
         }
@@ -2546,7 +3085,20 @@ def create_strategy_workshop_router(
             )
         registry_id = str(link["strategy_spec_registry_id"])
         try:
-            registry_readback = canonical.get_strategy_spec(registry_id)
+            registry_readback, document_sha256, strategy_id = (
+                _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            link = store.ensure_version_link_digest(
+                workshop_id=workshop_id,
+                workshop_version_id=version_id,
+                strategy_id=strategy_id,
+                document_sha256=document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -2555,6 +3107,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="select_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="StrategySpec version projection is inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="select_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Workshop version projection is inconsistent",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         selected_session = {
             **session,
@@ -2705,9 +3290,28 @@ def create_strategy_workshop_router(
                 response=response,
             )
         registry_id = str(link["strategy_spec_registry_id"])
-        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
+        resume = _resume_context(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="dispatch_research",
+            request_hash=request_hash,
+            claimed_by=command_key,
+        )
+        # Reusing the recorded downstream idempotency digest keeps the
+        # downstream task/run idempotency keys stable across a new-key retry,
+        # so an unacknowledged prior create is deduplicated downstream.
+        digest = (resume or {}).get("digest") or hashlib.sha256(
+            f"{workshop_id}:{command_key}".encode()
+        ).hexdigest()[:20]
+        dispatch_kwargs: Dict[str, Any] = {}
+        if resume is not None and resume["partial_effects"]:
+            dispatch_kwargs["resume"] = {
+                "research_task_id": resume["partial_effects"].get("research_task_id"),
+                "research_run_id": resume["partial_effects"].get("research_run_id"),
+            }
         try:
             downstream = canonical.dispatch_research_run(
+                **dispatch_kwargs,
                 task_payload={
                     "title": f"Strategy Workshop research {workshop_id}",
                     "objective": body.research_context,
@@ -2753,6 +3357,8 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+                resume_digest=digest,
+                resume=resume,
             )
         run = dict(downstream["run"])
         run_id = str(run.get("run_id") or run.get("id") or "")
@@ -2788,6 +3394,16 @@ def create_strategy_workshop_router(
                 "research_run_id": run_id,
                 "workshop_version_id": str(version_id),
                 "approval_decision_id": approval["approval_decision_id"],
+                **(
+                    {
+                        "resumed_from_command_id": resume["receipt"].get("command_id"),
+                        "resumed_from_idempotency_key": resume["receipt"].get(
+                            "idempotency_key"
+                        ),
+                    }
+                    if resume is not None
+                    else {}
+                ),
             },
             event={
                 "event_id": f"wsevt-research-{digest}",
@@ -2800,6 +3416,15 @@ def create_strategy_workshop_router(
                 },
                 "trace_id": request_id,
             },
+            downstream_digest=digest,
+            resume=resume,
+        )
+        _resolve_resumed_compensation(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="dispatch_research",
+            resume=resume,
+            resolved_by_idempotency_key=command_key,
         )
         _ws_publish(
             workshop_id,
@@ -2889,10 +3514,29 @@ def create_strategy_workshop_router(
                 canonical_authority="consultation_service",
                 response=response,
             )
-        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
-        consultation_id = f"cr-ws-{digest}"
+        resume = _resume_context(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="open_consultation",
+            request_hash=request_hash,
+            claimed_by=command_key,
+        )
+        # Reusing the recorded digest re-derives the same deterministic
+        # consultation request id, so a new-key retry adopts the request a
+        # failed attempt may already have created downstream.
+        digest = (resume or {}).get("digest") or hashlib.sha256(
+            f"{workshop_id}:{command_key}".encode()
+        ).hexdigest()[:20]
+        consultation_id = (
+            str((resume or {}).get("partial_effects", {}).get("consultation_request_id") or "")
+            or f"cr-ws-{digest}"
+        )
+        open_kwargs: Dict[str, Any] = {}
+        if resume is not None:
+            open_kwargs["resume"] = True
         try:
             consultation = canonical.open_consultation(
+                **open_kwargs,
                 request_id=consultation_id,
                 payload={
                     "request_type": "strategy_review",
@@ -2934,8 +3578,37 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+                resume_digest=digest,
+                resume=resume,
             )
         downstream_status = str(consultation.get("status") or "").lower()
+        if downstream_status == "cancelled":
+            # A cancelled consultation is not a successful open.  Seal the
+            # adopted lineage in the same transaction as this failure so no
+            # later retry re-adopts the dead request; a new-key retry then
+            # opens a fresh consultation under its own digest.
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="open_consultation",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Consultation request is cancelled downstream",
+                reason="CONSULTATION_REQUEST_CANCELLED",
+                precondition_failed="consultation_request",
+                resolve_source=(
+                    _source_resolution(
+                        resume,
+                        resolution="cancelled",
+                        resolved_by=command_key,
+                        extra={"consultation_request_id": consultation_id},
+                    )
+                    if resume is not None
+                    else None
+                ),
+            )
         resource = {
             "consultation": consultation,
             "downstream_status": downstream_status,
@@ -2953,6 +3626,18 @@ def create_strategy_workshop_router(
                 canonical_refs={
                     "consultation_request_id": consultation_id,
                     "workshop_version_id": version_id,
+                    **(
+                        {
+                            "resumed_from_command_id": resume["receipt"].get(
+                                "command_id"
+                            ),
+                            "resumed_from_idempotency_key": resume["receipt"].get(
+                                "idempotency_key"
+                            ),
+                        }
+                        if resume is not None
+                        else {}
+                    ),
                 },
                 event={
                     "event_id": f"wsevt-consult-{digest}",
@@ -2965,30 +3650,56 @@ def create_strategy_workshop_router(
                     },
                     "trace_id": request_id,
                 },
+                downstream_digest=digest,
+                resume=resume,
             )
         except HTTPException:
-            try:
-                canonical.cancel_consultation(
-                    consultation_id,
-                    actor_id=scope.user_id,
-                    trace_id=request_id,
-                )
-                store.fail_command(
-                    workshop_id=workshop_id,
-                    tenant_id=scope.tenant_id,
-                    user_id=scope.user_id,
-                    operation="open_consultation",
-                    idempotency_key=command_key,
-                    request_hash=request_hash,
-                    failure={"reason": "WORKSHOP_COMMIT_FAILED"},
-                    compensation={
-                        "consultation_request_id": consultation_id,
-                        "action": "cancelled",
-                    },
-                )
-            except Exception:
-                pass
+            # Compensation-or-resume with exclusive effect ownership: only a
+            # consultation this attempt itself created (resume is None) may
+            # be cancelled; on success the failed receipt's compensation is
+            # sealed as cancelled so a retry opens a fresh consultation.  An
+            # adopted request is shared lineage — cancelling it could destroy
+            # a resource the prior receipt chain still references — so the
+            # failed receipt keeps its resumable lineage instead (the adopted
+            # source was resolved as superseded in the same failure write).
+            # If cancellation itself fails, the receipt likewise keeps its
+            # resumable lineage and a new-key retry adopts the recorded
+            # request instead of opening a duplicate.
+            if resume is None:
+                cancelled = False
+                try:
+                    canonical.cancel_consultation(
+                        consultation_id,
+                        actor_id=scope.user_id,
+                        trace_id=request_id,
+                    )
+                    cancelled = True
+                except Exception:
+                    pass
+                if cancelled and hasattr(store, "resolve_command_compensation"):
+                    try:
+                        store.resolve_command_compensation(
+                            workshop_id=workshop_id,
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                            operation="open_consultation",
+                            idempotency_key=command_key,
+                            resolution={
+                                "resolved_at": utc_now(),
+                                "resolution": "cancelled",
+                                "consultation_request_id": consultation_id,
+                            },
+                        )
+                    except Exception:
+                        pass
             raise
+        _resolve_resumed_compensation(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="open_consultation",
+            resume=resume,
+            resolved_by_idempotency_key=command_key,
+        )
         return _command_response(
             receipt=receipt,
             resource=resource,
@@ -3046,6 +3757,16 @@ def create_strategy_workshop_router(
                 "WORKSHOP_VERSION_REQUIRED",
                 precondition_failed="final_version_id",
             )
+        selected_version_id = str(session.get("selected_version_id") or "")
+        if str(version_id) != selected_version_id:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Conclusion requires the currently selected workshop version",
+                "WORKSHOP_FINAL_VERSION_NOT_SELECTED",
+                precondition_failed="final_version_id",
+                details_extra={"selected_version_id": selected_version_id},
+            )
         two_person_proof = _require_approval(
             approval_decision_id=body.approval_decision_id,
             workshop_id=workshop_id,
@@ -3081,7 +3802,24 @@ def create_strategy_workshop_router(
             )
         registry_id = str(link["strategy_spec_registry_id"])
         try:
-            registry_readback = canonical.get_strategy_spec(registry_id)
+            # The terminal transition demands the same authoritative projection
+            # proof as version selection: Registry readback must expose a
+            # complete StrategySpec document in the caller's scope whose digest
+            # still matches the immutable durable link.
+            registry_readback, document_sha256, final_strategy_id = (
+                _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            link = store.ensure_version_link_digest(
+                workshop_id=workshop_id,
+                workshop_version_id=str(version_id),
+                strategy_id=final_strategy_id,
+                document_sha256=document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -3090,6 +3828,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="Final StrategySpec version projection is incomplete or inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Final workshop version digest no longer matches its immutable link",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         concluded_at = utc_now()
         concluded_session = {

@@ -8,6 +8,8 @@
 
 set -euo pipefail
 
+PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"
+
 PROJECT_ID="${PROJECT_ID:-pantheon-lupin-dev-20260719}"
 REMOTE_USER="${REMOTE_USER:-lupin}"
 
@@ -20,6 +22,10 @@ DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview-
 DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}"
 DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
 DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
+# Large hosted dev datasets can make one lifecycle projection tick take
+# 150-180 seconds. Keep the compose default fail-closed at 120 seconds, while
+# managed dev deploys explicitly allow one slow tick plus scheduling headroom.
+DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-300}"
 # Strict by default: the dev deploy must not silently re-force stub/permissive
 # auth on every run. docker-compose.yml's own PANTHEON_BFF_AUTH_STUB/MODE
 # defaults are strict/false, but this script always passes an explicit value
@@ -29,6 +35,7 @@ DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
 # DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
 # compose file defaults. When strict mode is requested without them, the
@@ -58,6 +65,9 @@ DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIEN
 DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID:-pantheon-dev-operator-b-v1}"
 DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET:-}"
 DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-true}"
+DEV_BFF_MFA_CLAIMS="${DEV_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}"
+DEV_BFF_MFA_VALUES="${DEV_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}"
+DEV_BFF_REQUIRE_EMAIL_VERIFIED="${DEV_BFF_REQUIRE_EMAIL_VERIFIED:-true}"
 # Keep the legacy/generic operator credential as the explicit no-MFA negative
 # fixture. Governed actors use dedicated credentials and MFA-positive tokens.
 DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"
@@ -87,6 +97,7 @@ DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REMOTE_URL
 DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
 DEV_STATUS_ROOT_HOST="${DEV_STATUS_ROOT_HOST:-}"
 DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
+DEV_SUPERVISOR_COMMAND_ROOT="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
 DEV_MANAGEMENT_AI_STORE_BACKEND="${DEV_MANAGEMENT_AI_STORE_BACKEND:-postgres}"
 DEV_MANAGEMENT_AI_STORE_SCHEMA="${DEV_MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
 DEV_MANAGEMENT_AI_DB_USER="${DEV_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
@@ -97,6 +108,14 @@ DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-true}"
 PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
+DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
+SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
+SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}"
+SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
+SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
+SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
+SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -185,12 +204,14 @@ Options:
 
 Environment overrides:
   REMOTE_USER
-  PANTHEON_DEPLOY_WORKTREE_ROOT
+  PANTHEON_DEPLOY_WORKTREE_ROOT PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
+  DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
+  DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
@@ -200,7 +221,8 @@ Environment overrides:
   DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET
   DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET
   DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET
-  DEV_BFF_MFA_REQUIRED DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED
+  DEV_BFF_MFA_REQUIRED DEV_BFF_MFA_CLAIMS DEV_BFF_MFA_VALUES
+  DEV_BFF_REQUIRE_EMAIL_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED
@@ -380,6 +402,20 @@ case "$DEPLOY_ENV" in
     ;;
 esac
 
+case "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" in
+  true|false) ;;
+  *) error "DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED must be true or false" ;;
+esac
+if [[ "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" == "true" && (
+  "$DEPLOY_ENV" != "dev" ||
+  "$COMPONENT" != "root" ||
+  "$DEV_BFF_AUTH_MODE" != "strict" ||
+  "$DEV_BFF_AUTH_STUB" == "true" ||
+  "$ALLOW_DIRTY" == "true"
+) ]]; then
+  error "PPL-ALLOC-009 dev proof requires a clean dev/root deploy with strict non-stub auth"
+fi
+
 configure_management_ai_dev_env
 configure_management_ai_dev_kernel_env
 
@@ -397,6 +433,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_fe_static_root=${DEV_FE_STATIC_ROOT}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
+  info "dev_ppl_alloc_009_dev_proof_enabled=${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
   info "dev_bff_mfa_required=${DEV_BFF_MFA_REQUIRED}"
   info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
   info "dev_bff_jwt_issuer_configured=$([[ -n "$DEV_BFF_JWT_ISSUER" ]] && echo true || echo false)"
@@ -426,7 +463,14 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
   info "dev_status_root_host=${PANTHEON_STATUS_ROOT_HOST:-}"
   info "dev_status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER:-}"
+  info "dev_supervisor_command_root=${DEV_SUPERVISOR_COMMAND_ROOT}"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
+  info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
+  info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
+  info "source_refresh_allowed_hosts_configured=$([[ -n "${SOURCE_REFRESH_ALLOWED_HOSTS}" ]] && echo true || echo false)"
+  info "source_refresh_max_ticks=${SOURCE_REFRESH_MAX_TICKS}"
+  info "source_refresh_max_concurrency=${SOURCE_REFRESH_MAX_CONCURRENCY}"
+  info "source_refresh_max_records=${SOURCE_REFRESH_MAX_RECORDS}"
   info "management_ai_store_backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
   info "management_ai_store_schema=${MANAGEMENT_AI_STORE_SCHEMA:-}"
   info "management_ai_database_user=${DEV_MANAGEMENT_AI_DB_USER}"
@@ -509,6 +553,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+  command_prefix+=" PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT=$(shell_quote "${DEV_SUPERVISOR_COMMAND_ROOT}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -516,8 +561,10 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "$DEV_BFF_PUBLIC_HOST")"
   command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "$DEV_FE_PUBLIC_HOST")"
   command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "$DEV_FE_STATIC_ROOT")"
+  command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
@@ -538,6 +585,9 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_MFA_REQUIRED=$(shell_quote "$DEV_BFF_MFA_REQUIRED")"
+  command_prefix+=" PANTHEON_DEV_BFF_MFA_CLAIMS=$(shell_quote "$DEV_BFF_MFA_CLAIMS")"
+  command_prefix+=" PANTHEON_DEV_BFF_MFA_VALUES=$(shell_quote "$DEV_BFF_MFA_VALUES")"
+  command_prefix+=" PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED=$(shell_quote "$DEV_BFF_REQUIRE_EMAIL_VERIFIED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED")"
@@ -565,6 +615,14 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
+  command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
+  command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"
+  command_prefix+=" SOURCE_INGEST_CONTROLLER_MAX_TICKS=$(shell_quote "${SOURCE_REFRESH_MAX_TICKS}")"
+  command_prefix+=" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=$(shell_quote "${SOURCE_REFRESH_MAX_CONCURRENCY}")"
+  command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_REFRESH_MAX_RECORDS}")"
+  command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_REFRESH_CONNECTOR_ID}")"
+  command_prefix+=" SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_REFRESH_TIMEOUT_SECONDS}")"
   command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
@@ -596,6 +654,150 @@ error() {
   exit 1
 }
 
+validate_source_refresh_profile() {
+  local selected="false"
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,source-ingest-scheduler,*) selected="true" ;;
+  esac
+
+  if [[ "$selected" != "true" ]]; then
+    [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
+      || error "external egress must remain deny when source-ingest-scheduler is not selected"
+    [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+      || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    return 0
+  fi
+
+  [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]] \
+    || error "source-ingest-scheduler requires PANTHEON_EXTERNAL_EGRESS=allowlist"
+  [[ -n "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+    || error "source-ingest-scheduler requires a reviewed exact host allowlist"
+  [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1 && SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24 )) \
+    || error "SOURCE_INGEST_CONTROLLER_MAX_TICKS must be between 1 and 24"
+  [[ "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
+    || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
+  [[ "${SOURCE_INGEST_MAX_RECORDS:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 500 )) \
+    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 500"
+  [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || error "SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id"
+  [[ "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS >= 30 && SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600 )) \
+    || error "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS must be between 30 and 3600"
+
+  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" <<'PY'
+import sys
+
+from services.external_egress import allowed_hosts
+
+hosts = allowed_hosts(
+    {
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": sys.argv[1],
+    }
+)
+if not hosts:
+    raise SystemExit("source refresh exact host allowlist is empty")
+if sys.argv[2] == "tw-twse-tpex-official-market":
+    required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
+    missing = sorted(required - hosts)
+    if missing:
+        raise SystemExit(
+            "official TWSE/TPEx refresh requires exact hosts: " + ",".join(sorted(required))
+        )
+print(f"validated {len(hosts)} exact source refresh hosts")
+PY
+  export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
+  export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
+}
+
+# One required scheduled/async worker per twelve-loop lane. The deploy fails
+# closed if the selected profile set does not resolve every one of these, so a
+# narrowed PANTHEON_DEV_COMPOSE_PROFILES can no longer silently deactivate a
+# loop. source-ingest-scheduler and source-ingest-agora-projector are
+# deliberately absent: they stay opt-in behind the bounded egress profile that
+# validate_source_refresh_profile guards.
+REQUIRED_LOOP_WORKERS=(
+  # source_ingestion
+  source-ingest
+  # strategy_distillation
+  strategy-distillation-worker
+  # alpha_replication
+  alpha-replication-worker
+  # persona_teaching
+  training-session-svc
+  training-session-preview-worker
+  # agora_interaction_evidence
+  policy-learning-svc
+  # human_imitation_shadow_evaluation
+  policy-learning-shadow-eval-scheduler
+  # consultation
+  consultation-svc
+  # promotion_deployment
+  deployment
+  deployment-outbox-consumer
+  runtime-manager
+  # capital_pool_execution
+  broker
+  capital
+  paper-fleet-reconciler
+  paper-signal-producer
+  # telemetry_reconciliation
+  reconciliation-drift-svc
+  reconciliation-drift-consumer
+  reconciliation-drift-scheduler
+  reconciliation-drift-incident-listener
+  # evolution
+  evolution
+  evolution-dispatch-worker
+  evolution-daily-sweep-scheduler
+  evolution-threshold-sweep-producer
+  # bff_health_monitoring
+  operator-bff
+  loop-run-projector-scheduler
+  # shared search index behind source + agora reads
+  search-svc
+  search-index-scheduler
+)
+
+# The legacy static paper runtime duplicates the binding-scoped workers that
+# paper-fleet-reconciler owns. Two writers on the same bindings is the exact
+# duplicate-worker failure this manifest is supposed to prevent.
+FORBIDDEN_DUPLICATE_WORKERS=(
+  pantheon-paper-runtime
+)
+
+validate_required_loop_workers() {
+  local resolved missing=() duplicates=() worker
+
+  resolved="$(
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+      docker compose -p pantheon -f docker-compose.yml config --services
+  )" || error "unable to resolve compose services for the selected profiles"
+
+  for worker in "${REQUIRED_LOOP_WORKERS[@]}"; do
+    if ! grep -qxF -- "$worker" <<<"$resolved"; then
+      missing+=("$worker")
+    fi
+  done
+  for worker in "${FORBIDDEN_DUPLICATE_WORKERS[@]}"; do
+    if grep -qxF -- "$worker" <<<"$resolved"; then
+      duplicates+=("$worker")
+    fi
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    error "required loop workers not activated by the selected profiles: ${missing[*]}"
+  fi
+  if (( ${#duplicates[@]} > 0 )); then
+    error "duplicate legacy workers activated alongside the loop manifest: ${duplicates[*]}"
+  fi
+
+  info "required_loop_workers=${#REQUIRED_LOOP_WORKERS[@]} all activated; no duplicate legacy workers"
+}
+
 curl_with_retry() {
   local url="$1"
   local attempts="${2:-12}"
@@ -610,6 +812,201 @@ curl_with_retry() {
   done
 
   curl -fsS "$url" >/dev/null
+}
+
+wait_for_exact_bff_lifecycle_readiness() {
+  local url="$1"
+
+  # Full root replacements have taken up to 213 seconds to move from process
+  # liveness through exact trusted recovery to accepted live truth on the dev
+  # VM. Keep the ordinary restart budget at 120 seconds and grant only trusted
+  # monotonic recovery a bounded 180-second extension (300 seconds total).
+  # If an exact/live projector briefly becomes generally unavailable during
+  # dependency warm-up, retain that exact evidence for at most 30 seconds and
+  # require /livez or /bff/version to keep proving the same running target.
+  # Compose separately gates /livez, so each invocation gets its own
+  # lifecycle-readiness acceptance budget; image/process startup cannot
+  # consume it.
+  python3 scripts/wait_for_bff_lifecycle_readiness.py \
+    --url "$url" \
+    --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
+    --initial-timeout-seconds 120 \
+    --recovery-extension-seconds 180 \
+    --stalled-timeout-seconds 45 \
+    --poll-interval-seconds 2 \
+    --request-timeout-seconds 2 \
+    --exact-evidence-max-age-seconds 30
+}
+
+wait_for_bounded_source_refresh_service() {
+  local service="$1"
+  local timeout_seconds="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
+  local started_epoch
+  local container_id=""
+  local state=""
+  local exit_code=""
+  started_epoch="$(date +%s)"
+
+  while (( $(date +%s) - started_epoch < timeout_seconds )); do
+    container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    if [[ -z "$container_id" ]]; then
+      sleep 5
+      continue
+    fi
+    state="$(docker inspect --format '{{.State.Status}}' "$container_id")"
+    case "$state" in
+      exited)
+        exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")"
+        [[ "$exit_code" == "0" ]] \
+          || error "bounded source refresh service ${service} exited with code ${exit_code}"
+        printf '%s\n' "$container_id"
+        return 0
+        ;;
+      dead)
+        error "bounded source refresh service ${service} entered dead state"
+        ;;
+      created|running|restarting)
+        sleep 5
+        ;;
+      *)
+        error "bounded source refresh service ${service} has unexpected state ${state}"
+        ;;
+    esac
+  done
+
+  error "bounded source refresh service ${service} did not reach terminal state within ${timeout_seconds}s"
+}
+
+verify_bounded_source_refresh_readback() {
+  local deploy_started_at="$1"
+  local scheduler_container_id=""
+  local projector_container_id=""
+  local evidence_dir=""
+
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,source-ingest-scheduler,*) ;;
+    *) return 0 ;;
+  esac
+
+  scheduler_container_id="$(wait_for_bounded_source_refresh_service source-ingest-scheduler)" \
+    || return 1
+  projector_container_id="$(wait_for_bounded_source_refresh_service source-ingest-agora-projector)" \
+    || return 1
+  evidence_dir="$(mktemp -d)"
+  curl -fsS --get \
+    --data-urlencode "connector_id=${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+    http://127.0.0.1:18097/api/source-ingest/receipts \
+    -o "${evidence_dir}/receipts.json" \
+    || { rm -rf "${evidence_dir}"; return 1; }
+  curl -fsS http://127.0.0.1:18097/api/source-ingest/controller/readback \
+    -o "${evidence_dir}/readback.json" \
+    || { rm -rf "${evidence_dir}"; return 1; }
+  docker cp \
+    "${projector_container_id}:/data/bff/agora_watchlist.json" \
+    "${evidence_dir}/agora_watchlist.json" \
+    || { rm -rf "${evidence_dir}"; return 1; }
+
+  if ! python3 - \
+    "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+    "${deploy_started_at}" \
+    "${evidence_dir}/receipts.json" \
+    "${evidence_dir}/readback.json" \
+    "${evidence_dir}/agora_watchlist.json" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def load(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def timestamp(value):
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+connector_id, deploy_started_at, receipts_path, readback_path, projection_path = sys.argv[1:]
+started = timestamp(deploy_started_at)
+receipts = load(receipts_path).get("receipts") or []
+candidates = [
+    receipt
+    for receipt in receipts
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("connector_id") == connector_id
+        and receipt.get("status") == "completed"
+        and receipt.get("typed_failure") is None
+        and receipt.get("source_timestamp")
+        and receipt.get("source_timestamp_status") == "valid"
+        and timestamp(receipt.get("finished_at") or receipt.get("created_at")) >= started
+    )
+]
+if not candidates:
+    raise SystemExit("bounded source refresh produced no new successful source-time-valid receipt")
+receipt = max(candidates, key=lambda item: timestamp(item.get("finished_at") or item.get("created_at")))
+run_id = str(receipt["ingest_run_id"])
+
+connectors = load(readback_path).get("connectors") or []
+connector = next(
+    (item for item in connectors if isinstance(item, dict) and item.get("connector_id") == connector_id),
+    None,
+)
+if connector is None:
+    raise SystemExit("bounded source refresh connector is absent from controller readback")
+freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+latest_receipt = freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), dict) else {}
+latest_record = connector.get("latest_source_record") if isinstance(connector.get("latest_source_record"), dict) else {}
+provenance = latest_record.get("provenance") if isinstance(latest_record.get("provenance"), dict) else {}
+source_id = str(latest_record.get("source_id") or "")
+if latest_receipt.get("ingest_run_id") != run_id:
+    raise SystemExit("controller freshness does not bind the new ingest receipt")
+if freshness.get("source_timestamp_status") != "valid":
+    raise SystemExit("controller freshness does not report valid provider source time")
+if provenance.get("source_ingest_run_id") != run_id or not source_id:
+    raise SystemExit("controller source record does not bind the new ingest run")
+
+projection = load(projection_path)
+rows = projection.values() if isinstance(projection, dict) else []
+projected = next(
+    (
+        row
+        for row in rows
+        if (
+            isinstance(row, dict)
+            and row.get("connectorId") == connector_id
+            and row.get("ingestRunId") == run_id
+            and row.get("sourceId") == source_id
+        )
+    ),
+    None,
+)
+if projected is None:
+    raise SystemExit("Agora projection does not bind the new receipt/run/source")
+projected_freshness = projected.get("freshness") if isinstance(projected.get("freshness"), dict) else {}
+if (
+    not projected.get("asOf")
+    or projected_freshness.get("sourceTimestamp") != projected.get("asOf")
+    or projected_freshness.get("sourceTimeStatus") != "valid"
+    or projected_freshness.get("status") not in {"fresh", "stale"}
+    or not isinstance(projected_freshness.get("stale"), bool)
+):
+    raise SystemExit("Agora projection is missing explicit source-time/freshness truth")
+print(
+    "bounded source refresh accepted "
+    f"connector={connector_id} run={run_id} source={source_id} "
+    f"freshness={projected_freshness['status']}"
+)
+PY
+  then
+    rm -rf "${evidence_dir}"
+    return 1
+  fi
+  rm -rf "${evidence_dir}"
+  info "bounded source refresh services exited zero and receipt/projection readback advanced"
 }
 
 ensure_dev_caddy_ingress() (
@@ -665,6 +1062,15 @@ assert_bff_source_sha() {
     error "BFF source SHA mismatch: expected ${PANTHEON_DEPLOY_SHA}, got ${actual:-missing}"
   fi
   info "BFF source SHA verified: ${actual}"
+}
+
+assert_ppl_alloc_009_dev_proof_gate() {
+  local expected="PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
+  docker inspect pantheon-operator-bff-1 \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep -F -x "${expected}" >/dev/null \
+    || error "operator-bff PPL-ALLOC-009 dev proof posture does not match ${expected}"
+  info "operator-bff PPL-ALLOC-009 dev proof posture verified: ${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
 }
 
 assert_dedicated_dev_login_identity() {
@@ -975,9 +1381,87 @@ git_fetch_origin_default_refs() {
 prepare_deploy_worktree() {
   local sha="${PANTHEON_DEPLOY_SHA}"
   local source_dir="${PANTHEON_REMOTE_DIR}"
-  local root="${PANTHEON_DEPLOY_WORKTREE_ROOT:-${HOME}/pantheon-ci-deploy}"
+  local root
+  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
+  if [[ -n "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}" ]]; then
+    root="${PANTHEON_DEPLOY_WORKTREE_ROOT}"
+  elif [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]; then
+    root="${HOME}/pantheon-ci-deploy/managed-deploy-worktrees"
+  else
+    # Preserve the established staging-live layout.  Dev alone needs the
+    # supervisor/deployment split because only dev hosts the task fleet.
+    root="${HOME}/pantheon-ci-deploy"
+  fi
   local deploy_dir="${root}/${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}"
   local marker="${root}/.${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}.marker"
+
+  if [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]; then
+    # BEGIN_DEV_DEPLOY_PATH_ISOLATION_PY
+    python3 - "$root" "$deploy_dir" "$command_root" <<'PY'
+from pathlib import Path
+import sys
+
+
+def lexical_absolute_path(value: str, label: str, *, must_exist: bool) -> Path:
+    raw = Path(value)
+    if not raw.is_absolute():
+        raise SystemExit(f"{label} must be absolute: {raw}")
+    if any(part in {".", ".."} for part in raw.parts):
+        raise SystemExit(f"{label} must not contain dot traversal: {raw}")
+    for candidate in (raw, *raw.parents):
+        if candidate.is_symlink():
+            raise SystemExit(
+                f"{label} contains a symlink component: {candidate}"
+            )
+    if must_exist and not raw.is_dir():
+        raise SystemExit(f"{label} must be an existing directory: {raw}")
+    return raw.resolve(strict=must_exist)
+
+
+def contains(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+deploy_root = lexical_absolute_path(
+    sys.argv[1],
+    "deploy worktree root",
+    must_exist=False,
+)
+deploy_dir = lexical_absolute_path(
+    sys.argv[2],
+    "deploy worktree",
+    must_exist=False,
+)
+command_root = lexical_absolute_path(
+    sys.argv[3],
+    "supervisor command root",
+    must_exist=True,
+)
+if contains(deploy_dir, command_root) or contains(command_root, deploy_dir):
+    raise SystemExit(
+        "deploy worktree and supervisor command root must be disjoint: "
+        f"deploy={deploy_dir} command={command_root}"
+    )
+deploy_root.mkdir(parents=True, exist_ok=True)
+created_deploy_root = lexical_absolute_path(
+    str(deploy_root),
+    "deploy worktree root",
+    must_exist=True,
+)
+if created_deploy_root != deploy_root:
+    raise SystemExit(
+        "deploy worktree root changed identity while being created: "
+        f"before={deploy_root} after={created_deploy_root}"
+    )
+PY
+    # END_DEV_DEPLOY_PATH_ISOLATION_PY
+  else
+    mkdir -p "$root"
+  fi
 
   cd "$source_dir"
   info "fetching origin"
@@ -985,8 +1469,6 @@ prepare_deploy_worktree() {
   if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
     git_fetch_origin "$sha"
   fi
-
-  mkdir -p "$root"
 
   if [[ -e "$deploy_dir" ]]; then
     [[ -f "$marker" ]] || error "refusing to reuse unmarked deploy path: ${deploy_dir}"
@@ -1378,6 +1860,11 @@ dump_dev_root_failure_diagnostics() {
 }
 
 retire_legacy_static_paper_runtime() {
+  # paper-fleet-reconciler and paper-signal-producer are now unconditional
+  # members of the required loop worker manifest, so co-enabling this profile
+  # always means two writers on the same bindings. On the root deploy path
+  # validate_required_loop_workers rejects that combination before we get
+  # here; this branch survives only for components that skip that guard.
   case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
     *,static-paper-runtime,*)
       info "static paper runtime profile explicitly enabled; leaving compatibility worker active"
@@ -1462,6 +1949,7 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
 
 provision_dev_supervisor_watchdog() {
   local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
   local attempt
   local linger_state=""
 
@@ -1470,14 +1958,14 @@ provision_dev_supervisor_watchdog() {
   [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
     || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
 
-  info "provisioning split-root dev supervisor config and persistent watchdog"
-  python3 scripts/provision_live_supervisor_config.py \
-    --repo-config "$(pwd)/.orchestrator/config.json" \
+  info "provisioning split-root dev supervisor config and persistent watchdog from ${command_root}"
+  python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
+    --repo-config "${command_root}/.orchestrator/config.json" \
     --live-config "$live_config" \
-    --command-root "$(pwd)" \
+    --command-root "$command_root" \
     --status-root "${PANTHEON_STATUS_ROOT_HOST}"
-  python3 scripts/check_config_drift.py \
-    --repo-config "$(pwd)/.orchestrator/config.json" \
+  python3 "${command_root}/scripts/check_config_drift.py" \
+    --repo-config "${command_root}/.orchestrator/config.json" \
     --live-config "$live_config" \
     --fix
 
@@ -1491,15 +1979,15 @@ provision_dev_supervisor_watchdog() {
     [[ "$linger_state" == "yes" ]] \
       || error "systemd user linger is not enabled for ${USER}"
   fi
-  python3 scripts/supervisor_watchdog_install.py \
-    --repo "$(pwd)" \
+  python3 "${command_root}/scripts/supervisor_watchdog_install.py" \
+    --repo "$command_root" \
     --config "$live_config" \
     --method auto \
     --start-now
 
   for attempt in $(seq 1 12); do
-    if python3 scripts/supervisor_runtime_health.py \
-      --repo "$(pwd)" \
+    if python3 "${command_root}/scripts/supervisor_runtime_health.py" \
+      --repo "$command_root" \
       --config-path "$live_config" \
       --require-watchdog; then
       info "persistent dev supervisor watchdog is healthy"
@@ -1561,22 +2049,36 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #   dormant-smoke                experiments/finrl/qlib/rllib/ray-tune/trl
     #   openclaw                     openclaw-gateway + openclaw-data-init
     #   openclaw-activation-ready-e2e  openclaw-activation-ready-e2e
-    #   search-index-scheduler       search-index-scheduler
     #   smoke                        smoke-stack (depends on full service set)
     #   source-ingest-scheduler      source-ingest-scheduler
+    #                                + source-ingest-agora-projector
     #   source-search-bounded        source-search-bounded-smoke
+    #
+    # Every remaining profile above is a smoke or an optional integration.
+    # Required loop workers are no longer profile-gated: they are default-on
+    # in docker-compose.yml so the manifest, not this profile list, is the
+    # single source of truth for which loops are running. That inversion is
+    # what validate_required_loop_workers below enforces.
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
     #
-    # source-ingest-scheduler is deliberately NOT in the default set. It ticks
-    # every 60s against third-party providers (Yahoo, CoinGecko, TWSE/TPEx,
-    # MOPS, FinMind, SEC/FRED/FINRA, stooq); left always-on it is continuous
-    # crawling from one cloud egress IP. Add it explicitly for a bounded run.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-search-bounded}"
+    # source-ingest-scheduler is the one required worker still gated, and it
+    # stays gated deliberately. It ticks every 60s against third-party
+    # providers (Yahoo, CoinGecko, TWSE/TPEx, MOPS, FinMind, SEC/FRED/FINRA,
+    # stooq); left always-on it is continuous crawling from one cloud egress
+    # IP. Add it explicitly for a bounded run. source-ingest-agora-projector
+    # shares that profile because it must project only after the bounded
+    # refresh completes.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,smoke,source-search-bounded}"
+    validate_source_refresh_profile
+    validate_required_loop_workers
+    source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
     COMPOSE_BAKE=false \
@@ -1584,6 +2086,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
+    PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
+    PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}" \
+    SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}" \
+    SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}" \
+    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
+    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     PANTHEON_CANARY_EXECUTION_ENABLED=false \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
@@ -1603,6 +2113,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
@@ -1623,6 +2134,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
     PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
+    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
+    PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
@@ -1650,6 +2164,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     PANTHEON_DEV_REPO="$(pwd)" \
       bash scripts/openclaw-configure-shared-model-pool.sh \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -1659,11 +2175,19 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    curl_with_retry http://127.0.0.1:18001/readyz \
+    # Root deployment replaces the lifecycle projector and BFF together. The
+    # BFF can become HTTP-ready while /readyz still reports the prior projector
+    # identity, so use the same exact-deployment, bounded recovery gate as the
+    # later residual restart smoke. A wrong or missing projector SHA can retry
+    # only inside the ordinary base window and can never grant the extension.
+    wait_for_exact_bff_lifecycle_readiness \
+      http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_ppl_alloc_009_dev_proof_gate \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ensure_dev_caddy_ingress \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -1690,6 +2214,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
     PANTHEON_CANARY_EXECUTION_ENABLED=false \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
@@ -1708,6 +2233,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
@@ -1728,6 +2254,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
     PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
+    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
+    PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
@@ -1762,11 +2291,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    curl_with_retry http://127.0.0.1:18001/readyz \
+    wait_for_exact_bff_lifecycle_readiness \
+      http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_ppl_alloc_009_dev_proof_gate \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ensure_dev_caddy_ingress \
       || { dump_dev_root_failure_diagnostics; exit 1; }

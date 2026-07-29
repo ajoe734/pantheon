@@ -20,6 +20,7 @@ from typing import Any, Mapping
 from services.research.alpha_replication.controller_state import ControllerState, ControllerStateStore
 from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.revalidation_worker import AlphaRevalidationWorker
+from services.research.experiment_orchestrator.authority import ExperimentAuthority
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -34,6 +35,7 @@ class ReplicationControllerConfig:
         state_path: Path | None = None,
         data_dir: Path | None = None,
         seed_store_path: Path | None = None,
+        authority: ExperimentAuthority | None = None,
     ) -> None:
         self.database_url = database_url or os.getenv("DATABASE_URL") or "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"
         self.registry_url = registry_url or os.getenv("PANTHEON_REGISTRY_URL") or "http://registry:8087"
@@ -45,6 +47,7 @@ class ReplicationControllerConfig:
         
         self.state_path = state_path or Path(os.getenv("ALPHA_REPLICATION_CONTROLLER_STATE_PATH") or self.data_dir / "controller_state.json")
         self.seed_store_path = seed_store_path or Path(os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or "data/source-ingest/distill_seeds.jsonl")
+        self.authority = authority
 
 
 def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> list[dict]:
@@ -60,6 +63,48 @@ def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> lis
         raise
     except Exception as exc:
         raise RuntimeError(f"Failed to query registry for strategy {strategy_id}: {exc}") from exc
+
+
+def _queue_payload_from_registry_entry(
+    entry: Mapping[str, Any],
+    *,
+    tenant_id: str,
+) -> dict[str, Any]:
+    """Normalize one approved immutable registry view into the queue contract."""
+
+    metadata = entry.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("approved StrategySpec registry metadata is required")
+    spec = metadata.get("strategy_spec")
+    if not isinstance(spec, Mapping):
+        raise ValueError("approved StrategySpec inline payload is required")
+    bound_tenant = str(metadata.get("tenant_id") or spec.get("tenant_id") or "").strip()
+    if not bound_tenant:
+        raise ValueError("approved StrategySpec tenant_id is required")
+    if bound_tenant != tenant_id:
+        raise ValueError(
+            f"approved StrategySpec tenant_id={bound_tenant!r} does not match "
+            f"controller tenant_id={tenant_id!r}"
+        )
+    if entry.get("artifact_type") != "strategy_spec":
+        raise ValueError("registry entry is not a StrategySpec")
+    if entry.get("artifact_state") != "approved":
+        raise ValueError("only approved StrategySpec registry entries may enqueue")
+    strategy_id = str(entry.get("strategy_id") or "").strip()
+    version = str(entry.get("version") or "").strip()
+    if str(spec.get("strategy_id") or "").strip() != strategy_id:
+        raise ValueError("embedded StrategySpec strategy_id does not match registry entry")
+    return {
+        "tenant_id": bound_tenant,
+        "strategy_spec_id": entry.get("registry_id"),
+        "strategy_id": strategy_id,
+        "spec_version": version,
+        "artifact_state": entry.get("artifact_state"),
+        "checksum": entry.get("checksum"),
+        "approval_decision_id": entry.get("approval_decision_id"),
+        "approver": entry.get("approver"),
+        "approved_at": entry.get("approved_at"),
+    }
 
 
 def build_loop_writer(*, dsn: str, state: ControllerState) -> Any:
@@ -98,7 +143,7 @@ def run_controller_tick(
     try:
         # 1. Read desired state: list of approved strategy specs in the registry
         # We find them by reading the distillation seeds file if it exists, or querying known IDs
-        source_ids = []
+        source_ids: list[str] = []
         if config.seed_store_path.exists():
             try:
                 for line in config.seed_store_path.read_text(encoding="utf-8").splitlines():
@@ -107,9 +152,13 @@ def run_controller_tick(
                         continue
                     payload = json.loads(line)
                     if isinstance(payload, dict) and "source_id" in payload:
-                        source_ids.append(payload["source_id"])
+                        source_id = str(payload["source_id"] or "").strip()
+                        if source_id and source_id not in source_ids:
+                            source_ids.append(source_id)
             except Exception as exc:
-                print(f"Warning: failed to read seeds store: {exc}", file=sys.stderr)
+                raise RuntimeError(
+                    f"Failed to read StrategySpec discovery trigger store: {exc}"
+                ) from exc
         
         # Always look up registry entries
         approved_specs = []
@@ -120,36 +169,63 @@ def run_controller_tick(
             except Exception as exc:
                 raise RuntimeError(f"Registry lookup failed for strategy {sid}: {exc}") from exc
         
-        desired_meta = {"approved_spec_count": len(approved_specs), "strategy_ids": [e["strategy_id"] for e in approved_specs]}
+        desired_meta = {
+            "approved_spec_count": len(approved_specs),
+            "strategy_spec_ids": [entry.get("registry_id") for entry in approved_specs],
+            "tenant_id": state.tenant_id,
+        }
         
         # 2. Enqueue into AlphaReplicationQueue
         queue = AlphaReplicationQueue(config.data_dir)
         enqueued_count = 0
         for entry in approved_specs:
-            spec = entry.get("metadata", {}).get("strategy_spec")
-            if spec:
-                spec_payload = dict(spec)
-                spec_payload.setdefault("lifecycle_state", "approved")
-                spec_payload.setdefault("spec_version", entry.get("version", "1.0"))
-                try:
-                    res = queue.enqueue(spec_payload, enqueued_by="alpha-replication-controller")
-                    if res is not None:
-                        enqueued_count += 1
-                except Exception as exc:
-                    raise RuntimeError(f"Failed to enqueue spec {spec.get('strategy_id')}: {exc}") from exc
+            try:
+                spec_payload = _queue_payload_from_registry_entry(
+                    entry,
+                    tenant_id=state.tenant_id,
+                )
+                result = queue.enqueue(
+                    spec_payload,
+                    enqueued_by="alpha-replication-controller",
+                )
+                if result is not None:
+                    enqueued_count += 1
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to enqueue StrategySpec {entry.get('registry_id')}: {exc}"
+                ) from exc
         
         # 3. Process the queue using AlphaRevalidationWorker
         worker = AlphaRevalidationWorker(
             queue,
             config.data_dir,
             worker_id="alpha-revalidation-worker",
+            authority=config.authority,
+            registry_url=config.registry_url,
         )
-        tick_result = worker.run_once()
+        tick_result = worker.run_once(tenant_id=state.tenant_id)
         
         reconcile_meta = {
             "enqueued_new": enqueued_count,
             "processed": tick_result.get("processed", 0),
             "created_run_ids": tick_result.get("created_run_ids", []),
+            "created_authority_task_ids": tick_result.get(
+                "created_authority_task_ids",
+                [],
+            ),
+            "created_authority_run_ids": tick_result.get(
+                "created_authority_run_ids",
+                [],
+            ),
+            "created_experiment_task_ids": tick_result.get(
+                "created_experiment_task_ids",
+                [],
+            ),
+            "created_experiment_run_ids": tick_result.get(
+                "created_experiment_run_ids",
+                [],
+            ),
+            "authority_receipts": tick_result.get("authority_receipts", []),
             "errors": tick_result.get("errors", []),
             "dispatch_mode": tick_result.get("dispatch_mode"),
         }
@@ -161,6 +237,8 @@ def run_controller_tick(
             "queue_total": q_metrics.get("total", 0),
             "queue_pending": q_metrics.get("pending", 0),
             "queue_revalidated": q_metrics.get("revalidated", 0),
+            "queue_claimed": q_metrics.get("claimed", 0),
+            "queue_dlq": q_metrics.get("dlq", 0),
             "worker_runs": w_metrics.get("run_count", 0),
             "worker_errors": w_metrics.get("error_count", 0),
         }
@@ -177,11 +255,19 @@ def run_controller_tick(
         if writer:
             try:
                 import asyncio
-                evidence_refs = []
-                # Write runs.jsonl as evidence
-                runs_path = config.data_dir / "alpha_revalidation_runs.jsonl"
-                if runs_path.exists():
-                    evidence_refs.append(str(runs_path))
+                evidence_refs: list[str] = []
+                for receipt in tick_result.get("authority_receipts", []):
+                    task_ref = (
+                        "research-authority://experiment-tasks/"
+                        f"{receipt['authority_task_id']}"
+                    )
+                    run_ref = (
+                        "research-authority://experiment-runs/"
+                        f"{receipt['authority_run_id']}"
+                    )
+                    for evidence_ref in (task_ref, run_ref):
+                        if evidence_ref not in evidence_refs:
+                            evidence_refs.append(evidence_ref)
                 
                 asyncio.run(writer.record_success(
                     loop_id=loop_id,

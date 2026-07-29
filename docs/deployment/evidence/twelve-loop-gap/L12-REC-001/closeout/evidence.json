@@ -1,0 +1,402 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-REC-001 product-level owner closeout gate.",
+    "note": "Closeout manifest over the merged reconciliation implementation, independently approved technical receipt, and owner post-refresh validation.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Append-only after the closeout manifest PR merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T11:41:33Z",
+    "evidence_cut_semantics": "Owner closeout over independently approved repository and product-test proof; no hosted activation, deployment restart, runtime mutation, or live-capital authority is claimed.",
+    "id": "L12-REC-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Reconciliation",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-REC-001",
+    "title": "Harden reconciliation scheduling, storage, and recovery"
+  },
+  "authorities": {
+    "actual_state": [
+      "tenant-scoped reconciliation records and DriftReports",
+      "scheduler logical-window claims and receipts",
+      "consumer pending, completed, dead-letter, and lease checkpoints",
+      "telemetry runtime summaries and IncidentCase correlation"
+    ],
+    "desired_state": [
+      "reconciliation policy",
+      "incident trigger",
+      "scheduled observation window"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-REC-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Reconciliation owns evaluations, alert handoffs, ReconciliationRecords, DriftReports, work claims, and worker checkpoints; Incidents remains incident owner and reconciliation remains advisory.",
+    "composes_with": [
+      "L12-MANIFEST-001 hosted token, tenant, SLA, timeout, and lease activation",
+      "later hosted twelve-loop verification",
+      "PR #4150"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_rec_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/reconciliation-drift/README.md",
+      "services/reconciliation-drift/consumer.py",
+      "services/reconciliation-drift/incident_listener.py",
+      "services/reconciliation-drift/main.py",
+      "services/reconciliation-drift/scheduler_worker.py",
+      "services/reconciliation-drift/store.py",
+      "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_store.py"
+    ],
+    "not_changing": "Telemetry source ownership, IncidentCase write ownership, emergency control behavior, shared deployment manifests, hosted credentials, runtime mutation, broker authority, or live capital.",
+    "owned_layer": "Durable tenant-scoped reconciliation storage, leased scheduler and consumer recovery, authenticated reconciliation API boundary, and incident-correlation transport"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged",
+        "sha": "9948a1da6be9969df7ce7c052ac64c5214189360",
+        "subject": "L12-REC-001: anchor durable reconciliation claims"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "e175b29c71b73caa10eb1b2e35c46a4f3bc168f7",
+        "subject": "L12-REC-001: anchor leased reconciliation workers"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "23959c7ae2816067fa2a605397cd936f7e2e8eeb",
+        "subject": "L12-REC-001: anchor rejected acceptance regressions"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "f4d9a84d5c79b1669f260f25fd428054e65d45d2",
+        "subject": "L12-REC-001: anchor tenant-safe consumer recovery"
+      },
+      {
+        "delivery_state": "merged",
+        "sha": "6cf8bd604af9a0919971bc93774cc545bd0fcbd9",
+        "subject": "L12-REC-001: record approved closeout evidence"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "ff5590369728235d998d261691effc1b5003d2c2",
+      "merge_sha": "917d281ae10b0426dae0667cf452b2d64263777f",
+      "merged_at": "2026-07-26T11:32:39Z",
+      "number": 4150,
+      "url": "https://github.com/ajoe734/pantheon/pull/4150"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff5590369728235d998d261691effc1b5003d2c2",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30200282591,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30200282591",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "ff5590369728235d998d261691effc1b5003d2c2",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30200281479,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30200281479",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/main.py services/reconciliation-drift/consumer.py services/reconciliation-drift/scheduler_worker.py services/reconciliation-drift/incident_listener.py",
+        "conclusion": "exit 0 after refreshing the task branch with current dev",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/reconciliation-drift/tests",
+        "conclusion": "98 passed, 1 known Starlette TestClient/httpx deprecation warning in 29.81s",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/foundation/tests/test_control_plane_postgres_owner_stores.py services/foundation/tests/test_persistence_posture.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+        "conclusion": "26 passed in 3.98s",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m ruff check --select F,E9 services/reconciliation-drift/store.py services/reconciliation-drift/main.py services/reconciliation-drift/consumer.py services/reconciliation-drift/scheduler_worker.py services/reconciliation-drift/incident_listener.py services/reconciliation-drift/tests/test_l12_rec_001_hardening.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py",
+        "conclusion": "All checks passed with Ruff 0.16.0",
+        "result": "pass"
+      },
+      {
+        "command": "sha256sum -c evidence.sha256 and jq closeout assertions",
+        "conclusion": "technical receipt checksum and task/review/acceptance assertions passed",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T11:30:34Z",
+    "validated_base_sha": "e62a1e047c5a43f6a15ad25bf08c9f06bc843936",
+    "validated_head_sha": "ff5590369728235d998d261691effc1b5003d2c2"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or restart is part of L12-REC-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "Token authentication, exact tenant matching, and tenant-filtered reads are mandatory when strict mode is selected; missing hosted wiring remains unactivated rather than silently claimed.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_reconciliation_service",
+    "publish_cut": {
+      "reason": "Hosted activation is explicitly delegated to L12-MANIFEST-001.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "activation_boundary": "L12-MANIFEST-001 remains responsible for hosted token, tenant, SLA, timeout, and lease configuration.",
+      "controller_liveness": "Deterministic scheduler and consumer acceptance proves measured SLA, lease contention, stale-owner fencing, durable checkpoints, fail-closed corrupt-state health, and bounded retry/dead-letter recovery before activation.",
+      "mode": "deterministic service acceptance before manifest activation",
+      "observed_at": "2026-07-26T11:30:34Z",
+      "status": "pass",
+      "terminal_readback": "Completed scheduler windows and tenant/event consumer receipts are read from durable authority; replay returns the accepted DriftReport without repeating incident classification."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Two schedulers contend for one tenant/window claim and perform one dependency read and evaluation; the competing request is deferred.",
+        "Two consumers contend for one tenant/event claim and perform one report build and incident classification, while equal external event IDs for two tenants each deliver independently."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Malformed, truncated, duplicate-key, non-standard-constant, and unsupported worker state fails closed without overwriting source bytes.",
+        "Missing bearer identity, missing tenant identity, payload tenant mismatch, cross-tenant incident correlation, and foreign-tenant legacy fallback all fail closed."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Incident-triggered evaluation preserves tenant_id, incident_id, source_event_id, binding and runtime identity, telemetry event IDs, and trigger reason.",
+        "Scheduler retries preserve tick_id and window_id, and completed receipts expose measured duration, SLA, and terminal status."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "After lease expiry and successor acquisition, stale save and release attempts cannot alter the successor token or checkpoint, including reuse of the same worker ID.",
+        "Timeout retry preserves the logical window; expired and failed claims recover; pending and dead-letter delivery state survives worker replacement without duplicate incident side effects."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Reconciliation remains advisory and cannot mutate runtime, emergency-control, broker, or capital state.",
+        "A stale lease token cannot complete or release recovered work; failed delivery remains visible for bounded retry or explicit dead-letter replay."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only repository behavior, deterministic service acceptance, merged CI, and evidence were exercised; hosted activation remains outside this task.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "Service-to-service token authentication is in scope; interactive operator MFA policy is unchanged.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Reconciliation remains advisory and adds no broker, allocation, runtime-mutation, or live-capital authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "The strict internal API boundary requires a configured bearer token and authenticated tenant; no operator or mutation role is introduced.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Tenant identity participates in JSON/Postgres storage keys, consumer delivery identity, authenticated payload validation, filtered reads, and exact-tenant legacy fallback.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex and independent reviewer Codex2 remained distinct; Codex2 approved ba5090aa558455aabd2afe39a30cf22be077b32e after rerunning rejected regressions and adjacent suites.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_scheduled_response_measures_configured_sla_and_persists_worker_state",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_scheduler_window_is_deterministic_and_timeout_retry_preserves_identity"
+      ],
+      "id": "AC1",
+      "statement": "Scheduled reconciliation completes within a measured configurable SLA.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_two_scheduler_requests_cannot_execute_one_window_concurrently",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_two_consumer_requests_cannot_duplicate_report_or_incident",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_consumer_checkpoint_and_release_reject_stale_lease_token"
+      ],
+      "id": "AC2",
+      "statement": "Two schedulers or consumers cannot duplicate one logical window or overwrite a successor checkpoint.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_reconciliation_drift_store.py",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_store.py::test_tenant_records_with_same_external_id_do_not_overwrite_each_other",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_consumer_delivery_identity_is_tenant_plus_event",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_json_legacy_raw_key_fallback_requires_exact_tenant",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_postgres_legacy_raw_key_fallback_requires_exact_tenant"
+      ],
+      "id": "AC3",
+      "statement": "Records, DriftReports, and worker state are authoritative durable tenant-scoped state.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_corrupt_consumer_state_fails_closed_and_active_lease_defers_peer",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_store.py::test_work_claim_identity_is_tenant_scoped_and_corruption_fails_closed"
+      ],
+      "id": "AC4",
+      "statement": "Corrupt worker and work-claim state fails closed and cannot be silently overwritten.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_consumer_checkpoint_and_release_reject_stale_lease_token",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_two_consumer_requests_cannot_duplicate_report_or_incident",
+        "services/reconciliation-drift/tests/test_l12_rec_001_hardening.py::test_scheduler_window_is_deterministic_and_timeout_retry_preserves_identity"
+      ],
+      "id": "AC5",
+      "statement": "Retry, dead-letter replay, dependency restart, and lease takeover recover without duplicate incidents.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "hosted_activation_pending": {
+      "blocking_for_this_task": false,
+      "containment": "The service does not claim strict hosted mode until token, tenant, SLA, timeout, and lease configuration is supplied; strict mode fails closed on missing identity.",
+      "description": "The selected hosted manifest has not yet activated the reconciled authentication and scheduling settings.",
+      "expiry": "L12-MANIFEST-001 completion.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "Before hosted reconciliation activation.",
+      "severity": "medium"
+    },
+    "hosted_product_drill": {
+      "blocking_for_this_task": false,
+      "containment": "Repository acceptance proves deterministic scheduling, durability, lease fencing, tenant isolation, corruption handling, and recovery without claiming hosted success.",
+      "description": "A later twelve-loop verification slice must exercise the merged service against current replacement-dev dependencies.",
+      "expiry": "Hosted twelve-loop verification completion.",
+      "owner": "Twelve-loop verification",
+      "recheck_trigger": "After L12-MANIFEST-001 activation.",
+      "severity": "informational"
+    },
+    "json_shared_path_topology": {
+      "blocking_for_this_task": false,
+      "containment": "fcntl serialization, strict reads, atomic replace, file fsync, and directory fsync protect processes sharing one POSIX authority; Postgres mode supplies the distributed owner store.",
+      "description": "JSON-mode cross-process fencing assumes replicas share one POSIX data path.",
+      "expiry": "Before JSON mode is used across independent hosts.",
+      "owner": "Reconciliation",
+      "recheck_trigger": "Any topology change from a shared POSIX path to independent-host JSON replicas.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json",
+    "normalized_hosted_readback": {
+      "controller_liveness": "deterministic SLA, lease fencing, durable checkpoint, corruption, retry, and dead-letter acceptance passed",
+      "hosted_activation_claimed": false,
+      "pr_4150_merged_to_dev": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "approved_task_brief": "4750adec2b5dd3e25250f1fd59f5ce5f17cedccc6ca376b7647312dcd9d3d377",
+      "reviewed_technical_receipt": "eb1a60c23f478bbb3f19fbb5c71a7252639e7003619eceaae5d3c2a8e6ec81f1"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T10:44:55Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/evidence.json",
+      "sequence": 1,
+      "sha": "8057cde8a06991d3b328a780890a596fd5a5a675",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T11:05:17Z",
+      "reference": ".orchestrator/task-briefs/l12_rec_001.md",
+      "sequence": 2,
+      "sha": "ba5090aa558455aabd2afe39a30cf22be077b32e",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T11:41:33Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4150",
+      "sequence": 3,
+      "sha": "917d281ae10b0426dae0667cf452b2d64263777f",
+      "status": "pass"
+    }
+  ]
+}

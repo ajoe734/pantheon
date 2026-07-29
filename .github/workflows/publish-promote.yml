@@ -1,7 +1,7 @@
 name: Publish Promote
 
 # Opens a `publish/<VER>` → `master` PR once the publish snapshot has soaked
-# in staging for `wave_workflow.promote.soak_days` days and no `regression/*`
+# in staging for `branch_workflow.promote.soak_days` days and no `regression/*`
 # label is set. Cron runs hourly; also triggered on `release/v*` tag push.
 
 on:
@@ -18,6 +18,8 @@ on:
         type: string
 
 permissions:
+  actions: write
+  checks: read
   contents: write
   pull-requests: write
   issues: read
@@ -47,6 +49,7 @@ jobs:
       - name: Discover candidates
         id: discover
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           args=(discover --github-output "$GITHUB_OUTPUT")

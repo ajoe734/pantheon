@@ -60,6 +60,90 @@ class GitHubBusCommandTests(unittest.TestCase):
             actor="Claude",
         )
 
+    def test_apply_bus_command_retry_uses_human_ops_actor(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "LIN-001",
+                    "status": "blocked",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "waiting_for": "Human/Ops",
+                    "next": "waiting for operator retry",
+                }
+            ]
+        }
+        command = GitHubCommand(verb="retry", target="LIN-001", raw="/retry LIN-001")
+
+        with (
+            mock.patch.object(github_bus, "run_ai_status") as run_ai_status,
+            mock.patch.object(github_bus, "queue_resume_for_task", return_value=True) as queue_resume,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed, reply = github_bus.apply_bus_command(
+                self.config,
+                self.bus_state,
+                status,
+                "ajoe734/pantheon",
+                command,
+                "ajoe734",
+                issue_number=4,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(reply, "Queued retry for `LIN-001`.")
+        run_ai_status.assert_called_once_with(
+            "reopen",
+            "LIN-001",
+            "GitHub retry requested via issue #4 by @ajoe734.",
+            actor="Human/Ops",
+        )
+        queue_resume.assert_called_once_with(self.config, status["tasks"][0])
+
+    def test_queue_resume_marks_github_retry_as_isolated_task_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            queue_path = root / "event-queue.jsonl"
+            activity_path = root / "activity-log.jsonl"
+            config = {
+                "paths": {
+                    "event_queue": str(queue_path),
+                    "activity_log": str(activity_path),
+                },
+                "agents": {
+                    "codex": {
+                        "id": "codex",
+                        "display_name": "Codex",
+                        "provider": "codex",
+                    }
+                },
+            }
+            task = {
+                "id": "OPS-RETRY-001",
+                "owner": "Codex",
+                "artifacts": [".orchestrator/supervisor.py"],
+                "next": "retry",
+            }
+            with (
+                mock.patch.object(github_bus, "render_wakeup_message", return_value="wake"),
+                mock.patch.object(
+                    github_bus,
+                    "execution_context_files",
+                    return_value=["AI_COLLABORATION_GUIDE.md"],
+                ),
+                mock.patch.object(github_bus, "write_activity_log"),
+            ):
+                queued = github_bus.queue_resume_for_task(config, task)
+
+            events = github_bus.load_jsonl(queue_path)
+
+        self.assertTrue(queued)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["reason"], "github_retry")
+        self.assertEqual(events[0]["metadata"]["workspace_task_id"], "OPS-RETRY-001")
+        self.assertTrue(events[0]["metadata"]["require_isolated_worktree"])
+        self.assertEqual(events[0]["metadata"]["explicit_retry_source"], "github_bus")
+
     def test_poll_pr_reviews_approved_uses_reviewer_approval(self) -> None:
         status = {
             "tasks": [
@@ -230,12 +314,17 @@ class GitHubBusCommandTests(unittest.TestCase):
     def test_upsert_review_pr_create_uses_create_label_flags(self) -> None:
         config = {
             "github_bus": {
+                "repo": "ajoe734/pantheon",
                 "default_branch": "master",
                 "auto_request_reviewers": True,
                 "reviewers": {"Claude": ["ajoe734"]},
                 "labels": {"review": ["pantheon-bus", "pantheon-review"]},
                 "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
-            }
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
         }
         bus_state = {"tasks": {}}
         status = {
@@ -255,11 +344,10 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=[]),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "branch_has_diff", return_value=True),
-            mock.patch.object(github_bus, "find_existing_pr", return_value=None),
             mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
             mock.patch.object(
                 github_bus,
@@ -279,14 +367,21 @@ class GitHubBusCommandTests(unittest.TestCase):
         args = run_gh.call_args.args[0]
         self.assertIn("--label", args)
         self.assertNotIn("--add-label", args)
+        self.assertEqual(args[args.index("--base") + 1], "dev")
+        self.assertEqual(args[args.index("--head") + 1], "task/LIN-001")
 
     def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
         config = {
             "github_bus": {
+                "repo": "ajoe734/pantheon",
                 "default_branch": "master",
                 "labels": {"review": ["pantheon-bus", "pantheon-review"]},
                 "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
-            }
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
         }
         bus_state = {"tasks": {}}
         status = {
@@ -306,9 +401,9 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists", return_value=False),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=[]),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None),
             mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
@@ -316,16 +411,21 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertTrue(changed)
         entry = bus_state["tasks"]["LIN-001"]["review_pr"]
         self.assertEqual(entry["state"], "skipped_unpublished_branch")
-        self.assertEqual(entry["branch"], "feature/lin-001")
+        self.assertEqual(entry["branch"], "task/LIN-001")
         self.assertEqual(entry["head_sha"], "abc123")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "github_review_pr_skipped")
 
     def test_upsert_review_pr_skips_recent_remote_recheck_for_unpublished_branch(self) -> None:
         config = {
             "github_bus": {
+                "repo": "ajoe734/pantheon",
                 "default_branch": "master",
                 "unpublished_branch_recheck_seconds": 300,
-            }
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
         }
         status = {
             "agents": [{"name": "Codex", "branch": "feature/lin-001"}],
@@ -339,13 +439,13 @@ class GitHubBusCommandTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
         }
-        skip_hash = '{"base": "master", "branch": "feature/lin-001", "head_sha": "abc123", "state": "skipped_unpublished_branch", "task_id": "LIN-001"}'
+        skip_hash = '{"base": "dev", "branch": "task/LIN-001", "head_sha": "abc123", "state": "skipped_unpublished_branch", "task_id": "LIN-001"}'
         bus_state = {
             "tasks": {
                 "LIN-001": {
                     "review_pr": {
                         "title": "[ReviewBus] LIN-001 Lineage task",
-                        "branch": "feature/lin-001",
+                        "branch": "task/LIN-001",
                         "state": "skipped_unpublished_branch",
                         "head_sha": "abc123",
                         "last_remote_branch_check_at": github_bus.utc_now(),
@@ -356,21 +456,26 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists") as remote_branch_exists,
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=[]),
+            mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
 
         self.assertFalse(changed)
-        remote_branch_exists.assert_not_called()
+        remote_branch_head_sha.assert_not_called()
 
     def test_upsert_review_pr_rechecks_unpublished_branch_after_ttl(self) -> None:
         config = {
             "github_bus": {
+                "repo": "ajoe734/pantheon",
                 "default_branch": "master",
                 "unpublished_branch_recheck_seconds": 300,
-            }
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
         }
         status = {
             "agents": [{"name": "Codex", "branch": "feature/lin-001"}],
@@ -384,13 +489,13 @@ class GitHubBusCommandTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
         }
-        skip_hash = '{"base": "master", "branch": "feature/lin-001", "head_sha": "abc123", "state": "skipped_unpublished_branch", "task_id": "LIN-001"}'
+        skip_hash = '{"base": "dev", "branch": "task/LIN-001", "head_sha": "abc123", "state": "skipped_unpublished_branch", "task_id": "LIN-001"}'
         bus_state = {
             "tasks": {
                 "LIN-001": {
                     "review_pr": {
                         "title": "[ReviewBus] LIN-001 Lineage task",
-                        "branch": "feature/lin-001",
+                        "branch": "task/LIN-001",
                         "state": "skipped_unpublished_branch",
                         "head_sha": "abc123",
                         "last_remote_branch_check_at": "2026-04-22T00:00:00Z",
@@ -401,14 +506,383 @@ class GitHubBusCommandTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(github_bus, "branch_exists", return_value=True),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists", return_value=False) as remote_branch_exists,
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=[]),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None) as remote_branch_head_sha,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
 
         self.assertFalse(changed)
-        remote_branch_exists.assert_called_once_with("feature/lin-001")
+        remote_branch_head_sha.assert_called_once_with("task/LIN-001")
+
+    def test_delivery_base_uses_dev_workflow_instead_of_legacy_master(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+            },
+        }
+
+        self.assertEqual(
+            github_bus.delivery_base_branch(config, "ajoe734/pantheon"),
+            "dev",
+        )
+
+    def test_review_branch_is_exact_task_branch_not_agent_or_current_branch(self) -> None:
+        config = {
+            "branch_workflow": {
+                "task_branch_prefix": "task/",
+            }
+        }
+        status = {
+            "agents": [{"name": "Codex", "branch": "feature/shared-owner-branch"}],
+        }
+        task = {
+            "id": "LIN-001",
+            "owner": "Codex",
+        }
+
+        branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(branch, "task/LIN-001")
+
+    def test_upsert_review_pr_binds_exact_merged_dev_evidence(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+        bus_state = {"tasks": {}}
+        task = {
+            "id": "OPS-EXACT-001",
+            "title": "Exact merged evidence",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        candidates = [
+            {
+                "number": 4018,
+                "title": "[ReviewBus] OPS-EXACT-001 Exact merged evidence",
+                "url": "https://github.com/ajoe734/pantheon/pull/4018",
+                "state": "CLOSED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "c6784286",
+                "baseRefName": "master",
+                "mergedAt": None,
+                "mergeCommit": None,
+            },
+            {
+                "number": 4017,
+                "title": "OPS-EXACT-001: implement exact evidence",
+                "url": "https://github.com/ajoe734/pantheon/pull/4017",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "c6784286",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T00:21:18Z",
+                "mergeCommit": {"oid": "f4f5f8fc"},
+            },
+        ]
+
+        with (
+            mock.patch.object(github_bus, "branch_head_sha", return_value="c6784286"),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value="c6784286",
+            ) as remote_branch_head_sha,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        evidence = bus_state["tasks"]["OPS-EXACT-001"]["review_pr"]
+        self.assertEqual(evidence["number"], 4017)
+        self.assertEqual(evidence["state"], "merged")
+        self.assertEqual(evidence["base_branch"], "dev")
+        self.assertEqual(evidence["head_sha"], "c6784286")
+        self.assertEqual(evidence["merge_commit"], "f4f5f8fc")
+        self.assertEqual(evidence["evidence_kind"], "merged_task_pr")
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "github_review_pr_bound",
+        )
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
+        run_gh.assert_not_called()
+
+    def test_upsert_review_pr_uses_unique_merged_head_when_local_ref_is_stale(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+        bus_state = {"tasks": {}}
+        task = {
+            "id": "OPS-EXACT-001",
+            "title": "Exact merged evidence",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        candidates = [
+            {
+                "number": 4024,
+                "title": "OPS-EXACT-001: implement exact evidence",
+                "url": "https://github.com/ajoe734/pantheon/pull/4024",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "updated-pr-head",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T01:17:51Z",
+                "mergeCommit": {"oid": "merged-to-dev"},
+            }
+        ]
+
+        with (
+            mock.patch.object(github_bus, "branch_head_sha", return_value="stale-local-head"),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value=None,
+            ) as remote_branch_head_sha,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        evidence = bus_state["tasks"]["OPS-EXACT-001"]["review_pr"]
+        self.assertEqual(evidence["number"], 4024)
+        self.assertEqual(evidence["head_sha"], "updated-pr-head")
+        self.assertEqual(evidence["merge_commit"], "merged-to-dev")
+        self.assertEqual(evidence["evidence_kind"], "merged_task_pr")
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
+        run_gh.assert_not_called()
+
+    def test_upsert_review_pr_uses_published_head_for_latest_merged_followup(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+        bus_state = {"tasks": {}}
+        task = {
+            "id": "OPS-EXACT-001",
+            "title": "Exact merged evidence",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        candidates = [
+            {
+                "number": 4024,
+                "title": "OPS-EXACT-001: initial delivery",
+                "url": "https://github.com/ajoe734/pantheon/pull/4024",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "initial-pr-head",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T01:17:51Z",
+                "mergeCommit": {"oid": "initial-dev-merge"},
+            },
+            {
+                "number": 4027,
+                "title": "OPS-EXACT-001: follow-up delivery",
+                "url": "https://github.com/ajoe734/pantheon/pull/4027",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "followup-pr-head",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T01:45:35Z",
+                "mergeCommit": {"oid": "followup-dev-merge"},
+            },
+        ]
+
+        with (
+            mock.patch.object(github_bus, "branch_head_sha", return_value="stale-local-head"),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value="followup-pr-head",
+            ) as remote_branch_head_sha,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        evidence = bus_state["tasks"]["OPS-EXACT-001"]["review_pr"]
+        self.assertEqual(evidence["number"], 4027)
+        self.assertEqual(evidence["head_sha"], "followup-pr-head")
+        self.assertEqual(evidence["merge_commit"], "followup-dev-merge")
+        self.assertEqual(evidence["evidence_kind"], "merged_task_pr")
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
+        run_gh.assert_not_called()
+
+    def test_upsert_review_pr_fails_closed_when_explicit_head_mismatches_pr(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+        bus_state = {"tasks": {}}
+        task = {
+            "id": "OPS-EXACT-001",
+            "title": "Exact merged evidence",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "github": {"head_sha": "expected-task-head"},
+        }
+        candidates = [
+            {
+                "number": 4024,
+                "title": "OPS-EXACT-001: stale evidence",
+                "url": "https://github.com/ajoe734/pantheon/pull/4024",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "different-task-head",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T01:17:51Z",
+                "mergeCommit": {"oid": "merged-to-dev"},
+            }
+        ]
+
+        with (
+            mock.patch.object(github_bus, "branch_head_sha", return_value="stale-local-head"),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
+            mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        evidence = bus_state["tasks"]["OPS-EXACT-001"]["review_pr"]
+        self.assertEqual(evidence["state"], "skipped_head_mismatch")
+        self.assertEqual(evidence["evidence_kind"], "fail_closed")
+        self.assertIn("different-task-head", evidence["diagnostic"])
+        self.assertEqual(evidence["candidates"][0]["head_sha"], "different-task-head")
+        remote_branch_head_sha.assert_not_called()
+        run_gh.assert_not_called()
+
+    def test_upsert_review_pr_fails_closed_on_legacy_base_mismatch(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+        bus_state = {"tasks": {}}
+        task = {
+            "id": "OPS-EXACT-001",
+            "title": "Exact merged evidence",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        candidates = [
+            {
+                "number": 4018,
+                "title": "[ReviewBus] OPS-EXACT-001 Exact merged evidence",
+                "url": "https://github.com/ajoe734/pantheon/pull/4018",
+                "state": "CLOSED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "c6784286",
+                "baseRefName": "master",
+                "mergedAt": None,
+                "mergeCommit": None,
+            }
+        ]
+
+        with (
+            mock.patch.object(github_bus, "branch_head_sha", return_value="c6784286"),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value="c6784286",
+            ) as remote_branch_head_sha,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        evidence = bus_state["tasks"]["OPS-EXACT-001"]["review_pr"]
+        self.assertEqual(evidence["state"], "skipped_base_mismatch")
+        self.assertEqual(evidence["base_branch"], "dev")
+        self.assertEqual(evidence["evidence_kind"], "fail_closed")
+        self.assertIn("#4018 -> master", evidence["diagnostic"])
+        self.assertIn("synthetic integration PR", evidence["diagnostic"])
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "github_review_pr_skipped",
+        )
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
+        run_gh.assert_not_called()
 
 
 class GitHubBusProcessTests(unittest.TestCase):

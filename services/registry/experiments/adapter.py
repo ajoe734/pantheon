@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 PRIMARY_BACKEND = "mlflow"
-MLFLOW_VERSION_PIN = "3.10.1"
+MLFLOW_VERSION_PIN = "3.11.1"
 WANDB_LOCAL_STORE_VERSION = "offline-local-store-v1"
 WANDB_SDK_MIN_VERSION = "wandb>=0.16.0"
 TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"

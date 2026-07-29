@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "AG-COMPAT-001-BE",
+  "archived_at": "2026-07-23T01:32:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-COMPAT-001-BE.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-COMPAT-001-BE.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/control-plane/specs/agora",
+      "services/control-plane/openapi",
+      "docs/contracts/agora"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "AG-PERF-TRUTH-001-BE",
+      "AG-CAND-TRUTH-001-BE",
+      "AG-WS-OPS-002"
+    ],
+    "fleet_lane": "agora-compat-backend",
+    "id": "AG-COMPAT-001-BE",
+    "last_update": "2026-07-23T01:32:48Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: Agora v1.13 backend bundle and pending frontend handoff merged in PR #4001 (6c52600df); closeout record merged in PR #4003 (b87f3d711); bundle/check and verify passed; owner suite 37 passed, 2 skipped, 0 failed; reviewer independently recorded 54 passed, 5 skipped, 0 failed and 42 exact-byte bindings.",
+    "owner": "Codex",
+    "phase": "Agora Compatibility / Wave 2 backend bundle",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "review_notes_zh": [
+      "v1.13 bundle/OpenAPI/handoff 驗證通過：determinism、exact-byte hash、ancestry、11 route 實作、pending compatibility 均獨立複驗",
+      "compatibility 維持 pending，待 AG-COMPAT-001-FE 提供 FE evidence，accepted manifest 歸 AG-COMPAT-002-GATE"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-COMPAT-001-BE.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "彙整 performance/candidate/workshop 新契約，重產 additive bundle、OpenAPI 與 deterministic hashes，提供 FE generator input；在 FE evidence 前維持 pending。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Regenerate complete Agora backend contract bundle",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-23T01:32:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-compat-001-be",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-COMPAT-001-BE",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "64edcc93f3d66092c78002590cc41e872654424e",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-compat-001-be",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "8a44a915b203f1d8817f9f1492710a9b835aec72",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-COMPAT-001-BE",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b87f3d711e2b8479ce7d68fe8a6228dbe5a2bfe7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-23T01:13:03Z",
+      "from": "Codex",
+      "message": "Agora v1.13 backend bundle and deterministic FE input are ready for review on task/AG-COMPAT-001-BE. Contract anchor 9e909de182f9f2379d23e8e6b81eefec29ffbce7; runtime 6e08b040eebd2c317a9b44741d8badbf878e26ad; handoff docs/contracts/agora/backend-generation-input.v1_13.json. Validation: 37 passed, 2 DB-dependent skips; bundle/handoff exact-byte verification and post-dev-merge verification passed. Compatibility intentionally remains pending for AG-COMPAT-001-FE.",
+      "resolved_at": "2026-07-23T01:22:05Z",
+      "status": "done",
+      "task_id": "AG-COMPAT-001-BE",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-23T01:22:05Z",
+      "from": "Claude",
+      "message": "Reviewer verification: bundle --check and verify pass; two clean regenerations byte-identical; 42 exact-byte sha256 bindings match at HEAD and contract commit 9e909de18; runtime 6e08b040e is ancestor of contract commit and dev; all 11 v1.13 operations implemented at runtime commit with no 501 disposition on bundle routes; PR #4001 merged to dev (6c52600df) with dev-compatibility-manifest still agora.v1.8/pending and handoff compatibility pending; focused tests 54 passed 5 skipped 0 failed. Returned to owner Codex for closeout.",
+      "status": "done",
+      "task_id": "AG-COMPAT-001-BE",
+      "to": "Codex",
+      "resolved_at": "2026-07-23T01:32:48Z"
+    }
+  ],
+  "blockers": []
+}

@@ -15,6 +15,7 @@ import time
 import urllib.parse
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -120,6 +121,13 @@ def _record(source_id: str, token: str, *, access_scope: list[str] | None = None
     }
 
 
+def _run_scoped_connector_ids(run_id: str) -> dict[str, str]:
+    return {
+        kind: f"conn-bounded-{kind}-{run_id}"
+        for kind in ("static", "feed", "replay", "scheduled")
+    }
+
+
 def _assert_no_unrestricted_crawler() -> None:
     status, registry = _request_json("GET", f"{SOURCE_INGEST_URL}/api/source-ingest/registry")
     if status != 200:
@@ -139,7 +147,8 @@ def _assert_no_unrestricted_crawler() -> None:
 
 
 def main() -> int:
-    suffix = str(int(time.time()))
+    suffix = uuid.uuid4().hex
+    connector_ids = _run_scoped_connector_ids(suffix)
     token = f"bounded-smoke-{suffix}"
     future_timestamp = (datetime.now(timezone.utc) + timedelta(seconds=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -151,7 +160,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
         body={
-            "connector": _connector("conn-bounded-static", "Pantheon bounded static"),
+            "connector": _connector(connector_ids["static"], "Pantheon bounded static"),
             "fetch": {
                 "mode": "static_records",
                 "next_watermark": future_timestamp,
@@ -165,7 +174,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
         body={
-            "connector_id": "conn-bounded-static",
+            "connector_id": connector_ids["static"],
             "trace_id": f"trace-static-{suffix}",
             "trigger_type": "bounded_smoke_static",
         },
@@ -188,9 +197,10 @@ def main() -> int:
             "POST",
             f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
             body={
-                "connector": _connector("conn-bounded-feed", "Pantheon bounded external feed"),
+                "connector": _connector(connector_ids["feed"], "Pantheon bounded external feed"),
                 "fetch": {
                     "mode": "external_feed",
+                    "network_scope": "internal_service",
                     "url": feed_url,
                     "allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"],
                     "timeout_seconds": 5,
@@ -206,7 +216,7 @@ def main() -> int:
             "POST",
             f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
             body={
-                "connector_id": "conn-bounded-feed",
+                "connector_id": connector_ids["feed"],
                 "trace_id": f"trace-feed-{suffix}",
                 "trigger_type": "bounded_smoke_feed",
             },
@@ -246,7 +256,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
         body={
-            "connector": _connector("conn-bounded-replay", "Pantheon bounded replay"),
+            "connector": _connector(connector_ids["replay"], "Pantheon bounded replay"),
             "fetch": {
                 "mode": "static_records",
                 "next_watermark": future_timestamp,
@@ -262,7 +272,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/jobs",
         body={
-            "connector_id": "conn-bounded-replay",
+            "connector_id": connector_ids["replay"],
             "trace_id": f"trace-replay-{suffix}",
             "trigger_type": "bounded_smoke_failure",
         },
@@ -287,7 +297,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
         body={
-            "connector": _connector("conn-bounded-scheduled", "Pantheon bounded scheduled"),
+            "connector": _connector(connector_ids["scheduled"], "Pantheon bounded scheduled"),
             "fetch": {
                 "mode": "static_records",
                 "next_watermark": future_timestamp,
@@ -299,12 +309,16 @@ def main() -> int:
         raise RuntimeError(f"scheduled connector configuration failed: {status} {sched_config}")
     status, schedule = _request_json(
         "PUT",
-        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors/conn-bounded-scheduled/schedule",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors/{connector_ids['scheduled']}/schedule",
         body={"interval_seconds": 1, "enabled": True},
     )
     if status != 200 or schedule.get("schedule", {}).get("enabled") is not True:
         raise RuntimeError(f"schedule enable failed: {status} {schedule}")
-    status, scheduled_run = _request_json("POST", f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled")
+    status, scheduled_run = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled",
+        body={"exclusive_connector_ids": [connector_ids["scheduled"]]},
+    )
     if status != 200 or scheduled_run.get("summary", {}).get("total_ran") != 1:
         raise RuntimeError(f"frontier scheduled run failed: {status} {scheduled_run}")
     frontier_id = ((scheduled_run.get("ran") or [{}])[0].get("frontier") or {}).get("frontier_id")

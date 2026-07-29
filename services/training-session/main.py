@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from evaluation_authority import (
@@ -18,6 +19,15 @@ from evaluation_authority import (
     EvaluationAuthoritySnapshot,
     load_evaluation_authority,
     stable_json_sha256,
+)
+from inbound_authority import (
+    TrainingInboundAuthority,
+    TrainingInboundAuthorityError,
+    authenticate_training_request,
+    authority_configuration_health,
+    current_authority,
+    reset_current_authority,
+    set_current_authority,
 )
 from services.knowledge.evidence.runtime_log import RuntimeEvidenceLog
 from services.foundation.health import register_fastapi_health_routes
@@ -69,12 +79,55 @@ def _data_dir() -> str:
 
 def _session_id(timestamp: str, existing: set[str]) -> str:
     prefix = timestamp[:10].replace("-", "")
-    index = len(existing) + 1
-    candidate = f"trn-{prefix}-{index:03d}"
+    candidate = f"trn-{prefix}-{uuid.uuid4().hex[:12]}"
     while candidate in existing:
-        index += 1
-        candidate = f"trn-{prefix}-{index:03d}"
+        candidate = f"trn-{prefix}-{uuid.uuid4().hex[:12]}"
     return candidate
+
+
+def _request_authority() -> TrainingInboundAuthority:
+    try:
+        return current_authority()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail="training authority context is unavailable") from exc
+
+
+def _tenant_id_for(record: Dict[str, Any]) -> str:
+    tenant_id = str(record.get("tenant_id") or "").strip()
+    if tenant_id:
+        return tenant_id
+    return _request_authority().tenant_id
+
+
+def _require_tenant_record(record: Dict[str, Any], not_found_detail: str) -> Dict[str, Any]:
+    if str(record.get("tenant_id") or "").strip() != _request_authority().tenant_id:
+        # Deliberately return 404 so callers cannot enumerate another tenant's
+        # session, job, preview, controls, or replay identifiers.
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    return record
+
+
+def _tenant_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    tenant_id = _request_authority().tenant_id
+    return [
+        record
+        for record in records
+        if str(record.get("tenant_id") or "").strip() == tenant_id
+    ]
+
+
+def _trusted_actor_id(declared_actor_id: Optional[str] = None) -> str:
+    authority = _request_authority()
+    if authority.token_kind == "test-disabled":
+        return str(declared_actor_id or "").strip() or authority.actor_id
+    trusted = authority.delegated_actor_id or authority.actor_id
+    declared = str(declared_actor_id or "").strip()
+    if declared and declared not in {"operator", trusted}:
+        raise HTTPException(
+            status_code=403,
+            detail="declared actor does not match the verified delegated actor",
+        )
+    return trusted
 
 
 def _next_event_id(timestamp: str, events: List[Dict[str, Any]], session_id: str) -> str:
@@ -222,6 +275,7 @@ def _teaching_event_payload(
 def _build_teaching_event(
     *,
     session_id: str,
+    tenant_id: str,
     event_id: str,
     event_type: str,
     actor: str,
@@ -253,6 +307,7 @@ def _build_teaching_event(
         {
             "event_id": event_id,
             "session_id": session_id,
+            "tenant_id": tenant_id,
             "actor": actor,
             "actor_type": actor_type or _actor_type_from_actor(actor),
             "actor_label": actor_label,
@@ -279,6 +334,7 @@ def _teaching_session_contract(session: Dict[str, Any]) -> Dict[str, Any]:
         "id": session.get("id") or session_id,
         "session_id": session_id,
         "persona_id": session.get("persona_id"),
+        "tenant_id": _tenant_id_for(session),
         "opened_by": session.get("opened_by") or session.get("operator_id") or "system",
         "mode": session.get("mode") or "coaching",
         "session_type": session.get("session_type") or "trainer",
@@ -357,20 +413,103 @@ class ReplayDecisionBody(BaseModel):
     decided_at: Optional[str] = None
 
 
-app = FastAPI(title="Pantheon Training Session Service", version="0.1.0")
+app = FastAPI(title="Pantheon Training Session Service", version="0.2.0")
 STORE_BACKEND = os.getenv("TRAINING_SESSION_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
 PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
+
+
+def _functional_health() -> Dict[str, Any]:
+    try:
+        results = store.list_functional_results()
+    except Exception as exc:  # noqa: BLE001 - health must degrade, never crash.
+        return {
+            "status": "error",
+            "result_count": 0,
+            "failure_count": 1,
+            "error": type(exc).__name__,
+        }
+    failures = [
+        result
+        for result in results
+        if str(result.get("status") or "").lower() not in {"ok", "passed", "completed"}
+    ]
+    return {
+        "status": "degraded" if failures else "ok",
+        "result_count": len(results),
+        "failure_count": len(failures),
+        "failures": failures[-10:],
+    }
+
+
+def _service_metrics() -> Dict[str, int]:
+    try:
+        return {
+            "session_count": len(store.list_sessions()),
+            "event_log_count": len(store.list_event_log()),
+        }
+    except Exception:  # noqa: BLE001 - the storage dependency carries detail.
+        return {"session_count": 0, "event_log_count": 0}
+
+
+def _record_functional_result(
+    operation: str,
+    *,
+    status: str,
+    detail: Dict[str, Any],
+) -> Dict[str, Any]:
+    authority = _request_authority()
+    return store.put_functional_result(
+        operation,
+        authority.tenant_id,
+        {
+            "status": status,
+            "checked_at": utc_now(),
+            "actor_service": authority.actor_service,
+            "detail": detail,
+        },
+    )
+
+
+@app.middleware("http")
+async def enforce_training_inbound_authority(request: Request, call_next):
+    if not request.url.path.startswith("/api/training/"):
+        return await call_next(request)
+    try:
+        authority = authenticate_training_request(
+            authorization=request.headers.get("Authorization"),
+            mfa_token=request.headers.get("X-MFA-Token"),
+            tenant_id=request.headers.get("X-Tenant-Id"),
+            actor_service=request.headers.get("X-Pantheon-Service"),
+            method=request.method,
+            path=request.url.path,
+            persistence_enforced=PERSISTENCE_POSTURE.enforced,
+        )
+    except TrainingInboundAuthorityError as exc:
+        return JSONResponse(exc.to_dict(), status_code=exc.status_code)
+    token = set_current_authority(authority)
+    try:
+        response = await call_next(request)
+        response.headers["X-Pantheon-Tenant"] = authority.tenant_id
+        return response
+    finally:
+        reset_current_authority(token)
+
+
 def get_store():
     return store
 register_fastapi_health_routes(
     app,
     "training-session",
-    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
-    metrics=lambda: {
-        "session_count": len(store.list_sessions()),
-        "event_log_count": len(store.list_event_log()),
+    dependencies=lambda: {
+        "persistence": PERSISTENCE_POSTURE.to_dict(),
+        "storage": store.storage_health(),
+        "inbound_authority": authority_configuration_health(
+            persistence_enforced=PERSISTENCE_POSTURE.enforced
+        ),
+        "functional": _functional_health(),
     },
+    metrics=_service_metrics,
     details=lambda: {
         "data_dir": _data_dir(),
         "store_backend": STORE_BACKEND,
@@ -381,18 +520,26 @@ register_fastapi_health_routes(
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    functional = _functional_health()
+    storage = store.storage_health()
+    metrics = _service_metrics()
     return {
-        "status": "ok",
+        "status": (
+            "ok"
+            if functional["status"] == "ok" and storage["status"] == "ok"
+            else "degraded"
+        ),
         "service": "training-session",
         "data_dir": _data_dir(),
-        "session_count": len(store.list_sessions()),
-        "event_log_count": len(store.list_event_log()),
+        **metrics,
+        "functional": functional,
+        "storage": storage,
     }
 
 
 @app.get("/api/training/sessions")
 def list_sessions(persona_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    sessions = store.list_sessions()
+    sessions = _tenant_records(store.list_sessions())
     if persona_id:
         sessions = [session for session in sessions if session.get("persona_id") == persona_id]
     if status:
@@ -402,6 +549,7 @@ def list_sessions(persona_id: Optional[str] = None, status: Optional[str] = None
 
 @app.post("/api/training/sessions", status_code=201)
 def create_session(body: CreateSessionBody) -> Dict[str, Any]:
+    authority = _request_authority()
     timestamp = body.created_at or utc_now()
     existing_ids = {str(session.get("session_id") or "") for session in store.list_sessions()}
     session_id = _session_id(timestamp, existing_ids)
@@ -409,6 +557,7 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
         "id": session_id,
         "session_id": session_id,
         "persona_id": body.persona_id,
+        "tenant_id": authority.tenant_id,
         "session_type": "trainer",
         "mode": body.mode,
         "objective": body.objective,
@@ -416,20 +565,28 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
         "status": "active",
         "started_at": timestamp,
         "ended_at": None,
-        "opened_by": body.actor_id,
+        "opened_by": _trusted_actor_id(body.actor_id),
         "current_control_state_ref": body.current_control_state_ref,
         "trace_id": body.trace_id or f"trace-{uuid.uuid4().hex[:12]}",
         "context_refs": body.context_refs,
-        "actor_context": {},
+        "actor_context": authority.actor_context(),
         "events": [],
         "outcomes": [],
     })
     store.put_session(session)
-    store.put_controls(session_id, {"session_id": session_id, "controls": []})
+    store.put_controls(
+        session_id,
+        {
+            "session_id": session_id,
+            "tenant_id": authority.tenant_id,
+            "controls": [],
+        },
+    )
     store.put_preview_bundle(
         session_id,
         {
             "session_id": session_id,
+            "tenant_id": authority.tenant_id,
             "evaluations": {},
             "preview": {
                 "eval_id": f"teval-{session_id.replace('trn-', '')}-001",
@@ -450,46 +607,54 @@ def get_session(session_id: str) -> Dict[str, Any]:
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
-    return session
+    return _require_tenant_record(session, "training session not found")
 
 
 @app.post("/api/training/sessions/{session_id}/events", status_code=201)
 def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="training session not found")
-    if str(session.get("status") or "").lower() != "active":
-        raise HTTPException(status_code=409, detail="training session is not active")
     timestamp = body.emitted_at or utc_now()
-    events = session.setdefault("events", [])
-    event_id = _next_event_id(timestamp, events, session_id)
-    sequence_number = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
-    event = _build_teaching_event(
-        session_id=session_id,
-        event_id=event_id,
-        event_type=body.event_type,
-        actor=body.actor,
-        actor_type=body.actor_type,
-        actor_label=body.actor_label,
-        message_body=body.message_body,
-        summary=body.summary,
-        timestamp=timestamp,
-        sequence_number=sequence_number,
-        outcome_signal=body.outcome_signal,
-        evidence_ref=body.evidence_ref,
-        patch_delta=body.patch_delta,
-        eval_ref=body.eval_ref,
-        artifact_refs=body.artifact_refs,
-        payload=body.payload,
-        correlation_id=body.correlation_id,
+    def build_event(session: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not session:
+            raise HTTPException(status_code=404, detail="training session not found")
+        _require_tenant_record(session, "training session not found")
+        if str(session.get("status") or "").lower() != "active":
+            raise HTTPException(status_code=409, detail="training session is not active")
+        events = session.get("events") if isinstance(session.get("events"), list) else []
+        event_id = _next_event_id(timestamp, events, session_id)
+        sequence_number = (
+            max((int(event.get("sequence_number") or 0) for event in events), default=0)
+            + 1
+        )
+        return _build_teaching_event(
+            session_id=session_id,
+            tenant_id=_tenant_id_for(session),
+            event_id=event_id,
+            event_type=body.event_type,
+            actor=_trusted_actor_id(body.actor),
+            actor_type=(
+                body.actor_type
+                if _request_authority().token_kind == "test-disabled"
+                else ("user" if _request_authority().delegated_actor_id else "service")
+            ),
+            actor_label=body.actor_label,
+            message_body=body.message_body,
+            summary=body.summary,
+            timestamp=timestamp,
+            sequence_number=sequence_number,
+            outcome_signal=body.outcome_signal,
+            evidence_ref=body.evidence_ref,
+            patch_delta=body.patch_delta,
+            eval_ref=body.eval_ref,
+            artifact_refs=body.artifact_refs,
+            payload=body.payload,
+            correlation_id=body.correlation_id,
+        )
+
+    session, event = store.append_session_event(
+        session_id,
+        build_event,
+        session_transform=_teaching_session_contract,
     )
-    events.append(event)
-    if body.outcome_signal:
-        outcomes = session.setdefault("outcomes", [])
-        if body.outcome_signal not in outcomes:
-            outcomes.append(body.outcome_signal)
-    store.put_session(session)
-    store.append_event(event)
     return {"accepted_at": timestamp, "event": event, "session": session}
 
 
@@ -498,12 +663,13 @@ def list_events(session_id: str) -> List[Dict[str, Any]]:
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
+    _require_tenant_record(session, "training session not found")
     return store.list_event_log(session_id)
 
 
 @app.get("/api/training/controls")
 def list_controls(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    records = store.list_controls()
+    records = _tenant_records(store.list_controls())
     if session_id:
         records = [record for record in records if record.get("session_id") == session_id]
     return records
@@ -514,7 +680,7 @@ def get_controls(session_id: str) -> Dict[str, Any]:
     record = store.get_controls(session_id)
     if not record:
         raise HTTPException(status_code=404, detail="trainer controls not found")
-    return record
+    return _require_tenant_record(record, "trainer controls not found")
 
 
 @app.post("/api/training/sessions/{session_id}/controls")
@@ -523,11 +689,16 @@ def patch_controls(session_id: str, body: PatchControlsBody) -> Dict[str, Any]:
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
+    _require_tenant_record(session, "training session not found")
     if str(session.get("status") or "").lower() != "active":
         raise HTTPException(status_code=409, detail="training session is not active")
 
     timestamp = body.patched_at or utc_now()
-    record = store.get_controls(session_id) or {"session_id": session_id, "controls": []}
+    record = store.get_controls(session_id) or {
+        "session_id": session_id,
+        "tenant_id": _tenant_id_for(session),
+        "controls": [],
+    }
     controls = list(record.get("controls") or [])
     by_key = {
         str(control.get("parameter_key") or ""): control
@@ -554,7 +725,14 @@ def patch_controls(session_id: str, body: PatchControlsBody) -> Dict[str, Any]:
     if field_errors:
         return {"session_id": session_id, "status": "rejected", "field_errors": field_errors, "current_controls": controls}
 
-    store.put_controls(session_id, {"session_id": session_id, "controls": controls})
+    store.put_controls(
+        session_id,
+        {
+            "session_id": session_id,
+            "tenant_id": _tenant_id_for(session),
+            "controls": controls,
+        },
+    )
     if updated:
         append_event(
             session_id,
@@ -571,7 +749,7 @@ def patch_controls(session_id: str, body: PatchControlsBody) -> Dict[str, Any]:
 
 @app.get("/api/training/previews")
 def list_previews(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    records = store.list_previews()
+    records = _tenant_records(store.list_previews())
     if session_id:
         records = [record for record in records if record.get("session_id") == session_id]
     return records
@@ -582,7 +760,7 @@ def get_preview(session_id: str) -> Dict[str, Any]:
     record = store.get_preview_bundle(session_id)
     if not record:
         raise HTTPException(status_code=404, detail="trainer preview not found")
-    return record
+    return _require_tenant_record(record, "trainer preview not found")
 
 
 def _runtime_evidence_log() -> RuntimeEvidenceLog:
@@ -653,6 +831,7 @@ def _persona_target_url(
     env_name: str,
     *,
     persona_id: str,
+    tenant_id: str = "",
     session_id: str,
     approval_decision_ref: str = "",
     generation: Optional[int] = None,
@@ -663,6 +842,7 @@ def _persona_target_url(
     try:
         return template.format(
             persona_id=quote(persona_id, safe=""),
+            tenant_id=quote(tenant_id, safe=""),
             session_id=quote(session_id, safe=""),
             approval_decision_ref=quote(approval_decision_ref, safe=""),
             generation="" if generation is None else generation,
@@ -692,13 +872,18 @@ def _read_target_precondition(
     trusted_now: datetime,
 ) -> Dict[str, Any]:
     persona_id = str(session.get("persona_id") or "").strip()
+    tenant_id = str(session.get("tenant_id") or "").strip()
     if not persona_id:
         raise PersonaTargetError("training session persona_id is required")
+    if not tenant_id:
+        raise PersonaTargetError("training session tenant_id is required")
     return read_persona_target_precondition(
         persona_id=persona_id,
+        tenant_id=tenant_id,
         persona_readback_url=_persona_target_url(
             "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
             persona_id=persona_id,
+            tenant_id=tenant_id,
             session_id=session_id,
         ),
         authorization_token=_persona_authority_token(),
@@ -721,7 +906,9 @@ def _parse_utc_timestamp(value: Any, label: str) -> datetime:
 
 
 def _canonical_controls(session_id: str) -> List[Dict[str, Any]]:
-    raw_controls = (store.get_controls(session_id) or {}).get("controls") or []
+    controls_record = store.get_controls(session_id) or {}
+    _require_tenant_record(controls_record, "trainer controls not found")
+    raw_controls = controls_record.get("controls") or []
     if not isinstance(raw_controls, list) or not raw_controls:
         raise AuthorityValidationError("candidate has no governed controls to evaluate")
     controls: List[Dict[str, Any]] = []
@@ -812,31 +999,47 @@ def _append_training_event(
     payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     session_id = str(session.get("session_id") or session.get("id") or "").strip()
-    events = session.setdefault("events", [])
-    event = _build_teaching_event(
-        session_id=session_id,
-        event_id=_next_event_id(timestamp, events, session_id),
-        event_type=event_type,
-        actor=actor,
-        actor_type=actor_type,
-        actor_label=actor_label,
-        summary=summary,
-        timestamp=timestamp,
-        sequence_number=max((int(item.get("sequence_number") or 0) for item in events), default=0) + 1,
-        outcome_signal=outcome_signal,
-        evidence_ref=evidence_ref,
-        patch_delta=patch_delta,
-        eval_ref=eval_ref,
-        artifact_refs=artifact_refs,
-        payload=payload,
+    def build_event(authoritative: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not authoritative:
+            raise HTTPException(status_code=404, detail="training session not found")
+        _require_tenant_record(authoritative, "training session not found")
+        events = (
+            authoritative.get("events")
+            if isinstance(authoritative.get("events"), list)
+            else []
+        )
+        return _build_teaching_event(
+            session_id=session_id,
+            tenant_id=_tenant_id_for(authoritative),
+            event_id=_next_event_id(timestamp, events, session_id),
+            event_type=event_type,
+            actor=actor,
+            actor_type=actor_type,
+            actor_label=actor_label,
+            summary=summary,
+            timestamp=timestamp,
+            sequence_number=(
+                max(
+                    (int(item.get("sequence_number") or 0) for item in events),
+                    default=0,
+                )
+                + 1
+            ),
+            outcome_signal=outcome_signal,
+            evidence_ref=evidence_ref,
+            patch_delta=patch_delta,
+            eval_ref=eval_ref,
+            artifact_refs=artifact_refs,
+            payload=payload,
+        )
+
+    stored_session, event = store.append_session_event(
+        session_id,
+        build_event,
+        session_transform=_teaching_session_contract,
     )
-    events.append(event)
-    if outcome_signal:
-        outcomes = session.setdefault("outcomes", [])
-        if outcome_signal not in outcomes:
-            outcomes.append(outcome_signal)
-    store.put_session(_teaching_session_contract(session))
-    store.append_event(event)
+    session.clear()
+    session.update(stored_session)
     return event
 
 
@@ -866,6 +1069,7 @@ def _build_preview_evaluation_proof(
     candidate_binding = {
         "session_id": session_id,
         "persona_id": preview.get("persona_id"),
+        "tenant_id": preview.get("tenant_id"),
         "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
         "controls_digest": controls_digest,
         "metrics_digest": metrics_digest,
@@ -883,6 +1087,7 @@ def _build_preview_evaluation_proof(
         "proof_ref": f"trainer-eval-proof:{session_id}:{eval_id}",
         "session_id": session_id,
         "persona_id": preview.get("persona_id"),
+        "tenant_id": preview.get("tenant_id"),
         "eval_id": eval_id,
         "job_id": job_id,
         "worker_run_id": worker_run_id,
@@ -1016,7 +1221,12 @@ def _run_preview_evaluation(
         )
     ]
 
-    bundle = store.get_preview_bundle(session_id) or {"session_id": session_id, "evaluations": {}}
+    bundle = store.get_preview_bundle(session_id) or {
+        "session_id": session_id,
+        "tenant_id": _tenant_id_for(session),
+        "evaluations": {},
+    }
+    _require_tenant_record(bundle, "trainer preview not found")
     evaluations = bundle.setdefault("evaluations", {})
     control_diff = [
         {
@@ -1031,6 +1241,7 @@ def _run_preview_evaluation(
         "eval_id": eval_id,
         "job_id": job_id,
         "session_id": session_id,
+        "tenant_id": _tenant_id_for(session),
         "persona_id": session.get("persona_id"),
         "status": "completed",
         "mode": mode,
@@ -1067,6 +1278,8 @@ def _run_preview_evaluation(
     )
     if job_id:
         active_job = store.get_preview_job(job_id)
+        if active_job:
+            _require_tenant_record(active_job, "preview job not found")
         try:
             lease_expires_at = _parse_utc_timestamp(
                 (active_job or {}).get("lease_expires_at"),
@@ -1086,6 +1299,7 @@ def _run_preview_evaluation(
         {
             "session_id": session_id,
             "persona_id": session.get("persona_id"),
+            "tenant_id": _tenant_id_for(session),
             "eval_id": eval_id,
             "job_id": job_id,
             "worker_run_id": worker_run_id,
@@ -1149,6 +1363,7 @@ def _run_preview_evaluation(
 
 def _preview_for_eval_ref(session_id: str, eval_ref: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     bundle = store.get_preview_bundle(session_id) or {}
+    _require_tenant_record(bundle, "trainer preview not found")
     eval_id = str(eval_ref.get("eval_id") or "").strip()
     evaluations = bundle.get("evaluations") if isinstance(bundle.get("evaluations"), dict) else {}
     if eval_id and isinstance(evaluations, dict):
@@ -1253,6 +1468,8 @@ def _require_commit_eval_proof(session_id: str, replay: Dict[str, Any]) -> Dict[
     job_id = str(proof.get("job_id") or "").strip()
     worker_run_id = str(proof.get("worker_run_id") or "").strip()
     job = store.get_preview_job(job_id) if job_id else None
+    if job:
+        _require_tenant_record(job, "preview job not found")
     if (
         not job
         or job.get("status") != "completed"
@@ -1290,6 +1507,7 @@ def _commit_authoritative_persona_target(
     trusted_now: datetime,
 ) -> Dict[str, Any]:
     persona_id = str(replay.get("persona_id") or "").strip()
+    tenant_id = str(replay.get("tenant_id") or "").strip()
     authority = proof.get("authority") if isinstance(proof.get("authority"), dict) else {}
     policy = authority.get("policy") if isinstance(authority.get("policy"), dict) else {}
     approval_decision_ref = str(policy.get("approval_decision_ref") or "").strip()
@@ -1301,6 +1519,7 @@ def _commit_authoritative_persona_target(
         raise PersonaTargetError("evaluation proof target_generation is invalid")
     return commit_persona_target(
         persona_id=persona_id,
+        tenant_id=tenant_id,
         session_id=session_id,
         candidate=proof.get("candidate_binding"),
         control_state=proof.get("controls"),
@@ -1312,6 +1531,7 @@ def _commit_authoritative_persona_target(
         persona_readback_url=_persona_target_url(
             "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
             persona_id=persona_id,
+            tenant_id=tenant_id,
             session_id=session_id,
             generation=generation,
             approval_decision_ref=approval_decision_ref,
@@ -1319,6 +1539,7 @@ def _commit_authoritative_persona_target(
         approval_readback_url=_persona_target_url(
             "TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE",
             persona_id=persona_id,
+            tenant_id=tenant_id,
             session_id=session_id,
             generation=generation,
             approval_decision_ref=approval_decision_ref,
@@ -1326,6 +1547,7 @@ def _commit_authoritative_persona_target(
         target_write_url=_persona_target_url(
             "TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE",
             persona_id=persona_id,
+            tenant_id=tenant_id,
             session_id=session_id,
             generation=generation,
             approval_decision_ref=approval_decision_ref,
@@ -1333,6 +1555,7 @@ def _commit_authoritative_persona_target(
         target_readback_url=_persona_target_url(
             "TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE",
             persona_id=persona_id,
+            tenant_id=tenant_id,
             session_id=session_id,
             generation=generation,
             approval_decision_ref=approval_decision_ref,
@@ -1364,19 +1587,46 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
+    _require_tenant_record(session, "training session not found")
     timestamp = utc_now()
     try:
-        return _run_preview_evaluation(
+        preview = _run_preview_evaluation(
             session_id,
             session,
             mode=body.mode,
             timestamp=timestamp,
-            requested_by="operator",
+            requested_by=_trusted_actor_id(),
         )
     except AuthorityValidationError as exc:
+        _record_functional_result(
+            "preview_evaluation",
+            status="failed",
+            detail={"session_id": session_id, "error_code": "evaluation_admission_rejected"},
+        )
         raise HTTPException(status_code=409, detail=f"preview evaluation rejected: {exc}") from exc
     except OSError as exc:
+        _record_functional_result(
+            "preview_evaluation",
+            status="failed",
+            detail={"session_id": session_id, "error_code": "preview_evidence_unavailable"},
+        )
         raise HTTPException(status_code=503, detail=f"preview evidence unavailable: {exc}") from exc
+    _record_functional_result(
+        "preview_evaluation",
+        status=(
+            "ok"
+            if (preview.get("evaluation_proof") or {}).get("governance_gate_state")
+            == "passed"
+            else "failed"
+        ),
+        detail={
+            "session_id": session_id,
+            "evaluation_proof_ref": (
+                preview.get("evaluation_proof") or {}
+            ).get("proof_ref"),
+        },
+    )
+    return preview
 
 
 def _preview_job_max_attempts() -> int:
@@ -1423,7 +1673,7 @@ def list_preview_jobs(
     status: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> List[Dict[str, Any]]:
-    jobs = store.list_preview_jobs()
+    jobs = _tenant_records(store.list_preview_jobs())
     if session_id:
         jobs = [job for job in jobs if job.get("session_id") == session_id]
     if status and status.lower() == "claimable":
@@ -1440,7 +1690,7 @@ def get_preview_job(job_id: str) -> Dict[str, Any]:
     job = store.get_preview_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="preview job not found")
-    return job
+    return _require_tenant_record(job, "preview job not found")
 
 
 @app.post("/api/training/sessions/{session_id}/preview-jobs", status_code=201)
@@ -1453,21 +1703,24 @@ def queue_preview_job(
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
+    _require_tenant_record(session, "training session not found")
     if str(session.get("status") or "").lower() != "active":
         raise HTTPException(status_code=409, detail="training session is not active")
 
     timestamp = utc_now()
     key = _idempotency_key(idempotency_key, x_idempotency_key)
+    requested_by = _trusted_actor_id(body.requested_by)
     job_id = _preview_job_id(session_id, key)
     request_hash = _stable_hash(
         {
             "session_id": session_id,
             "mode": body.mode,
-            "requested_by": body.requested_by,
+            "requested_by": requested_by,
         }
     )
     existing = store.get_preview_job(job_id)
     if existing is not None:
+        _require_tenant_record(existing, "preview job not found")
         if existing.get("request_hash") != request_hash:
             raise HTTPException(status_code=409, detail="idempotency key conflict")
         existing["replayed"] = True
@@ -1480,9 +1733,10 @@ def queue_preview_job(
             "job_id": job_id,
             "session_id": session_id,
             "persona_id": session.get("persona_id"),
+            "tenant_id": _tenant_id_for(session),
             "eval_id": eval_id,
             "mode": body.mode,
-            "requested_by": body.requested_by,
+            "requested_by": requested_by,
             "request_hash": request_hash,
         },
         recorded_at=timestamp,
@@ -1490,10 +1744,11 @@ def queue_preview_job(
     job = {
         "job_id": job_id,
         "session_id": session_id,
+        "tenant_id": _tenant_id_for(session),
         "eval_id": eval_id,
         "status": "queued",
         "mode": body.mode,
-        "requested_by": body.requested_by,
+        "requested_by": requested_by,
         "requested_at": timestamp,
         "client_requested_at": body.requested_at,
         "attempt_count": 0,
@@ -1510,8 +1765,10 @@ def queue_preview_job(
     _append_training_event(
         session,
         event_type="preview_requested",
-        actor=body.requested_by,
-        actor_type=_actor_type_from_actor(body.requested_by),
+        actor=requested_by,
+        actor_type=(
+            "user" if _request_authority().delegated_actor_id else "service"
+        ),
         summary="Async trainer preview evaluation queued.",
         timestamp=timestamp,
         eval_ref={"eval_id": eval_id, "job_id": job_id},
@@ -1523,6 +1780,10 @@ def queue_preview_job(
 @app.post("/api/training/preview-jobs/{job_id}/run")
 def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Dict[str, Any]:
     del body
+    existing_job = store.get_preview_job(job_id)
+    if not existing_job:
+        raise HTTPException(status_code=404, detail="preview job not found")
+    _require_tenant_record(existing_job, "preview job not found")
     now = _trusted_now().astimezone(timezone.utc)
     timestamp = _utc_iso(now)
     lease_expires_at = _utc_iso(now + timedelta(seconds=_preview_job_lease_seconds()))
@@ -1531,6 +1792,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     def claim(existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if existing is None:
             raise HTTPException(status_code=404, detail="preview job not found")
+        _require_tenant_record(existing, "preview job not found")
         if existing.get("status") == "completed":
             replayed = dict(existing)
             replayed["replayed"] = True
@@ -1566,6 +1828,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
         retryable = False
         preview = None
     else:
+        _require_tenant_record(session, "training session not found")
         failure_code = None
         retryable = False
         try:
@@ -1606,6 +1869,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                 {
                     "job_id": job_id,
                     "session_id": session_id,
+                    "tenant_id": _tenant_id_for(job),
                     "worker_run_id": worker_run_id,
                     "attempt_count": job.get("attempt_count"),
                     "error_code": failure_code,
@@ -1634,7 +1898,18 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                 }
             return active
 
-        return store.mutate_preview_job(job_id, fail)
+        failed_job = store.mutate_preview_job(job_id, fail)
+        _record_functional_result(
+            "preview_evaluation",
+            status="failed",
+            detail={
+                "job_id": job_id,
+                "session_id": session_id,
+                "error_code": failure_code,
+                "retryable": retryable,
+            },
+        )
+        return failed_job
 
     proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
 
@@ -1658,13 +1933,28 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
         active.pop("failed_at", None)
         return active
 
-    return store.mutate_preview_job(job_id, complete)
+    completed_job = store.mutate_preview_job(job_id, complete)
+    _record_functional_result(
+        "preview_evaluation",
+        status=(
+            "ok"
+            if completed_job.get("governance_gate_state") == "passed"
+            else "failed"
+        ),
+        detail={
+            "job_id": job_id,
+            "session_id": session_id,
+            "evaluation_proof_ref": completed_job.get("evaluation_proof_ref"),
+            "governance_gate_state": completed_job.get("governance_gate_state"),
+        },
+    )
+    return completed_job
 
 
 
 @app.get("/api/training/replays")
 def list_replays(persona_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    records = store.list_replays()
+    records = _tenant_records(store.list_replays())
     if persona_id:
         records = [record for record in records if record.get("persona_id") == persona_id]
     if status:
@@ -1679,10 +1969,11 @@ def get_replay(session_id: str) -> Dict[str, Any]:
         session = store.get_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="training replay not found")
+        _require_tenant_record(session, "training replay not found")
         replay = dict(session)
         replay.setdefault("replay_resolution", {"state": "not_applicable"})
         replay.setdefault("artifacts", {})
-    return replay
+    return _require_tenant_record(replay, "training replay not found")
 
 
 @app.post("/api/training/sessions/{session_id}/complete", status_code=201)
@@ -1690,8 +1981,10 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
+    _require_tenant_record(session, "training session not found")
     existing_replay = store.get_replay(session_id)
     if existing_replay and (existing_replay.get("replay_resolution") or {}).get("state") == "pending_decision":
+        _require_tenant_record(existing_replay, "training replay not found")
         if str(session.get("status") or "").lower() != "completed":
             session["status"] = "completed"
             session["ended_at"] = existing_replay.get("ended_at") or utc_now()
@@ -1728,6 +2021,7 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     )
     replay_event = _build_teaching_event(
         session_id=session_id,
+        tenant_id=_tenant_id_for(replay),
         event_id=f"tevt-complete-{str(proof.get('proof_digest') or '')[:20]}",
         actor="system",
         actor_label="Training Session Service",
@@ -1752,6 +2046,7 @@ def complete_session(session_id: str) -> Dict[str, Any]:
             {
                 "session_id": session_id,
                 "persona_id": session.get("persona_id"),
+                "tenant_id": _tenant_id_for(session),
                 "proof_digest": proof.get("proof_digest"),
                 "candidate_digest": proof.get("candidate_digest"),
                 "candidate_snapshot_at": candidate_snapshot_at,
@@ -1791,11 +2086,13 @@ def _decide_replay(
             session = store.get_session(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="training replay not found")
+            _require_tenant_record(session, "training replay not found")
             replay = dict(session)
             replay.setdefault("replay_resolution", {"state": "not_applicable"})
             replay.setdefault("artifacts", {})
         else:
             replay = existing_replay
+            _require_tenant_record(replay, "training replay not found")
 
         resolution = replay.setdefault("replay_resolution", {})
         existing_idempotency = resolution.get("idempotency")
@@ -1828,6 +2125,7 @@ def _decide_replay(
                     {
                         "session_id": session_id,
                         "persona_id": replay.get("persona_id"),
+                        "tenant_id": _tenant_id_for(replay),
                         "candidate_snapshot_at": candidate_snapshot_at,
                         "proof_digest": proof.get("proof_digest"),
                         "candidate_digest": proof.get("candidate_digest"),
@@ -1851,6 +2149,7 @@ def _decide_replay(
                         {
                             "session_id": session_id,
                             "persona_id": replay.get("persona_id"),
+                            "tenant_id": _tenant_id_for(replay),
                             "proof_digest": proof.get("proof_digest"),
                             "error_code": "persona_target_authority_rejected",
                         },
@@ -1869,6 +2168,7 @@ def _decide_replay(
                     {
                         "session_id": session_id,
                         "persona_id": replay.get("persona_id"),
+                        "tenant_id": _tenant_id_for(replay),
                         "proof_digest": proof.get("proof_digest"),
                         "candidate_digest": proof.get("candidate_digest"),
                         "controls_digest": proof.get("controls_digest"),
@@ -1931,6 +2231,7 @@ def _decide_replay(
                     {
                         "session_id": session_id,
                         "persona_id": replay.get("persona_id"),
+                        "tenant_id": _tenant_id_for(replay),
                         "candidate_snapshot_at": candidate_snapshot_at,
                         "decision_by": body.actor_id,
                         "note": body.note,
@@ -1977,6 +2278,7 @@ def _decide_replay(
         }
         decision_event = _build_teaching_event(
             session_id=session_id,
+            tenant_id=_tenant_id_for(replay),
             event_id=f"tevt-decision-{request_hash[:20]}",
             actor="system",
             actor_label="Training Session Service",
@@ -2015,12 +2317,37 @@ def commit_replay(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ) -> Dict[str, Any]:
-    return _decide_replay(
-        session_id,
-        body,
-        "committed",
-        idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+    body = body.model_copy(update={"actor_id": _trusted_actor_id(body.actor_id)})
+    try:
+        replay = _decide_replay(
+            session_id,
+            body,
+            "committed",
+            idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+        )
+    except HTTPException as exc:
+        _record_functional_result(
+            "persona_commit",
+            status="failed",
+            detail={
+                "session_id": session_id,
+                "status_code": exc.status_code,
+                "error": str(exc.detail),
+            },
+        )
+        raise
+    _record_functional_result(
+        "persona_commit",
+        status="ok",
+        detail={
+            "session_id": session_id,
+            "state": (replay.get("replay_resolution") or {}).get("state"),
+            "persona_target_controller_record_ref": (
+                replay.get("artifacts") or {}
+            ).get("persona_target_controller_record_ref"),
+        },
     )
+    return replay
 
 
 @app.post("/api/training/replays/{session_id}/discard")
@@ -2030,9 +2357,28 @@ def discard_replay(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ) -> Dict[str, Any]:
-    return _decide_replay(
-        session_id,
-        body,
-        "discarded",
-        idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+    body = body.model_copy(update={"actor_id": _trusted_actor_id(body.actor_id)})
+    try:
+        replay = _decide_replay(
+            session_id,
+            body,
+            "discarded",
+            idempotency_key=_idempotency_key(idempotency_key, x_idempotency_key),
+        )
+    except HTTPException as exc:
+        _record_functional_result(
+            "replay_discard",
+            status="failed",
+            detail={
+                "session_id": session_id,
+                "status_code": exc.status_code,
+                "error": str(exc.detail),
+            },
+        )
+        raise
+    _record_functional_result(
+        "replay_discard",
+        status="ok",
+        detail={"session_id": session_id, "state": "discarded"},
     )
+    return replay

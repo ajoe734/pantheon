@@ -8,12 +8,19 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.deployment.auth import (
+    AUTHENTICATED_SERVICE_ROLES,
+    AuthError,
+    AuthenticatedTenant,
+    TenantBoundaryError,
+    authenticate_tenant,
+)
 from services.promotion.pg_store import (
     build_promotion_approval_store,
     build_promotion_deployment_store,
@@ -180,6 +187,7 @@ def _serialize_approval_decision(decision: ApprovalDecision) -> dict[str, Any]:
 def _validated_approval_decision(
     decision_id: str,
     *,
+    tenant_id: str,
     artifact_id: str,
     artifact_version: str,
     capital_pool_id: str,
@@ -187,6 +195,8 @@ def _validated_approval_decision(
 ) -> dict[str, Any]:
     decision = approval_store.get(decision_id)
     if decision is None:
+        raise HTTPException(status_code=404, detail=f"ApprovalDecision '{decision_id}' not found")
+    if str(decision.tenant_id or "").strip() != tenant_id:
         raise HTTPException(status_code=404, detail=f"ApprovalDecision '{decision_id}' not found")
 
     if decision.decision_state != DecisionState.DECIDED:
@@ -234,6 +244,41 @@ def _validated_approval_decision(
 def create_app() -> FastAPI:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     app = FastAPI(title="Pantheon Promotion Service", version="0.1.0")
+
+    @app.middleware("http")
+    async def promotion_authenticated_tenant_boundary(request: Request, call_next):
+        if request.url.path.startswith("/api/v1"):
+            try:
+                request.state.promotion_identity = authenticate_tenant(
+                    authorization=request.headers.get("Authorization"),
+                    tenant_id=request.headers.get("X-Tenant-Id"),
+                    service_prefix="PROMOTION",
+                    required_roles=AUTHENTICATED_SERVICE_ROLES,
+                    mfa_header=request.headers.get("X-MFA-Token"),
+                )
+            except AuthError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.message, "error_code": exc.code},
+                )
+            except TenantBoundaryError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={
+                        "detail": str(exc),
+                        "error_code": "TENANT_BOUNDARY_DENIED",
+                    },
+                )
+        return await call_next(request)
+
+    def identity_for(request: Request) -> AuthenticatedTenant:
+        identity = getattr(request.state, "promotion_identity", None)
+        if not isinstance(identity, AuthenticatedTenant):
+            raise HTTPException(
+                status_code=401, detail="Authenticated tenant is required."
+            )
+        return identity
+
     register_fastapi_health_routes(
         app,
         "promotion-svc",
@@ -260,7 +305,15 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/api/v1/approvals", status_code=status.HTTP_201_CREATED)
-    async def create_approval(body: ApprovalCreateRequest) -> dict[str, Any]:
+    async def create_approval(
+        request: Request, body: ApprovalCreateRequest
+    ) -> dict[str, Any]:
+        identity = identity_for(request)
+        if body.tenant_id != identity.tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="ApprovalDecision tenant_id does not match the authenticated tenant.",
+            )
         decision_id = body.decision_id or f"apv-{uuid.uuid4().hex[:12]}"
         if approval_store.get(decision_id):
             raise HTTPException(status_code=409, detail=f"ApprovalDecision '{decision_id}' already exists")
@@ -285,12 +338,18 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/approvals")
     async def list_approvals(
+        request: Request,
         target_type: str | None = Query(default=None),
         target_id: str | None = Query(default=None),
         decision_state: str | None = Query(default=None),
         risk_level: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        approvals = approval_store.list_all()
+        tenant_id = identity_for(request).tenant_id
+        approvals = [
+            item
+            for item in approval_store.list_all()
+            if str(item.tenant_id or "").strip() == tenant_id
+        ]
 
         def _enum_value(value: Any) -> Any:
             return getattr(value, "value", value)
@@ -308,10 +367,22 @@ def create_app() -> FastAPI:
         return {"count": len(approvals), "items": [item.to_dict() for item in approvals]}
 
     @app.post("/api/v1/approvals/{decision_id}/decide", status_code=status.HTTP_200_OK)
-    async def decide_approval(decision_id: str, body: ApprovalDecideRequest) -> dict[str, Any]:
+    async def decide_approval(
+        request: Request, decision_id: str, body: ApprovalDecideRequest
+    ) -> dict[str, Any]:
+        identity = identity_for(request)
         decision = approval_store.get(decision_id)
-        if decision is None:
+        if decision is None or str(decision.tenant_id or "").strip() != identity.tenant_id:
             raise HTTPException(status_code=404, detail=f"ApprovalDecision '{decision_id}' not found")
+        if body.actor_role not in identity.roles:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Authenticated roles {sorted(identity.roles)} do not include "
+                    f"declared actor_role {body.actor_role!r}."
+                ),
+            )
+        body = body.model_copy(update={"actor_id": identity.actor_id})
         if decision.decision_state not in (DecisionState.PROPOSED, DecisionState.UNDER_REVIEW):
             raise HTTPException(
                 status_code=409,
@@ -339,13 +410,17 @@ def create_app() -> FastAPI:
         return _serialize_approval_decision(working)
 
     @app.post("/api/v1/deployments", status_code=status.HTTP_201_CREATED)
-    async def create_deployment(body: DeploymentCreateRequest) -> JSONResponse:
+    async def create_deployment(
+        request: Request, body: DeploymentCreateRequest
+    ) -> JSONResponse:
+        identity = identity_for(request)
         plan_id = body.plan_id or f"dp-{uuid.uuid4().hex[:12]}"
         if deployment_store.get(plan_id):
             raise HTTPException(status_code=409, detail=f"DeploymentPlan '{plan_id}' already exists")
 
         approval_decision = _validated_approval_decision(
             body.approval_decision_id,
+            tenant_id=identity.tenant_id,
             artifact_id=body.artifact_id,
             artifact_version=body.artifact_version,
             capital_pool_id=body.capital_pool_id,
@@ -359,6 +434,14 @@ def create_app() -> FastAPI:
         scale = DeploymentScale(**body.scale.model_dump()) if body.scale else None
         binding_id = body.binding_id or body.persona_capital_binding_id
         metadata = dict(body.metadata or {})
+        declared_tenant_id = str(metadata.get("tenant_id") or "").strip()
+        if declared_tenant_id and declared_tenant_id != identity.tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="DeploymentPlan metadata.tenant_id does not match the authenticated tenant.",
+            )
+        metadata["tenant_id"] = identity.tenant_id
+        metadata["authenticated_actor_id"] = identity.actor_id
         if body.loader_checks_passed is not None:
             metadata.setdefault("loader_checks_passed", body.loader_checks_passed)
         if body.persona_capital_binding_status:
@@ -381,7 +464,7 @@ def create_app() -> FastAPI:
                 capital_pool_id=body.capital_pool_id,
                 target_stage=body.target_stage,
                 current_stage=body.current_stage,
-                created_by=body.created_by,
+                created_by=identity.actor_id,
                 sponsor_persona_id=body.sponsor_persona_id,
                 runtime_config_ref=body.runtime_config_ref,
                 binding_id=binding_id,
@@ -407,6 +490,7 @@ def create_app() -> FastAPI:
                 "persona_capital_binding_status": body.persona_capital_binding_status,
                 "allowed_deployment_scope": body.allowed_deployment_scope,
                 "loader_checks_passed": body.loader_checks_passed,
+                "tenant_id": identity.tenant_id,
                 "approval_decision": approval_decision,
             },
         )
@@ -416,12 +500,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/deployments")
     async def list_deployments(
+        request: Request,
         status_value: str | None = Query(default=None, alias="status"),
         capital_pool_id: str | None = Query(default=None),
         approval_decision_id: str | None = Query(default=None),
         target_stage: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        plans = deployment_store.list_all()
+        tenant_id = identity_for(request).tenant_id
+        plans = [
+            plan
+            for plan in deployment_store.list_all()
+            if (
+                isinstance(plan.metadata, dict)
+                and str(plan.metadata.get("tenant_id") or "").strip() == tenant_id
+            )
+        ]
 
         def _enum_value(value: Any) -> Any:
             return getattr(value, "value", value)
