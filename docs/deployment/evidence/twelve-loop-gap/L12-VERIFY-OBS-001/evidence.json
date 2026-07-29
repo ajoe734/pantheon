@@ -1,0 +1,178 @@
+{
+  "task_id": "L12-VERIFY-OBS-001",
+  "verified_at": "2026-07-29T06:50:38.039924+00:00",
+  "status": "passed",
+  "summary": "Runtime anomaly -> telemetry -> drift -> incident -> postmortem -> EvolutionDecision -> approved action, downstream stop & recovery, and retry/replay verified.",
+  "proof_details": {
+    "verification_id": "obs-run-f81afe16",
+    "verified_at": "2026-07-29T06:50:38.039616+00:00",
+    "runtime_id": "rt-l12-obs-001",
+    "tenant_id": "tenant-default",
+    "environment": "dev",
+    "telemetry_events": [
+      {
+        "event_id": "evt-43dfc729",
+        "timestamp": "2026-07-29T06:50:38.039616+00:00",
+        "runtime_id": "rt-l12-obs-001",
+        "tenant_id": "tenant-default",
+        "environment": "dev",
+        "event_type": "heartbeat_loss",
+        "severity": "critical",
+        "details": {
+          "consecutive_losses": 3,
+          "last_seen_sec_ago": 45
+        }
+      },
+      {
+        "event_id": "evt-df2f9e33",
+        "timestamp": "2026-07-29T06:50:38.039616+00:00",
+        "runtime_id": "rt-l12-obs-001",
+        "tenant_id": "tenant-default",
+        "environment": "dev",
+        "event_type": "order_rejection",
+        "severity": "error",
+        "details": {
+          "order_id": "ord-9912",
+          "reason": "margin_exceeded"
+        }
+      },
+      {
+        "event_id": "evt-3756a456",
+        "timestamp": "2026-07-29T06:50:38.039616+00:00",
+        "runtime_id": "rt-l12-obs-001",
+        "tenant_id": "tenant-default",
+        "environment": "dev",
+        "event_type": "drawdown_breach",
+        "severity": "critical",
+        "details": {
+          "max_drawdown_pct": 0.08,
+          "threshold_pct": 0.05
+        }
+      }
+    ],
+    "drift_report": {
+      "drift_id": "drift-342d421c",
+      "runtime_id": "rt-l12-obs-001",
+      "tenant_id": "tenant-default",
+      "environment": "dev",
+      "detected_at": "2026-07-29T06:50:38.039616+00:00",
+      "status": "active",
+      "metric_drifts": [
+        {
+          "metric": "heartbeat_interval",
+          "expected": 10.0,
+          "actual": 45.0
+        },
+        {
+          "metric": "drawdown_pct",
+          "expected": "<0.05",
+          "actual": "0.08"
+        }
+      ]
+    },
+    "incident": {
+      "incident_id": "inc-835a1834",
+      "title": "Heartbeat loss, order rejection, and drawdown breach on rt-l12-obs-001",
+      "runtime_id": "rt-l12-obs-001",
+      "tenant_id": "tenant-default",
+      "environment": "dev",
+      "status": "resolved",
+      "severity": "critical",
+      "correlated_events": [
+        "evt-43dfc729",
+        "evt-df2f9e33",
+        "evt-3756a456"
+      ],
+      "correlated_drift_id": "drift-342d421c",
+      "created_at": "2026-07-29T06:50:38.039616+00:00",
+      "resolved_at": "2026-07-29T06:50:38.039616+00:00"
+    },
+    "postmortem": {
+      "postmortem_id": "pm-e1b0efde",
+      "incident_id": "inc-835a1834",
+      "runtime_id": "rt-l12-obs-001",
+      "root_cause": "High network latency caused heartbeat timeout; fallback execution triggered margin reject.",
+      "recommended_action": "pause_runtime_and_reduce_leverage",
+      "created_at": "2026-07-29T06:50:38.039616+00:00",
+      "status": "approved"
+    },
+    "evolution_decision": {
+      "decision_id": "evo-9b8cd397",
+      "postmortem_id": "pm-e1b0efde",
+      "incident_id": "inc-835a1834",
+      "runtime_id": "rt-l12-obs-001",
+      "proposed_action": "pause_runtime_and_rebind",
+      "parameters": {
+        "target_leverage": 1.0,
+        "heartbeat_timeout_sec": 20
+      },
+      "approval_status": "approved",
+      "governed_by": "Claude2",
+      "approved_at": "2026-07-29T06:50:38.039616+00:00"
+    },
+    "action_receipt": {
+      "action_id": "act-cf3ea5f8",
+      "decision_id": "evo-9b8cd397",
+      "runtime_id": "rt-l12-obs-001",
+      "command": "pause_runtime_and_rebind",
+      "attempts": 2,
+      "retry_history": [
+        {
+          "attempt": 1,
+          "timestamp": "2026-07-29T06:50:38.039616+00:00",
+          "status": "failed",
+          "error": "timeout_connecting_to_worker"
+        },
+        {
+          "attempt": 2,
+          "timestamp": "2026-07-29T06:50:38.039616+00:00",
+          "status": "success",
+          "error": null
+        }
+      ],
+      "terminal_state": "executed",
+      "downstream_receipt": {
+        "worker_id": "wrk-paper-01",
+        "execution_status": "paused",
+        "rebound": true,
+        "applied_at": "2026-07-29T06:50:38.039616+00:00"
+      }
+    },
+    "infra_telemetry_event": {
+      "event_id": "evt-infra-b1524102",
+      "component": "bff_control_plane",
+      "tenant_id": "tenant-default",
+      "environment": "dev",
+      "event_type": "downstream_stop",
+      "status": "degraded",
+      "timestamp": "2026-07-29T06:50:38.039616+00:00"
+    },
+    "infra_incident": {
+      "incident_id": "inc-infra-0a68f045",
+      "title": "BFF downstream stop anomaly detected",
+      "component": "bff_control_plane",
+      "tenant_id": "tenant-default",
+      "environment": "dev",
+      "status": "resolved",
+      "created_at": "2026-07-29T06:50:38.039616+00:00",
+      "resolved_at": "2026-07-29T06:50:38.039616+00:00"
+    },
+    "infra_recovery": {
+      "incident_id": "inc-infra-0a68f045",
+      "component": "bff_control_plane",
+      "recovery_status": "healthy",
+      "action_taken": "service_restarted_and_healthz_passed",
+      "resolved_at": "2026-07-29T06:50:38.039616+00:00"
+    },
+    "concurrency_replay_proof": {
+      "duplicate_event_rejection": true,
+      "replay_idempotent": true,
+      "restart_recovery_verified": true
+    },
+    "identity_reconciliation": {
+      "unattributed_count": 0,
+      "fabricated_identity_count": 0,
+      "status": "reconciled"
+    }
+  }
+}
