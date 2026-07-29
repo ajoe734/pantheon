@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Repair promote PR CI trigger and auto-merge path
 - Status: review_approved
-- Owner: Codex2
+- Owner: Codex
 - Reviewer: Antigravity
-- Next: PR #4262 已合併；fresh promote PR #4375 證明 exact-head dispatch 與 auto-merge，但 run 30450718720 暴露 workflow_dispatch 仍重掃已驗證 release history。需先合併 narrow trailer-range repair，再以新 immutable release 完成 required checks、master ancestry 與 stale PR retirement 證據。
+- Next: Fresh release v2026.07.29.8 passed required checks and auto-merged through PR #4378 as master commit 2c9388e07b9a99ac2938d58a0edf6e4d34002dd5; 27 ancestry-proven stale promote PRs were retired. Merge the exact-head rollup repair and completed evidence through the final task PR, then run governed done.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。

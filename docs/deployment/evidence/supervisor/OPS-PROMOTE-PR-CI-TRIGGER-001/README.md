@@ -439,19 +439,44 @@ repair.
 
 ## Live Proof and Stale-PR Retirement
 
-The immutable exact-candidate proof must be recorded only after the repair is
-merged into `dev`, a fresh release snapshot contains it, and that snapshot's
-promote PR receives all three contexts. The manifest intentionally leaves
-these fields pending during the implementation PR:
+PR `#4377` merged the trailer-scan repair into `dev` as
+`715308c381a73b80cfe974689f00b4a42877255f`. Governed publish-cut run
+`30451782773` then created immutable `release/v2026.07.29.8` and
+`publish/v2026.07.29.8` at that exact commit. Publish-promote run
+`30451859583` opened PR `#4378` at exact promote head
+`d46444611ab0eacf2b2b4f5c8fa0ec3018d37348`, dispatched Branch CI, and
+verified auto-merge enabled at `2026-07-29T12:30:42Z`.
 
-- fresh release tag and promote branch;
-- exact promote PR number and head;
-- workflow run and three required conclusions;
-- auto-merge result and resulting `master` merge commit;
-- ancestry proof covering every stale release;
-- the exact stale PR numbers closed only after that proof.
+Exact-head workflow-dispatch run `30451897051` passed `Commit trailers`,
+`Runtime mirror guard`, `Smoke acceptance`, and Python packaging, but GitHub
+still returned a null PR `statusCheckRollup`. The bot-created PR had an inert
+`pull_request` Branch CI run `30451895166` with conclusion
+`action_required`. Re-running only that exact PR/head run materialized all
+four successful checks in the PR rollup. The existing auto-merge request then
+merged PR `#4378` at `2026-07-29T12:36:16Z` as master commit
+`2c9388e07b9a99ac2938d58a0edf6e4d34002dd5`.
 
-No stale PR is closed merely because it is old. The owner will first prove
-that the accepted fresh release makes its release tag reachable from
-`master`, then close only older open promote PRs whose release tags are
-ancestors of that accepted release.
+Anchor `5cff7b71f307761538841c5efc45ff2038e571fa` makes that final rescue
+automatic. `publish_promote.py` now discovers only an `action_required`
+`pull_request` Branch CI run whose workflow path, PR number, and full head SHA
+all match the promote candidate, then requests its rerun before protected
+auto-merge. It does not rerun other workflows, other PRs, or other heads.
+
+After fetching master at `2c9388e07b9a99ac2938d58a0edf6e4d34002dd5`,
+the owner proved all 27 older open promote releases were ancestors of
+`release/v2026.07.29.8` and reachable from master. The following stale PRs
+were closed with that exact ancestry explanation while every branch and
+immutable tag was preserved:
+
+`#4375`, `#4138`, `#4137`, `#4132`, `#4129`, `#4126`, `#4125`, `#4122`,
+`#4116`, `#4113`, `#4112`, `#4108`, `#4098`, `#4095`, `#4092`, `#4090`,
+`#4085`, `#4082`, `#4076`, `#4071`, `#4069`, `#4065`, `#4059`, `#4057`,
+`#4052`, `#4048`, and `#4039`.
+
+The post-retirement open `promote/* -> master` count is zero. Focused
+verification at the rollup-repair anchor passed 27 `PublishPromoteTests`,
+75 pytest cases, Python compilation, both workflow YAML parses, evidence JSON
+parsing, and `git diff --check`. The remaining closeout gate is repository
+publication only: the final task PR containing the rollup repair and this
+evidence must receive Antigravity exact-head approval and merge to `dev`
+before the owner runs governed `done`.
