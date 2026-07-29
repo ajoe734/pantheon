@@ -2,9 +2,9 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T09:31:00Z",
+  "updated_at": "2026-07-29T10:25:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
-  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
   "do_not_use": [
     "Codex collaboration subagents",
@@ -18,8 +18,101 @@
     "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
     "config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
     "status_root": "/home/lupin/pantheon",
-    "runtime_sha_observed": "a6d56c366f7436574e6d2d241b47564558beac74"
+    "runtime_sha_observed": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+    "watchdog_reason": "supervisor_healthy",
+    "priority_gate_archived": {
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "delivery_commit": "18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d",
+      "closeout_evidence_commit": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+      "archived_at": "2026-07-29T10:16:49Z"
+    }
   },
+  "current_dispatch_waves_2026_07_29T1025Z": [
+    {
+      "wave": 0,
+      "parallel": true,
+      "purpose": "Supervisor/fleet hygiene and closeout repair before product-completion claims.",
+      "tasks": [
+        {
+          "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "scope": ["GitHub PR #4367", "GitHub PR #4364 status table", "GitHub PR #4313", "GitHub PR #4297", "task row/source-ref truth"],
+          "acceptance": [
+            "Confirm #4367 is superseded by archived #4365/#4366 evidence or record concrete contrary evidence",
+            "Close or supersede stale duplicate PRs with exact PR/head rationale",
+            "Do not close active product PR #4364 unless exact review proves it stale or invalid",
+            "Record PR number, state, head SHA, owner task, and action"
+          ]
+        },
+        {
+          "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "scope": ["L12-MANIFEST-REVIEW-GAP-TASKS-20260729", "PR #4330", "merged-but-nonterminal L12 rows"],
+          "acceptance": [
+            "Locate or create task-brief-shaped merged evidence",
+            "Use governed reconcile_merged_done only after evidence file and delivery commit are already merged to dev",
+            "Otherwise open a minimal closeout-evidence PR, merge it, then archive",
+            "Do not restart implementation for already merged work"
+          ]
+        },
+        {
+          "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "scope": ["live supervisor health", "worker-runtime heartbeats/status", "first post-#4365 L12 dispatch"],
+          "acceptance": [
+            "Prove live root SHA 8ea01a8e3993b3dabc6cd475c7058d299eaf4a01 or newer",
+            "Capture actual worker_runner PIDs and run ids",
+            "Verify next eligible L12 review/finalize dispatch uses Claude2 or Antigravity",
+            "Record Codex/Codex2 only as fallback/runtime repair evidence",
+            "Do not edit .orchestrator/config.json"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 1,
+      "parallel": true,
+      "purpose": "Product verifier and frontend proof lanes.",
+      "tasks": [
+        {"id": "L12-VERIFY-KNOW-001", "owner_preference": ["Claude2"], "reviewer_preference": ["Antigravity"]},
+        {"id": "L12-VERIFY-LEARN-001", "owner_preference": ["Antigravity"], "reviewer_preference": ["Claude2"]},
+        {"id": "L12-VERIFY-RUNTIME-001", "owner_preference": ["Claude2"], "reviewer_preference": ["Antigravity"]},
+        {"id": "L12-VERIFY-OBS-001", "owner_preference": ["Antigravity"], "reviewer_preference": ["Claude2"]},
+        {"id": "L12-FE-TRUTH-001", "owner_preference": ["Antigravity"], "reviewer_preference": ["Claude2"]}
+      ],
+      "common_acceptance": [
+        "Service-boundary calls and persisted ids",
+        "Before/after readbacks",
+        "Negative tests for tenant/RBAC/duplicates/restart/replay/DLQ as applicable",
+        "Exact-head independent review, merge to dev, and archive",
+        "No pass-printer, generated UUID-only proof, or local-only fixture completion"
+      ]
+    },
+    {
+      "wave": 2,
+      "parallel": false,
+      "purpose": "Hosted proof and final closeout after Wave 1 archives.",
+      "tasks": [
+        {"id": "L12-HOSTED-001", "owner_preference": ["Antigravity"], "reviewer_preference": ["Claude2"]},
+        {"id": "L12-CLOSE-001", "owner_preference": ["Claude2"], "reviewer_preference": ["Antigravity"], "human_ops_signoff_required": true}
+      ]
+    },
+    {
+      "wave": 3,
+      "parallel": true,
+      "purpose": "Regression guardrails that prevent another false completion.",
+      "tasks": [
+        {"id": "SUP-PROVIDER-FIRST-HELPER-GUARD-20260729", "current_pr": 4362},
+        {"id": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729", "current_pr": 4363},
+        {"id": "SUP-L12-TASK-BRIEF-SYNC-20260729"},
+        {"id": "SUP-L12-WORKER-PYDEPS-20260729"},
+        {"id": "SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729"}
+      ]
+    }
+  ],
   "fleet_checkpoint_2026_07_29T0830Z": {
     "claude2": {
       "quota": "1/1",

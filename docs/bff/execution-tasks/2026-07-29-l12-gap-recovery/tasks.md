@@ -14,12 +14,118 @@ Terminal-fallback correction: `2026-07-29T09:08Z`
 
 Clean command-root correction: `2026-07-29T09:31Z`
 
+Current-state refresh: `2026-07-29T10:25Z`
+
 Source audit:
-`docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
+`docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md`
 
 This task plan avoids duplicate artifact ownership. Existing L12 task rows
 remain canonical for product implementation. New `SUP-*` tasks are guard and
 coordination lanes only.
+
+## 2026-07-29T10:25Z dispatch delta
+
+The current dispatch authority is
+`docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md`.
+
+- `SUP-L12-REVIEW-PRIORITY-GATE-20260729` is complete and archived after
+  #4365/#4366. Do not redispatch it.
+- Live supervisor root is
+  `8ea01a8e3993b3dabc6cd475c7058d299eaf4a01` and watchdog reports
+  `supervisor_healthy`.
+- #4367 is stale duplicate closeout receipt work and must be retired or
+  superseded, not counted as product evidence.
+- #4364 (`L12-VERIFY-OBS-001`) is open but behind and still needs exact
+  Claude2 review after refresh/rebase.
+- #4330 is merged but `L12-MANIFEST-REVIEW-GAP-TASKS-20260729` remains
+  canonical-row blocked because closeout metadata must be reconciled.
+- Active product work remains KNOW, LEARN, RUNTIME, OBS, FE, HOSTED, CLOSE.
+
+## Current parallel dispatch waves
+
+### Wave 0 — supervisor/fleet hygiene and closeout repair
+
+#### `SUP-L12-STALE-PR-RETIRE-20260729`
+
+- Owner: `Antigravity`
+- Reviewer: `Claude2`
+- Scope:
+  - GitHub PR #4367
+  - GitHub PR #4364 status/readiness table only; do not close if still valid
+  - GitHub PR #4313 / #4297 stale closeout state
+  - task row/source-ref truth for stale L12 PRs
+- Acceptance:
+  - #4367 is confirmed superseded by archived #4365/#4366 evidence or a
+    concrete reason is recorded if it is not;
+  - stale duplicate PRs are closed or superseded with exact PR/head rationale;
+  - active product PR #4364 is left open unless exact review proves it is stale
+    or invalid;
+  - evidence table records PR number, state, head SHA, owner task, and action.
+
+#### `SUP-L12-MERGED-ROW-RECONCILE-20260729`
+
+- Owner: `Claude2`
+- Reviewer: `Antigravity`
+- Scope:
+  - `L12-MANIFEST-REVIEW-GAP-TASKS-20260729`
+  - PR #4330 / merge `d9cbbbfa2b0d4076f939a6d0fcc921406993d7af`
+  - other merged-but-nonterminal L12 rows found by exact evidence
+- Acceptance:
+  - locate or create task-brief-shaped merged evidence;
+  - use governed `reconcile_merged_done` only after evidence file and delivery
+    commit are already merged to `dev`;
+  - otherwise open a minimal closeout-evidence PR, merge it, then archive;
+  - no implementation restart for already merged work.
+
+#### `SUP-L12-FLEET-DISPATCH-READBACK-20260729`
+
+- Owner: `Antigravity`
+- Reviewer: `Claude2`
+- Scope:
+  - live supervisor health
+  - worker-runtime heartbeats/status
+  - first post-#4365 L12 review/finalize dispatch
+- Acceptance:
+  - live root SHA is `8ea01a8e3993b3dabc6cd475c7058d299eaf4a01` or newer;
+  - actual `worker_runner.py` PIDs and run ids are captured;
+  - next eligible L12 review/finalize dispatch goes to Claude2 or Antigravity;
+  - Codex/Codex2 dispatch is recorded only as fallback/runtime repair, not as
+    preferred fleet proof;
+  - `.orchestrator/config.json` is not edited.
+
+### Wave 1 — product verifier work, maximally parallel
+
+Run these in parallel where provider slots allow. Owners/reviewers below are
+the preferred lanes and should not be reassigned to Codex-family lanes merely
+because they are available.
+
+1. `L12-VERIFY-KNOW-001`: Claude2 owner, Antigravity reviewer.
+2. `L12-VERIFY-LEARN-001`: Antigravity owner, Claude2 reviewer.
+3. `L12-VERIFY-RUNTIME-001`: Claude2 owner, Antigravity reviewer.
+4. `L12-VERIFY-OBS-001`: Antigravity owner, Claude2 reviewer.
+5. `L12-FE-TRUTH-001`: Antigravity owner, Claude2 reviewer.
+
+Each Wave 1 lane must prove service-boundary calls, persisted ids, before/after
+readbacks, negative tests, restart/replay behavior, exact-head review, merge,
+and archive. A pass-printer, generated UUID, local-only fixture, or narrow CI
+does not satisfy acceptance.
+
+### Wave 2 — hosted and final closeout
+
+Start only after Wave 1 product lanes are accepted, merged, and archived.
+
+1. `L12-HOSTED-001`: Antigravity owner, Claude2 reviewer.
+2. `L12-CLOSE-001`: Claude2 owner, Antigravity reviewer, Human/Ops signoff.
+
+### Wave 3 — regression guardrails
+
+These can run in parallel with Wave 1 if artifact scopes do not overlap:
+
+1. `SUP-PROVIDER-FIRST-HELPER-GUARD-20260729` / PR #4362.
+2. `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` / PR #4363.
+3. `SUP-L12-TASK-BRIEF-SYNC-20260729`.
+4. `SUP-L12-WORKER-PYDEPS-20260729`.
+5. `SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729`.
 
 ## Active product lanes
 
