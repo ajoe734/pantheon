@@ -1,0 +1,279 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-29-l12-manifest-review-reopen-gap",
+  "generated_at": "2026-07-29T02:40:00Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/L12_MANIFEST_REVIEW_REOPEN_GAP_2026-07-29T0225Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "canonical_parent_task": "L12-MANIFEST-001",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "competing canonical tasks that independently mutate docker-compose.yml",
+    "same-author GitHub independent approval",
+    "schema-only validator pass as product acceptance"
+  ],
+  "current_blocker": {
+    "task_id": "L12-MANIFEST-001",
+    "status": "in_progress",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "pr": 4329,
+    "head_sha": "114bfce34dbe1d6abf48c9d7759bd2e7bff5aa87",
+    "canonical_review_gate": "failure",
+    "root_freeze": "success",
+    "missing": [
+      "bare Compose renders only 20/27 healthchecks",
+      "alpha-replication-worker lacks health or heartbeat proof",
+      "policy-learning-shadow-eval-scheduler lacks health or heartbeat proof",
+      "paper-signal-producer lacks health or heartbeat proof",
+      "reconciliation-drift-consumer lacks health or heartbeat proof",
+      "reconciliation-drift-scheduler lacks health or heartbeat proof",
+      "reconciliation-drift-incident-listener lacks health or heartbeat proof",
+      "search-index-scheduler lacks health or heartbeat proof",
+      "per-worker auth applicability matrix is absent",
+      "per-worker durable-volume applicability matrix is absent",
+      "kill-one worker restart proof is absent",
+      "PR and readback wording are stale"
+    ]
+  },
+  "workstreams": [
+    {
+      "id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "canonical_task": "L12-MANIFEST-001",
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex",
+        "Codex2"
+      ],
+      "services": [
+        "alpha-replication-worker",
+        "search-index-scheduler"
+      ],
+      "depends_on": [],
+      "output_type": "patch-plan-or-integrable-branch",
+      "scope": [
+        "docker-compose.yml service definitions for alpha/source workers",
+        "worker health or heartbeat implementation for alpha/source workers",
+        "manifest evidence readback for these services"
+      ],
+      "acceptance": [
+        "alpha-replication-worker has healthcheck plus heartbeat proof or explicit governed waiver",
+        "search-index-scheduler has healthcheck plus heartbeat proof or explicit governed waiver",
+        "compose config renders the new service health definitions",
+        "tests or smoke commands prove the readback for these two services"
+      ]
+    },
+    {
+      "id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "canonical_task": "L12-MANIFEST-001",
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Antigravity",
+        "Claude2",
+        "Codex",
+        "Codex2"
+      ],
+      "services": [
+        "policy-learning-shadow-eval-scheduler",
+        "paper-signal-producer"
+      ],
+      "depends_on": [],
+      "output_type": "patch-plan-or-integrable-branch",
+      "scope": [
+        "docker-compose.yml service definitions for imitation/capital workers",
+        "worker health or heartbeat implementation for imitation/capital workers",
+        "safe paper/no-live-capital evidence"
+      ],
+      "acceptance": [
+        "policy-learning-shadow-eval-scheduler has healthcheck plus heartbeat proof or explicit governed waiver",
+        "paper-signal-producer has healthcheck plus heartbeat proof or explicit governed waiver",
+        "paper-signal-producer evidence preserves no-live-capital safe write defaults",
+        "tests or smoke commands prove the readback for these two services"
+      ]
+    },
+    {
+      "id": "L12-MANIFEST-HC-REC-20260729",
+      "canonical_task": "L12-MANIFEST-001",
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex",
+        "Codex2"
+      ],
+      "services": [
+        "reconciliation-drift-consumer",
+        "reconciliation-drift-scheduler",
+        "reconciliation-drift-incident-listener"
+      ],
+      "depends_on": [],
+      "output_type": "patch-plan-or-integrable-branch",
+      "scope": [
+        "docker-compose.yml service definitions for reconciliation workers",
+        "worker health or heartbeat implementation for reconciliation workers",
+        "manifest evidence readback for reconciliation workers"
+      ],
+      "acceptance": [
+        "reconciliation-drift-consumer has healthcheck plus heartbeat proof or explicit governed waiver",
+        "reconciliation-drift-scheduler has healthcheck plus heartbeat proof or explicit governed waiver",
+        "reconciliation-drift-incident-listener has healthcheck plus heartbeat proof or explicit governed waiver",
+        "tests or smoke commands prove the readback for these three services"
+      ]
+    },
+    {
+      "id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "canonical_task": "L12-MANIFEST-001",
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Antigravity",
+        "Claude2",
+        "Codex",
+        "Codex2"
+      ],
+      "services": [
+        "all required L12 manifest workers"
+      ],
+      "depends_on": [],
+      "output_type": "validator-and-evidence-update",
+      "scope": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "tests for evidence validator"
+      ],
+      "acceptance": [
+        "manifest readback contains per-worker auth applicability",
+        "manifest readback contains per-worker durable-volume applicability",
+        "zero-volume services are each adjudicated as stateless/idempotent or repaired",
+        "validator rejects missing auth or volume applicability for required workers"
+      ]
+    },
+    {
+      "id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "canonical_task": "L12-MANIFEST-001",
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex",
+        "Codex2"
+      ],
+      "depends_on": [],
+      "output_type": "isolated-runtime-proof-or-waiver",
+      "scope": [
+        "isolated non-shared compose project",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md"
+      ],
+      "acceptance": [
+        "kill-one worker proof uses isolated/non-shared worker instance",
+        "docker inspect shows RestartCount increment after PID1 crash",
+        "ExitCode and timestamps prove daemon restart rather than operator restart",
+        "if the crash test is waived, waiver is explicit, governed, and referenced by AC2"
+      ]
+    },
+    {
+      "id": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+      "canonical_task": null,
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex",
+        "Codex2"
+      ],
+      "depends_on": [],
+      "output_type": "runtime-readback",
+      "scope": [
+        ".orchestrator/state.json",
+        ".orchestrator/worker-runtime",
+        ".orchestrator/assistant-dev-packets",
+        "ai-activity-log.jsonl"
+      ],
+      "acceptance": [
+        "readback identifies live supervisor command root and config path",
+        "readback identifies actual auto-worker runs for Antigravity and Claude-family lanes or exact failure reason",
+        "repeated SIGTERM/context-canceled/no-op cases are recorded with worker id and timestamp",
+        "no .orchestrator/config.json edits are made"
+      ]
+    },
+    {
+      "id": "L12-MANIFEST-CLOSEOUT-ALIGN-20260729",
+      "canonical_task": "L12-MANIFEST-001",
+      "target_repo": "pantheon",
+      "owner_preference": [
+        "Codex2",
+        "Claude2",
+        "Antigravity",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Codex",
+        "Antigravity",
+        "Claude2",
+        "Codex2"
+      ],
+      "depends_on": [
+        "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+        "L12-MANIFEST-HC-IMIT-CAP-20260729",
+        "L12-MANIFEST-HC-REC-20260729",
+        "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+        "L12-MANIFEST-RESTART-PROOF-20260729"
+      ],
+      "output_type": "final-owner-integration",
+      "scope": [
+        "PR #4329 or replacement PR",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/evidence.sha256",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-001/manifest-readback.md",
+        "ai-status.json#L12-MANIFEST-001"
+      ],
+      "acceptance": [
+        "all workstream outputs are integrated into one exact-head manifest PR",
+        "PR title and body no longer contain stale v1.0.2 or wrong owner/reviewer claims",
+        "readback lists every moved evidence file including evidence.sha256",
+        "evidence checksum validates",
+        "canonical review gate is success on the exact final head",
+        "L12-MANIFEST-001 can merge and archive"
+      ]
+    }
+  ]
+}
