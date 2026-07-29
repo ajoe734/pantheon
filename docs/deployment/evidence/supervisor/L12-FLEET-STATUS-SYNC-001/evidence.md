@@ -1,6 +1,6 @@
 # L12-FLEET-STATUS-SYNC-001 closeout evidence
 
-Status: owner evidence ready for independent Codex2 review
+Status: blocked pending authoritative projection refresh
 
 ## Outcome
 
@@ -45,11 +45,35 @@ This distinction matters for review. PR #4282 proves detection for structured
 migrate every legacy top-level `source_pr`/`source_head` field. No broader claim
 is made here.
 
+## Current resume gate
+
+The prior snapshot remains historical evidence, but it is no longer sufficient
+for closeout. At `2026-07-29T10:35:42Z`, governed `show` had just returned this
+task as active `in_progress`, owned by Codex and reviewed by Antigravity, while
+the generated command-root surfaces reported:
+
+- `ai-status.json`: 0 matching task rows;
+- `current-work.md`: 0 matching task rows; and
+- `dashboard-bundle.json`: 0 matching task objects.
+
+Each status-root file was still byte-identical to its docs-site mirror. The
+mirrors are therefore internally synchronized but consistently omit the active
+authoritative row. AC1 currently fails closed.
+
+The owner attempted to refresh the projection with the governed `progress`
+command. The wrapper rejected the command before mutation because the
+supervisor-issued runtime SHA was
+`8ea01a8e3993b3dabc6cd475c7058d299eaf4a01`, while the command root had advanced
+to `352e8172c1d5a32555216ef54c5557042bdfce1f`. The owner did not override the
+issued binding or run a task-worktree status command. Supervisor must issue a
+fresh command-runtime binding; the owner must then refresh and re-verify the
+projection before independent review.
+
 ## Acceptance mapping
 
-1. Governed show and generated views agree on task existence: pass. The live
-   task was present in show, current-work, and the dashboard worker link, and
-   each docs-site mirror matched its status-root source.
+1. Governed show and generated views agree on task existence: blocked on the
+   current projection mismatch. The `2026-07-28` snapshot passed, but the newer
+   resume check found governed show ahead of all three generated surfaces.
 2. File-only ghost state cannot outrank the authoritative journal: pass.
    `test_authoritative_load_ignores_divergent_file_and_save_advances_journal`
    verifies that a rogue task written only to `ai-status.json` is ignored, and
@@ -64,8 +88,9 @@ is made here.
    `test_authoritative_bridge_dispatch_survives_next_projection_cycle` proves
    that the journal-backed bridge assignment returns after a stale file-only
    projection.
-5. Closeout does not restart implementation: pass pending independent review.
-   This branch changes only the task brief and task-scoped evidence.
+5. Closeout does not restart implementation: blocked pending projection refresh
+   and fresh exact-head review. This branch still changes only the task brief
+   and task-scoped evidence.
 
 ## Verification
 
@@ -86,9 +111,13 @@ Owner rerun on the current task worktree:
 python3 scripts/dev/provision_python_distribution.py
 PASS
 
-.venv-pantheon/bin/python3 -m pytest -q \
+env -u PANTHEON_COMMAND_ROOT \
+    -u PANTHEON_COMMAND_RUNTIME_SHA \
+    -u PANTHEON_STATUS_COMMAND_ROOT \
+    -u PANTHEON_STATUS_COMMAND_SHA \
+  .venv-pantheon/bin/python3 -m pytest -q \
   scripts/test_ai_status.py scripts/test_status_file_guard.py
-168 passed, 31 subtests passed in 30.58s
+168 passed, 31 subtests passed in 29.36s
 
 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py \
   -k 'dashboard_flags_merged_delivery_that_still_needs_closeout or
@@ -122,17 +151,19 @@ including Commit trailers, Runtime mirror guard, Python packaging provision,
 Smoke acceptance, Forward to orchestrator, the Pantheon canonical review gate,
 and the root merge gate.
 
-## Review request
+## Blocked review request
 
-Codex2 should independently:
+After Supervisor issues a fresh command-runtime binding and the owner restores
+AC1, Antigravity should independently:
 
 1. verify PR #4282 exact head and merge ancestry;
-2. inspect the acceptance mapping and focused test results;
+2. inspect the acceptance mapping, focused test results, and refreshed
+   show/current-work/dashboard projection;
 3. decide whether the documented legacy top-level source metadata is acceptable
    for this evidence-only closeout or requires a concrete reopen; and
 4. bind `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json`
    as `REVIEW_FILE` when approving the exact closeout-evidence PR head.
 
-Until that independent decision is recorded, this manifest remains owner
-evidence, not `review_approved` evidence and not authority to mark the task
-`done`.
+Until AC1 is restored and that independent decision is recorded, this manifest
+remains blocked owner evidence, not `review_approved` evidence and not authority
+to mark the task `done`.

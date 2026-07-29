@@ -1,16 +1,16 @@
 {
   "schema_version": "supervisor_status_sync_closeout_evidence.v1",
   "schema_status": {
-    "status": "owner_evidence_ready_for_independent_review",
+    "status": "owner_evidence_blocked_on_authoritative_projection_refresh",
     "product_level_required": false,
-    "note": "Task-scoped closeout evidence for an already-merged dashboard/status drift detector. This manifest does not claim a deployment, hosted activation, or capital authority."
+    "note": "Task-scoped closeout evidence for an already-merged dashboard/status drift detector. The 2026-07-29 resume check found governed show ahead of the generated projection, and the governed refresh then failed closed after the supervisor command runtime advanced beyond this worker's issued SHA. This manifest does not claim closeout, deployment, hosted activation, or capital authority."
   },
   "task": {
     "id": "L12-FLEET-STATUS-SYNC-001",
     "title": "Stop stale supervisor status/source_ref regressions",
     "phase": "Fleet control",
     "owner": "Codex",
-    "reviewer": "Codex2",
+    "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-FLEET-STATUS-SYNC-001",
@@ -122,17 +122,47 @@
       "finding": "These are legacy top-level dispatch fields, not dashboard source_ref.head_sha. The dashboard normalizes source_ref to an empty object and therefore does not present the old head as the delivery binding. The current task title and next action explicitly identify PR #4282, its exact head, and its merge commit."
     }
   },
+  "resume_observation": {
+    "observed_at": "2026-07-29T10:35:42Z",
+    "governed_show_before_runtime_advance": {
+      "source": "active",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "last_update": "2026-07-29T10:28:34Z"
+    },
+    "generated_projection": {
+      "ai_status_task_count": 0,
+      "current_work_task_count": 0,
+      "dashboard_task_object_count": 0,
+      "mirrors_byte_identical": true,
+      "sha256": {
+        "ai_status": "7bed382e7f2474aab58e7a196e28518c6b112cb6c5f14c0406fbd87301d83906",
+        "current_work": "3b34a0c5ce1eae261490b29cda0e560e894fa0d98ed22021bc93d65a0f3363d8",
+        "dashboard_bundle": "88404b5494e018ccb88dd961502b548c09e83b931bc93440c8f2fea11447c009"
+      },
+      "finding": "The three generated surfaces and their docs-site mirrors agree with each other, but all omit the task returned by governed show. AC1 is not currently satisfied."
+    },
+    "governed_refresh_attempt": {
+      "command": "AI_NAME=Codex \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" progress L12-FLEET-STATUS-SYNC-001 <checkpoint>",
+      "result": "rejected before mutation",
+      "issued_runtime_sha": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+      "observed_command_root_sha": "352e8172c1d5a32555216ef54c5557042bdfce1f",
+      "error": "PANTHEON_COMMAND_RUNTIME_SHA mismatch",
+      "required_next": "Supervisor must issue a fresh command-runtime binding. The owner must then use the governed command root to refresh the authoritative projection and re-verify all three generated surfaces before review."
+    }
+  },
   "acceptance": [
     {
       "id": "AC1",
       "statement": "Governed show and generated current-work/dashboard agree on task existence.",
-      "status": "pass",
+      "status": "blocked_current_projection_mismatch",
       "evidence": [
-        "live_projection_observation.governed_show",
-        "live_projection_observation.current_work",
-        "live_projection_observation.dashboard",
-        "live_projection_observation.mirror_sha256"
-      ]
+        "live_projection_observation",
+        "resume_observation"
+      ],
+      "note": "The 2026-07-28 snapshot passed, but closeout fails closed on the newer 2026-07-29 mismatch."
     },
     {
       "id": "AC2",
@@ -165,10 +195,11 @@
     {
       "id": "AC5",
       "statement": "The already-merged implementation is closed out without restarting or broadening implementation.",
-      "status": "pass_pending_independent_closeout_review",
+      "status": "blocked_pending_projection_refresh_and_fresh_review",
       "evidence": [
         "delivery_observation.implementation_pull_request",
         "scope.not_changing",
+        "resume_observation",
         "review"
       ]
     }
@@ -185,8 +216,8 @@
         "result": "pass; checkout-scoped .venv-pantheon provisioned and import paths verified from a foreign working directory"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
-        "result": "168 passed, 31 subtests passed in 30.58s"
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
+        "result": "168 passed, 31 subtests passed in 29.36s after isolating the local test subprocesses from the auto worker's stale external command-runtime lease"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'dashboard_flags_merged_delivery_that_still_needs_closeout or dashboard_uses_structured_delivery_evidence_for_closeout_drift or derived_views_skip_a_stale_projection or authoritative_load_ignores_divergent_file_and_save_advances_journal'",
@@ -214,14 +245,14 @@
     }
   },
   "review": {
-    "reviewer": "Codex2",
-    "status": "pending",
-    "decision": "independent_review_required",
+    "reviewer": "Antigravity",
+    "status": "blocked",
+    "decision": "projection_refresh_required_before_independent_review",
     "review_targets": [
       "Verify PR #4282 exact head and merge ancestry.",
-      "Verify the focused acceptance tests and the live show/current-work/dashboard snapshot.",
+      "After a supervisor-issued command-runtime refresh, verify governed show, current-work, dashboard, and all mirrors contain the same active task row.",
       "Decide whether AC3's documented legacy top-level source_pr/source_head input is acceptable for this evidence-only closeout or requires a concrete reopen.",
-      "Bind this manifest as REVIEW_FILE when approving the exact closeout-evidence PR head."
+      "Approve only the refreshed exact closeout-evidence PR head after AC1 returns to pass; keep this manifest bound as REVIEW_FILE."
     ]
   }
 }
