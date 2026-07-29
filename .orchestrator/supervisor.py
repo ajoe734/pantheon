@@ -12376,9 +12376,12 @@ def task_declared_priority_rank(task: dict[str, Any]) -> int:
     return int(match.group(1))
 
 
-def task_l12_recovery_priority_rank(task: dict[str, Any]) -> int:
-    """Keep L12 recovery work ahead of unrelated work sharing a dispatch tier."""
+def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> int:
+    """Keep L12 recovery reviews ahead within the review dispatch tier."""
 
+    review_priority = dispatch_reason_priority(REASON_REVIEW_READY)
+    if review_priority is None or base_priority != review_priority:
+        return 1_000_000
     task_id = str(task.get("id") or "").strip().upper()
     if task_id.startswith("L12-") or task_id.startswith("SUP-L12-"):
         return 0
@@ -12395,7 +12398,7 @@ def task_dispatch_order_key(
     candidate = task or {}
     return (
         base_priority,
-        task_l12_recovery_priority_rank(candidate),
+        task_l12_review_priority_rank(candidate, base_priority),
         task_declared_priority_rank(candidate),
         board_index,
     )
@@ -13218,7 +13221,7 @@ def dispatch_ready_tasks(
             candidates.append(
                 (
                     priority,
-                    task_l12_recovery_priority_rank(task),
+                    task_l12_review_priority_rank(task, priority),
                     task_declared_priority_rank(task),
                     index,
                     task,

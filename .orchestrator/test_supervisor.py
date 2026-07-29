@@ -2689,6 +2689,9 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         state = {"queue": {"events": {}}, "workers": {}}
         config = json.loads(json.dumps(self.config))
         config["ready_dispatcher"]["max_dispatches_per_tick"] = 1
+        config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "shared_review": 1,
+        }
         config["agents"]["claude2"] = {
             "id": "claude2",
             "name": "Claude2",
@@ -2703,8 +2706,23 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "provider": "antigravity",
             "adapter": "antigravity",
         }
-        config["providers"]["claude2"] = {"delivery_mode": "claude"}
-        config["providers"]["antigravity"] = {"delivery_mode": "antigravity"}
+        config["providers"]["claude2"] = {
+            "delivery_mode": "claude",
+            "account": "shared_review",
+        }
+        config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "shared_review",
+        }
+
+        self.assertEqual(
+            supervisor.quota_group_concurrency_limit(
+                config,
+                "claude2",
+                config["ready_dispatcher"],
+            ),
+            1,
+        )
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -2727,6 +2745,34 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "L12-VERIFY-OBS-001")
         self.assertEqual(queued_event["target_agent"], "Claude2")
         self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
+    def test_l12_priority_gate_is_limited_to_review_dispatch(self) -> None:
+        review_priority = supervisor.dispatch_reason_priority("review_ready_dispatch")
+        owned_priority = supervisor.dispatch_reason_priority("owned_in_progress_dispatch")
+
+        self.assertIsNotNone(review_priority)
+        self.assertIsNotNone(owned_priority)
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "L12-VERIFY-OBS-001"},
+                int(review_priority),
+            ),
+            0,
+        )
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729"},
+                int(review_priority),
+            ),
+            0,
+        )
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "L12-VERIFY-OBS-001"},
+                int(owned_priority),
+            ),
+            1_000_000,
+        )
 
     def test_task_declared_priority_rank_is_fail_safe(self) -> None:
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "P0"}), 0)
@@ -7365,6 +7411,23 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                     worker,
                     task_map,
                     state,
+                )
+            )
+            l12_worker = {
+                **worker,
+                "run_id": "claude2-l12-review",
+                "task_id": "L12-VERIFY-OBS-001",
+            }
+            l12_state = {
+                "queue": {"events": {}},
+                "workers": {l12_worker["run_id"]: l12_worker},
+            }
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    l12_worker,
+                    task_map,
+                    l12_state,
                 )
             )
 
