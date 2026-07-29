@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import os
 import sys
 import tempfile
 from copy import deepcopy
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
-from unittest.mock import patch
+from typing import Any, Dict, Iterator, List, Optional
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -99,6 +101,114 @@ def _truth_source(packet: Dict[str, Any], truth_level: str) -> Dict[str, Any]:
     )
 
 
+REPO_ROOT = BFF_DIR.parents[2]
+
+
+def _loop_conformance_module():
+    """Import the shared controller-record contract without its asyncpg deps."""
+
+    path = REPO_ROOT / "services" / "loop-control" / "conformance.py"
+    spec = importlib.util.spec_from_file_location("l12_health_conformance", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _catalog_controller_name(loop_id: str) -> Optional[str]:
+    registry = loop_inventory_model._load_registry()
+    for loop in registry["loops"] + registry["composite_overlays"]:
+        if loop["loop_id"] == loop_id:
+            return loop["controller_contract"]["controller_name"]
+    return None
+
+
+def _canonical_controller_record(
+    loop_id: str,
+    *,
+    now: datetime,
+    tenant_id: str = TENANT_ID,
+    environment: str = ENVIRONMENT,
+    heartbeat_at: Optional[datetime] = None,
+    evidence_refs: Optional[List[str]] = None,
+    controller_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build one durable controller row that satisfies the shared contract."""
+
+    heartbeat = heartbeat_at or now
+    return {
+        "loop_id": loop_id,
+        "tenant_id": tenant_id,
+        "environment": environment,
+        "controller_id": f"{loop_id}-controller-1",
+        "controller_name": (
+            controller_name
+            or _catalog_controller_name(loop_id)
+            or f"{loop_id.replace('_', '-')}-controller"
+        ),
+        "deployment_sha": "deadbeefcafe",
+        "desired_state_query": f"desired state for {loop_id}",
+        "actual_state_query": f"actual state for {loop_id}",
+        "desired_state": {
+            "present": True,
+            "source": f"{loop_id}-desired-authority",
+            "checked_at": heartbeat,
+        },
+        "downstream_actual_state": {
+            "status": "ready",
+            "source": f"{loop_id}-terminal-store",
+            "checked_at": heartbeat,
+        },
+        "last_heartbeat_at": heartbeat,
+        "last_tick_at": heartbeat,
+        "last_success_at": heartbeat,
+        "last_failure_at": heartbeat - timedelta(minutes=5),
+        "last_failure_reason": f"{loop_id} downstream timeout",
+        "last_repair_at": heartbeat - timedelta(minutes=4),
+        "last_repair_reason": f"{loop_id} drift repaired",
+        "backlog": 0,
+        "lag": 0,
+        "dlq_count": 0,
+        "evidence_refs": (
+            evidence_refs
+            if evidence_refs is not None
+            else [f"docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/{loop_id}.json"]
+        ),
+        "truth_level": "reconciled_live_proof",
+        "lease_token": f"{loop_id}-fence-1",
+        "lease_expires_at": heartbeat + timedelta(seconds=60),
+        "payload": {"last_success_summary": f"{loop_id} reconciled desired and actual"},
+    }
+
+
+@contextmanager
+def _controller_store_client(
+    rows: List[Dict[str, Any]],
+    monkeypatch,
+) -> Iterator[TestClient]:
+    """Serve controller rows through the real durable-store read path."""
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_ENV", ENVIRONMENT)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db",
+    )
+    monkeypatch.setitem(sys.modules, "asyncpg", MagicMock())
+    loop_control = importlib.import_module("services.loop-control")
+
+    async def mock_list_records(self, tenant_id, environment):
+        return deepcopy(rows)
+
+    monkeypatch.setattr(
+        loop_control.LoopControllerStore,
+        "list_records",
+        mock_list_records,
+    )
+    with _loop_health_client() as client:
+        yield client
+
+
 def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     with _loop_health_client() as client:
@@ -135,9 +245,19 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     source_loop = next(item for item in payload["items"] if item["loop_id"] == "source_ingestion")
     assert source_loop["current_maturity"] == "api-only"
     assert source_loop["target_maturity"] == "reconciled"
-    assert source_loop["controller_health"]["status"] == "not_implemented"
+    # The catalog declares an implemented controller, so the absence of a
+    # record is "unobserved", not "not_implemented" -- and still not live.
+    assert source_loop["controller"]["status"] == "implemented"
+    assert source_loop["controller_health"]["status"] == "unobserved"
+    assert source_loop["controller_health"]["current_record_accepted"] is False
     assert source_loop["last_success"] is None
     assert source_loop["last_failure"] is None
+
+    consultation_loop = next(
+        item for item in payload["items"] if item["loop_id"] == "consultation"
+    )
+    assert consultation_loop["controller"]["status"] == "not_implemented"
+    assert consultation_loop["controller_health"]["status"] == "not_implemented"
 
     ooda_overlay = next(item for item in payload["items"] if item["loop_id"] == "per_persona_ooda")
     assert ooda_overlay["classification"] == "composite_overlay"
@@ -201,11 +321,16 @@ def test_loop_health_service_store_overlays_controller_health_and_events(monkeyp
     assert response.status_code == 200, response.text
     payload = response.json()
     data = payload["data"]
-    assert data["controller_health"]["status"] == "not_implemented"
+    # The reported controller identity does not match the catalog contract, so
+    # the record stays unaccepted and the surface stays unobserved.
+    assert data["controller_health"]["status"] == "unobserved"
     assert data["controller_health"]["source"] == "registry_metadata"
     assert data["controller_health"]["reported_status"] == "healthy"
     assert data["controller_health"]["reported_source"] == "service_store"
     assert data["controller_health"]["current_record_accepted"] is False
+    assert data["controller_health"]["rejection_reason"] == (
+        "runtime controller identity does not match catalog contract"
+    )
     assert data["last_success"]["at"] == "2026-06-27T06:01:00Z"
     assert data["last_failure"]["reason"] == "connector timeout"
     assert data["downstream_actual_state"]["status"] == "ok"
@@ -609,6 +734,225 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
         "runtime controller identity does not match catalog contract"
     )
     assert data["live_status"]["is_reconciled"] is False
+
+
+def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
+    monkeypatch,
+) -> None:
+    """All-loop conformance plus tenant-scoped operator-truth readback.
+
+    Every canonical loop emits a record that satisfies the shared controller
+    contract, the BFF shows desired presence, controller health, last
+    success/failure, downstream actual state, and provenance for each one, and
+    none of them is promoted to live truth because the catalog does not admit
+    it yet.
+    """
+
+    conformance = _loop_conformance_module()
+    now = datetime.now(timezone.utc)
+    rows = [
+        _canonical_controller_record(loop_id, now=now)
+        for loop_id in conformance.CANONICAL_LOOP_IDS
+    ]
+    for row in rows:
+        conformance.assert_controller_record_conforms(row)
+
+    # A record from another tenant must never reach this tenant's operator.
+    foreign_ref = "docs/deployment/evidence/other-tenant/leaked.json"
+    foreign = _canonical_controller_record(
+        "consultation",
+        now=now,
+        tenant_id="tenant-somebody-else",
+        evidence_refs=[foreign_ref],
+    )
+    conformance.assert_controller_record_conforms(foreign)
+
+    with _controller_store_client([*rows, foreign], monkeypatch) as client:
+        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["meta"]["scope"] == {
+        "tenant_id": TENANT_ID,
+        "environment": ENVIRONMENT,
+        "source": "authenticated_identity_and_deployment_scope",
+    }
+    assert payload["meta"]["coverage"]["raw_health_record_count"] == 12
+    assert payload["meta"]["coverage"]["canonical_loop_count"] == 12
+
+    items = {item["loop_id"]: item for item in payload["items"]}
+    assert set(conformance.CANONICAL_LOOP_IDS) <= set(items)
+
+    for loop_id in conformance.CANONICAL_LOOP_IDS:
+        item = items[loop_id]
+        health = item["controller_health"]
+        packet = item["evidence_packet"]
+
+        # Desired presence, health, last success/failure, actual state.
+        assert item["desired_state_presence"]["authoritative"] is True, loop_id
+        assert item["desired_state_presence"]["present"] is True, loop_id
+        assert item["desired_state_presence"]["query"] == (
+            f"desired state for {loop_id}"
+        )
+        assert item["downstream_actual_state"]["authoritative"] is True, loop_id
+        assert item["downstream_actual_state"]["status"] == "ready", loop_id
+        assert item["last_success"]["at"], loop_id
+        assert item["last_failure"]["reason"] == f"{loop_id} downstream timeout"
+        assert health["freshness"]["current"] is True, loop_id
+        assert health["controller_name"], loop_id
+
+        # Provenance is always visible and always attributed.
+        assert packet["source"] == "controller_store", loop_id
+        assert packet["runtime_record_evidence_basis"] == "controller_runtime", loop_id
+        assert packet["runtime_evidence_refs"], loop_id
+        assert packet["highest_truth_level"] == "reconciled_live_proof", loop_id
+        assert packet["archived_task_completion_accepted"] is False, loop_id
+
+        # Nothing is promoted: the catalog does not admit any live claim yet.
+        assert packet["eligible_live_truth_levels"] == [], loop_id
+        assert packet["accepted_live_liveness"] is False, loop_id
+        assert packet["can_claim_reconciled"] is False, loop_id
+        assert packet["can_claim_proven_live"] is False, loop_id
+        assert packet["operator_truth"]["degraded"] is True, loop_id
+        assert item["live_status"]["is_live"] is False, loop_id
+        assert item["live_status"]["is_reconciled"] is False, loop_id
+
+        contract_status = item["controller"]["status"]
+        if contract_status == "implemented":
+            # The record matches the catalog contract, so it is accepted as a
+            # current controller observation -- but still not as live truth.
+            assert packet["runtime_controller_record_qualified"] is True, loop_id
+            assert health["current_record_accepted"] is True, loop_id
+            assert health["status"] == "healthy", loop_id
+            assert health["source"] == "controller_store", loop_id
+            assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
+                "The catalog maturity and controller contract do not admit this "
+                "live claim."
+            ), loop_id
+        else:
+            assert contract_status == "not_implemented", loop_id
+            assert health["current_record_accepted"] is False, loop_id
+            assert health["status"] == "not_implemented", loop_id
+            assert health["rejection_reason"] == (
+                "catalog controller contract is not implemented"
+            ), loop_id
+
+    # The foreign-tenant record contributed nothing to this tenant's view.
+    for item in payload["items"]:
+        assert foreign_ref not in item["evidence_packet"]["refs"], item["loop_id"]
+
+
+def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
+    monkeypatch,
+) -> None:
+    """Stale, contradicted, and archive-only records never become truth."""
+
+    conformance = _loop_conformance_module()
+    now = datetime.now(timezone.utc)
+    stale_at = now - timedelta(days=30)
+
+    stale_rows = [
+        _canonical_controller_record(loop_id, now=now, heartbeat_at=stale_at)
+        for loop_id in conformance.CANONICAL_LOOP_IDS
+    ]
+    for row in stale_rows:
+        # Staleness is a freshness fact, not a schema violation: the record
+        # still conforms, and the read model still has to refuse it.
+        conformance.assert_controller_record_conforms(row)
+
+    with _controller_store_client(stale_rows, monkeypatch) as client:
+        stale_response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+    assert stale_response.status_code == 200, stale_response.text
+    stale_payload = stale_response.json()
+    assert stale_payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
+    assert stale_payload["meta"]["coverage"]["controller_health_record_count"] == 0
+
+    stale_items = {item["loop_id"]: item for item in stale_payload["items"]}
+    for loop_id in conformance.CANONICAL_LOOP_IDS:
+        item = stale_items[loop_id]
+        assert item["controller_health"]["freshness"]["current"] is False, loop_id
+        assert item["controller_health"]["current_record_accepted"] is False, loop_id
+        assert item["evidence_packet"]["runtime_controller_record_qualified"] is False, (
+            loop_id
+        )
+        assert item["evidence_packet"]["accepted_live_liveness"] is False, loop_id
+        assert item["live_status"]["operator_truth"]["degraded"] is True, loop_id
+
+    # Archive-only provenance: task completion is reference-only, never runtime
+    # evidence, so no loop keeps a runtime evidence ref.
+    archive_rows = [
+        _canonical_controller_record(
+            loop_id,
+            now=now,
+            evidence_refs=[f"ai-task-archive/tasks/{loop_id}.json"],
+        )
+        for loop_id in conformance.CANONICAL_LOOP_IDS
+    ]
+    with _controller_store_client(archive_rows, monkeypatch) as client:
+        archive_response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+    assert archive_response.status_code == 200, archive_response.text
+    archive_items = {
+        item["loop_id"]: item for item in archive_response.json()["items"]
+    }
+    for loop_id in conformance.CANONICAL_LOOP_IDS:
+        item = archive_items[loop_id]
+        assert item["evidence_packet"]["runtime_evidence_refs"] == [], loop_id
+        assert item["evidence_packet"]["runtime_controller_record_qualified"] is False, (
+            loop_id
+        )
+        assert item["controller_health"]["current_record_accepted"] is False, loop_id
+        if item["controller"]["status"] == "implemented":
+            assert item["controller_health"]["rejection_reason"] == (
+                "task archive completion is reference-only, not runtime evidence"
+            ), loop_id
+
+    # Contradicted provenance: a record that declares two different evidence
+    # bases is refused outright.  This case is served from the file store, so
+    # the durable-store path from the phases above must be turned off first.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    contradicted = {
+        loop_id: {
+            "loop_id": loop_id,
+            "tenant_id": TENANT_ID,
+            "environment": ENVIRONMENT,
+            "truth_level": "reconciled_live_proof",
+            "truth_status": "present",
+            "evidence_basis": "controller_runtime",
+            "provenance_type": "task_archive",
+            "controller_health": {
+                "status": "healthy",
+                "controller_name": _catalog_controller_name(loop_id)
+                or f"{loop_id.replace('_', '-')}-controller",
+                "last_heartbeat_at": now.isoformat().replace("+00:00", "Z"),
+            },
+            "evidence_packet": {
+                "packet_id": f"contradicted-{loop_id}",
+                "refs": [f"docs/deployment/evidence/{loop_id}/runtime.json"],
+            },
+        }
+        for loop_id in conformance.CANONICAL_LOOP_IDS
+    }
+    with _loop_health_client(loop_health_store=contradicted) as client:
+        contradicted_response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+    assert contradicted_response.status_code == 200, contradicted_response.text
+    contradicted_items = {
+        item["loop_id"]: item for item in contradicted_response.json()["items"]
+    }
+    for loop_id in conformance.CANONICAL_LOOP_IDS:
+        item = contradicted_items[loop_id]
+        packet = item["evidence_packet"]
+        assert packet["runtime_record_evidence_basis"] == "conflicting", loop_id
+        assert packet["runtime_controller_record_qualified"] is False, loop_id
+        assert packet["accepted_live_liveness"] is False, loop_id
+        assert item["controller_health"]["current_record_accepted"] is False, loop_id
+        if item["controller"]["status"] == "implemented":
+            assert item["controller_health"]["rejection_reason"] == (
+                "record declares conflicting evidence provenance"
+            ), loop_id
 
 
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:
