@@ -1,14 +1,17 @@
 # L12-MANIFEST-001 — runtime manifest readback
 
-Owner `Claude2`, current reviewer `Codex2`. Branch `task/L12-MANIFEST-001`,
+Owner `Codex2`, current reviewer `Codex`. Branch `task/L12-MANIFEST-001`,
 implementation base `dev` `f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut v1.1.0.
-This cut scanned the authoritative task-state event log through sequence 4295;
+This cut scanned the authoritative task-state event log through sequence 4298;
 that is its canonical scan boundary and every canonical-state claim below is read
 as of it.
 
-Cut v1.0.2 (historical) was reopened by `Codex2` on 2026-07-29T01:45:02Z. §9
-records the reopen and exactly what v1.1.0 corrects. The implementation itself is
-unchanged and already merged: `docker-compose.yml` and
+Cut v1.0.2 (historical) was reopened by then-reviewer `Codex2` on
+2026-07-29T01:45:02Z. Human/Ops then reassigned the repair to owner `Codex2`
+with reviewer `Codex` at journal sequence 4296 (historical); the supervisor
+redispatched that assignment at sequence 4298. §9 records the reopen and exactly
+what v1.1.0 corrects. The implementation itself is unchanged and already merged:
+`docker-compose.yml` and
 `scripts/deploy_nonprod_vm.sh` are byte-identical to the v1.0.0 (historical)
 validation head `4cf8feed` (historical), and only this document and
 `evidence.json` move in v1.1.0.
@@ -118,8 +121,6 @@ source change outside this task's artifact scope of `docker-compose.yml` and
 > rows read `no` — and re-rendering the bare config confirms 20 / 27. The count,
 > the residual-risk id, and the AC2 wording are corrected here and in
 > `evidence.json`. Recount independently with the command in §7.
-
-`pantheon-paper-runtime` does not resolve.
 
 `pantheon-paper-runtime` does not resolve.
 
@@ -264,13 +265,14 @@ docker inspect pantheon-policy-learning-shadow-eval-scheduler-1 --format \
    Policy={{.HostConfig.RestartPolicy.Name}} StopTimeout={{.Config.StopTimeout}}'
 ```
 
-## 8. Review decision and delivery record
+## 8. Historical review decision and implementation delivery record
 
-Added by cut v1.0.2. Nothing in §§1–7 changed; no implementation file changed and
-no proof claim was added, strengthened, or re-scoped. The withdrawn daemon-side
-auto-restart trigger claim in §6 stays withdrawn and unproven.
+Added by cut v1.0.2 (historical). Nothing in §§1–7 changed in that cut; no
+implementation file changed and no proof claim was added, strengthened, or
+re-scoped. The withdrawn daemon-side auto-restart trigger claim in §6 stays
+withdrawn and unproven.
 
-**The independent verdict.** `Antigravity` approved through the governed
+**The historical independent verdict.** `Antigravity` approved through the governed
 `approve` command at `2026-07-29T01:08:43Z`, bound to the exact head
 `6783e252adca302e2b5ef3363fa2b225b67f4c97` of PR
 [#4326](https://github.com/ajoe734/pantheon/pull/4326). The verdict verified that
@@ -318,12 +320,36 @@ merge freeze 2026-07-27` (51260871216). Each is recorded in `evidence.json` unde
 git merge-base --is-ancestor 2e0c63860b4d2d33f93ba9b445c274bc59e3f1ff origin/dev
 ```
 
-*Replay caveat.* The done guard's `merge_sha` ancestry check does not fire on the
-canonical closeout path, because it keys off a `repository` field the canonical
-task row does not carry — the row names the delivery repo as `target_repo`. It
-does fire on the evidence-manifest replay path, which derives `repository` from
-this manifest and resolves ancestry inside the pinned supervisor command root
-rather than a `dev`-tip checkout. While that pin sits behind the merge, a replay
-will report the merge commit as not an ancestor of `HEAD`. That is a property of
-the pin, not of the delivery, and it clears once the command root advances past
-the merge.
+## 9. Current evidence repair and receipt boundary
+
+At canonical journal sequence 4298, the task is `in_progress`, owner `Codex2`,
+reviewer `Codex`. The implementation remains the already-merged PR #4326
+delivery; this cut does not touch `docker-compose.yml` or
+`scripts/deploy_nonprod_vm.sh`.
+
+The current cut repairs the four fail-closed gaps recorded by the Codex2 reopen
+at sequence 4291 (historical):
+
+1. the bare Compose render proves **20 / 27** healthchecks and seven exceptions,
+   including `search-index-scheduler`;
+2. current approval and independent-review fields no longer claim both
+   “approved” and “not yet reviewed” at once;
+3. owner/reviewer fields match the current canonical assignment while the
+   Antigravity verdict remains historical implementation provenance only; and
+4. the evidence manifest uses a content digest and a check-backed delivery
+   receipt so all ten fail-closed evidence rules can verify the delivered bytes
+   offline.
+
+This document is the single Markdown artifact in the content digest. The same
+digest also binds the unchanged `docker-compose.yml` and
+`scripts/deploy_nonprod_vm.sh`. The receipt commit is created only after these
+bytes are final; the following evidence-only commit records that immutable
+receipt SHA and its required checks without changing any digest-bound artifact.
+The manifest and companion checksum therefore remain outside the content digest
+and avoid recursive self-hashing.
+
+The current `Codex` independent verdict is intentionally not pre-written. It
+must be issued against the exact final PR #4329 head through the governed review
+command. The historical Antigravity approval still proves review of the merged
+implementation, but it does not substitute for Codex review of this corrected
+evidence cut.
