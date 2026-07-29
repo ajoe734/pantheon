@@ -1,6 +1,6 @@
 # L12 fleet status sync closeout refresh
 
-Evidence cut: `2026-07-28T18:52:58Z`.
+Evidence cut: `2026-07-29T10:35:48Z`.
 
 ## Outcome
 
@@ -10,23 +10,26 @@ The implementation is already delivered. Pantheon PR
 `a0020c5ac50e510467a5e80c412c7703245cf4dd`. This task does not restart or
 modify that implementation.
 
-The prior evidence-only PR
-[#4297](https://github.com/ajoe734/pantheon/pull/4297) was refreshed from
-current `dev` `a6d56c366f7436574e6d2d241b47564558beac74`. Its current exact head is
-`6b2fd109a885d7eb26a985d621ef3ef9d3e26753`, and its diff contains only:
+The evidence-only PR
+[#4297](https://github.com/ajoe734/pantheon/pull/4297) was refreshed again
+through GitHub's guarded update-branch API from current `dev`
+`352e8172c1d5a32555216ef54c5557042bdfce1f`. Its current exact head is
+`193be7fe39b2767dfb8fde3aa931fc40080af34d`, and its diff still contains only:
 
 - `.orchestrator/task-briefs/l12_fleet_status_sync_001.md`;
 - `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json`;
 - `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md`.
 
-Auto-merge remains disabled. All eight visible Branch CI check runs are green.
-The dedicated Codex2 reviewer dispatch approved exact head
-`6b2fd109a885d7eb26a985d621ef3ef9d3e26753`; Pantheon canonical review gate
-status id `51241172509` is successful.
+Auto-merge remains disabled. All eight visible Branch CI check runs are green
+on the refreshed exact head. The earlier canonical review gate status id
+`51241172509` approved old head
+`6b2fd109a885d7eb26a985d621ef3ef9d3e26753`; it is retained as history but is
+not reused for `193be7fe39b2767dfb8fde3aa931fc40080af34d`.
 
 ## Independent reproduction
 
-Codex2 independently inspected the exact PR head and reproduced:
+Codex2 independently inspected refreshed exact head
+`193be7fe39b2767dfb8fde3aa931fc40080af34d` and reproduced:
 
 - `168 passed, 31 subtests passed` for `scripts/test_ai_status.py` and
   `scripts/test_status_file_guard.py`;
@@ -49,11 +52,10 @@ the inherited command runtime failed closed because
 `ORCH_TASK_ID=L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728` did not match
 `L12-FLEET-STATUS-SYNC-001`. That is the expected safety result.
 
-The dedicated Codex2 reviewer dispatch for `L12-FLEET-STATUS-SYNC-001`
-recorded the exact-head approval at `2026-07-28T18:55:18Z`. The GitHub review
-endpoint returned 422 because Pantheon agents share one GitHub account; the
-required canonical commit status was recorded successfully and is the
-repository's authoritative review gate.
+After the new base refresh, the canonical source task is `in_progress`, owned
+by Codex and reviewed by Antigravity. The new exact head has no canonical
+review-gate status yet, so independent rereview remains required. This wrapper
+task does not bypass the governed parent-task lease to approve it.
 
 Human/Ops root freeze, PR merge, and the parent owner's canonical
 `done`/archive remain pending at this cut.

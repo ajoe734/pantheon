@@ -10,30 +10,27 @@ Do not read `current-work.md` by default for implementation context.
 - Owner: Codex2
 - Reviewer: Codex
 - Phase: Twelve Loop Remediation / Wave 0 Fleet Status Sync Closeout
-- Last update: 2026-07-28T18:55:18Z
-- Next: Codex2 approved PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 through canonical review gate status id 51241172509. Human/Ops root freeze, exact-head merge, and owner done/archive remain.
+- Last update: 2026-07-29T10:35:48Z
+- Next: PR #4297 is refreshed from dev `352e8172c1d5a32555216ef54c5557042bdfce1f` at exact head `193be7fe39b2767dfb8fde3aa931fc40080af34d`; exact-head rereview, Human/Ops root freeze, merge, and canonical done/archive remain.
 
 ## Summary
 刷新並完成 L12-FLEET-STATUS-SYNC-001 closeout；不得重做已 merged implementation。
 
 ## Owner Result
 - PR #4282 implementation head
-  `e806affaa279f8b9d4b41bae6117a9431c99b90e` is already merged to `dev` as
-  `a0020c5ac50e510467a5e80c412c7703245cf4dd`.
-- Codex refreshed evidence-only PR #4297 from current `dev`
-  `a6d56c366f7436574e6d2d241b47564558beac74`; its exact head is
-  `6b2fd109a885d7eb26a985d621ef3ef9d3e26753`.
-- The refreshed PR changes only the source task brief and two closeout evidence
-  files. Codex2 reproduced 168 status/guard tests and the projection refresh
-  test, then verified JSON, mirror parity, diff, ancestry, and green Branch CI.
-- The dedicated reviewer dispatch approved exact head
-  `6b2fd109a885d7eb26a985d621ef3ef9d3e26753`; canonical review gate status id
-  `51241172509` is successful and the source task is `review_approved`.
-- This wrapper worker is leased only to
-  `L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728`. Its attempt to mutate the parent
-  task correctly failed closed with a task-mismatch guard, so the dedicated
-  `L12-FLEET-STATUS-SYNC-001` reviewer dispatch retained and exercised
-  canonical approval authority.
+  `e806affaa279f8b9d4b41bae6117a9431c99b90e` remains merged to `dev` as
+  `a0020c5ac50e510467a5e80c412c7703245cf4dd`; this task did not restart it.
+- PR #4297 was refreshed through GitHub's guarded update-branch API from
+  `dev` `352e8172c1d5a32555216ef54c5557042bdfce1f`; its exact head is now
+  `193be7fe39b2767dfb8fde3aa931fc40080af34d`.
+- The refreshed PR still changes only the source task brief and two closeout
+  evidence files. All eight Branch CI jobs passed, as did 168 status/guard
+  tests and the authoritative projection refresh test on the exact head.
+- The prior canonical approval applied to old head
+  `6b2fd109a885d7eb26a985d621ef3ef9d3e26753` and is not reused for the new
+  head. The source task is currently `in_progress`, owned by Codex and reviewed
+  by Antigravity; exact-head rereview must complete before Human/Ops root
+  freeze and merge.
 
 ## Dependencies
 - none

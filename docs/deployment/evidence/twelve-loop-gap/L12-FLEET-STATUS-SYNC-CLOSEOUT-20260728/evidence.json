@@ -5,13 +5,13 @@
     "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence",
     "owner": "Codex2",
     "reviewer": "Codex",
-    "status": "owner_evidence_anchored_parent_review_approved",
+    "status": "owner_evidence_refresh_verified_parent_rereview_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
-    "evidence_cut_at": "2026-07-28T18:55:18Z",
-    "overall_admission": "parent_exact_head_review_approved_freeze_merge_and_archive_pending"
+    "evidence_cut_at": "2026-07-29T10:35:48Z",
+    "overall_admission": "parent_refreshed_exact_head_verified_rereview_freeze_merge_and_archive_pending"
   },
   "scope": {
     "owned_layer": "Task-scoped receipt for refreshing and closing the already-merged fleet status synchronization delivery.",
@@ -44,13 +44,13 @@
     "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4297",
     "original_evidence_head": "b24b454108dc2137f2b24d226c57ec1192bcf026",
     "refreshed_evidence_commit": "7766d38064a814090e0f1ff41775b4c362bf7bf9",
-    "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
-    "composed_dev": "a6d56c366f7436574e6d2d241b47564558beac74",
+    "exact_head": "193be7fe39b2767dfb8fde3aa931fc40080af34d",
+    "composed_dev": "352e8172c1d5a32555216ef54c5557042bdfce1f",
     "base_branch": "dev",
     "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
     "state": "open",
     "mergeable": true,
-    "merge_state": "blocked_pending_root_freeze_and_exact_head_merge",
+    "merge_state": "blocked_pending_governed_rereview_root_freeze_and_exact_head_merge",
     "auto_merge": false,
     "branch_ci": {
       "status": "pass",
@@ -63,13 +63,13 @@
       ]
     },
     "canonical_task": {
-      "status": "review_approved",
+      "status": "in_progress",
       "owner": "Codex",
-      "reviewer": "Codex2",
+      "reviewer": "Antigravity",
       "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json"
     },
-    "canonical_review": {
-      "status": "success",
+    "prior_canonical_review": {
+      "status": "superseded_by_head_refresh",
       "reviewed_at": "2026-07-28T18:55:18Z",
       "reviewer": "Codex2",
       "pull_request": 4297,
@@ -78,7 +78,16 @@
       "status_context": "Pantheon canonical review gate",
       "status_id": 51241172509,
       "github_review_submission_error": "gh: Unprocessable Entity (HTTP 422)",
-      "note": "Pantheon agents share one GitHub account, so the required exact-head commit status is authoritative rather than a self-review."
+      "note": "This review remains historical evidence for the old head and is not reused after the base refresh."
+    },
+    "canonical_review": {
+      "status": "pending",
+      "reviewer": "Antigravity",
+      "pull_request": 4297,
+      "exact_head": "193be7fe39b2767dfb8fde3aa931fc40080af34d",
+      "base": "dev",
+      "status_context": "Pantheon canonical review gate",
+      "note": "The refreshed exact head has no canonical review-gate status at this evidence cut."
     },
     "changed_files": [
       ".orchestrator/task-briefs/l12_fleet_status_sync_001.md",
@@ -87,7 +96,7 @@
     ]
   },
   "verification": {
-    "performed_at": "2026-07-28T18:52:58Z",
+    "performed_at": "2026-07-29T10:35:48Z",
     "commands": [
       {
         "command": "python3 scripts/dev/provision_python_distribution.py",
@@ -95,19 +104,19 @@
         "conclusion": "Checkout-scoped .venv-pantheon was provisioned and import paths were verified from a foreign working directory without PYTHONPATH."
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
         "result": "pass",
-        "conclusion": "168 passed, 31 subtests passed in 31.65 seconds."
+        "conclusion": "168 passed, 31 subtests passed in 29.05 seconds on exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d. External command-root bindings were removed from the isolated test process so fixtures exercised this head's own wrapper."
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py -k authoritative_bridge_dispatch_survives_next_projection_cycle",
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py -k authoritative_bridge_dispatch_survives_next_projection_cycle",
         "result": "pass",
-        "conclusion": "1 passed, 26 deselected in 1.06 seconds."
+        "conclusion": "1 passed, 26 deselected in 1.00 seconds on exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d."
       },
       {
         "command": "python3 -m json.tool <exact-head evidence.json>; git diff --check origin/dev...origin/pr-4297-current",
         "result": "pass",
-        "conclusion": "The exact-head manifest is valid JSON and the evidence-only PR diff is clean."
+        "conclusion": "The refreshed exact-head manifest is valid JSON and the evidence-only PR diff is clean."
       },
       {
         "command": "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev; git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
@@ -122,7 +131,7 @@
       {
         "command": "gh pr checks 4297 --repo ajoe734/pantheon",
         "result": "pass",
-        "conclusion": "All eight visible Branch CI check runs passed on exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753."
+        "conclusion": "All eight visible Branch CI check runs passed on exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d."
       }
     ]
   },
@@ -132,13 +141,19 @@
     "command": "approve",
     "result": "expected_fail_closed",
     "error": "status command task mismatch: argv task L12-FLEET-STATUS-SYNC-001 != ORCH_TASK_ID L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
-    "required_path": "The dedicated Codex2 review_ready_dispatch for L12-FLEET-STATUS-SYNC-001 recorded canonical approval.",
-    "dedicated_dispatch_result": {
-      "status": "review_approved",
+    "required_path": "A dedicated Antigravity review_ready_dispatch for L12-FLEET-STATUS-SYNC-001 must record canonical approval of the refreshed head.",
+    "prior_dedicated_dispatch_result": {
+      "status": "superseded_by_head_refresh",
       "recorded_at": "2026-07-28T18:55:18Z",
       "pull_request": 4297,
       "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
       "canonical_status_id": 51241172509
+    },
+    "current_required_dispatch": {
+      "status": "pending",
+      "reviewer": "Antigravity",
+      "pull_request": 4297,
+      "exact_head": "193be7fe39b2767dfb8fde3aa931fc40080af34d"
     }
   },
   "acceptance": [
@@ -146,7 +161,7 @@
       "id": "AC1",
       "criterion": "Refresh or supersede PR #4297 from current dev.",
       "status": "pass",
-      "proof": "PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 composes current dev a6d56c366f7436574e6d2d241b47564558beac74 and has green Branch CI."
+      "proof": "PR #4297 exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d composes dev 352e8172c1d5a32555216ef54c5557042bdfce1f and has green Branch CI."
     },
     {
       "id": "AC2",
@@ -157,8 +172,8 @@
     {
       "id": "AC3",
       "criterion": "Obtain exact-head independent review.",
-      "status": "pass",
-      "proof": "The dedicated Codex2 reviewer dispatch approved PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753; Pantheon canonical review gate status id 51241172509 is successful."
+      "status": "pending_after_head_refresh",
+      "proof": "Prior status id 51241172509 approved old head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753. Refreshed head 193be7fe39b2767dfb8fde3aa931fc40080af34d passed owner reproduction and Branch CI but still requires governed Antigravity review."
     },
     {
       "id": "AC4",
@@ -178,6 +193,7 @@
     "status": "pending",
     "decision": "independent_review_required_after_parent_closeout_receipt",
     "review_targets": [
+      "Confirm Antigravity canonical review of PR #4297 exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d.",
       "Confirm Human/Ops root-freeze and PR #4297 exact-head merge identities.",
       "Confirm L12-FLEET-STATUS-SYNC-001 reaches canonical done/archive without implementation restart.",
       "Verify this wrapper manifest and checksum before binding it as REVIEW_FILE."
@@ -201,11 +217,20 @@
       "status": "review_approved",
       "sha": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
       "reference": "Pantheon canonical review gate status id 51241172509 approved PR #4297 exact head; source task returned to Codex for root-freeze, merge, and owner closeout."
+    },
+    {
+      "sequence": 3,
+      "actor": "Codex2",
+      "kind": "parent_base_refresh_verified",
+      "recorded_at": "2026-07-29T10:35:48Z",
+      "status": "rereview_pending",
+      "sha": "193be7fe39b2767dfb8fde3aa931fc40080af34d",
+      "reference": "GitHub update-branch composed dev 352e8172c1d5a32555216ef54c5557042bdfce1f; the diff remained evidence-only, all eight Branch CI jobs passed, and exact-head owner reproduction passed."
     }
   ],
   "known_limitations": [
     "This task does not claim hosted deployment, runtime activation, program-level twelve-loop completion, or capital authority.",
     "The legacy top-level source_pr/source_head fields are disclosed but are not migrated by this closeout.",
-    "Human/Ops root-freeze, merge, and owner done/archive are pending at this evidence cut."
+    "Governed Antigravity rereview, Human/Ops root-freeze, merge, and owner done/archive are pending at this evidence cut."
   ]
 }
