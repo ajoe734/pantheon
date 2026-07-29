@@ -12862,6 +12862,8 @@ def higher_priority_ready_task_exists(
     served_higher_priority_task_ids: set[str] = set()
     active_event_ids: set[str] = set()
     current_run_id = str(worker.get("run_id") or "")
+    if task_priority_preemption_protected(current_task):
+        return False
 
     for run_id, other in (effective_state.get("workers", {}) or {}).items():
         if other.get("status") not in active_statuses:
@@ -12914,6 +12916,20 @@ def higher_priority_ready_task_exists(
     free_slots = max(0, agent_capacity - occupied_count)
     unserved_higher_priority = higher_priority_task_ids - served_higher_priority_task_ids
     return len(unserved_higher_priority) > free_slots
+
+
+def task_priority_preemption_protected(task: dict[str, Any] | None) -> bool:
+    """True when a recovery task must finish instead of being repeatedly interrupted."""
+
+    if not isinstance(task, dict):
+        return False
+    task_id = str(task.get("id") or "")
+    dispatch_model = str(task.get("dispatch_model") or "")
+    if task_id.startswith("SUP-L12-") and dispatch_model == "real-supervisor-auto-workers":
+        return True
+    preferred_lanes = task.get("preferred_lane_order")
+    phase = str(task.get("phase") or "")
+    return task_id.startswith("SUP-L12-") and isinstance(preferred_lanes, list) and "Wave 0" in phase
 
 
 def worker_matches_current_assignment(
