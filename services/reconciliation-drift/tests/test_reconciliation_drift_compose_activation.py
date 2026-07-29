@@ -55,6 +55,20 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert "reconciliation-drift-data:/data/reconciliation-drift" in consumer["volumes"]
     assert consumer["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
     assert consumer["depends_on"]["telemetry"]["condition"] == "service_healthy"
+    assert consumer["environment"]["RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE"] == (
+        "${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-"
+        "/tmp/reconciliation-drift-consumer-health.json}"
+    )
+    assert consumer["environment"][
+        "RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS"
+    ] == "${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}"
+    assert consumer["healthcheck"]["test"] == [
+        "CMD",
+        "python",
+        "services/reconciliation-drift/consumer.py",
+        "healthcheck",
+    ]
+    assert consumer["healthcheck"]["start_period"] == "300s"
 
     scheduler = services["reconciliation-drift-scheduler"]
     assert "profiles" not in scheduler
@@ -75,6 +89,20 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         scheduler["environment"]["RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS"]
         == "${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}"
     )
+    assert scheduler["environment"]["RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE"] == (
+        "${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-"
+        "/tmp/reconciliation-drift-scheduler-health.json}"
+    )
+    assert scheduler["environment"][
+        "RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS"
+    ] == "${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}"
+    assert scheduler["healthcheck"]["test"] == [
+        "CMD",
+        "python",
+        "services/reconciliation-drift/scheduler_worker.py",
+        "healthcheck",
+    ]
+    assert scheduler["healthcheck"]["start_period"] == "300s"
 
     listener = services["reconciliation-drift-incident-listener"]
     assert "profiles" not in listener
@@ -98,6 +126,22 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         == "/data/reconciliation-drift/incident-listener-state.json"
     )
     assert "reconciliation-drift-data:/data/reconciliation-drift" in listener["volumes"]
+    assert listener["environment"][
+        "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE"
+    ] == (
+        "${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-"
+        "/tmp/reconciliation-drift-incident-listener-health.json}"
+    )
+    assert listener["environment"][
+        "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS"
+    ] == "${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}"
+    assert listener["healthcheck"]["test"] == [
+        "CMD",
+        "python",
+        "services/reconciliation-drift/incident_listener.py",
+        "healthcheck",
+    ]
+    assert listener["healthcheck"]["start_period"] == "300s"
 
     smoke = services["smoke-stack"]
     assert smoke["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"

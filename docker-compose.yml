@@ -2016,6 +2016,8 @@ services:
       RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS:-1}
       RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ: ${RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ:-false}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/tmp/reconciliation-drift-consumer-health.json}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -2023,6 +2025,12 @@ services:
         condition: service_healthy
       telemetry:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/consumer.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   reconciliation-drift-scheduler:
     build:
@@ -2037,9 +2045,17 @@ services:
       RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/tmp/reconciliation-drift-scheduler-health.json}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/scheduler_worker.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   reconciliation-drift-incident-listener:
     build:
@@ -2056,6 +2072,8 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_STATE_PATH: /data/reconciliation-drift/incident-listener-state.json
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -2063,6 +2081,12 @@ services:
         condition: service_healthy
       incidents:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/incident_listener.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   research-worker-gateway-svc:
     build:
