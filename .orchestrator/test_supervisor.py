@@ -2665,6 +2665,115 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "INCIDENT-P0",
         )
 
+    def test_dispatcher_prioritizes_l12_review_over_unrelated_review_for_claude2(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T08:42:03Z",
+                },
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T08:42:52Z",
+                },
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 1
+        config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "shared_review": 1,
+        }
+        config["agents"]["claude2"] = {
+            "id": "claude2",
+            "name": "Claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude",
+        }
+        config["agents"]["antigravity"] = {
+            "id": "antigravity",
+            "name": "Antigravity",
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        config["providers"]["claude2"] = {
+            "delivery_mode": "claude",
+            "account": "shared_review",
+        }
+        config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "shared_review",
+        }
+
+        self.assertEqual(
+            supervisor.quota_group_concurrency_limit(
+                config,
+                "claude2",
+                config["ready_dispatcher"],
+            ),
+            1,
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude2"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "L12-VERIFY-OBS-001")
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
+    def test_l12_priority_gate_is_limited_to_review_dispatch(self) -> None:
+        review_priority = supervisor.dispatch_reason_priority("review_ready_dispatch")
+        owned_priority = supervisor.dispatch_reason_priority("owned_in_progress_dispatch")
+
+        self.assertIsNotNone(review_priority)
+        self.assertIsNotNone(owned_priority)
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "L12-VERIFY-OBS-001"},
+                int(review_priority),
+            ),
+            0,
+        )
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729"},
+                int(review_priority),
+            ),
+            0,
+        )
+        self.assertEqual(
+            supervisor.task_l12_review_priority_rank(
+                {"id": "L12-VERIFY-OBS-001"},
+                int(owned_priority),
+            ),
+            1_000_000,
+        )
+
     def test_task_declared_priority_rank_is_fail_safe(self) -> None:
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "P0"}), 0)
         self.assertEqual(supervisor.task_declared_priority_rank({"priority": "p12"}), 12)
@@ -7248,6 +7357,79 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 state,
             )
         )
+
+    def test_l12_review_preempts_unrelated_same_tier_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-non-l12-review",
+            "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "review_ready_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "OPS-PROMOTE-PR-CI-TRIGGER-001": {
+                "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+            "L12-VERIFY-OBS-001": {
+                "id": "L12-VERIFY-OBS-001",
+                "status": "review",
+                "owner": "Antigravity",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+            l12_worker = {
+                **worker,
+                "run_id": "claude2-l12-review",
+                "task_id": "L12-VERIFY-OBS-001",
+            }
+            l12_state = {
+                "queue": {"events": {}},
+                "workers": {l12_worker["run_id"]: l12_worker},
+            }
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    l12_worker,
+                    task_map,
+                    l12_state,
+                )
+            )
 
     def test_startup_recovery_does_not_preempt_still_live_worker(self) -> None:
         config = json.loads(json.dumps(self.config))
@@ -12043,6 +12225,156 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
+
+    def test_l12_owner_failure_does_not_fall_back_to_codex_when_provider_first_lane_fails(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Claude2": ["Codex"]},
+                "reviewer_fallbacks": {"Claude2": ["Codex"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_l12_reviewer_failure_does_not_fall_back_to_codex2_when_provider_first_lane_fails(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "reviewer_fallbacks": {"Claude2": ["Codex2", "Codex"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "L12-VERIFY-OBS-001",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-review-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker exited before the task reached a terminal status.",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_l12_owner_failure_can_fall_back_to_antigravity_provider_first(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Claude2": ["Codex", "Antigravity"]},
+                "reviewer_fallbacks": {"Claude2": ["Codex", "Antigravity"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        worker = {
+            "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+            "agent_id": "claude2",
+            "retry_count": 1,
+            "run_id": "claude2-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Antigravity")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertIn("Task returned to todo until Antigravity starts a fresh run.", kwargs["message"])
 
 
 class MissingHandoffBlockerTests(unittest.TestCase):
