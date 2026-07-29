@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-MANIFEST-001 product-level runtime manifest evidence admission.",
-    "note": "Owner evidence cut v1.0.0. This replaces the prior 34-line evidence.json committed as a106af4251782c1672b9fb5db056f925ae4dbee6, which asserted status review_approved with owner Antigravity and reviewer Claude2 while the canonical row was in_progress with owner Claude2 and reviewer Antigravity, and which carried no implementation diff. The manifest below records the real docker-compose.yml and scripts/deploy_nonprod_vm.sh change and the readbacks taken against the live dev stack.",
+    "note": "Owner evidence cut v1.0.1. v1.0.0 replaced the prior 34-line evidence.json committed as a106af4251782c1672b9fb5db056f925ae4dbee6, which asserted status review_approved with owner Antigravity and reviewer Claude2 while the canonical row was in_progress with owner Claude2 and reviewer Antigravity, and which carried no implementation diff. The manifest below records the real docker-compose.yml and scripts/deploy_nonprod_vm.sh change and the readbacks taken against the live dev stack. v1.0.1 is an owner-initiated correction, not new work: v1.0.0 read its kill-one probe as proof that the unless-stopped policy restarted the worker unaided, and the container's RestartCount reads 0, which refutes that. The claim is withdrawn and downgraded to not proven across validation, behavioral_proof, hosted_readback, integrity, and acceptance, and the gap is stated as residual risk auto_restart_policy_not_proven_end_to_end. No implementation file changed between v1.0.0 and v1.0.1.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-29T00:20:00Z",
-    "evidence_cut_semantics": "Owner evidence cut v1.0.0 at task branch head 4cf8feedbc3b988e356d67b36be8e628d17eaf2e over base dev f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8. Canonical task state at cut time is owner Claude2, reviewer Antigravity, status in_progress. All twenty-seven required loop workers now resolve from docker-compose.yml with no profile selected; scripts/deploy_nonprod_vm.sh refuses any deploy whose selected profiles do not resolve every one of them. The independent reviewer verdict is not yet recorded. The done guard therefore refuses this cut on two counts, both intended: overall_admission carries 'pending' and record_log holds no approved reviewer verdict. The approval cut must update both fields and record the PR's required_checks; the owner does not pre-write them.",
+    "evidence_cut_at": "2026-07-29T00:36:31Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.0.1 at task branch head 94abec5f84e18481511496955d322c7842a01612 over base dev f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8, correcting v1.0.0 which was cut at 4cf8feedbc3b988e356d67b36be8e628d17eaf2e. Canonical task state at cut time is owner Claude2, reviewer Antigravity, status in_progress. All twenty-seven required loop workers now resolve from docker-compose.yml with no profile selected; scripts/deploy_nonprod_vm.sh refuses any deploy whose selected profiles do not resolve every one of them. docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to the v1.0.0 validation head, so every compose, gate, healthcheck, and regression result recorded here still applies unchanged; validated_head_sha therefore still names 4cf8feed. The one substantive change in v1.0.1 is the withdrawal of the auto-restart claim described in schema_status.note. The independent reviewer verdict is not yet recorded. The done guard therefore refuses this cut on two counts, both intended: overall_admission carries 'pending' and record_log holds no approved reviewer verdict. The approval cut must update both fields and record the PR's required_checks; the owner does not pre-write them.",
     "id": "L12-MANIFEST-001",
     "overall_admission": "accepted_owner_implementation_pending_independent_review",
     "owner": "Claude2",
@@ -82,6 +82,12 @@
         "note": "Added validate_required_loop_workers, dropped search-index-scheduler from the default profile string, and recorded the adjudication that keeps source-ingest-scheduler and source-ingest-agora-projector behind the bounded egress gate.",
         "sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e",
         "subject": "L12-MANIFEST-001: anchor fail-closed loop worker deploy guard"
+      },
+      {
+        "delivery_state": "current_branch",
+        "note": "Evidence-only commit carrying owner cut v1.0.0. No implementation file changed; docker-compose.yml and scripts/deploy_nonprod_vm.sh are byte-identical to 4cf8feed.",
+        "sha": "94abec5f84e18481511496955d322c7842a01612",
+        "subject": "L12-MANIFEST-001: recut runtime manifest evidence"
       }
     ],
     "required_checks": []
@@ -132,9 +138,9 @@
       },
       {
         "claim_scope": "current",
-        "command": "docker kill --signal=SIGKILL pantheon-policy-learning-shadow-eval-scheduler-1",
-        "conclusion": "The container stopped at 2026-07-29T00:14:50Z and was restarted by its unless-stopped policy at 2026-07-29T00:16:32Z with no operator action; it then logged startup_recovery status ok and a fresh authenticated tick at 2026-07-29T00:16:33Z. Its rendered StopTimeout is 30 seconds.",
-        "result": "pass"
+        "command": "docker kill --signal=SIGKILL pantheon-policy-learning-shadow-eval-scheduler-1, then re-read with docker inspect --format 'RestartCount={{.RestartCount}} ExitCode={{.State.ExitCode}} FinishedAt={{.State.FinishedAt}} StartedAt={{.State.StartedAt}} RestartPolicy={{.HostConfig.RestartPolicy.Name}} StopTimeout={{.Config.StopTimeout}}' and docker logs --timestamps over the same window",
+        "conclusion": "Corrected on independent re-readback; the prior cut's reading of this command is withdrawn. What the readback does support: the container stopped at 2026-07-29T00:14:50.962927635Z, was running again at 2026-07-29T00:16:32.319332602Z, and on coming back logged startup_recovery status ok with reset_count 0 plus a fresh tenant-bound authenticated tick at 2026-07-29T00:16:33.111Z with no 401; RestartPolicy reads unless-stopped and StopTimeout reads 30, so both rendered settings reach the runtime. What it does not support: that Docker's restart policy performed that restart. The same container reads RestartCount=0 and ExitCode=0, which a policy-driven restart would not produce, and the 101.4-second gap is consistent with operator-initiated recovery. docker kill is in fact not a sound probe of a restart policy at all, because the daemon records an explicit kill or stop as operator intent and deliberately suppresses unless-stopped. The end-to-end auto-restart claim is therefore downgraded to not proven.",
+        "result": "partial_config_reaches_runtime_auto_restart_not_proven"
       },
       {
         "claim_scope": "current",
@@ -176,7 +182,7 @@
       "hosted_activation_claimed": false,
       "observed_at": "2026-07-29T00:16:33Z",
       "status": "local_integration_pass",
-      "terminal_readback": "Before the change the live stack ran 55 containers with no policy-learning-shadow-eval-scheduler container at all, confirming the human_imitation_shadow_evaluation loop worker was never started by the deploy default. After the change that worker was started in the same project, completed startup recovery and an authenticated tick, survived a SIGKILL through its restart policy, and recovered with a fresh authenticated tick. Both new heartbeat healthchecks were exercised positive and negative inside the already-running strategy-distillation-worker and deployment-outbox-consumer containers."
+      "terminal_readback": "Before the change the live stack ran 55 containers with no policy-learning-shadow-eval-scheduler container at all, confirming the human_imitation_shadow_evaluation loop worker was never started by the deploy default. After the change that worker was started in the same project and completed startup recovery and an authenticated tick. It was then force-stopped and, once running again, recovered cleanly with startup_recovery status ok, reset_count 0, and a fresh authenticated tick. Its RestartPolicy reads unless-stopped and its StopTimeout reads 30 in docker inspect. Its RestartCount reads 0, so that particular recovery was operator-initiated and is not evidence that the restart policy fires unaided; the prior cut claimed otherwise and that claim is withdrawn here. Both new heartbeat healthchecks were exercised positive and negative inside the already-running strategy-distillation-worker and deployment-outbox-consumer containers."
     }
   },
   "behavioral_proof": {
@@ -205,11 +211,12 @@
     },
     "restart_and_recovery": {
       "proof": [
-        "Every one of the twenty-seven required loop workers renders restart: unless-stopped and stop_grace_period: 30s, so a supervised restart is the default and a worker gets 30 seconds to finish in-flight work before SIGKILL.",
-        "A real kill-one restart was performed against the live dev stack: pantheon-policy-learning-shadow-eval-scheduler-1 was SIGKILLed at 2026-07-29T00:14:50Z, was restarted by its restart policy at 2026-07-29T00:16:32Z with no operator action, and logged startup_recovery status ok plus a fresh authenticated tick at 2026-07-29T00:16:33Z.",
-        "The container's rendered StopTimeout was read back as 30 from docker inspect, confirming the graceful-stop value reaches the runtime rather than only the file."
+        "Every one of the twenty-seven required loop workers renders restart: unless-stopped and stop_grace_period: 30s, so a supervised restart is the declared default and a worker gets 30 seconds to finish in-flight work before it is force-terminated.",
+        "Those settings reach the runtime and not only the file: docker inspect on the live pantheon-policy-learning-shadow-eval-scheduler-1 reports RestartPolicy unless-stopped and StopTimeout 30.",
+        "Worker-side recovery from an abrupt termination is proven. The container was force-stopped at 2026-07-29T00:14:50.962927635Z and was running again at 2026-07-29T00:16:32.319332602Z; docker logs show it then emitted startup_recovery status ok with reset_count 0 and a fresh tenant-bound authenticated tick at 2026-07-29T00:16:33.111Z with no 401. An interrupted worker therefore resumes cleanly and needs no manual state repair.",
+        "Not proven, and withdrawn from the prior cut: that Docker's unless-stopped policy itself performed that restart with no operator action. The same container reads RestartCount=0 and ExitCode=0, which is inconsistent with a policy-driven restart, and the 101.4-second outage is consistent with operator-initiated recovery. The method was unsound rather than the configuration: docker kill records explicit operator intent, so the daemon suppresses the restart policy by design. A sound probe crashes the container's PID 1 from inside, leaving the exit unsolicited, and is confirmed by RestartCount incrementing. That probe was not run in this slice; it is recorded in residual_risks as auto_restart_policy_not_proven_end_to_end for the reviewer to adjudicate."
       ],
-      "status": "pass"
+      "status": "partial_auto_restart_not_proven"
     },
     "rollback_or_compensation": {
       "proof": [
@@ -268,7 +275,8 @@
       ],
       "id": "AC2",
       "statement": "Workers have restart, health, heartbeat, durable volumes, auth, and graceful-stop configuration.",
-      "status": "pass"
+      "status": "pass",
+      "blocking_until": "Scope of this pass, stated so the reviewer can disagree with it. The criterion as worded is about configuration, and the configuration is proven: 27/27 required loop workers render restart: unless-stopped and stop_grace_period: 30s, 21/27 carry a healthcheck with the six exceptions recorded as a residual risk, durable volumes and service-token auth are rendered per the inventory table in manifest-readback.md, and docker inspect confirms unless-stopped and StopTimeout 30 reach the live runtime rather than only the file. Worker-side recovery after an abrupt termination was also observed clean. What is NOT proven is the daemon-side trigger — that the unless-stopped policy fires unaided — because the attempted probe used docker kill, which the daemon excludes from the restart policy by design, and RestartCount read back as 0. This owner cut treats that as outside the wording of AC2 and records it as residual risk auto_restart_policy_not_proven_end_to_end rather than folding it into this status. If the reviewer reads AC2 as requiring the runtime trigger too, this item is not a pass and the reviewer should withhold approval until an in-container PID 1 crash probe is authorised and RestartCount is read back as incremented."
     },
     {
       "evidence_refs": [
@@ -299,6 +307,15 @@
     }
   ],
   "residual_risks": {
+    "auto_restart_policy_not_proven_end_to_end": {
+      "blocking_for_this_task": false,
+      "containment": "The configuration half is proven at the runtime and not merely in the file: docker inspect on the live container reports RestartPolicy unless-stopped and StopTimeout 30, and all twenty-seven required loop workers render both keys. The worker half is proven too: after an abrupt termination the worker resumed with startup_recovery status ok, reset_count 0, and a fresh authenticated tick, so an unattended restart would not require manual state repair. What is unproven is only the daemon-side trigger, and unless-stopped is Docker's own default-supervised behaviour rather than anything this task implements.",
+      "description": "No probe in this slice demonstrates that Docker's unless-stopped policy restarts a required loop worker unaided. The attempted probe used docker kill, which the daemon records as explicit operator intent and therefore excludes from the restart policy; the observed RestartCount stayed 0 and the container came back only after operator action. A sound probe crashes the container's PID 1 from inside so the exit is unsolicited, and is confirmed by RestartCount incrementing, but that is a destructive action against the shared live dev stack and was not authorised in the owner slice.",
+      "expiry": "When an in-container PID 1 crash probe is run against one required loop worker and RestartCount is read back as incremented, or when the reviewer accepts the rendered-and-inspected configuration plus the clean worker-side recovery as sufficient for AC2.",
+      "owner": "Claude2 owner slice, adjudication delegated to reviewer Antigravity",
+      "recheck_trigger": "Any change to a required loop worker's restart or stop_grace_period setting, or authorisation to run a destructive in-container crash probe on the dev stack.",
+      "severity": "medium"
+    },
     "six_workers_without_a_heartbeat_surface": {
       "blocking_for_this_task": false,
       "containment": "All six carry restart: unless-stopped, a 30-second graceful stop, and a service_healthy dependency condition on the API they drive, so a crash is supervised even though a hung tick is not detected.",
@@ -340,7 +357,11 @@
       "all_required_loop_workers_default_on": true,
       "duplicate_legacy_worker_resolved": false,
       "hosted_activation_claimed": false,
-      "kill_one_restart_observed": true,
+      "kill_one_restart_observed": false,
+      "observed_container_restart_count": 0,
+      "restart_policy_reaches_runtime": true,
+      "stop_grace_period_reaches_runtime": true,
+      "worker_recovery_after_abrupt_stop_observed": true,
       "live_broker_enabled_default": false,
       "source_external_egress_default": "deny"
     },
@@ -386,6 +407,15 @@
       "reference": "Owner evidence cut v1.0.0 recorded against branch head 4cf8feedbc3b988e356d67b36be8e628d17eaf2e, including the live kill-one restart readback and the corrected owner/reviewer/status fields. Awaiting the independent Antigravity verdict.",
       "sequence": 4,
       "sha": "4cf8feedbc3b988e356d67b36be8e628d17eaf2e",
+      "status": "superseded_by_owner_correction"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_evidence_correction",
+      "recorded_at": "2026-07-29T00:36:31Z",
+      "reference": "Owner cut v1.0.1 withdraws v1.0.0's claim that Docker's unless-stopped policy restarted pantheon-policy-learning-shadow-eval-scheduler-1 unaided. Independent re-readback of the same live container reports RestartCount=0 and ExitCode=0 against a claimed policy-driven restart, and the 101.4-second gap between FinishedAt 2026-07-29T00:14:50.962927635Z and StartedAt 2026-07-29T00:16:32.319332602Z indicates operator-initiated recovery. The probe method was itself unsound: docker kill records explicit operator intent, so the daemon suppresses the restart policy by design. Retained as proven from the same readback: RestartPolicy unless-stopped and StopTimeout 30 reach the live runtime, and the worker recovered cleanly with startup_recovery status ok, reset_count 0, and a fresh authenticated tick at 2026-07-29T00:16:33.111Z. The sound probe, an in-container PID 1 crash confirmed by an incremented RestartCount, is destructive against the shared live dev stack and was not authorised in this slice; it is recorded as residual risk auto_restart_policy_not_proven_end_to_end for reviewer adjudication. No implementation file changed. Awaiting the independent Antigravity verdict.",
+      "sequence": 5,
+      "sha": "94abec5f84e18481511496955d322c7842a01612",
       "status": "ready_for_independent_review"
     }
   ]

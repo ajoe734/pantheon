@@ -1,8 +1,16 @@
 # L12-MANIFEST-001 — runtime manifest readback
 
 Owner `Claude2`, reviewer `Antigravity`. Branch `task/L12-MANIFEST-001`, head
-`4cf8feedbc3b988e356d67b36be8e628d17eaf2e` over base `dev`
-`f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut at `2026-07-29T00:20:00Z`.
+`94abec5f84e18481511496955d322c7842a01612` over base `dev`
+`f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8`. Cut v1.0.1 at `2026-07-29T00:36:31Z`.
+
+> **Correction in v1.0.1.** Cut v1.0.0 read the kill-one probe in §6 as proof
+> that the `unless-stopped` policy restarted the worker unaided. Re-readback of
+> the same container reports `RestartCount=0`, which refutes that. The claim is
+> withdrawn; see §6 for what the readback does and does not support. No
+> implementation file changed between the two cuts — `docker-compose.yml` and
+> `scripts/deploy_nonprod_vm.sh` are byte-identical to the v1.0.0 validation
+> head `4cf8feed`, so every other result below stands unchanged.
 
 ## 1. The gap, reproduced before changing anything
 
@@ -170,11 +178,40 @@ container was recreated. The worker came up and logged:
 
 Authenticated, tenant-bound, no 401.
 
-**Kill-one worker restart.** `docker kill --signal=SIGKILL` on that container.
-Stopped `2026-07-29T00:14:50Z`; restarted by its `unless-stopped` policy at
-`2026-07-29T00:16:32Z` with no operator action; logged `startup_recovery` ok and
-a fresh authenticated tick at `2026-07-29T00:16:33Z`. `docker inspect` reports
-`StopTimeout=30`, so the graceful-stop value reaches the runtime.
+**Kill-one worker restart — partially proven, corrected in v1.0.1.**
+`docker kill --signal=SIGKILL` on that container, then `docker inspect` and
+`docker logs --timestamps` over the same window.
+
+| readback | value |
+| :-- | :-- |
+| `.State.FinishedAt` | `2026-07-29T00:14:50.962927635Z` |
+| `.State.StartedAt` | `2026-07-29T00:16:32.319332602Z` |
+| `.RestartCount` | **`0`** |
+| `.State.ExitCode` | `0` |
+| `.HostConfig.RestartPolicy.Name` | `unless-stopped` |
+| `.Config.StopTimeout` | `30` |
+
+*Proven.* The rendered restart policy and graceful-stop value reach the runtime,
+not just the file. And the worker recovers cleanly from an abrupt termination:
+once running again it logged `startup_recovery` `status ok` with `reset_count 0`
+and a fresh tenant-bound authenticated tick at `2026-07-29T00:16:33.111Z`, no
+401. An unattended restart would not need manual state repair.
+
+*Not proven, and withdrawn from v1.0.0.* That the `unless-stopped` policy
+performed that restart with no operator action. `RestartCount=0` and
+`ExitCode=0` are not what a policy-driven restart leaves behind, and the
+101.4-second outage reads as operator-initiated recovery.
+
+*Why the probe was unsound.* `docker kill` is not a valid test of a restart
+policy at all: the daemon records an explicit kill or stop as operator intent
+and suppresses `unless-stopped` by design. A sound probe crashes the container's
+PID 1 from inside — `docker exec <c> kill -9 1` — so the exit is unsolicited,
+and is confirmed by `RestartCount` incrementing to 1. That probe is destructive
+against the shared live dev stack and was not authorised in this slice. It is
+recorded in `evidence.json` as residual risk
+`auto_restart_policy_not_proven_end_to_end` for the reviewer to adjudicate:
+either authorise the crash probe, or accept the inspected configuration plus the
+clean worker-side recovery as sufficient for AC2.
 
 **Regression suites.** 24 compose-activation contract tests and 106 deploy-script
 contract tests pass.
@@ -197,4 +234,11 @@ docker compose -f docker-compose.yml --env-file /dev/null config --format json \
 
 # 4. the egress adjudication is still enforced
 sed -n '/^validate_source_refresh_profile/,/^}$/p' scripts/deploy_nonprod_vm.sh
+
+# 5. the corrected restart readback — confirm RestartCount is still 0,
+#    i.e. that §6's withdrawal is right and the auto-restart trigger
+#    remains unproven
+docker inspect pantheon-policy-learning-shadow-eval-scheduler-1 --format \
+  'RestartCount={{.RestartCount}} ExitCode={{.State.ExitCode}}
+   Policy={{.HostConfig.RestartPolicy.Name}} StopTimeout={{.Config.StopTimeout}}'
 ```
