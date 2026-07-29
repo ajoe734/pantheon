@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T08:48:00Z",
+  "updated_at": "2026-07-29T09:08:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
@@ -90,6 +90,46 @@
       "L12-VERIFY-OBS-001 PR #4364 needs exact Claude2 review and merge/signoff",
       "L12-VERIFY-RUNTIME-001 and L12-VERIFY-KNOW-001 are both todo",
       "Dispatch ordering must be fixed so fresh L12 review tasks outrank non-L12 OPS review on the only Claude2 slot"
+    ]
+  },
+  "fleet_checkpoint_2026_07_29T0904Z": {
+    "priority_gate_pr": {
+      "pr": 4365,
+      "head": "08fec4999c7a542ef7debf6913e809091164e3d8",
+      "base": "dev",
+      "status": "open",
+      "visible_checks": "rerunning_after_provider_first_fallback_update",
+      "merge_state": "BLOCKED",
+      "auto_merge": "enabled"
+    },
+    "terminal_fallback_loop": {
+      "codex_run": {
+        "run_id": "codex-20260729T090119Z-ecccaf9a",
+        "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+        "exit_code": 143,
+        "finished_at": "2026-07-29T09:01:39Z"
+      },
+      "claude2_runs": [
+        {
+          "run_id": "claude2-20260729T090239Z-94a953a3",
+          "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+          "exit_code": 143,
+          "finished_at": "2026-07-29T09:02:43Z"
+        },
+        {
+          "run_id": "claude2-20260729T090341Z-a09b8351",
+          "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+          "exit_code": 143,
+          "finished_at": "2026-07-29T09:03:44Z"
+        }
+      ],
+      "bad_reassignment": "After repeated Claude2 terminal/missing-process handling, the supervisor auto-reassigned SUP-L12-REVIEW-PRIORITY-GATE-20260729 back to Codex at 2026-07-29T09:04:29Z.",
+      "durable_fix": "#4365 head 08fec4999 adds L12/SUP-L12 provider-first fallback filtering so Claude2/Antigravity terminal failures cannot fall back to Codex/Codex2 unless an Antigravity/Claude-family candidate is viable."
+    },
+    "not_complete": [
+      "#4365 must merge and be promoted to the live supervisor command root before the fallback guard is effective",
+      "L12-VERIFY-OBS-001 still waits for exact Claude2 review of PR #4364",
+      "The live supervisor remains on runtime SHA a6d56c366f7436574e6d2d241b47564558beac74 until a reviewed merge/promotion happens"
     ]
   },
   "waves": [
@@ -263,11 +303,14 @@
           "scope": [
             ".orchestrator/supervisor.py review dispatch ordering",
             ".orchestrator/supervisor.py queue lease cleanup after interrupted worker",
+            ".orchestrator/supervisor.py L12 provider-first terminal fallback filtering",
             ".orchestrator/test_supervisor.py provider quota priority regression"
           ],
           "acceptance": [
             "Reproduce L12-VERIFY-OBS-001 waiting in review on PR #4364 while OPS-PROMOTE-PR-CI-TRIGGER-001 is dispatched to the only Claude2 slot",
             "Fresh L12 review tasks with green PR evidence outrank non-L12 OPS reviews when provider quota is shared",
+            "Repeated Claude2/Antigravity terminal or missing-process failures on L12/SUP-L12 tasks cannot auto-reassign owner/reviewer to Codex/Codex2",
+            "Provider-first fallbacks still permit Antigravity/Claude-family recovery candidates when viable",
             "Interrupted non-L12 queue events do not immediately redispatch ahead of a waiting L12 review",
             "Regression covers queue event ordering, lease cleanup, and provider quota accounting",
             "No .orchestrator/config.json edits"

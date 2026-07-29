@@ -10,6 +10,8 @@ Fleet correction: `2026-07-29T08:40Z`
 
 Dispatch-priority correction: `2026-07-29T08:48Z`
 
+Terminal-fallback correction: `2026-07-29T09:08Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0710Z.md`
 
@@ -275,9 +277,16 @@ progress.
 - Owner: `Claude2`
 - Reviewer: `Antigravity`
 - Current state: new guard task to materialize after this packet merges.
+- Latest live observation: the task was materialized and churned through
+  `codex-20260729T090119Z-ecccaf9a`, `claude2-20260729T090239Z-94a953a3`,
+  and `claude2-20260729T090341Z-a09b8351`, all exiting with SIGTERM/code 143.
+  The supervisor then auto-reassigned ownership from `Claude2` back to `Codex`
+  at `2026-07-29T09:04:29Z`, proving the terminal-fallback path also violates
+  provider-first L12 routing until #4365 is merged and live-promoted.
 - Scope:
   - supervisor dispatch ordering for `review` tasks;
   - provider quota selection when L12 tasks compete with non-L12 OPS tasks;
+  - L12/SUP-L12 provider-first terminal fallback filtering;
   - queue lease cleanup after manual/live priority interruption.
 - Acceptance:
   - reproduce the 2026-07-29T08:46Z/08:48Z condition where
@@ -285,6 +294,10 @@ progress.
     supervisor dispatched `OPS-PROMOTE-PR-CI-TRIGGER-001` to `Claude2` twice;
   - ensure L12 `review` tasks with fresh PR heads and green checks outrank
     non-L12 OPS reviews when they share the only Claude2 quota slot;
+  - repeated Claude2/Antigravity terminal or missing-process failures on
+    L12/SUP-L12 work cannot auto-reassign owner/reviewer to Codex/Codex2;
+  - provider-first fallback still permits Antigravity/Claude-family candidates
+    when they are viable;
   - after a non-L12 worker is interrupted for L12 priority, prevent immediate
     redispatch of the same non-L12 queue event ahead of the waiting L12 review;
   - add regression covering queue event ordering, lease cleanup, and provider

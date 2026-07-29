@@ -10,6 +10,8 @@ Fleet correction captured at: `2026-07-29T08:40Z`
 
 Dispatch-priority correction captured at: `2026-07-29T08:48Z`
 
+Terminal-fallback correction captured at: `2026-07-29T09:08Z`
+
 Program: `pantheon-twelve-loop-gap-2026-07-26`
 
 This is a current-state audit, not a completion claim. The purpose is to keep
@@ -383,6 +385,37 @@ The 08:48Z live state check adds another fleet-control gap:
   sharing the same provider quota, and prevent immediate redispatch of an
   interrupted non-L12 event ahead of the waiting L12 review.
 
+### Terminal-fallback correction — 09:04Z provider-first was undone
+
+The 09:04Z live state check adds a second supervisor-control gap, distinct
+from raw review ordering:
+
+- #4365 was opened to fix the dispatch priority bug and initially reached head
+  `67c27dfdc85d4300eac738e3366d8a7b7cb69f06` with local regressions and
+  Branch CI green.
+- The live task row `SUP-L12-REVIEW-PRIORITY-GATE-20260729` then churned
+  through supervisor auto-worker dispatches:
+  - `codex-20260729T090119Z-ecccaf9a` exited with SIGTERM/code 143 at
+    `2026-07-29T09:01:39Z`;
+  - `claude2-20260729T090239Z-94a953a3` exited with SIGTERM/code 143 at
+    `2026-07-29T09:02:43Z`;
+  - `claude2-20260729T090341Z-a09b8351` exited with SIGTERM/code 143 at
+    `2026-07-29T09:03:44Z`.
+- After those failures, the supervisor auto-reassigned the L12/SUP-L12 task
+  from `Claude2` back to `Codex` at `2026-07-29T09:04:29Z`. This is a real
+  provider-first violation in the terminal/missing-process fallback path, not
+  a Codex chat subagent.
+- #4365 was therefore extended to head
+  `08fec4999c7a542ef7debf6913e809091164e3d8` with an additional durable guard:
+  L12/SUP-L12 terminal failure fallback filters candidates to
+  `Antigravity`, `Antigravity2`, `Claude`, or `Claude2`, so repeated
+  Claude2/Antigravity failures cannot silently fall back to `Codex` or
+  `Codex2`. Local regression scope: `WorkerReassignmentTests`,
+  dispatch-priority tests, and the prior 100-test supervisor slice.
+- This fix is not live until #4365 is reviewed, merged, and promoted to the
+  live supervisor command root. The current live supervisor still reports
+  runtime SHA `a6d56c366f7436574e6d2d241b47564558beac74`.
+
 ## Pass 3 — dispatch, fleet, and guardrail audit
 
 ### Confirmed fleet usage
@@ -390,6 +423,10 @@ The 08:48Z live state check adds another fleet-control gap:
 The work was routed through the repository supervisor/auto-worker mechanism,
 not Codex subagents:
 
+- Latest 09:04Z task-state shows `SUP-L12-REVIEW-PRIORITY-GATE-20260729`
+  returned to `todo` with owner `Codex` after repeated `Claude2` terminal /
+  missing-process handling. That is exactly the live fallback bug now covered
+  by #4365 head `08fec4999c7a542ef7debf6913e809091164e3d8`.
 - Latest 08:48Z process check shows no Claude2 L12 worker live. OBS is in
   `review` on PR #4364/head `ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd`, but
   Claude2 is instead running non-L12 `OPS-PROMOTE-PR-CI-TRIGGER-001` as
