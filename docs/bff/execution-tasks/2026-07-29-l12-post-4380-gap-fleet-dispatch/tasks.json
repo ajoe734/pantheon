@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-29-l12-post-4380-gap-fleet-dispatch",
+  "generated_at": "2026-07-29T13:14:40Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/POST_4380_THREE_PASS_GAP_AUDIT_2026-07-29T1314Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "base_commit": "2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "stale behind PR heads as proof",
+    "merged PR without governed task closeout as done",
+    "legacy front-ai-trading-system"
+  ],
+  "authoritative_current_state": {
+    "merged_since_prior_final_packet": [
+      {
+        "pr": 4379,
+        "task": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+        "merge_commit": "2c07f509bd74c022acd742bad8bbccfaa4053cd2",
+        "effect": "enabled governed archive of L12-MANIFEST-REVIEW-GAP-TASKS-20260729"
+      },
+      {
+        "pr": 4380,
+        "task": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+        "merge_commit": "2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+        "effect": "repaired promote PR Branch CI trigger and auto-merge path"
+      }
+    ],
+    "open_prs_requiring_action": [
+      {
+        "pr": 4364,
+        "task": "L12-VERIFY-OBS-001",
+        "head": "ecf17e9d088e37102b4128ebc2a7d77e4328be8a",
+        "merge_state": "BEHIND",
+        "required_action": "true rebase/squash onto current origin/dev, rerun CI, handoff Claude2"
+      },
+      {
+        "pr": 4372,
+        "task": "SUP-L12-STALE-PR-RETIRE-20260729",
+        "head": "07f163cb21e047a491b1b90c5422dbba69ea0563",
+        "merge_state": "BEHIND",
+        "required_action": "wait for valid #4364 head, then refresh evidence/sha/readme and review"
+      },
+      {
+        "pr": 4376,
+        "task": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+        "head": "c0e113f624f2b851b79edd12a64c6083f2246905",
+        "merge_state": "BEHIND",
+        "required_action": "amend subject <=72 chars, keep trailers, rebase, rerun CI, review"
+      },
+      {
+        "pr": 4373,
+        "task": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+        "head": "cf4f6617883871c71f8d3bf20782ed605b1a604b",
+        "merge_state": "BEHIND",
+        "required_action": "rebase and refresh dispatch/readback evidence after #4380"
+      },
+      {
+        "pr": 4363,
+        "task": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+        "head": "94695276e2d174505a107ccaa4346efb1692575e",
+        "merge_state": "BEHIND",
+        "required_action": "rebase/refresh runtime reliability evidence and review"
+      }
+    ]
+  },
+  "waves": [
+    {
+      "wave": "A",
+      "parallel": true,
+      "purpose": "Refresh stale open PRs against current dev and obtain exact-head review.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-OBS-001",
+          "target_repo": "pantheon",
+          "target_pr": 4364,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "acceptance": [
+            "PR branch contains base 2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+            "Observability verifier evidence is preserved and rerun if needed",
+            "CI is green",
+            "Claude2 exact-head review is recorded"
+          ]
+        },
+        {
+          "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+          "target_repo": "pantheon",
+          "target_pr": 4373,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "acceptance": [
+            "Dispatch/readback evidence is refreshed after #4380",
+            "PR branch is not BEHIND current dev",
+            "CI and exact-head review pass"
+          ]
+        },
+        {
+          "id": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+          "target_repo": "pantheon",
+          "target_pr": 4376,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "acceptance": [
+            "Commit subject is <=72 characters",
+            "Required trailers are present",
+            "PR branch is not BEHIND current dev",
+            "CI and exact-head review pass"
+          ]
+        },
+        {
+          "id": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+          "target_repo": "pantheon",
+          "target_pr": 4363,
+          "owner_preference": ["Codex", "Claude2", "Antigravity"],
+          "reviewer_preference": ["Codex2", "Claude2", "Antigravity"],
+          "depends_on": [],
+          "acceptance": [
+            "Evidence is refreshed against current dev",
+            "PR branch is not BEHIND current dev",
+            "CI and exact-head review pass"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "B",
+      "parallel": false,
+      "purpose": "Retire stale PR evidence only after its live dependencies are fresh.",
+      "tasks": [
+        {
+          "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+          "target_repo": "pantheon",
+          "target_pr": 4372,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": ["L12-VERIFY-OBS-001"],
+          "acceptance": [
+            "Evidence binds the new non-BEHIND #4364 head",
+            "No stale #4364 head is counted",
+            "CI and exact-head review pass"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "C",
+      "parallel": true,
+      "purpose": "Closeout already-merged support rows through governed status only.",
+      "tasks": [
+        {
+          "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+          "target_repo": "pantheon",
+          "target_pr": 4380,
+          "owner_preference": ["Codex2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "acceptance": [
+            "PR #4380 merge commit is recorded",
+            "Evidence manifest is current",
+            "Governed task closeout archives the row"
+          ]
+        },
+        {
+          "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+          "target_repo": "pantheon",
+          "target_pr": 4379,
+          "owner_preference": ["Claude2", "Human/Ops"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "acceptance": [
+            "PR #4379 merge commit is recorded",
+            "The support row is finalized or reconciled without reopening the already-archived target row"
+          ]
+        },
+        {
+          "id": "L12-FLEET-STATUS-SYNC-001",
+          "target_repo": "pantheon",
+          "owner_preference": ["Codex", "Codex2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": [],
+          "acceptance": [
+            "Review-approved evidence remains valid after current dev or is refreshed",
+            "Governed closeout archives the row"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "D",
+      "parallel": true,
+      "purpose": "Run product verifier and hosted proof only when prerequisite truth/evidence is valid.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-KNOW-001",
+          "depends_on": ["L12-TRUTH-001"],
+          "owner_preference": ["Claude2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "acceptance": ["Real Source/Distillation/Alpha drill evidence is archived"]
+        },
+        {
+          "id": "L12-VERIFY-LEARN-001",
+          "depends_on": ["L12-TRUTH-001"],
+          "owner_preference": ["Antigravity", "Claude2"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "acceptance": [
+            "Verifier is not self-attesting",
+            "Real Teaching/Agora/Imitation/Consultation evidence is archived",
+            "RBAC negative, restart/DLQ, and no-runtime-mutation checks are included"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-RUNTIME-001",
+          "depends_on": ["L12-TRUTH-001"],
+          "owner_preference": ["Claude2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "acceptance": ["Deployment/capital/runtime drill evidence is archived without live-capital activation"]
+        },
+        {
+          "id": "L12-HOSTED-001",
+          "depends_on": [
+            "L12-VERIFY-KNOW-001",
+            "L12-VERIFY-LEARN-001",
+            "L12-VERIFY-RUNTIME-001",
+            "L12-VERIFY-OBS-001"
+          ],
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "acceptance": ["Hosted FE/BFF exact identity and restart/no-duplicate/auth/tenant/safety proof is archived"]
+        },
+        {
+          "id": "L12-CLOSE-001",
+          "depends_on": ["L12-HOSTED-001"],
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "acceptance": ["Final protected closeout proves every requirement and excludes stale PR/task proof"]
+        }
+      ]
+    }
+  ]
+}
