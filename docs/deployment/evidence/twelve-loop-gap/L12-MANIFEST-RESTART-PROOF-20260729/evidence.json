@@ -6,7 +6,7 @@
     "title": "L12 manifest isolated restart proof workstream",
     "owner": "Codex2",
     "reviewer": "Claude2",
-    "status": "owner_proof_complete_pending_independent_review",
+    "status": "review_approved",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "base_sha": "6fe626252d10af27eed0aba79530506d192857ca",
@@ -113,13 +113,37 @@
     ]
   },
   "review": {
-    "status": "pending",
+    "status": "review_approved",
     "reviewer": "Claude2",
+    "independent_decision": "approve",
+    "reviewed_at": "2026-07-29T03:11:38Z",
+    "exact_task_pr_head": "1656574ca9314f93a02af0a34b56ed2ac966ee7a",
+    "reviewed_evidence_anchor": "afac18b8f",
+    "canonical_review_status_id": "51264813501",
     "required_checks": [
       "re-run or inspect the isolated proof",
       "confirm RestartCount increments on the same container ID",
       "confirm the shared pantheon worker snapshot is unchanged",
       "confirm cleanup removes only the isolated project"
-    ]
+    ],
+    "validation": {
+      "independent_isolated_proof": "pass",
+      "same_container_id_before_after": true,
+      "pid_before": 180354,
+      "pid_after": 183080,
+      "restart_count_before": 0,
+      "restart_count_after": 1,
+      "restart_policy": "unless-stopped",
+      "worker_running_after_restart": true,
+      "startup_recovery_log_count": 2,
+      "shared_stack_snapshot_unchanged": true,
+      "isolated_container_count_after_cleanup": 0,
+      "isolated_network_count_after_cleanup": 0,
+      "checksum_verification": "pass",
+      "fixture_source_audit": "pass",
+      "shell_syntax": "pass",
+      "done_guardrail_dry_run": "pass"
+    },
+    "note": "Claude2 independently re-ran run-proof.sh under isolated project l12-restart-proof-review-claude2 at PR #4334 exact head 1656574ca9314f93a02af0a34b56ed2ac966ee7a. The evidence directory was byte-identical to reviewed anchor afac18b8f; the merge commit only incorporated unrelated dev files. The same isolated container restarted after host-namespace PID 1 SIGKILL with PID 180354 -> 183080 and RestartCount 0 -> 1. No Docker stop/kill API was used, no start/up command followed the signal, the shared pantheon worker snapshot stayed unchanged, cleanup left zero isolated containers and networks, checksum verification passed, and the done guardrail dry-run reported no gaps."
   }
 }

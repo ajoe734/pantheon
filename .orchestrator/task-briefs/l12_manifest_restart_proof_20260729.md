@@ -4,10 +4,16 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: L12 manifest isolated restart proof workstream
-- Status: todo
-- Owner: Codex2
+- Status: review_approved
+- Owner: Codex
 - Reviewer: Claude2
-- Next: Workstream under L12-MANIFEST-001. Do not edit .orchestrator/config.json. Produce isolated non-shared restart proof with RestartCount increment, or a governed waiver packet, for L12-MANIFEST-001 evidence.
+- Next: Claude2 delta-reviews the refreshed PR #4338 head, then the integrator merges the exact approved head and Codex runs governed `done`.
+
+## Closeout Handoff
+- Claude2 approved PR #4338 at exact head `801852aeb59991526d37904491ceda62410ec701`; all recorded CI and the canonical review gate passed.
+- The supervisor reassigned owner closeout from Codex2 to Codex after Codex2 repeatedly failed to resolve the remote task ref. The reviewer remains Claude2.
+- Codex preserved the reviewed restart evidence byte-for-byte, anchored the owner metadata handoff, and refreshed the branch through `origin/dev` commit `50a1c5af513d43e0e97f8174cccc0325e0d19ece`.
+- Because Pantheon review binds the exact PR head, the refreshed head requires a narrow delta review before merge; the isolated proof itself is unchanged.
 
 ## Summary
 補 isolated/non-shared PID1 crash restart proof，或取得明確 governed waiver。
