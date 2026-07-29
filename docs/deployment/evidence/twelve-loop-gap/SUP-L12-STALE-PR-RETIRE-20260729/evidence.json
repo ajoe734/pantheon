@@ -1,0 +1,18 @@
+{
+  "task_id": "SUP-L12-STALE-PR-RETIRE-20260729",
+  "audit_timestamp": "2026-07-29T11:46:00Z",
+    {
+      "pr_number": 4364,
+      "title": "L12-VERIFY-OBS-001: anchor evidence manifest update",
+      "state": "OPEN",
+      "head_sha": "ecf17e9d088e37102b4128ebc2a7d77e4328be8a",
+      "merge_state_status": "BEHIND",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "associated_task": "L12-VERIFY-OBS-001",
+      "task_status": "review",
+      "action": "PRESERVED_OPEN",
+      "rationale": "Active product proof PR for active task row L12-VERIFY-OBS-001 (owner Antigravity, reviewer Claude2) currently in review (head SHA verified as-of 2026-07-29T13:05:14Z)"
+    }
+  ]
+}
