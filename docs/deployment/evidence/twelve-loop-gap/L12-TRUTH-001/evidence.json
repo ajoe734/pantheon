@@ -83,6 +83,13 @@
         "delivery_state": "head of PR #4350 into dev",
         "hosted_cut_inclusion": false,
         "note": "Catalog-to-runtime exactness, all-loop record conformance with tenant-scoped readback, the all-loop stale/archive-only/contradicted negatives, and this evidence manifest. This is the tree the recorded validation commands were run against."
+      },
+      {
+        "sha": "47f752dbd",
+        "subject": "L12-TRUTH-001: record delivery head in evidence",
+        "delivery_state": "evidence-only commit on task/L12-TRUTH-001; no implementation file changes",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence-only. PR #4350 into dev carries the implementation head 880ca444fc63a9d325b970559fed4927b8f391af plus this and any later evidence commits. implementation_delivery.pull_requests is filled at closeout with the real merge_sha, because writing the PR head into this manifest advances that head."
       }
     ],
     "required_checks": [
@@ -116,13 +123,7 @@
         "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
         "conclusion": "success"
       }
-    ],
-    "pull_request": {
-      "number": 4350,
-      "url": "https://github.com/ajoe734/pantheon/pull/4350",
-      "head_sha": "880ca444fc63a9d325b970559fed4927b8f391af",
-      "base": "dev"
-    }
+    ]
   },
   "validation": {
     "commands": [
@@ -389,6 +390,15 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4350",
       "sequence": 2,
       "sha": "880ca444fc63a9d325b970559fed4927b8f391af",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "owner_evidence_correction",
+      "recorded_at": "2026-07-29T05:17:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
+      "sequence": 3,
+      "sha": "47f752dbd",
       "status": "pass"
     }
   ]
