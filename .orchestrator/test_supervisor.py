@@ -7814,6 +7814,69 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 )
             )
 
+    def test_unslotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-wave0-readback",
+            "task_id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "SUP-L12-FLEET-DISPATCH-READBACK-20260729": {
+                "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+            "SUP-L12-STALE-PR-RETIRE-20260729": {
+                "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+            "SUP-L12-MERGED-ROW-RECONCILE-20260729": {
+                "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+                "status": "todo",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
     def test_dead_coordination_worker_is_completed_without_taskboard_entry(self) -> None:
         config = {
             "schema": {

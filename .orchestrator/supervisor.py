@@ -12841,14 +12841,14 @@ def higher_priority_ready_task_exists(
 
         if (
             candidate_priority is not None
+            and urgent_priority_cutoff is not None
+            and candidate_priority > urgent_priority_cutoff
+        ):
+            continue
+        if (
+            candidate_priority is not None
             and task_dispatch_order_key(task, candidate_priority) < current_order_key
         ):
-            if (
-                slot_count
-                and urgent_priority_cutoff is not None
-                and candidate_priority > urgent_priority_cutoff
-            ):
-                continue
             higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
