@@ -1,5 +1,7 @@
 """Tests for paper_signal_producer (closes the missing-signal-source gap)."""
 import unittest
+import tempfile
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
@@ -13,6 +15,8 @@ from services.execution.lean_runtime.paper_signal_producer import (
     BoundedPaperStrategy,
     build_smoke_signal,
     fetch_eligible_paper_bindings,
+    healthcheck,
+    main,
 )
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
@@ -165,6 +169,49 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(len(bindings), 1)
         self.assertEqual(bindings[0]["binding_id"], "rb-1")
         self.assertEqual(bindings[0]["status"], "active")
+
+    def test_health_requires_recent_paper_only_tick(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            health_file = Path(directory) / "paper-producer-health.json"
+            env = {
+                "SIGNAL_STORE_URL": "redis://signal-store:6379",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+                "PAPER_PRODUCER_INTERVAL_SECONDS": "1",
+                "PAPER_PRODUCER_MAX_TICKS": "1",
+                "PAPER_PRODUCER_HEALTH_FILE": str(health_file),
+                "PANTHEON_LIVE_BROKER_ENABLED": "false",
+                "PANTHEON_CANARY_EXECUTION_ENABLED": "false",
+            }
+            with patch.dict("os.environ", env, clear=False), patch(
+                "services.execution.lean_runtime.paper_signal_producer."
+                "fetch_eligible_paper_bindings",
+                return_value=[],
+            ):
+                self.assertEqual(main(), 0)
+                self.assertEqual(healthcheck(), 0)
+
+            state = json.loads(health_file.read_text(encoding="utf-8"))
+            self.assertEqual(state["worker_name"], "paper-signal-producer")
+            self.assertEqual(state["status"], "ok")
+            self.assertEqual(state["ticks"], 1)
+            self.assertEqual(state["execution_mode"], "paper")
+            self.assertFalse(state["live_capital_enabled"])
+            self.assertFalse(state["live_order_submission_enabled"])
+
+    def test_paper_producer_refuses_live_execution_flags(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SIGNAL_STORE_URL": "redis://signal-store:6379",
+                "PANTHEON_LIVE_BROKER_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "refuses live/canary execution flags",
+            ):
+                main()
 
 
 if __name__ == "__main__":
