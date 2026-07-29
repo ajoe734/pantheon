@@ -174,52 +174,80 @@
         "note": "Drops pre-merge pull_request facts and keeps final PR merge facts for closeout, matching sibling twelve-loop evidence convention.",
         "sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
         "subject": "L12-TRUTH-001: fill PR facts at closeout, not before"
+      },
+      {
+        "delivery_state": "evidence-only commit on task/L12-TRUTH-001; no implementation file changes",
+        "hosted_cut_inclusion": false,
+        "note": "Records the rebase-invariant artifact digests and the pre-rebase to post-rebase SHA mapping under integrity.source_artifact_sha256_by_epoch.",
+        "sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
+        "subject": "L12-TRUTH-001: refresh rebased evidence identities"
+      },
+      {
+        "delivery_state": "reviewed head of PR #4350; the exact SHA the reviewer approved and the commit statuses were posted against",
+        "hosted_cut_inclusion": false,
+        "note": "Final pre-merge evidence commit. Antigravity approved this SHA at 2026-07-29T05:34:30Z and both required external commit statuses were posted against it.",
+        "sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
+        "subject": "L12-TRUTH-001: record rebase-invariant artifact identity"
+      }
+    ],
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
+        "merge_sha": "f0c22242762f23740a7e8bea412e08b16bc6cd44",
+        "merged_at": "2026-07-29T05:35:55Z",
+        "number": 4350,
+        "url": "https://github.com/ajoe734/pantheon/pull/4350"
       }
     ],
     "required_checks": [
       {
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
         "workflow": "Commit trailers"
       },
       {
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
         "workflow": "Runtime mirror guard"
       },
       {
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
         "workflow": "Python packaging provision"
       },
       {
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
         "workflow": "Smoke acceptance"
       },
       {
-        "conclusion": "absent",
+        "conclusion": "success",
         "event": "external_commit_status",
-        "head_sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
         "jobs": {
-          "posted_by": "scripts/git/github_review_bridge.py, driven by the reviewer's governed approve",
+          "description": "L12-TRUTH-001 approve by Antigravity at 9ee12147144c",
+          "posted_at": "2026-07-29T05:34:29Z",
+          "posted_by": "scripts/git/github_review_bridge.py, driven by reviewer Antigravity's governed approve",
           "required_by": "dev branch protection, app_id null; no workflow posts this context",
-          "unblocks": "reviewer Antigravity running approve with both REVIEW_PR and REVIEW_HEAD_SHA bound to the current head"
+          "status_id": 51269321647
         },
         "workflow": "Pantheon canonical review gate"
       },
       {
-        "conclusion": "absent",
+        "conclusion": "success",
         "event": "external_commit_status",
-        "head_sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
+        "head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
         "jobs": {
+          "description": "Root freeze override: L12-TRUTH-001 reviewed exact head; no config edit.",
+          "posted_at": "2026-07-29T05:35:40Z",
           "posted_by": "Human/Ops, manually",
           "required_by": "dev branch protection, app_id null; no workflow posts this context",
-          "unblocks": "Human/Ops escalation; no fleet agent can produce this status"
+          "status_id": 51269362851
         },
         "workflow": "Pantheon root merge freeze 2026-07-27"
       }
@@ -269,6 +297,20 @@
         },
         "recorded_at": "2026-07-29T05:25:50Z",
         "verification": "sha256sum over the six artifact paths at branch head 106e1edd11f4c04da5accc28504db4cd848df39c; unchanged since the evidence cut"
+      },
+      "owner_closeout_merge_readback_2026-07-29T05:46:25Z": {
+        "digests": {
+          "docs/deployment/loop-catalog.registry.json": "0aa0cfaeddd45bf50dc023a133abbc9ff2c57d4c78e7f7710661a87521d5c694",
+          "services/control-plane/bff/loop_inventory.py": "e0489e192d4796fe1211b25317c10b3f0a45f5174faa056e14b79cec3b1fb8fc",
+          "services/control-plane/bff/main.py": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
+          "services/control-plane/bff/test_loop_health_read_model_contract.py": "ec28b030bc9141e5e22c707ef78a4f7fd982228f5fa104c05c2866a7dcb74907",
+          "services/control-plane/bff/test_loop_inventory_read_model_contract.py": "71eac95e92e174a9762ced2f3feaade8cd47d827a759a1feaa341066ff5148bc",
+          "tests/test_loop_catalog_registry.py": "d90fe59d86e3c1942e2580ee795470f84ec03466e0a1468b028ba477ee590b45"
+        },
+        "note": "Post-merge readback at the dev tip. Every digest is identical to the reviewed owner_evidence_cut epoch, so the squash merge delivered the reviewed artifacts unchanged even though it rewrote every branch commit SHA.",
+        "recorded_at": "2026-07-29T05:46:25Z",
+        "source_sha": "f0c22242762f23740a7e8bea412e08b16bc6cd44",
+        "verification": "sha256sum over the six artifact paths at the merged dev tip f0c22242762f23740a7e8bea412e08b16bc6cd44; `git diff --name-only 9ee12147144c9d8b64f1c524dcd7fe5a394777e7 origin/dev` is empty"
       }
     }
   },
@@ -317,6 +359,32 @@
       "sequence": 5,
       "sha": "106e1edd11f4c04da5accc28504db4cd848df39c",
       "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "decision": "review_approved",
+      "kind": "reviewer_independent_review_decision",
+      "recorded_at": "2026-07-29T05:34:30Z",
+      "reference": "task-state event sha256 85a62caee41d9d88447aaf1ecf5acec836a7b85105601b8355fcfb0b931785c5, sequence 4843, source antigravity1-1-20260729T053339Z-f3e120a1",
+      "sequence": 6,
+      "sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7",
+      "status": "pass",
+      "transcribed_by": "Claude2 at closeout, per evidence_policy.mutation_rule; the governed approve binds REVIEW_FILE and posts the commit status but never edits this manifest",
+      "verdict": "Reviewed implementation for L12-TRUTH-001. 1) Catalog controller_contract truth verified for the 3 implemented loops. 2) Bidirectional catalog-to-runtime exactness verified. 3) All-loop controller record conformance and tenant isolation verified. 4) Degradation for stale/archived/contradicted records verified. 5) Maturity fail-closed (no premature promotion) verified. 6) 44 unit/contract tests passed at head 9ee12147144c9d8b64f1c524dcd7fe5a394777e7. 7) PR #4350 is MERGEABLE with 4/4 green CI checks; evidence.json validates against product-evidence schema and sha256sum passes."
+    },
+    {
+      "actor": "Claude2",
+      "admission_basis": "Independent review approved by Antigravity at 2026-07-29T05:34:30Z against head 9ee12147144c9d8b64f1c524dcd7fe5a394777e7, and PR #4350 squash-merged into dev as f0c22242762f23740a7e8bea412e08b16bc6cd44 with all six required contexts green. Admission covers operator-truth surfaces only: no loop is promoted past implemented and no hosted liveness is admitted.",
+      "closeout_pr": "A second, evidence-only PR carries this record_log entry, the checksum, and the README. Its own merge facts are recorded in canonical delivery metadata by the governed done command rather than restated here, because writing that PR's head into this manifest would advance that head.",
+      "closeout_revalidation": "44 focused tests re-run at merge SHA f0c22242762f23740a7e8bea412e08b16bc6cd44; all six artifact digests re-hashed and identical to the reviewed cut.",
+      "kind": "owner_closeout_delivery_bound",
+      "merge_method": "squash; GitHub collapsed the six branch commits into one dev commit, so no branch SHA in this manifest is an ancestor of origin/dev and merge_sha is the definitive binding",
+      "recorded_at": "2026-07-29T05:46:25Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4350 squash-merged as f0c22242762f23740a7e8bea412e08b16bc6cd44",
+      "sequence": 7,
+      "sha": "f0c22242762f23740a7e8bea412e08b16bc6cd44",
+      "status": "pass",
+      "what_changed": "Binds the delivery to the merge SHA, transcribes the reviewer verdict from the authoritative task-state event, promotes the two external commit statuses from absent to success with their posted status ids, and records the closeout revalidation of all 44 focused tests plus the six artifact digests at the merged dev tip. No implementation file is changed by this entry."
     }
   ],
   "residual_risks": {
@@ -327,6 +395,15 @@
       "expiry": "when a task owns the loop catalog schema and can add a runtime_binding property",
       "owner": "L12-CLOSE-001",
       "recheck_trigger": "any change to docs/deployment/loop-catalog.schema.json",
+      "severity": "low"
+    },
+    "manifest_predates_the_stricter_gap_validator": {
+      "blocking_for_this_task": false,
+      "containment": "This manifest validates cleanly against schemas/product-evidence.schema.json, the schema it declares in schema_status and the one it was reviewed under. Closeout reduced the stricter validator's rejection count from 24 to 22 by binding required_checks to recorded commits; the rest are structural conventions, not contradicted claims. Rewriting the reviewed manifest into the newer shape at closeout would replace the reviewed artifact, which the closeout spec forbids.",
+      "description": "scripts/validate_twelve_loop_gap_evidence.py enforces a later evidence convention (versioned owner cut, content-digest head binding, current_delivery_receipt anchor role, per-command claim_scope, a bound .md document, journal sequence dating) that this manifest does not use. It rejected the reviewed manifest with 24 findings before closeout and 22 after. The validator is not wired into CI or into scripts/ai-status.sh done, so it gated neither the review nor the merge.",
+      "expiry": "when a task migrates the twelve-loop evidence manifests to the newer convention",
+      "owner": "L12-CLOSE-001",
+      "recheck_trigger": "any task that adopts scripts/validate_twelve_loop_gap_evidence.py as a merge or closeout gate",
       "severity": "low"
     },
     "nine_loops_without_a_canonical_controller": {
@@ -415,7 +492,7 @@
     "evidence_cut_at": "2026-07-29T05:08:59Z",
     "evidence_cut_semantics": "Owner evidence cut for independent review. The delivery makes the loop catalog state which controllers actually exist, adds catalog-to-runtime exactness validation in both directions, and proves all-loop controller-record conformance plus tenant-scoped operator-truth readback through the BFF read models. No maturity is promoted and no liveness is admitted.",
     "id": "L12-TRUTH-001",
-    "overall_admission": "pending_independent_review",
+    "overall_admission": "approved_and_merged",
     "owner": "Claude2",
     "phase": "Twelve Loop Remediation / Operator Truth",
     "product_level_required": true,
@@ -468,10 +545,15 @@
         "command": "PYTHONPATH=/tmp/l12-truth-rebase-uYSPvG/pantheon /tmp/l12-rec-001-venv.rJ98sk/bin/python -m pytest tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py -q -p no:warnings # rebased PR head 0c14bc6cc57147217e3844c7edfe4d9655a75ed5",
         "conclusion": "pass",
         "result": "44 passed in 15.94s"
+      },
+      {
+        "command": "PYTHONPATH=/tmp/pantheon-worker-worktrees/pantheon/l12-truth-001 /tmp/l12-rec-001-venv.rJ98sk/bin/python -m pytest tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py -q -p no:warnings # closeout revalidation at merged dev tip f0c22242762f23740a7e8bea412e08b16bc6cd44",
+        "conclusion": "pass",
+        "result": "44 passed in 15.76s"
       }
     ],
     "validated_at": "2026-07-29T05:23:52Z",
     "validated_base_sha": "89e1e80c69b688df80d6ccb2bdc2e3d4a9041d3c",
-    "validated_head_sha": "0c14bc6cc57147217e3844c7edfe4d9655a75ed5"
+    "validated_head_sha": "9ee12147144c9d8b64f1c524dcd7fe5a394777e7"
   }
 }

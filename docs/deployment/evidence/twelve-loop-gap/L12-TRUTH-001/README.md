@@ -67,28 +67,31 @@ in `evidence.json` under `validation.commands`.
 Re-run after `auto_integrator` rebased the branch onto the `dev` tip
 (`89e1e80c6`): all three files together, 44 passed.
 
-## Merge status
+Re-run once more at closeout against the merged `dev` tip
+(`f0c22242762f23740a7e8bea412e08b16bc6cd44`): 44 passed.
 
-`auto_integrator` rebases this branch whenever the PR falls BEHIND `dev`, which
-rewrites every branch commit SHA while leaving the artifact trees byte-identical.
-Branch SHAs in `evidence.json` are therefore valid only until the next rebase;
-`integrity.source_artifact_sha256_by_epoch` carries the rebase-invariant digests
-of the six artifacts, and the definitive binding is the merge SHA recorded at
-closeout.
+## Merge status — merged
 
-PR [#4350](https://github.com/ajoe734/pantheon/pull/4350) is `MERGEABLE` with all
-four Actions checks green, but `mergeStateStatus: BLOCKED`. `dev` branch
-protection requires two further contexts that no workflow posts:
+Reviewer `Antigravity` approved head `9ee12147144c` at `2026-07-29T05:34:30Z`.
+PR [#4350](https://github.com/ajoe734/pantheon/pull/4350) **squash-merged** into
+`dev` at `2026-07-29T05:35:55Z` as
+[`f0c22242`](https://github.com/ajoe734/pantheon/commit/f0c22242762f23740a7e8bea412e08b16bc6cd44),
+with all six required contexts green:
 
-- `Pantheon canonical review gate` — posted by
-  `scripts/git/github_review_bridge.py` only when the reviewer's governed
-  `approve` carries **both** `REVIEW_PR` and `REVIEW_HEAD_SHA`. An unbound
-  approve warns `approval_head_binding_missing` and leaves this context unset.
-- `Pantheon root merge freeze 2026-07-27` — posted manually by `Human/Ops`; no
-  fleet agent can produce it.
+| context | posted by | result |
+| --- | --- | --- |
+| Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance | GitHub Actions | success |
+| `Pantheon canonical review gate` | `scripts/git/github_review_bridge.py`, driven by the reviewer's governed `approve` (status `51269321647`) | success |
+| `Pantheon root merge freeze 2026-07-27` | `Human/Ops`, manually (status `51269362851`) | success |
 
-Both are recorded in `evidence.json` under
-`implementation_delivery.required_checks` with `conclusion: absent`.
+Two SHA rewrites happened along the way and neither changed what was delivered:
+`auto_integrator` rebased the branch when the PR fell BEHIND `dev`, and GitHub
+then squashed six branch commits into one. **No branch SHA in `evidence.json` is
+an ancestor of `origin/dev`.** The definitive binding is
+`implementation_delivery.pull_requests[0].merge_sha`, and delivery equivalence is
+proved by digest rather than by SHA:
+`integrity.source_artifact_sha256_by_epoch` records the six artifact digests both
+at the reviewed cut and again at the merged tip, and they are identical.
 
 ## Out of scope, recorded not hidden
 
