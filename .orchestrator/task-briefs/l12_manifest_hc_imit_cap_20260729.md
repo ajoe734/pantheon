@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: L12 manifest imitation/capital health heartbeat workstream
 - Status: review_approved
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Antigravity
-- Next: Review approved: verified 57 passed, 4 skipped in full validation suite for exact-head commit c82e9bebeecdc04605714e92141a913c41ccfdff under open PR #4340. Heartbeat evidence, Docker Compose healthcheck assertions, paper safety flags, and evidence.json manifest are fully verified.
+- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.
 
 ## Summary
 補 policy-learning-shadow-eval-scheduler 與 paper-signal-producer 的 health/heartbeat 證據或 waiver，保留 paper/no-live-capital。
