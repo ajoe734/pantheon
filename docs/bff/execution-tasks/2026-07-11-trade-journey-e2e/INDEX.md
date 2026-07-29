@@ -1,6 +1,6 @@
 # Trade Journey E2E Execution Packet - 2026-07-11
 
-Status: ready for fleet dispatch after source PR merge
+Status: closed 2026-07-24 — all twelve tasks delivered; see § Packet closeout
 
 Source archive:
 
@@ -81,3 +81,19 @@ Each task records repository, branch, PR, merge SHA, tests, reviewer verdict,
 contract/version changes, hosted evidence where applicable, and residual risks.
 The packet closes only after `TJ-E2E-012` proves all twelve acceptance scenarios
 from the archived gap specification.
+
+## Packet closeout
+
+Closed `2026-07-24`. `TJ-E2E-001`–`TJ-E2E-011` are archived `done`/`completed`.
+`TJ-E2E-012` proved all twelve acceptance scenarios against an immutable hosted
+run and passed both gates — Human/Ops **APPROVED** `2026-07-23T08:07:19Z` and
+governed reviewer `Codex` **APPROVED** `2026-07-24T00:48:58Z`. Final evidence
+index:
+[TJ-E2E-012-hosted-acceptance-closeout.md](TJ-E2E-012-hosted-acceptance-closeout.md).
+
+The Wave 5 owner/reviewer row above records the original dispatch assignment;
+`TJ-E2E-012` was actually delivered by owner `Claude2` with reviewer `Codex`
+after governed reassignment. Closure covers the read-only hosted rollout for the
+two proven FE/BFF pairs only — not live writes, broker capital, or production
+default rollout. Residual risks R1–R4 and R6 remain owned as recorded in the
+closeout packet §7.

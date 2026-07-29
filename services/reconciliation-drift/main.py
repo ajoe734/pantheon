@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import contextvars
+import hmac
 import json
+import math
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -10,7 +14,8 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from consumer import build_drift_report_from_event
@@ -21,7 +26,7 @@ from services.trade_journey.correlation_envelope import (
     propagate_envelope,
     validate_envelope,
 )
-from store import ReconciliationDriftStore, build_reconciliation_drift_store
+from store import build_reconciliation_drift_store
 
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
@@ -29,6 +34,11 @@ DEFAULT_CRITICAL_RELATIVE_DELTA = 0.5
 RECONCILIATION_ERROR_SEVERITIES = {"critical", "error"}
 _LIFECYCLE_APPEND_PRODUCER = "reconciliation-drift.scheduled"
 _RETRYABLE_HTTP_STATUSES = {408, 425, 429}
+_TENANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
+_TENANT_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "reconciliation_tenant_id",
+    default="default",
+)
 _REQUIRED_LIFECYCLE_IDENTITY_FIELDS = (
     "event_id",
     "event_type",
@@ -61,8 +71,154 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _monotonic() -> float:
+    return time.monotonic()
+
+
 def _data_dir() -> str:
     return os.getenv("RECONCILIATION_DRIFT_DATA_DIR", "/tmp/pantheon/reconciliation-drift")
+
+
+def _auth_mode() -> str:
+    mode = os.getenv("RECONCILIATION_DRIFT_AUTH_MODE", "disabled").strip().lower()
+    if mode not in {"disabled", "token"}:
+        raise HTTPException(
+            status_code=503,
+            detail="RECONCILIATION_DRIFT_AUTH_MODE must be disabled or token",
+        )
+    return mode
+
+
+def _configured_tenant_id() -> str:
+    tenant_id = (
+        os.getenv("PANTHEON_TENANT_ID")
+        or os.getenv("RECONCILIATION_DRIFT_DEFAULT_TENANT_ID")
+        or "default"
+    ).strip()
+    if not _TENANT_ID_PATTERN.fullmatch(tenant_id):
+        raise HTTPException(status_code=503, detail="configured tenant id is invalid")
+    return tenant_id
+
+
+def _current_tenant_id() -> str:
+    return _TENANT_CONTEXT.get()
+
+
+def _authorized_body_tenant(tenant_id: Optional[str]) -> str:
+    current = _current_tenant_id()
+    supplied = str(tenant_id or "").strip()
+    if supplied and supplied != current:
+        raise HTTPException(status_code=403, detail="tenant identity mismatch")
+    return current
+
+
+def _mapping_tenant_id(payload: Dict[str, Any]) -> str:
+    direct = str(payload.get("tenant_id") or "").strip()
+    envelope = payload.get("correlation_envelope")
+    enveloped = (
+        str(envelope.get("tenant_id") or "").strip()
+        if isinstance(envelope, dict)
+        else ""
+    )
+    if direct and enveloped and direct != enveloped:
+        raise HTTPException(
+            status_code=422,
+            detail="payload tenant_id conflicts with correlation envelope",
+        )
+    return direct or enveloped
+
+
+def _authorized_payload_tenant(
+    payload: Dict[str, Any],
+    *,
+    require_explicit: bool,
+) -> str:
+    current = _current_tenant_id()
+    supplied = _mapping_tenant_id(payload)
+    if supplied and supplied != current:
+        raise HTTPException(status_code=403, detail="payload tenant identity mismatch")
+    if require_explicit and not supplied:
+        raise HTTPException(status_code=422, detail="payload tenant identity is required")
+    return current
+
+
+def _authorize_payloads(
+    payloads: List[Dict[str, Any]],
+    *,
+    require_explicit: bool,
+) -> None:
+    for payload in payloads:
+        _authorized_payload_tenant(
+            payload,
+            require_explicit=require_explicit,
+        )
+
+
+def _tenant_visible(record: Dict[str, Any]) -> bool:
+    record_tenant = str(record.get("tenant_id") or "").strip()
+    if record_tenant:
+        return record_tenant == _current_tenant_id()
+    return _auth_mode() == "disabled"
+
+
+def _tenant_scoped(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [record for record in records if _tenant_visible(record)]
+
+
+def _worker_state_id(*, tenant_id: str, worker_kind: str, worker_id: str) -> str:
+    identity = f"{tenant_id}:{worker_kind}:{worker_id}"
+    return f"worker-{uuid.uuid5(uuid.NAMESPACE_URL, identity).hex}"
+
+
+def _scheduled_window_id(
+    *,
+    tenant_id: str,
+    timestamp: str,
+    window_seconds: int,
+) -> str:
+    if window_seconds < 1:
+        raise HTTPException(status_code=503, detail="scheduler window must be >= 1 second")
+    try:
+        observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="scheduler clock is invalid") from exc
+    start_epoch = int(observed.timestamp())
+    start_epoch -= start_epoch % window_seconds
+    start = datetime.fromtimestamp(start_epoch, tz=timezone.utc)
+    return (
+        f"scheduled:{tenant_id}:"
+        f"{start.isoformat().replace('+00:00', 'Z')}:PT{window_seconds}S"
+    )
+
+
+def _record_worker_state(
+    *,
+    tenant_id: str,
+    worker_kind: str,
+    worker_id: str,
+    window_id: str,
+    result: Dict[str, Any],
+    updated_at: str,
+) -> Dict[str, Any]:
+    state_id = _worker_state_id(
+        tenant_id=tenant_id,
+        worker_kind=worker_kind,
+        worker_id=worker_id,
+    )
+    return store.put_worker_state(
+        {
+            "id": state_id,
+            "state_id": state_id,
+            "tenant_id": tenant_id,
+            "worker_kind": worker_kind,
+            "worker_id": worker_id,
+            "last_window_id": window_id,
+            "status": result.get("status"),
+            "controller_status": result.get("controller_status"),
+            "last_result": result,
+            "updated_at": updated_at,
+        }
+    )
 
 
 def _next_id(prefix: str, timestamp: str, existing: set[str]) -> str:
@@ -315,6 +471,7 @@ def _build_alert_handoffs(evaluation: Dict[str, Any], timestamp: str) -> List[Di
             {
                 "alert_id": alert_id,
                 "evaluation_id": evaluation["evaluation_id"],
+                "tenant_id": evaluation.get("tenant_id"),
                 "binding_id": evaluation["binding_id"],
                 "severity": check["status"],
                 "alert_type": "metric_drift",
@@ -339,6 +496,7 @@ def _build_alert_handoffs(evaluation: Dict[str, Any], timestamp: str) -> List[Di
             {
                 "alert_id": alert_id,
                 "evaluation_id": evaluation["evaluation_id"],
+                "tenant_id": evaluation.get("tenant_id"),
                 "binding_id": evaluation["binding_id"],
                 "severity": check["status"],
                 "alert_type": "reconciliation_mismatch",
@@ -482,6 +640,7 @@ def _paper_reconciliation_checks(
 
 
 class EvaluationBody(BaseModel):
+    tenant_id: Optional[str] = None
     binding_id: str
     runtime_id: Optional[str] = None
     evaluation_id: Optional[str] = None
@@ -495,6 +654,8 @@ class EvaluationBody(BaseModel):
 
 
 class TelemetryEventConsumeBody(BaseModel):
+    tenant_id: Optional[str] = None
+    worker_id: Optional[str] = None
     event: Optional[Dict[str, Any]] = None
     events: List[Dict[str, Any]] = Field(default_factory=list)
     baseline_metrics: Dict[str, Any] = Field(default_factory=dict)
@@ -510,6 +671,7 @@ class HandoffBody(BaseModel):
 
 
 class PaperRunReconciliationBody(BaseModel):
+    tenant_id: Optional[str] = None
     binding_id: str
     runtime_id: str
     deployment_plan_id: str
@@ -532,6 +694,7 @@ class PaperRunReconciliationBody(BaseModel):
 
 
 class CanaryRunReconciliationBody(BaseModel):
+    tenant_id: Optional[str] = None
     binding_id: str
     runtime_id: str
     deployment_plan_id: str
@@ -554,6 +717,7 @@ class CanaryRunReconciliationBody(BaseModel):
 
 
 class LiveRunReconciliationBody(BaseModel):
+    tenant_id: Optional[str] = None
     binding_id: str
     runtime_id: str
     deployment_plan_id: str
@@ -580,6 +744,69 @@ STORE_BACKEND = os.getenv("RECONCILIATION_DRIFT_STORE_BACKEND", "json").strip().
 PERSISTENCE_POSTURE = require_persistence_posture("reconciliation-drift")
 store = build_reconciliation_drift_store(DATA_DIR)
 app = FastAPI(title="Pantheon Reconciliation Drift Service", version="0.1.0")
+
+
+@app.middleware("http")
+async def authenticate_tenant(request: Request, call_next):
+    """Bind every reconciliation API request to one authenticated tenant.
+
+    Local compatibility mode remains explicit through the default ``disabled``
+    setting. Hosted/internal deployments select ``token`` and must provide
+    both a service bearer token and ``X-Tenant-Id``; missing configuration or
+    identity fails closed before a handler can read or mutate durable state.
+    """
+
+    if not request.url.path.startswith("/api/reconciliation-drift"):
+        return await call_next(request)
+    try:
+        mode = _auth_mode()
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    supplied_tenant = str(request.headers.get("x-tenant-id") or "").strip()
+    if supplied_tenant and not _TENANT_ID_PATTERN.fullmatch(supplied_tenant):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "X-Tenant-Id is invalid"},
+        )
+    if mode == "token":
+        configured_token = os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "")
+        if not configured_token:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "reconciliation tenant authentication is not configured"
+                },
+            )
+        authorization = request.headers.get("authorization") or ""
+        scheme, separator, supplied_token = authorization.partition(" ")
+        if (
+            separator != " "
+            or scheme.lower() != "bearer"
+            or not supplied_token
+            or not hmac.compare_digest(supplied_token, configured_token)
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "invalid reconciliation bearer token"},
+            )
+        if not supplied_tenant:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "X-Tenant-Id is required"},
+            )
+    try:
+        tenant_id = supplied_tenant or _configured_tenant_id()
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    token = _TENANT_CONTEXT.set(tenant_id)
+    try:
+        response = await call_next(request)
+    finally:
+        _TENANT_CONTEXT.reset(token)
+    response.headers["Vary"] = "Authorization, X-Tenant-Id"
+    return response
+
+
 register_fastapi_health_routes(
     app,
     "reconciliation-drift",
@@ -603,11 +830,15 @@ register_fastapi_health_routes(
         "alert_count": len(store.list_alert_handoffs()),
         "reconciliation_record_count": len(store.list_reconciliation_records()),
         "drift_report_count": len(store.list_drift_reports()),
+        "worker_state_count": len(store.list_worker_states()),
     },
     details=lambda: {
         "data_dir": DATA_DIR,
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+        "tenant_auth_mode": os.getenv(
+            "RECONCILIATION_DRIFT_AUTH_MODE", "disabled"
+        ).strip().lower(),
     },
 )
 
@@ -634,6 +865,11 @@ def health() -> Dict[str, Any]:
 
 @app.post("/api/reconciliation-drift/evaluations", status_code=201)
 def create_evaluation(body: EvaluationBody) -> Dict[str, Any]:
+    tenant_id = _authorized_body_tenant(body.tenant_id)
+    _authorize_payloads(
+        body.telemetry_events,
+        require_explicit=_auth_mode() == "token",
+    )
     timestamp = body.evaluated_at or utc_now()
     evaluation_id = body.evaluation_id or _next_id(
         "rdeval",
@@ -653,6 +889,7 @@ def create_evaluation(body: EvaluationBody) -> Dict[str, Any]:
     evaluation = {
         "id": evaluation_id,
         "evaluation_id": evaluation_id,
+        "tenant_id": tenant_id,
         "binding_id": body.binding_id,
         "runtime_id": body.runtime_id,
         "status": status,
@@ -686,40 +923,142 @@ def create_evaluation(body: EvaluationBody) -> Dict[str, Any]:
 
 @app.post("/api/reconciliation-drift/telemetry-events/consume", status_code=201)
 def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
+    tenant_id = _authorized_body_tenant(body.tenant_id)
+    require_explicit_tenant = _auth_mode() == "token"
+    worker_id = str(body.worker_id or "reconciliation-consumer").strip()
+    if not worker_id:
+        raise HTTPException(status_code=422, detail="worker_id must not be empty")
+    try:
+        lease_seconds = float(
+            os.getenv("RECONCILIATION_DRIFT_CONSUMER_LEASE_SECONDS", "120")
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="RECONCILIATION_DRIFT_CONSUMER_LEASE_SECONDS is invalid",
+        ) from exc
+    if not math.isfinite(lease_seconds) or lease_seconds <= 0:
+        raise HTTPException(
+            status_code=503,
+            detail="RECONCILIATION_DRIFT_CONSUMER_LEASE_SECONDS must be finite and > 0",
+        )
     events = list(body.events)
     if body.event:
         events.insert(0, body.event)
 
-    existing_report_ids = {str(item.get("drift_report_id") or "") for item in store.list_drift_reports()}
+    existing_report_ids = {
+        str(item.get("drift_report_id") or "")
+        for item in _tenant_scoped(store.list_drift_reports())
+    }
     drift_reports: List[Dict[str, Any]] = []
     incident_cases: List[Dict[str, Any]] = []
     ignored_event_ids: List[str] = []
+    duplicate_event_ids: List[str] = []
+    deferred_event_ids: List[str] = []
     for event in events:
-        report = build_drift_report_from_event(
+        event_tenant_id = _authorized_payload_tenant(
             event,
-            baseline_metrics=body.baseline_metrics,
-            thresholds=body.thresholds,
-            generated_at=body.generated_at,
-            existing_report_ids=existing_report_ids,
+            require_explicit=require_explicit_tenant,
         )
-        if report is None:
-            ignored_event_ids.append(str(event.get("event_id") or event.get("id") or "<unknown>"))
+        event_id = str(event.get("event_id") or event.get("id") or "").strip()
+        if not event_id:
+            canonical = json.dumps(
+                event,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            event_id = f"payload-{uuid.uuid5(uuid.NAMESPACE_URL, canonical).hex}"
+        claim_result = store.claim_work(
+            tenant_id=event_tenant_id,
+            work_type="telemetry_consume",
+            window_id=event_id,
+            owner_id=worker_id,
+            lease_seconds=lease_seconds,
+        )
+        claim = claim_result.get("claim") or {}
+        if not claim_result["acquired"]:
+            if claim_result["reason"] == "completed":
+                duplicate_event_ids.append(event_id)
+                completed_result = claim.get("result")
+                completed_report_id = str(
+                    (completed_result or {}).get("drift_report_id") or ""
+                ).strip()
+                if completed_report_id:
+                    completed_report = store.get_drift_report(
+                        completed_report_id,
+                        tenant_id=event_tenant_id,
+                    )
+                    if completed_report is not None:
+                        drift_reports.append(completed_report)
+            else:
+                deferred_event_ids.append(event_id)
             continue
-        stored = store.put_drift_report(report)
-        existing_report_ids.add(str(stored.get("drift_report_id") or ""))
-        drift_reports.append(stored)
-        incident_case = _classify_drift_report_incident(stored)
-        if incident_case is not None:
-            incident_cases.append(incident_case)
+        try:
+            report = build_drift_report_from_event(
+                event,
+                baseline_metrics=body.baseline_metrics,
+                thresholds=body.thresholds,
+                generated_at=body.generated_at,
+                existing_report_ids=existing_report_ids,
+            )
+            if report is None:
+                ignored_event_ids.append(event_id)
+                work_result = {
+                    "status": "ok",
+                    "event_id": event_id,
+                    "drift_report_id": None,
+                    "incident_id": None,
+                }
+                store.complete_work(
+                    claim_id=str(claim["claim_id"]),
+                    lease_token=str(claim["lease_token"]),
+                    result=work_result,
+                )
+                continue
+            report["tenant_id"] = event_tenant_id
+            stored = store.put_drift_report(report)
+            existing_report_ids.add(str(stored.get("drift_report_id") or ""))
+            drift_reports.append(stored)
+            incident_case = _classify_drift_report_incident(stored)
+            if incident_case is not None:
+                incident_cases.append(incident_case)
+            work_result = {
+                "status": "ok",
+                "event_id": event_id,
+                "drift_report_id": stored.get("drift_report_id"),
+                "incident_id": (
+                    incident_case.get("incident_id") or incident_case.get("id")
+                    if isinstance(incident_case, dict)
+                    else None
+                ),
+            }
+            store.complete_work(
+                claim_id=str(claim["claim_id"]),
+                lease_token=str(claim["lease_token"]),
+                result=work_result,
+            )
+        except Exception as exc:
+            store.fail_work(
+                claim_id=str(claim["claim_id"]),
+                lease_token=str(claim["lease_token"]),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
 
-    return {
-        "status": "ok",
+    status = "deferred" if deferred_event_ids and not drift_reports else "ok"
+    result = {
+        "status": status,
         "consumed_event_count": len(events),
         "drift_report_count": len(drift_reports),
         "drift_reports": drift_reports,
         "incident_case_count": len(incident_cases),
         "incident_cases": incident_cases,
         "ignored_event_ids": ignored_event_ids,
+        "duplicate_event_ids": duplicate_event_ids,
+        "deferred_event_ids": deferred_event_ids,
+        "tenant_id": tenant_id,
+        "worker_id": worker_id,
         "source_contract": {
             "telemetry_truth_owner": "telemetry-ingest",
             "incident_truth_owner": "incidents",
@@ -727,10 +1066,27 @@ def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
             "emergency_control_chain_affected": False,
         },
     }
+    _record_worker_state(
+        tenant_id=tenant_id,
+        worker_kind="telemetry_consumer",
+        worker_id=worker_id,
+        window_id=",".join(
+            str(event.get("event_id") or event.get("id") or "")
+            for event in events
+        ),
+        result=result,
+        updated_at=utc_now(),
+    )
+    return result
 
 
 @app.post("/api/reconciliation-drift/paper-runs/reconcile", status_code=201)
 def create_paper_reconciliation_record(body: PaperRunReconciliationBody) -> Dict[str, Any]:
+    tenant_id = _authorized_body_tenant(body.tenant_id)
+    _authorize_payloads(
+        body.telemetry_events,
+        require_explicit=_auth_mode() == "token",
+    )
     timestamp = body.generated_at or utc_now()
     record_id = body.record_id or _next_id(
         "recon",
@@ -764,6 +1120,7 @@ def create_paper_reconciliation_record(body: PaperRunReconciliationBody) -> Dict
     record = {
         "id": record_id,
         "record_id": record_id,
+        "tenant_id": tenant_id,
         "recon_type": "paper_run",
         "scope_ref": body.binding_id,
         "runtime_binding_id": body.binding_id,
@@ -861,6 +1218,11 @@ def create_paper_reconciliation_record(body: PaperRunReconciliationBody) -> Dict
 
 @app.post("/api/reconciliation-drift/canary-runs/reconcile", status_code=201)
 def create_canary_reconciliation_record(body: CanaryRunReconciliationBody) -> Dict[str, Any]:
+    tenant_id = _authorized_body_tenant(body.tenant_id)
+    _authorize_payloads(
+        body.telemetry_events,
+        require_explicit=_auth_mode() == "token",
+    )
     timestamp = body.generated_at or utc_now()
     record_id = body.record_id or _next_id(
         "recon",
@@ -895,6 +1257,7 @@ def create_canary_reconciliation_record(body: CanaryRunReconciliationBody) -> Di
     record = {
         "id": record_id,
         "record_id": record_id,
+        "tenant_id": tenant_id,
         "recon_type": "canary_run",
         "scope_ref": body.binding_id,
         "runtime_binding_id": body.binding_id,
@@ -992,6 +1355,11 @@ def create_canary_reconciliation_record(body: CanaryRunReconciliationBody) -> Di
 
 @app.post("/api/reconciliation-drift/live-runs/reconcile", status_code=201)
 def create_live_reconciliation_record(body: LiveRunReconciliationBody) -> Dict[str, Any]:
+    tenant_id = _authorized_body_tenant(body.tenant_id)
+    _authorize_payloads(
+        body.telemetry_events,
+        require_explicit=_auth_mode() == "token",
+    )
     timestamp = body.generated_at or utc_now()
     record_id = body.record_id or _next_id(
         "recon",
@@ -1026,6 +1394,7 @@ def create_live_reconciliation_record(body: LiveRunReconciliationBody) -> Dict[s
     record = {
         "id": record_id,
         "record_id": record_id,
+        "tenant_id": tenant_id,
         "recon_type": "live_run",
         "scope_ref": body.binding_id,
         "runtime_binding_id": body.binding_id,
@@ -1123,7 +1492,7 @@ def create_live_reconciliation_record(body: LiveRunReconciliationBody) -> Dict[s
 
 @app.get("/api/reconciliation-drift/evaluations")
 def list_evaluations(binding_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-    evaluations = store.list_evaluations()
+    evaluations = _tenant_scoped(store.list_evaluations())
     if binding_id:
         evaluations = [item for item in evaluations if item.get("binding_id") == binding_id]
     return evaluations
@@ -1131,15 +1500,15 @@ def list_evaluations(binding_id: Optional[str] = Query(default=None)) -> List[Di
 
 @app.get("/api/reconciliation-drift/evaluations/{evaluation_id}")
 def get_evaluation(evaluation_id: str) -> Dict[str, Any]:
-    evaluation = store.get_evaluation(evaluation_id)
-    if not evaluation:
+    evaluation = store.get_evaluation(evaluation_id, tenant_id=_current_tenant_id())
+    if not evaluation or not _tenant_visible(evaluation):
         raise HTTPException(status_code=404, detail="drift evaluation not found")
     return evaluation
 
 
 @app.get("/api/reconciliation-drift/reconciliation-records")
 def list_reconciliation_records(binding_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-    records = store.list_reconciliation_records()
+    records = _tenant_scoped(store.list_reconciliation_records())
     if binding_id:
         records = [item for item in records if item.get("binding_id") == binding_id]
     return records
@@ -1147,8 +1516,11 @@ def list_reconciliation_records(binding_id: Optional[str] = Query(default=None))
 
 @app.get("/api/reconciliation-drift/reconciliation-records/{record_id}")
 def get_reconciliation_record(record_id: str) -> Dict[str, Any]:
-    record = store.get_reconciliation_record(record_id)
-    if not record:
+    record = store.get_reconciliation_record(
+        record_id,
+        tenant_id=_current_tenant_id(),
+    )
+    if not record or not _tenant_visible(record):
         raise HTTPException(status_code=404, detail="reconciliation record not found")
     return record
 
@@ -1158,7 +1530,7 @@ def list_drift_reports(
     scope_ref: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
 ) -> List[Dict[str, Any]]:
-    reports = store.list_drift_reports()
+    reports = _tenant_scoped(store.list_drift_reports())
     if scope_ref:
         reports = [item for item in reports if item.get("scope_ref") == scope_ref]
     if status:
@@ -1168,8 +1540,8 @@ def list_drift_reports(
 
 @app.get("/api/reconciliation-drift/drift-reports/{report_id}")
 def get_drift_report(report_id: str) -> Dict[str, Any]:
-    report = store.get_drift_report(report_id)
-    if not report:
+    report = store.get_drift_report(report_id, tenant_id=_current_tenant_id())
+    if not report or not _tenant_visible(report):
         raise HTTPException(status_code=404, detail="drift report not found")
     return report
 
@@ -1178,7 +1550,7 @@ def get_drift_report(report_id: str) -> Dict[str, Any]:
 def summary(binding_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
     evaluations = list_evaluations(binding_id=binding_id)
     alerts = list_alert_handoffs(binding_id=binding_id, handoff_state=None)
-    drift_reports = store.list_drift_reports()
+    drift_reports = _tenant_scoped(store.list_drift_reports())
     if binding_id:
         drift_reports = [
             item for item in drift_reports if item.get("binding_id") == binding_id or item.get("scope_ref") == binding_id
@@ -1218,7 +1590,7 @@ def list_alert_handoffs(
     binding_id: Optional[str] = Query(default=None),
     handoff_state: Optional[str] = Query(default="ready"),
 ) -> List[Dict[str, Any]]:
-    alerts = store.list_alert_handoffs()
+    alerts = _tenant_scoped(store.list_alert_handoffs())
     if binding_id:
         alerts = [item for item in alerts if item.get("binding_id") == binding_id]
     if handoff_state:
@@ -1228,8 +1600,8 @@ def list_alert_handoffs(
 
 @app.post("/api/reconciliation-drift/alerts/{alert_id}/handoff")
 def mark_alert_handoff(alert_id: str, body: HandoffBody) -> Dict[str, Any]:
-    alert = store.get_alert_handoff(alert_id)
-    if not alert:
+    alert = store.get_alert_handoff(alert_id, tenant_id=_current_tenant_id())
+    if not alert or not _tenant_visible(alert):
         raise HTTPException(status_code=404, detail="alert handoff not found")
     updated = dict(alert)
     updated["handoff_state"] = body.handoff_state
@@ -1241,13 +1613,18 @@ def mark_alert_handoff(alert_id: str, body: HandoffBody) -> Dict[str, Any]:
 
 
 class ScheduledReconcileBody(BaseModel):
+    tenant_id: Optional[str] = None
     tick_id: Optional[str] = None
+    window_id: Optional[str] = None
+    worker_id: Optional[str] = None
+    sla_seconds: Optional[float] = Field(default=None, gt=0)
     binding_id: Optional[str] = None
     dispatch_incidents: bool = True
     lifecycle_only: bool = False
 
 
 class IncidentTriggerBody(BaseModel):
+    tenant_id: Optional[str] = None
     incident: Optional[Dict[str, Any]] = None
     anomaly_event: Optional[Dict[str, Any]] = None
     event: Optional[Dict[str, Any]] = None
@@ -1546,7 +1923,7 @@ def _latest_accepted_lifecycle_append(
     candidates: List[
         tuple[datetime, str, str, Dict[str, Any], Dict[str, Any]]
     ] = []
-    for evaluation in store.list_evaluations():
+    for evaluation in _tenant_scoped(store.list_evaluations()):
         if str(evaluation.get("binding_id") or "") != binding_id:
             continue
         raw_state = evaluation.get("lifecycle_append")
@@ -2209,6 +2586,7 @@ def _scheduled_drift_report(
         "drift_report_id": report_id,
         "recon_run_id": evaluation["evaluation_id"],
         "evaluation_id": evaluation["evaluation_id"],
+        "tenant_id": evaluation.get("tenant_id"),
         "drift_type": "runtime_health" if "lag" in metric or "runtime" in metric else "execution",
         "incident_cluster_id": cluster_id,
         "scope_ref": required["binding_id"],
@@ -2330,17 +2708,19 @@ def _trigger_status(severity: Any, reason: str) -> str:
     return "degraded"
 
 
-@app.post("/api/reconciliation-drift/scheduled-reconcile", status_code=201)
-def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
+def _execute_scheduled_reconcile(
+    body: ScheduledReconcileBody,
+    *,
+    tenant_id: str,
+    timestamp: str,
+    tick_id: str,
+) -> Dict[str, Any]:
     """Run a scheduled reconciliation pass over all active bindings visible in telemetry.
 
     Idempotent: a second call with the same tick_id skips bindings that already
     have an evaluation record for that tick, so duplicate scheduler ticks do not
     create duplicate ReconciliationRecords.
     """
-    timestamp = utc_now()
-    tick_id = body.tick_id or timestamp
-
     telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
     summaries = _fetch_telemetry_runtime_summaries(telemetry_url)
 
@@ -2357,6 +2737,16 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             "triggered_at": timestamp,
             "detail": "telemetry service unavailable",
         }
+
+    scoped_summaries: List[Dict[str, Any]] = []
+    for summary in summaries:
+        summary_tenant = _mapping_tenant_id(summary)
+        if summary_tenant:
+            if summary_tenant == tenant_id:
+                scoped_summaries.append(summary)
+        elif _auth_mode() == "disabled":
+            scoped_summaries.append(summary)
+    summaries = scoped_summaries
 
     requested_binding_id = str(body.binding_id or "").strip()
     if body.lifecycle_only and not requested_binding_id:
@@ -2393,7 +2783,10 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             telemetry_url=telemetry_url,
         )
 
-    existing_evaluation_ids = {str(item.get("evaluation_id") or "") for item in store.list_evaluations()}
+    existing_evaluation_ids = {
+        str(item.get("evaluation_id") or "")
+        for item in _tenant_scoped(store.list_evaluations())
+    }
 
     created_evaluation_ids: List[str] = []
     skipped_binding_ids: List[str] = []
@@ -2452,7 +2845,10 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
 
         if evaluation_id in existing_evaluation_ids:
             skipped_binding_ids.append(binding_id)
-            existing_evaluation = store.get_evaluation(evaluation_id)
+            existing_evaluation = store.get_evaluation(
+                evaluation_id,
+                tenant_id=tenant_id,
+            )
             if existing_evaluation is None:
                 continue
             evaluation_statuses.append(str(existing_evaluation.get("status") or status))
@@ -2474,7 +2870,10 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             delivery = existing_evaluation.get("incident_delivery")
             if report is None:
                 continue
-            existing_report = store.get_drift_report(str(report["drift_report_id"]))
+            existing_report = store.get_drift_report(
+                str(report["drift_report_id"]),
+                tenant_id=tenant_id,
+            )
             report_to_dispatch = existing_report or report
             drift_report_ids.append(str(report_to_dispatch["drift_report_id"]))
             if isinstance(delivery, dict) and delivery.get("status") == "delivered":
@@ -2503,6 +2902,7 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         evaluation = {
             "id": evaluation_id,
             "evaluation_id": evaluation_id,
+            "tenant_id": tenant_id,
             "binding_id": binding_id,
             "runtime_id": runtime_id or None,
             "status": status,
@@ -2608,6 +3008,184 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
     }
 
 
+def _completed_window_response(claim: Dict[str, Any]) -> Dict[str, Any]:
+    cached = dict(claim.get("result") or {})
+    evaluation_ids = [
+        str(value) for value in cached.get("evaluation_ids") or [] if value
+    ]
+    skipped_binding_ids: List[str] = []
+    for evaluation_id in evaluation_ids:
+        evaluation = store.get_evaluation(
+            evaluation_id,
+            tenant_id=_current_tenant_id(),
+        )
+        binding_id = str((evaluation or {}).get("binding_id") or "").strip()
+        if binding_id:
+            skipped_binding_ids.append(binding_id)
+    cached.update(
+        {
+            "evaluated_binding_count": 0,
+            "skipped_binding_count": len(skipped_binding_ids),
+            "evaluation_ids": [],
+            "skipped_binding_ids": skipped_binding_ids,
+            "duplicate_window": True,
+            "lease_status": "completed",
+        }
+    )
+    return cached
+
+
+@app.post("/api/reconciliation-drift/scheduled-reconcile", status_code=201)
+def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
+    """Claim and execute one deterministic tenant-scoped observation window."""
+
+    tenant_id = _authorized_body_tenant(body.tenant_id)
+    timestamp = utc_now()
+    try:
+        window_seconds = int(
+            os.getenv("RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS", "300")
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS is invalid",
+        ) from exc
+    derived_window_id = _scheduled_window_id(
+        tenant_id=tenant_id,
+        timestamp=timestamp,
+        window_seconds=window_seconds,
+    )
+    tick_id = str(body.tick_id or body.window_id or derived_window_id).strip()
+    window_id = str(body.window_id or tick_id).strip()
+    worker_id = str(body.worker_id or "reconciliation-scheduler").strip()
+    if not tick_id or not window_id or not worker_id:
+        raise HTTPException(
+            status_code=422,
+            detail="tick_id, window_id, and worker_id must not be empty",
+        )
+    try:
+        default_sla_seconds = float(
+            os.getenv("RECONCILIATION_DRIFT_SCHEDULED_SLA_SECONDS", "60")
+        )
+        configured_lease_seconds = float(
+            os.getenv("RECONCILIATION_DRIFT_SCHEDULER_LEASE_SECONDS", "180")
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="scheduled reconciliation SLA/lease configuration is invalid",
+        ) from exc
+    sla_seconds = float(body.sla_seconds or default_sla_seconds)
+    lease_seconds = max(configured_lease_seconds, sla_seconds * 2)
+    if (
+        not math.isfinite(sla_seconds)
+        or sla_seconds <= 0
+        or not math.isfinite(lease_seconds)
+        or lease_seconds <= 0
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="scheduled reconciliation SLA/lease must be finite and > 0",
+        )
+
+    claim_result = store.claim_work(
+        tenant_id=tenant_id,
+        work_type="scheduled_reconcile",
+        window_id=window_id,
+        owner_id=worker_id,
+        lease_seconds=lease_seconds,
+    )
+    claim = claim_result.get("claim") or {}
+    if not claim_result["acquired"]:
+        if claim_result["reason"] == "completed":
+            return _completed_window_response(claim)
+        return {
+            "status": "deferred",
+            "controller_status": "degraded",
+            "tick_id": tick_id,
+            "window_id": window_id,
+            "tenant_id": tenant_id,
+            "worker_id": worker_id,
+            "duplicate_window": True,
+            "lease_status": claim_result["reason"],
+            "lease_owner": claim.get("owner_id"),
+            "lease_expires_at": claim.get("lease_expires_at"),
+            "evaluated_binding_count": 0,
+            "skipped_binding_count": 0,
+            "evaluation_ids": [],
+            "skipped_binding_ids": [],
+            "triggered_at": timestamp,
+        }
+
+    started = _monotonic()
+    claim_finalized = False
+    try:
+        result = _execute_scheduled_reconcile(
+            body,
+            tenant_id=tenant_id,
+            timestamp=timestamp,
+            tick_id=tick_id,
+        )
+        duration_seconds = max(0.0, _monotonic() - started)
+        result.update(
+            {
+                "window_id": window_id,
+                "tenant_id": tenant_id,
+                "worker_id": worker_id,
+                "duration_seconds": duration_seconds,
+                "sla_seconds": sla_seconds,
+                "within_sla": duration_seconds <= sla_seconds,
+                "sla_status": "met"
+                if duration_seconds <= sla_seconds
+                else "breached",
+                "duplicate_window": False,
+                "lease_status": "acquired",
+            }
+        )
+        terminal_failure = (
+            result.get("status") in {"failure", "error", "unavailable"}
+            or not result["within_sla"]
+        )
+        if terminal_failure:
+            store.fail_work(
+                claim_id=str(claim["claim_id"]),
+                lease_token=str(claim["lease_token"]),
+                error=(
+                    "scheduled reconciliation SLA breached"
+                    if not result["within_sla"]
+                    else str(result.get("detail") or result.get("status"))
+                ),
+                result=result,
+            )
+        else:
+            store.complete_work(
+                claim_id=str(claim["claim_id"]),
+                lease_token=str(claim["lease_token"]),
+                result=result,
+            )
+        claim_finalized = True
+        _record_worker_state(
+            tenant_id=tenant_id,
+            worker_kind="scheduler",
+            worker_id=worker_id,
+            window_id=window_id,
+            result=result,
+            updated_at=utc_now(),
+        )
+        return result
+    except Exception as exc:
+        if not claim_finalized:
+            try:
+                store.fail_work(
+                    claim_id=str(claim["claim_id"]),
+                    lease_token=str(claim["lease_token"]),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            except Exception:
+                pass
+        raise
+
+
 @app.post("/api/reconciliation-drift/incident-triggers/consume", status_code=201)
 def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     """Consume an incident/anomaly trigger and immediately create a reconciliation evaluation.
@@ -2615,9 +3193,21 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     Idempotent: duplicate incident or source event payloads produce the same
     evaluation_id and are returned as skipped instead of creating duplicates.
     """
+    tenant_id = _authorized_body_tenant(body.tenant_id)
     timestamp = body.generated_at or utc_now()
     incident = body.incident or {}
     anomaly_event = body.anomaly_event or body.event or {}
+    require_explicit_tenant = _auth_mode() == "token"
+    if incident:
+        _authorized_payload_tenant(
+            incident,
+            require_explicit=require_explicit_tenant,
+        )
+    if anomaly_event:
+        _authorized_payload_tenant(
+            anomaly_event,
+            require_explicit=require_explicit_tenant,
+        )
     binding_id = str(
         body.binding_id
         or _first_trigger_value(
@@ -2649,7 +3239,7 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     trigger_id = incident_id or source_event_id or f"{binding_id}:{timestamp}"
     evaluation_id = _trigger_evaluation_id(trigger_id, binding_id)
 
-    existing = store.get_evaluation(evaluation_id)
+    existing = store.get_evaluation(evaluation_id, tenant_id=tenant_id)
     if existing is not None:
         return {
             "status": "ok",
@@ -2657,6 +3247,7 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
             "created": False,
             "skipped": True,
             "evaluation_id": evaluation_id,
+            "tenant_id": tenant_id,
             "binding_id": binding_id,
             "runtime_id": runtime_id or None,
             "incident_id": incident_id or None,
@@ -2696,6 +3287,7 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
     evaluation = {
         "id": evaluation_id,
         "evaluation_id": evaluation_id,
+        "tenant_id": tenant_id,
         "binding_id": binding_id,
         "runtime_id": runtime_id or None,
         "status": status,
@@ -2749,6 +3341,7 @@ def consume_incident_trigger(body: IncidentTriggerBody) -> Dict[str, Any]:
         "created": True,
         "skipped": False,
         "evaluation_id": stored["evaluation_id"],
+        "tenant_id": tenant_id,
         "binding_id": binding_id,
         "runtime_id": runtime_id or None,
         "incident_id": incident_id or None,

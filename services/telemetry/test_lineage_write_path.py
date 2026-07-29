@@ -24,7 +24,8 @@ TestLiveLineageWritePathDefaultWiring — direct component proof:
    succeeds.
 
 TestLiveLineageWritePathFullStackHTTPRoute — literal HTTP-status proof:
-5. A real RuntimeManagerClient (local-transport RuntimeManagerService)
+5. A real RuntimeManagerClient, opted into local transport explicitly with
+   ``allow_local=True`` and pointed at a per-test temporary binding store,
    deploys a live RuntimeBinding — governance preconditions and all.
 6. Real telemetry ingest admits an event referencing that binding.
 7. The real `services.incidents.main` FastAPI app's
@@ -33,11 +34,19 @@ TestLiveLineageWritePathFullStackHTTPRoute — literal HTTP-status proof:
    client and lineage service, no other lookups replaced — returns 201 on
    first delivery and 200 on idempotent replay.
 
+The full-stack layer owns its entire runtime-manager configuration
+(OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001): it never inherits
+``PANTHEON_RUNTIME_MANAGER_URL``, token, or store-path values from the
+ambient environment, and it does not relax RuntimeManagerClient's
+fail-closed default — see
+``test_default_runtime_manager_client_stays_fail_closed_without_url``.
+
 See docs/decisions/LIN-003-live-lineage-write-path.md for the full root
 cause and scope.
 """
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
@@ -63,7 +72,10 @@ from services.telemetry.lineage_read import LineageReadService
 # onto sys.path (see its _RUNTIME_MANAGER_DIR bootstrap), so this becomes
 # importable afterwards — the same bare-module import reference_validation
 # itself uses.
-from runtime_manager_client import RuntimeManagerClient  # noqa: E402
+from runtime_manager_client import (  # noqa: E402
+    RuntimeManagerClient,
+    RuntimeManagerClientError,
+)
 
 
 class _FakeBinding:
@@ -285,6 +297,23 @@ def _valid_deploy_request(**overrides) -> dict:
     return request
 
 
+# Deliberately unroutable: discard port on loopback, with a path no Pantheon
+# route serves. Bound only while `services.incidents.main` is imported, so the
+# module's import-time default validator can be constructed without inheriting
+# operator config; the test replaces that validator before any request runs, so
+# nothing ever dials this URL.
+_INERT_RUNTIME_MANAGER_URL = "http://127.0.0.1:9/lin003-inert-never-contacted"
+
+# Ambient values that would otherwise silently decide this test's transport,
+# credentials, or storage location. Cleared per test; mock.patch.dict restores
+# whatever the environment actually had on teardown.
+_AMBIENT_RUNTIME_MANAGER_ENV = (
+    "PANTHEON_RUNTIME_MANAGER_URL",
+    "PANTHEON_RUNTIME_MANAGER_TOKEN_FILE",
+    "PANTHEON_RUNTIME_MANAGER_TIMEOUT_SECONDS",
+)
+
+
 class _RuntimeManagerClientAdapter:
     """Satisfies TelemetryIngestService's RuntimeBindingProtocol (attribute
     access) from RuntimeManagerClient.get() (dict access) — the same
@@ -309,29 +338,94 @@ class TestLiveLineageWritePathFullStackHTTPRoute(unittest.IsolatedAsyncioTestCas
 
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
+        root = Path(self._tempdir.name)
+        self._binding_store_path = root / "bindings.json"
         self._env_patch = mock.patch.dict(
             os.environ,
             {
-                "PANTHEON_RUNTIME_BINDING_STORE_PATH": str(
-                    Path(self._tempdir.name) / "bindings.json"
-                ),
+                "PANTHEON_RUNTIME_BINDING_STORE_PATH": str(self._binding_store_path),
                 "PANTHEON_SINGLE_RUNTIME_ENFORCED": "true",
+                # Pin the bearer token so a broken or absent ambient token file
+                # cannot fail the client constructor for an unrelated reason.
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "lin003-isolated-test-token",
+                # Keep services.incidents.main's import-time store bootstrap
+                # inside this test's tempdir instead of the shared
+                # /tmp/pantheon/incidents default.
+                "INCIDENTS_DATA_DIR": str(root / "incidents-data"),
             },
             clear=False,
         )
         self._env_patch.start()
-        os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
+        for name in _AMBIENT_RUNTIME_MANAGER_ENV:
+            os.environ.pop(name, None)
 
     def tearDown(self) -> None:
         self._env_patch.stop()
         self._tempdir.cleanup()
 
+    def _isolated_runtime_manager_client(self) -> RuntimeManagerClient:
+        """This test's own runtime-manager surface, declared explicitly.
+
+        ``allow_local=True`` is RuntimeManagerClient's documented test/local
+        opt-in. It is required here *because* the production default fails
+        closed when ``PANTHEON_RUNTIME_MANAGER_URL`` is unset; the test states
+        its transport rather than hoping the ambient environment supplies one.
+        The store path is per-test, so no state survives between runs or leaks
+        into a developer's or CI runner's shared runtime-manager store.
+        """
+        self.assertNotIn(
+            "PANTHEON_RUNTIME_MANAGER_URL",
+            os.environ,
+            "this test must not resolve a runtime-manager transport from ambient config",
+        )
+        return RuntimeManagerClient(allow_local=True)
+
+    def test_default_runtime_manager_client_stays_fail_closed_without_url(self):
+        """Guard rail for the isolation above.
+
+        The full-stack test must never be repaired by letting
+        RuntimeManagerClient fall back to an in-process RuntimeManager when no
+        URL is configured. Isolation here is an explicit ``allow_local`` opt-in
+        confined to the test; it is not a relaxation of the deployed default.
+        """
+        self.assertNotIn("PANTHEON_RUNTIME_MANAGER_URL", os.environ)
+        with self.assertRaises(RuntimeManagerClientError):
+            RuntimeManagerClient()
+        with self.assertRaises(RuntimeManagerClientError):
+            RuntimeManagerClient(require_remote=True)
+
+    def test_isolated_runtime_manager_fixture_writes_only_to_tempdir(self):
+        """The fixture is self-contained: deploy/readback round-trips through
+        the per-test store and nothing else."""
+        self.assertFalse(self._binding_store_path.exists())
+        client = self._isolated_runtime_manager_client()
+        binding = client.deploy(_valid_deploy_request())
+
+        self.assertTrue(self._binding_store_path.exists())
+        readback = client.get(binding["binding_id"])
+        self.assertIsNotNone(readback)
+        self.assertEqual(readback["binding_id"], binding["binding_id"])
+
     async def test_ingest_then_consume_threshold_route_201_then_replay_200(self):
         from fastapi.testclient import TestClient
         from services.incident.pg_store import build_incident_store
-        from services.incidents import main as incidents_main
 
-        rm_client = RuntimeManagerClient()
+        # services.incidents.main constructs a module-level
+        # CanonicalReferenceValidator at import time, whose default
+        # _RuntimeBindingLookup builds a RuntimeManagerClient with no
+        # allow_local opt-in — so importing it in a clean environment fails
+        # closed. Bind an explicit inert URL for the import only. The route's
+        # validator is replaced below with this test's live one, so that URL is
+        # never dialled; it exists so the test owns the configuration instead of
+        # inheriting whatever the operator happened to export.
+        with mock.patch.dict(
+            os.environ,
+            {"PANTHEON_RUNTIME_MANAGER_URL": _INERT_RUNTIME_MANAGER_URL},
+            clear=False,
+        ):
+            from services.incidents import main as incidents_main
+
+        rm_client = self._isolated_runtime_manager_client()
         binding = rm_client.deploy(_valid_deploy_request())
         binding_id = binding["binding_id"]
 
@@ -422,6 +516,81 @@ class TestLiveLineageWritePathFullStackHTTPRoute(unittest.IsolatedAsyncioTestCas
                 self.assertEqual(replay.json()["incident_id"], first.json()["incident_id"])
         finally:
             await ingest_svc.stop(graceful=True)
+
+
+# Hostile ambient configuration: every value the full-stack fixture must
+# override rather than inherit. The URL host is reserved for documentation
+# (RFC 5737) and the paths do not exist, so anything that actually leaked
+# through would fail loudly instead of silently passing.
+_HOSTILE_AMBIENT_ENV = {
+    "PANTHEON_RUNTIME_MANAGER_URL": "http://198.51.100.7:8099",
+    "PANTHEON_RUNTIME_MANAGER_TOKEN": "ambient-operator-token",
+    "PANTHEON_RUNTIME_MANAGER_TOKEN_FILE": "/nonexistent/ambient-token",
+    "PANTHEON_RUNTIME_BINDING_STORE_PATH": "/nonexistent/ambient/bindings.json",
+    "PANTHEON_SINGLE_RUNTIME_ENFORCED": "false",
+    "INCIDENTS_DATA_DIR": "/nonexistent/ambient/incidents",
+}
+
+
+class TestFullStackFixtureIsolation(unittest.TestCase):
+    """OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001.
+
+    The full-stack case above must own its runtime-manager configuration in
+    both directions: ambient values must not reach it, and its own values must
+    not survive it. Both halves are asserted here rather than assumed, because
+    a leak in either direction reintroduces exactly the ordering-dependent
+    green/red flip this task exists to remove.
+    """
+
+    def test_fixture_overrides_ambient_config_then_restores_it(self):
+        with mock.patch.dict(os.environ, _HOSTILE_AMBIENT_ENV, clear=False):
+            before = dict(os.environ)
+
+            case = TestLiveLineageWritePathFullStackHTTPRoute(
+                "test_isolated_runtime_manager_fixture_writes_only_to_tempdir"
+            )
+            case.setUp()
+            try:
+                tempdir = Path(case._tempdir.name)
+                # Ambient transport is removed, not merely shadowed.
+                self.assertNotIn("PANTHEON_RUNTIME_MANAGER_URL", os.environ)
+                self.assertNotIn("PANTHEON_RUNTIME_MANAGER_TOKEN_FILE", os.environ)
+                # Ambient storage and enforcement are replaced by test-owned values.
+                self.assertEqual(
+                    os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"],
+                    str(tempdir / "bindings.json"),
+                )
+                self.assertEqual(os.environ["PANTHEON_SINGLE_RUNTIME_ENFORCED"], "true")
+                self.assertTrue(
+                    os.environ["INCIDENTS_DATA_DIR"].startswith(str(tempdir))
+                )
+                self.assertTrue(tempdir.exists())
+            finally:
+                case.tearDown()
+
+            # No process-global residue: environment byte-identical, tempdir gone.
+            self.assertEqual(dict(os.environ), before)
+            self.assertFalse(tempdir.exists())
+
+    def test_full_stack_case_passes_under_hostile_ambient_config(self):
+        """End-to-end: run the whole full-stack case with ambient runtime-manager
+        config pointed somewhere unreachable. It must still pass, and must leave
+        the environment exactly as it found it."""
+        with mock.patch.dict(os.environ, _HOSTILE_AMBIENT_ENV, clear=False):
+            before = dict(os.environ)
+
+            suite = unittest.TestLoader().loadTestsFromTestCase(
+                TestLiveLineageWritePathFullStackHTTPRoute
+            )
+            result = unittest.TextTestRunner(
+                stream=io.StringIO(), verbosity=0
+            ).run(suite)
+
+            self.assertTrue(
+                result.wasSuccessful(),
+                f"failures={result.failures!r} errors={result.errors!r}",
+            )
+            self.assertEqual(dict(os.environ), before)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "AG-PERF-TRUTH-001-FE",
+  "archived_at": "2026-07-22T22:53:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-FE.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-FE.md",
+      "execute-plans/src/agora/pages/strategy-performance",
+      "execute-plans/src/bff"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "src/agora/pages/strategy-performance",
+      "src/bff"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "AG-PERF-TRUTH-001-BE"
+    ],
+    "fleet_lane": "agora-performance-frontend",
+    "id": "AG-PERF-TRUTH-001-FE",
+    "last_update": "2026-07-22T22:53:30Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized reviewer-approved Strategy Performance truth delivery: execute-plans PR #502 merged at 0cfc3058b1b20bf850b0d5132c250f13cf88421d; Pantheon closeout PR #3984 merged at 4b02d5b7dd23326cf37eb329007f733f1f11e34b; 23 focused tests, tsc, focused eslint, diff check, and getSimulatedDetails absence passed; hosted deployment remains accepted at FE 0cfc3058 / BFF 5004450c with live/strict and safe write defaults.",
+    "owner": "Codex2",
+    "phase": "Agora Truth / Wave 1 performance frontend",
+    "priority": "P0",
+    "repository_id": "execute_plans",
+    "review_notes_zh": [
+      "審查通過：PR #502 已合併 execute-plans/dev，merge commit 0cfc3058b1b20bf850b0d5132c250f13cf88421d。",
+      "程式審查確認 production path 無 getSimulatedDetails 或 local-only success；projection 失敗嚴格顯示 unavailable/error，suggestion action 經 write/role gate，且只在獨立 receipt readback 完整比對後更新權威狀態與顯示 receipt。",
+      "精確 commit 本地驗證：npm test -- src/lib/bff-v1/agora/performance.test.ts src/agora/pages/strategy-performance/StrategyPerformancePage.test.tsx（23 passed）；npx tsc --noEmit；focused npx eslint，皆通過。",
+      "Post-merge integration gate 29950152351 成功；deploy 29961222454 成功；live deployment.json accepted 並精確綁定 FE 0cfc3058b1b20bf850b0d5132c250f13cf88421d / BFF 5004450c5493aa8aef284cf42439c9b27ef54235，live/strict、real/stub writes false、pre/post-switch probes passed。"
+    ],
+    "reviewer": "Codex",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-FE.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/execute-plans"
+    },
+    "status": "done",
+    "summary_zh": "移除 getSimulatedDetails 與 local-only success；依 BFF availability/provenance 顯示真實/unknown 狀態，suggestion action 只在 receipt readback 後成功。",
+    "target_repo": "ajoe734/execute-plans",
+    "task_class": "execution",
+    "title": "Remove simulated Strategy Performance product data",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T22:53:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-perf-truth-001-fe",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-PERF-TRUTH-001-FE",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "fb2df8ec805754a3bf7a83ea544138ca9c32c521",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-perf-truth-001-fe",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/home/lupin/pantheon-ci-deploy/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "7acb6b9885d9c940f12883cb16eb927e5a52c6ee",
+      "commit_subject": "AG-PERF-TRUTH-001-FE: finalize accepted frontend delivery",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Pantheon closeout record and task pointer for the reviewed",
+        "Not changing": "execute-plans implementation bytes, Pantheon BFF contracts,",
+        "Composes with": "execute-plans PR #502 at merge 0cfc3058, Pantheon backend PR",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-PERF-TRUTH-001-FE",
+        "Reviewer": "Codex",
+        "Verified": "23 focused Vitest tests; tsc; focused eslint; diff check; accepted hosted FE/BFF manifest"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4b02d5b7dd23326cf37eb329007f733f1f11e34b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:22:45Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AG-PERF-TRUTH-001-FE away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-07-22T18:44:33Z",
+      "status": "done",
+      "task_id": "AG-PERF-TRUTH-001-FE",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T22:22:00Z",
+      "from": "Codex2",
+      "message": "PR #502 merged to execute-plans/dev at 0cfc3058b1b20bf850b0d5132c250f13cf88421d. Integration gate 29950152351 passed against stable BFF 5004450c5493aa8aef284cf42439c9b27ef54235 with lint, unit/integration, strict read-only builds, exact-candidate desktop/mobile Playwright (50 passed each), F13 Agora, strict fallback, and a11y coverage. Deploy 29961222454 succeeded; live deployment.json is accepted for the exact pair with live/strict mode, real/stub writes false, and pre/post-switch probes passed. Please review for approval.",
+      "resolved_at": "2026-07-22T22:27:51Z",
+      "status": "done",
+      "task_id": "AG-PERF-TRUTH-001-FE",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T22:27:51Z",
+      "from": "Codex",
+      "message": "Review approved: PR #502 and exact FE/BFF accepted deployment verified; Codex2 should perform task-closeout finalization and mark done.",
+      "status": "done",
+      "task_id": "AG-PERF-TRUTH-001-FE",
+      "to": "Codex2",
+      "resolved_at": "2026-07-22T22:53:31Z"
+    }
+  ],
+  "blockers": []
+}

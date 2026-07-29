@@ -1,246 +1,315 @@
-"""Unit tests for AlphaReplicationQueue."""
+"""Behavioral tests for the governed AlphaReplicationQueue."""
 
 from __future__ import annotations
 
-import tempfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from .queue import AlphaReplicationQueue, REVIEWABLE_STATES
 
 
+NOW = datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc)
+
+
 def _approved_spec(
-    strategy_id: str = "strat-001",
-    spec_version: str = "1.0",
-    lifecycle_state: str = "approved",
+    *,
+    tenant_id: str = "tenant-a",
+    strategy_spec_id: str = "reg-strategy-spec-alpha-1.0.0",
+    strategy_id: str = "strat-alpha",
+    spec_version: str = "1.0.0",
+    artifact_state: str = "approved",
+    checksum: str = "sha256:approved-alpha",
+    approval_decision_id: str = "approval-alpha-001",
 ) -> dict:
     return {
-        "spec_version": spec_version,
+        "tenant_id": tenant_id,
+        "strategy_spec_id": strategy_spec_id,
         "strategy_id": strategy_id,
-        "lifecycle_state": lifecycle_state,
+        "spec_version": spec_version,
+        "artifact_state": artifact_state,
+        "checksum": checksum,
+        "approval_decision_id": approval_decision_id,
+        "approver": "research-reviewer",
+        "approved_at": "2026-07-26T09:00:00Z",
     }
 
 
-class TestAlphaReplicationQueueEnqueue:
-    def test_enqueue_approved_spec_returns_entry(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        entry = q.enqueue(_approved_spec())
-        assert entry is not None
-        assert entry["strategy_id"] == "strat-001"
-        assert entry["spec_version"] == "1.0"
-        assert entry["status"] == "pending"
-        assert entry["revalidation_count"] == 0
-        assert entry["experiment_run_ids"] == []
-
-    def test_enqueue_review_state_accepted(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        entry = q.enqueue(_approved_spec(lifecycle_state="review"))
-        assert entry is not None
-        assert entry["lifecycle_state"] == "review"
-
-    def test_enqueue_draft_state_rejected(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        with pytest.raises(ValueError, match="lifecycle_state"):
-            q.enqueue(_approved_spec(lifecycle_state="draft"))
-
-    def test_enqueue_candidate_state_rejected(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        with pytest.raises(ValueError, match="lifecycle_state"):
-            q.enqueue(_approved_spec(lifecycle_state="candidate"))
-
-    def test_enqueue_missing_strategy_id_raises(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        spec = _approved_spec()
-        del spec["strategy_id"]
-        with pytest.raises(ValueError, match="strategy_id"):
-            q.enqueue(spec)
-
-    def test_enqueue_missing_spec_version_raises(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        spec = _approved_spec()
-        del spec["spec_version"]
-        with pytest.raises(ValueError, match="spec_version"):
-            q.enqueue(spec)
-
-    def test_enqueue_idempotent_same_spec(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        first = q.enqueue(_approved_spec())
-        second = q.enqueue(_approved_spec())
-        assert first is not None
-        assert second is None  # duplicate
-        assert len(q.list_all()) == 1
-
-    def test_enqueue_different_versions_both_accepted(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1", spec_version="1.0"))
-        q.enqueue(_approved_spec(strategy_id="s1", spec_version="1.1"))
-        assert len(q.list_all()) == 2
-
-    def test_enqueue_different_strategies_both_accepted(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1"))
-        q.enqueue(_approved_spec(strategy_id="s2"))
-        assert len(q.list_all()) == 2
-
-    def test_enqueue_records_enqueued_by(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        entry = q.enqueue(_approved_spec(), enqueued_by="distillation-worker")
-        assert entry is not None
-        assert entry["enqueued_by"] == "distillation-worker"
-
-    def test_enqueued_at_is_set(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        entry = q.enqueue(_approved_spec())
-        assert entry is not None
-        assert entry["enqueued_at"].endswith("Z")
+def _claim(
+    queue: AlphaReplicationQueue,
+    *,
+    tenant_id: str = "tenant-a",
+    now: datetime = NOW,
+    lease_seconds: int = 60,
+) -> dict:
+    claimed = queue.claim_next_pending(
+        tenant_id,
+        claimant="worker-a",
+        lease_seconds=lease_seconds,
+        now=now,
+    )
+    assert claimed is not None
+    return claimed
 
 
-class TestAlphaReplicationQueueList:
-    def test_list_pending_returns_only_pending(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1"))
-        q.enqueue(_approved_spec(strategy_id="s2"))
-        pending = q.list_pending()
-        assert len(pending) == 2
-        assert all(e["status"] == "pending" for e in pending)
+def test_only_explicit_approved_review_enters_queue(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    assert REVIEWABLE_STATES == {"approved"}
+    assert queue.enqueue(_approved_spec(), now=NOW) is not None
 
-    def test_list_all_returns_all_entries(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1"))
-        q.enqueue(_approved_spec(strategy_id="s2"))
-        assert len(q.list_all()) == 2
+    for state in ("review", "candidate", "draft"):
+        with pytest.raises(ValueError, match="Only approved reviewed"):
+            queue.enqueue(
+                _approved_spec(
+                    strategy_spec_id=f"reg-{state}",
+                    artifact_state=state,
+                ),
+                now=NOW,
+            )
 
-    def test_list_empty_when_no_entries(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        assert q.list_pending() == []
-        assert q.list_all() == []
-
-
-class TestAlphaReplicationQueueMarkRevalidated:
-    def test_mark_revalidated_updates_entry(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec())
-        found = q.mark_revalidated("strat-001", "1.0", run_id="run-abc", status="dispatched")
-        assert found is True
-        entries = q.list_all()
-        assert entries[0]["last_revalidation_status"] == "dispatched"
-        assert entries[0]["revalidation_count"] == 1
-        assert "run-abc" in entries[0]["experiment_run_ids"]
-
-    def test_mark_revalidated_increments_count(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec())
-        q.mark_revalidated("strat-001", "1.0", run_id="run-1", status="dispatched")
-        q.mark_revalidated("strat-001", "1.0", run_id="run-2", status="dispatched")
-        entry = q.list_all()[0]
-        assert entry["revalidation_count"] == 2
-        assert set(entry["experiment_run_ids"]) == {"run-1", "run-2"}
-
-    def test_mark_revalidated_returns_false_for_unknown_spec(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        found = q.mark_revalidated("nonexistent", "1.0", run_id="run-x", status="failed")
-        assert found is False
-
-    def test_mark_revalidated_does_not_duplicate_run_id(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec())
-        q.mark_revalidated("strat-001", "1.0", run_id="run-1", status="dispatched")
-        q.mark_revalidated("strat-001", "1.0", run_id="run-1", status="dispatched")
-        entry = q.list_all()[0]
-        assert entry["experiment_run_ids"].count("run-1") == 1
+    for missing in ("approval_decision_id", "approver", "approved_at", "checksum"):
+        payload = _approved_spec(strategy_spec_id=f"reg-missing-{missing}")
+        payload.pop(missing)
+        with pytest.raises(ValueError, match=missing):
+            queue.enqueue(payload, now=NOW)
 
 
-class TestAlphaReplicationQueueMetrics:
-    def test_metrics_initial_state(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        metrics = q.get_metrics()
-        assert metrics["total"] == 0
-        assert metrics["pending"] == 0
+def test_tenant_and_canonical_strategy_spec_id_form_the_only_queue_key(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    first = queue.enqueue(_approved_spec(tenant_id="tenant-a"), now=NOW)
+    second_tenant = queue.enqueue(_approved_spec(tenant_id="tenant-b"), now=NOW)
 
-    def test_metrics_counts_pending(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1"))
-        q.enqueue(_approved_spec(strategy_id="s2"))
-        metrics = q.get_metrics()
-        assert metrics["total"] == 2
-        assert metrics["pending"] == 2
-        assert metrics["revalidated"] == 0
-
-    def test_metrics_after_revalidation(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1"))
-        q.mark_revalidated("s1", "1.0", run_id="r1", status="dispatched")
-        metrics = q.get_metrics()
-        assert metrics["revalidated"] == 1
-
-    def test_metrics_failed_count(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec(strategy_id="s1"))
-        q.mark_revalidated("s1", "1.0", run_id="r1", status="failed")
-        metrics = q.get_metrics()
-        assert metrics["last_revalidation_failed"] == 1
+    assert first is not None
+    assert second_tenant is not None
+    assert queue.enqueue(_approved_spec(tenant_id="tenant-a"), now=NOW) is None
+    assert len(queue.list_all()) == 2
 
 
-class TestAlphaReplicationQueuePersistence:
-    def test_queue_persists_across_instances(self, tmp_path):
-        q1 = AlphaReplicationQueue(tmp_path)
-        q1.enqueue(_approved_spec())
-        q2 = AlphaReplicationQueue(tmp_path)
-        assert len(q2.list_all()) == 1
+def test_duplicate_key_with_changed_immutable_binding_fails_closed(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    queue.enqueue(_approved_spec(), now=NOW)
 
-    def test_rewrite_persists_updated_entries(self, tmp_path):
-        q1 = AlphaReplicationQueue(tmp_path)
-        q1.enqueue(_approved_spec())
-        q1.mark_revalidated("strat-001", "1.0", run_id="r1", status="dispatched")
-        q2 = AlphaReplicationQueue(tmp_path)
-        entry = q2.list_all()[0]
-        assert entry["last_revalidation_status"] == "dispatched"
-        assert entry["revalidation_count"] == 1
+    with pytest.raises(ValueError, match="immutable binding conflict.*checksum"):
+        queue.enqueue(_approved_spec(checksum="sha256:changed"), now=NOW)
+    with pytest.raises(ValueError, match="immutable binding conflict.*approval_decision_id"):
+        queue.enqueue(
+            _approved_spec(approval_decision_id="approval-alpha-002"),
+            now=NOW,
+        )
 
 
-class TestAlphaReplicationQueueDLQAndTenantIdempotency:
-    def test_tenant_scoped_idempotency(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        spec1 = _approved_spec(strategy_id="strat-idemp", spec_version="1.0")
-        spec1["tenant_id"] = "tenant-a"
-        spec2 = _approved_spec(strategy_id="strat-idemp", spec_version="1.0")
-        spec2["tenant_id"] = "tenant-b"
-        
-        assert q.enqueue(spec1) is not None
-        assert q.enqueue(spec2) is not None
-        assert len(q.list_all()) == 2
-        
-        # Duplicate for same tenant is ignored
-        assert q.enqueue(spec1) is None
+def test_claim_lease_expires_and_stale_token_cannot_ack(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    queue.enqueue(_approved_spec(), now=NOW)
+    first = _claim(queue, now=NOW, lease_seconds=30)
 
-    def test_mark_failed_retries_and_dlq(self, tmp_path):
-        q = AlphaReplicationQueue(tmp_path)
-        q.enqueue(_approved_spec("s1"))
-        
-        # 1st failure: remains pending
-        q.mark_failed("s1", "1.0", error="err 1", max_retries=3)
-        assert len(q.list_pending()) == 1
-        entry = q.list_all()[0]
-        assert entry["status"] == "pending"
-        assert entry["revalidation_count"] == 1
-        
-        # 2nd failure: remains pending
-        q.mark_failed("s1", "1.0", error="err 2", max_retries=3)
-        assert len(q.list_pending()) == 1
-        
-        # 3rd failure: transitions to dlq
-        q.mark_failed("s1", "1.0", error="err 3", max_retries=3)
-        assert len(q.list_pending()) == 0
-        entry = q.list_all()[0]
-        assert entry["status"] == "dlq"
-        assert entry["last_revalidation_status"] == "failed"
-        assert entry["revalidation_count"] == 3
-        
-        # replay resets back to pending
-        q.replay_dlq("s1", "1.0")
-        assert len(q.list_pending()) == 1
-        entry = q.list_all()[0]
-        assert entry["status"] == "pending"
-        assert entry["revalidation_count"] == 0
-        assert entry["last_revalidation_status"] is None
+    assert (
+        queue.claim_next_pending(
+            "tenant-a",
+            claimant="worker-b",
+            lease_seconds=30,
+            now=NOW + timedelta(seconds=29),
+        )
+        is None
+    )
+    reclaimed = queue.claim_next_pending(
+        "tenant-a",
+        claimant="worker-b",
+        lease_seconds=30,
+        now=NOW + timedelta(seconds=31),
+    )
+    assert reclaimed is not None
+    assert reclaimed["claim_generation"] == 2
+    assert reclaimed["reclaimed_count"] == 1
+    assert reclaimed["claim_token"] != first["claim_token"]
 
+    assert (
+        queue.mark_revalidated(
+            "tenant-a",
+            first["strategy_spec_id"],
+            claim_token=first["claim_token"],
+            authority_task_id="rtask-stale",
+            authority_run_id="rrun-stale",
+            experiment_task_id="etask-stale",
+            experiment_run_id="erun-stale",
+            now=NOW + timedelta(seconds=32),
+        )
+        is False
+    )
+    assert queue.mark_revalidated(
+        "tenant-a",
+        reclaimed["strategy_spec_id"],
+        claim_token=reclaimed["claim_token"],
+        authority_task_id="rtask-current",
+        authority_run_id="rrun-current",
+        experiment_task_id="etask-current",
+        experiment_run_id="erun-current",
+        now=NOW + timedelta(seconds=32),
+    )
+
+    entry = queue.list_all()[0]
+    assert entry["status"] == "completed"
+    assert entry["authority_task_id"] == "rtask-current"
+    assert entry["authority_run_ids"] == ["rrun-current"]
+    assert entry["experiment_task_id"] == "etask-current"
+    assert entry["experiment_run_ids"] == ["erun-current"]
+
+
+def test_explicit_recovery_and_renewal_are_fenced(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    queue.enqueue(_approved_spec(), now=NOW)
+    claim = _claim(queue, now=NOW, lease_seconds=30)
+
+    assert queue.renew_claim(
+        "tenant-a",
+        claim["strategy_spec_id"],
+        claim_token=claim["claim_token"],
+        lease_seconds=60,
+        now=NOW + timedelta(seconds=20),
+    )
+    assert queue.recover_expired_claims(
+        "tenant-a",
+        now=NOW + timedelta(seconds=50),
+    ) == 0
+    assert queue.recover_expired_claims(
+        "tenant-a",
+        now=NOW + timedelta(seconds=81),
+    ) == 1
+    assert queue.list_all()[0]["status"] == "pending"
+
+
+def test_failures_reach_dlq_and_replay_is_idempotent_and_tenant_scoped(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    queue.enqueue(_approved_spec(tenant_id="tenant-a"), now=NOW)
+    queue.enqueue(_approved_spec(tenant_id="tenant-b"), now=NOW)
+
+    for attempt in range(1, 4):
+        claim = _claim(
+            queue,
+            tenant_id="tenant-a",
+            now=NOW + timedelta(minutes=attempt),
+        )
+        assert queue.mark_failed(
+            "tenant-a",
+            claim["strategy_spec_id"],
+            claim_token=claim["claim_token"],
+            error=f"failure {attempt}",
+            max_retries=3,
+            now=NOW + timedelta(minutes=attempt, seconds=1),
+        )
+
+    tenant_a = next(
+        entry for entry in queue.list_all() if entry["tenant_id"] == "tenant-a"
+    )
+    tenant_b = next(
+        entry for entry in queue.list_all() if entry["tenant_id"] == "tenant-b"
+    )
+    assert tenant_a["status"] == "dlq"
+    assert tenant_a["attempt_count"] == 3
+    assert tenant_b["status"] == "pending"
+
+    assert queue.replay_dlq(
+        "tenant-a",
+        tenant_a["strategy_spec_id"],
+        replay_id="replay-alpha-001",
+        replayed_by="operator-a",
+        reason="dependency repaired",
+        now=NOW + timedelta(hours=1),
+    )
+    assert (
+        queue.replay_dlq(
+            "tenant-a",
+            tenant_a["strategy_spec_id"],
+            replay_id="replay-alpha-001",
+            replayed_by="operator-a",
+            reason="duplicate request",
+            now=NOW + timedelta(hours=1, seconds=1),
+        )
+        is False
+    )
+    replayed = next(
+        entry for entry in queue.list_all() if entry["tenant_id"] == "tenant-a"
+    )
+    assert replayed["status"] == "pending"
+    assert replayed["attempt_count"] == 0
+    assert replayed["replay_count"] == 1
+    assert replayed["consumed_replay_ids"] == ["replay-alpha-001"]
+
+
+def test_replay_id_aba_reuse_is_always_a_noop_after_restart(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    payload = _approved_spec()
+    queue.enqueue(payload, now=NOW)
+
+    def fail_to_dlq(at: datetime) -> None:
+        claim = _claim(queue, now=at)
+        assert queue.mark_failed(
+            "tenant-a",
+            claim["strategy_spec_id"],
+            claim_token=claim["claim_token"],
+            error="operator replay regression",
+            max_retries=1,
+            now=at + timedelta(seconds=1),
+        )
+        assert queue.list_all()[0]["status"] == "dlq"
+
+    fail_to_dlq(NOW + timedelta(minutes=1))
+    assert queue.replay_dlq(
+        "tenant-a",
+        payload["strategy_spec_id"],
+        replay_id="replay-A",
+        replayed_by="operator-a",
+        reason="first repair",
+        now=NOW + timedelta(minutes=2),
+    )
+
+    fail_to_dlq(NOW + timedelta(minutes=3))
+    assert queue.replay_dlq(
+        "tenant-a",
+        payload["strategy_spec_id"],
+        replay_id="replay-B",
+        replayed_by="operator-b",
+        reason="second repair",
+        now=NOW + timedelta(minutes=4),
+    )
+
+    fail_to_dlq(NOW + timedelta(minutes=5))
+    restarted = AlphaReplicationQueue(tmp_path)
+    assert (
+        restarted.replay_dlq(
+            "tenant-a",
+            payload["strategy_spec_id"],
+            replay_id="replay-A",
+            replayed_by="operator-a",
+            reason="stale ABA retry",
+            now=NOW + timedelta(minutes=6),
+        )
+        is False
+    )
+
+    entry = restarted.list_all()[0]
+    assert entry["status"] == "dlq"
+    assert entry["last_replay_id"] == "replay-B"
+    assert entry["consumed_replay_ids"] == ["replay-A", "replay-B"]
+    assert entry["replay_count"] == 2
+
+
+def test_queue_state_survives_process_restart(tmp_path) -> None:
+    first = AlphaReplicationQueue(tmp_path)
+    first.enqueue(_approved_spec(), now=NOW)
+    claim = _claim(first, now=NOW)
+    assert first.mark_failed(
+        "tenant-a",
+        claim["strategy_spec_id"],
+        claim_token=claim["claim_token"],
+        error="transient",
+        max_retries=3,
+        now=NOW + timedelta(seconds=1),
+    )
+
+    restarted = AlphaReplicationQueue(tmp_path)
+    entry = restarted.list_all()[0]
+    assert entry["tenant_id"] == "tenant-a"
+    assert entry["strategy_spec_id"] == "reg-strategy-spec-alpha-1.0.0"
+    assert entry["attempt_count"] == 1
+    assert entry["status"] == "pending"

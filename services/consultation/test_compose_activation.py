@@ -35,6 +35,11 @@ def test_root_compose_wires_consultation_service_boundary() -> None:
     assert "os.environ.get('PORT','8096')" in healthcheck
     assert "/readyz" in healthcheck
 
+    dockerfile = (
+        Path(__file__).resolve().parent / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert 'CMD ["python", "-m", "services.consultation.supervisor"]' in dockerfile
+
     bff_env = _env_map(services["operator-bff"])
     runtime_env = _env_map(services["runtime-manager"])
     expected_url = "http://consultation-svc:8096"

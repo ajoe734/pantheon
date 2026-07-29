@@ -1,630 +1,577 @@
-"""
-Unit tests for the consultation workflow executor.
+"""L12-CONS-001 acceptance tests for the durable Consultation executor."""
 
-Acceptance (LOOP-AUTO-KNOW-006):
-- Committee and red-team workflow executes from ConsultRequest.
-- Memo generation and governance handoff are durable (idempotent).
-- Handoffs are consumed exactly once or reported blocked.
-"""
 from __future__ import annotations
 
 import json
-import tempfile
-import unittest
+import socket
+import threading
+import time
 import urllib.error
-from typing import Any
-from unittest.mock import MagicMock, patch
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Iterator
 
 import pytest
+import uvicorn
 
-from services.consultation import workflow_executor as wex
-from services.consultation.main import app, store
-from services.consultation.models import (
-    ConsultRequestStatus,
-    GateHandoffStatus,
-    MemoStatus,
+from services.consultation import main as consultation_main
+from services.consultation.provider import HttpContributionProvider
+from services.consultation.store import ConsultationStore
+from services.consultation.workflow_executor import (
+    ExecutorConfig,
+    execute_claim,
+    run_tick,
 )
-from fastapi.testclient import TestClient
+from services.consultation.workflow_state import WorkflowStateStore
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+TENANT = "tenant-consult-a"
+OTHER_TENANT = "tenant-consult-b"
+SERVICE_TOKEN = "consultation-service-token"
+OPERATOR_TOKEN = "consultation-operator-token"
+PROVIDER_TOKEN = "provider-service-token"
+HANDOFF_TOKEN = "handoff-service-token"
 
 
-def _make_request_payload(
-    request_type: str = "strategy_review",
-    target_id: str = "strat-wf-001",
-) -> dict[str, Any]:
-    return {
-        "request_type": request_type,
-        "requested_by": {"actor_type": "persona", "actor_id": "p-test"},
-        "target_type": "strategy",
-        "target_id": target_id,
-        "trace_id": f"trace-wf-{request_type}",
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _request_json(
+    url: str,
+    *,
+    method: str = "GET",
+    token: str | None = SERVICE_TOKEN,
+    tenant_id: str = TENANT,
+    payload: dict[str, Any] | None = None,
+) -> Any:
+    headers = {
+        "Accept": "application/json",
+        "X-Pantheon-Tenant-Id": tenant_id,
     }
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    body = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=10.0) as response:
+        raw = response.read().decode("utf-8")
+    return json.loads(raw) if raw else {}
 
 
-# ---------------------------------------------------------------------------
-# execute_workflow tests (via FastAPI TestClient → real store)
-# ---------------------------------------------------------------------------
+@dataclass
+class BoundaryControl:
+    mode: str = "complete"
+    provider_calls: list[dict[str, Any]] | None = None
+    handoff_calls: list[dict[str, Any]] | None = None
+
+    def __post_init__(self) -> None:
+        self.provider_calls = []
+        self.handoff_calls = []
+        self.lock = threading.Lock()
 
 
-class TestExecuteWorkflow(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        store.__init__(self.tmp.name)
-        self.client = TestClient(app)
+class _BoundaryServer(ThreadingHTTPServer):
+    control: BoundaryControl
 
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
 
-    def _base_url(self) -> str:
-        return "http://testserver"
+class _BoundaryHandler(BaseHTTPRequestHandler):
+    server: _BoundaryServer
 
-    def _create_submitted_request(self, request_type: str = "strategy_review") -> str:
-        resp = self.client.post(
-            "/api/consult/requests", json=_make_request_payload(request_type)
+    def log_message(self, _format: str, *args: object) -> None:
+        del args
+
+    def _read(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        parsed = json.loads(raw.decode("utf-8"))
+        assert isinstance(parsed, dict)
+        return parsed
+
+    def _write(self, status: int, payload: dict[str, Any]) -> None:
+        raw = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
+        payload = self._read()
+        if self.path == "/contribute":
+            if self.headers.get("Authorization") != f"Bearer {PROVIDER_TOKEN}":
+                self._write(403, {"detail": "provider auth failed"})
+                return
+            with self.server.control.lock:
+                self.server.control.provider_calls.append(
+                    {
+                        "payload": payload,
+                        "tenant": self.headers.get("X-Pantheon-Tenant-Id"),
+                        "actor": self.headers.get("X-Pantheon-Service-Actor"),
+                        "idempotency_key": self.headers.get("Idempotency-Key"),
+                    }
+                )
+                mode = self.server.control.mode
+            if mode == "blocked":
+                self._write(
+                    200,
+                    {
+                        "status": "blocked",
+                        "reason": "qualified committee provider unavailable",
+                        "retryable": True,
+                    },
+                )
+                return
+            request_id = str(payload["request_id"])
+            tenant_id = str(payload["tenant_id"])
+            self._write(
+                200,
+                {
+                    "status": "completed",
+                    "contribution": {
+                        "contribution_id": f"contrib-{request_id}",
+                        "tenant_id": tenant_id,
+                        "request_id": request_id,
+                        "participant_type": "committee",
+                        "participant_ref": "risk-committee-provider",
+                        "summary": "Qualified provider reviewed the consultation evidence.",
+                        "recommendation": "approve_with_conditions",
+                        "confidence": 0.84,
+                        "event_type": "committee_provider_contribution",
+                        "event_content": {
+                            "claim": "Risk remains bounded under paper-only constraints.",
+                            "provider_run_id": f"provider-run-{request_id}",
+                        },
+                        "evidence": [
+                            {
+                                "id": f"provider-evidence-{request_id}",
+                                "evidence_type": "committee_review",
+                                "artifact_ref": f"artifact://{request_id}/review",
+                                "description": "Provider-produced consultation review.",
+                                "link": f"artifact://{request_id}/review",
+                            }
+                        ],
+                        "findings": [
+                            {
+                                "severity": "medium",
+                                "category": "risk",
+                                "claim": "Paper-only risk controls are present.",
+                                "evidence_refs": [
+                                    f"provider-evidence-{request_id}"
+                                ],
+                                "recommendation": "Keep live authority disabled.",
+                            }
+                        ],
+                    },
+                },
+            )
+            return
+        if self.path == "/handoff":
+            if self.headers.get("Authorization") != f"Bearer {HANDOFF_TOKEN}":
+                self._write(403, {"detail": "handoff auth failed"})
+                return
+            handoff = payload.get("handoff") or {}
+            with self.server.control.lock:
+                self.server.control.handoff_calls.append(
+                    {
+                        "payload": payload,
+                        "tenant": self.headers.get("X-Pantheon-Tenant-Id"),
+                        "idempotency_key": self.headers.get("Idempotency-Key"),
+                    }
+                )
+            self._write(
+                200,
+                {
+                    "acknowledged": True,
+                    "handoff_id": handoff.get("handoff_id"),
+                    "consumer_ref": "governance-handoff-sink",
+                },
+            )
+            return
+        self._write(404, {"detail": "not found"})
+
+
+@contextmanager
+def _boundary_server() -> Iterator[tuple[str, BoundaryControl]]:
+    control = BoundaryControl()
+    server = _BoundaryServer(("127.0.0.1", 0), _BoundaryHandler)
+    server.control = control
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}", control
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def _consultation_server() -> Iterator[str]:
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            consultation_main.app,
+            host="127.0.0.1",
+            port=port,
+            log_level="error",
         )
-        assert resp.status_code == 201, resp.text
-        request_id = resp.json()["request_id"]
-        submit = self.client.post(f"/api/consult/requests/{request_id}/submit")
-        assert submit.status_code == 200, submit.text
-        return request_id
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("consultation test server did not start")
+        time.sleep(0.01)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
 
-    def _get_request(self, request_id: str) -> dict[str, Any]:
-        resp = self.client.get(f"/api/consult/requests/{request_id}")
-        assert resp.status_code == 200, resp.text
-        return resp.json()
 
-    def _patched_wex(self) -> Any:
-        """Return workflow_executor with HTTP calls wired to TestClient."""
+@dataclass
+class LiveStack:
+    api_url: str
+    boundary_url: str
+    control: BoundaryControl
+    root: Path
 
-        class _PatchedWex:
-            def __init__(self, client: TestClient, base_url: str) -> None:
-                self._client = client
-                self._base_url = base_url
+    def config(
+        self,
+        *,
+        worker_id: str = "worker-a",
+        state_path: Path | None = None,
+        lease_seconds: int = 30,
+        max_blocked_attempts: int = 3,
+        batch_size: int = 10,
+    ) -> ExecutorConfig:
+        return ExecutorConfig(
+            api_url=self.api_url,
+            tenant_id=TENANT,
+            api_token=SERVICE_TOKEN,
+            provider_url=self.boundary_url + "/contribute",
+            provider_token=PROVIDER_TOKEN,
+            provider_service_actor="qualified-provider-adapter",
+            handoff_sink_url=self.boundary_url + "/handoff",
+            handoff_token=HANDOFF_TOKEN,
+            worker_id=worker_id,
+            state_path=str(state_path or self.root / "workflow.sqlite3"),
+            lease_seconds=lease_seconds,
+            retry_after_seconds=0,
+            max_blocked_attempts=max_blocked_attempts,
+            batch_size=batch_size,
+            timeout_seconds=10.0,
+        )
 
-            def _get(self, path: str) -> Any:
-                resp = self._client.get(path)
-                assert resp.status_code == 200, resp.text
-                return resp.json()
+    def create_request(
+        self,
+        request_id: str,
+        *,
+        request_type: str = "strategy_review",
+    ) -> None:
+        payload = {
+            "request_id": request_id,
+            "tenant_id": TENANT,
+            "request_type": request_type,
+            "requested_by": {
+                "actor_type": "operator",
+                "actor_id": "risk-operator",
+            },
+            "target_type": "allocation_policy",
+            "target_id": f"allocation-{request_id}",
+            "task": "Review paper-only allocation risk.",
+            "context_refs": [],
+            "evidence_refs": [],
+            "priority": "high",
+            "metadata": {"paper_only": True},
+            "trace_id": f"trace-{request_id}",
+        }
+        _request_json(
+            self.api_url + "/api/consult/requests",
+            method="POST",
+            token=OPERATOR_TOKEN,
+            payload=payload,
+        )
+        _request_json(
+            self.api_url + f"/api/consult/requests/{request_id}/submit",
+            method="POST",
+            token=OPERATOR_TOKEN,
+            payload={},
+        )
 
-            def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-                resp = self._client.post(path, json=payload)
-                assert resp.status_code in (200, 201), resp.text
-                return resp.json()
 
-        return _PatchedWex(self.client, self._base_url())
-
-    # We patch the HTTP-level functions in workflow_executor to use TestClient.
-
-    def _http_mock(self) -> dict[str, Any]:
-        client = self.client
-
-        def _mock_get(url: str, *, timeout_seconds: float) -> Any:
-            path = url.replace("http://testserver", "").replace("http://127.0.0.1:8098", "")
-            resp = client.get(path)
-            if resp.status_code == 200:
-                return resp.json()
-            raise urllib.error.HTTPError(url, resp.status_code, resp.text, {}, None)  # type: ignore[arg-type]
-
-        def _mock_post(url: str, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
-            path = url.replace("http://testserver", "").replace("http://127.0.0.1:8098", "")
-            resp = client.post(path, json=payload)
-            if resp.status_code in (200, 201):
-                return resp.json()
-            raise urllib.error.HTTPError(url, resp.status_code, resp.text, {}, None)  # type: ignore[arg-type]
-
-        return {"_json_get": _mock_get, "_json_post": _mock_post}
-
-    def _run_workflow(self, request_dict: dict[str, Any]) -> dict[str, str]:
-        mocks = self._http_mock()
-        with (
-            patch.object(wex, "_json_get", mocks["_json_get"]),
-            patch.object(wex, "_json_post", mocks["_json_post"]),
-        ):
-            return wex.execute_workflow(
-                api_url="http://testserver",
-                request=request_dict,
-                timeout_seconds=10.0,
+@pytest.fixture
+def live_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[LiveStack]:
+    monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", SERVICE_TOKEN)
+    monkeypatch.setenv("CONSULTATION_OPERATOR_TOKEN", OPERATOR_TOKEN)
+    consultation_main.store = ConsultationStore(str(tmp_path / "domain"))
+    consultation_main.workflow_state = WorkflowStateStore(
+        tmp_path / "workflow.sqlite3"
+    )
+    with _boundary_server() as (boundary_url, control):
+        with _consultation_server() as api_url:
+            yield LiveStack(
+                api_url=api_url,
+                boundary_url=boundary_url,
+                control=control,
+                root=tmp_path,
             )
 
-    def _run_tick(self) -> dict[str, Any]:
-        mocks = self._http_mock()
-        with (
-            patch.object(wex, "_json_get", mocks["_json_get"]),
-            patch.object(wex, "_json_post", mocks["_json_post"]),
-        ):
-            return wex.run_tick(api_url="http://testserver", timeout_seconds=10.0)
 
-    def _simulate_participant_activity(self, request_id: str, participant_ref: str, participant_type: str = "committee") -> str:
-        # 1. Post a transcript event from the participant
-        self.client.post(
-            f"/api/consult/requests/{request_id}/events",
-            json={
-                "request_id": request_id,
-                "event_type": "discussion",
-                "actor": {"actor_type": participant_type, "actor_id": participant_ref},
-                "content": {"message": "Discussing strategy review"},
-                "evidence_refs": []
-            }
+def _provider(config: ExecutorConfig) -> HttpContributionProvider:
+    return HttpContributionProvider(
+        endpoint=config.provider_url,
+        bearer_token=config.provider_token,
+        service_actor=config.provider_service_actor,
+        timeout_seconds=config.timeout_seconds,
+    )
+
+
+def test_real_provider_auth_tenant_and_acknowledged_handoff(
+    live_stack: LiveStack,
+) -> None:
+    request_id = "cr-real-boundary"
+    live_stack.create_request(request_id)
+    config = live_stack.config()
+    state = WorkflowStateStore(config.state_path)
+
+    result = run_tick(config=config, state=state)
+
+    assert result["completed"] == 1
+    assert result["dead_lettered"] == 0
+    assert state.counts(tenant_id=TENANT)["completed"] == 1
+    assert len(live_stack.control.provider_calls) == 1
+    provider_call = live_stack.control.provider_calls[0]
+    assert provider_call["tenant"] == TENANT
+    assert provider_call["actor"] == "qualified-provider-adapter"
+    assert provider_call["idempotency_key"].startswith("consultation-provider:")
+    assert len(live_stack.control.handoff_calls) == 1
+
+    participants = _request_json(
+        live_stack.api_url
+        + f"/api/consult/requests/{request_id}/participants"
+    )
+    memos = _request_json(
+        live_stack.api_url
+        + f"/api/consult/memos?request_id={request_id}"
+    )
+    handoffs = _request_json(
+        live_stack.api_url
+        + f"/api/consult/handoffs?request_id={request_id}"
+    )
+    assert [item["participant_ref"] for item in participants] == [
+        "risk-committee-provider"
+    ]
+    assert len(memos) == 1
+    assert memos[0]["author_type"] == "committee"
+    assert memos[0]["status"] == "published"
+    assert len(handoffs) == 1
+    assert handoffs[0]["status"] == "acknowledged"
+
+    with pytest.raises(urllib.error.HTTPError) as unauthenticated:
+        _request_json(
+            live_stack.api_url + f"/api/consult/requests/{request_id}",
+            token=None,
         )
-        
-        # 2. Attach evidence from the participant
-        self.client.post(
-            f"/api/consult/requests/{request_id}/evidence",
-            json={
-                "evidence_ref": {
-                    "id": f"ev-{request_id}",
-                    "evidence_type": "artifact_ref",
-                    "link": "http://evidence-link"
-                },
-                "attached_by": {"actor_type": participant_type, "actor_id": participant_ref},
-                "trace_id": f"trace-{request_id}"
-            }
+    assert unauthenticated.value.code == 401
+
+    with pytest.raises(urllib.error.HTTPError) as cross_tenant:
+        _request_json(
+            live_stack.api_url + f"/api/consult/requests/{request_id}",
+            tenant_id=OTHER_TENANT,
         )
-        
-        # 3. Submit memo from the participant
-        memo_type = "committee_summary" if participant_type == "committee" else "redteam_report"
-        resp = self.client.post(
-            "/api/consult/memos",
-            json={
-                "request_id": request_id,
-                "memo_type": memo_type,
-                "author_type": participant_type,
-                "author_ref": participant_ref,
-                "summary": "Qualified memo summary",
-                "findings": [],
-                "recommendation": "approve",
-                "trace_id": f"trace-{request_id}"
-            }
-        )
-        assert resp.status_code == 201, resp.text
-        return resp.json()["memo_id"]
+    assert cross_tenant.value.code == 404
 
-    # --- Tests ---
 
-    def test_committee_workflow_runs_from_submitted_request(self) -> None:
-        """Committee workflow: submitted → assigned → memo submitted + published → handoff created."""
-        request_id = self._create_submitted_request("strategy_review")
-        req = self._get_request(request_id)
-        assert req["status"] == "submitted"
+def test_two_executors_claim_once_and_create_one_memo_handoff(
+    live_stack: LiveStack,
+) -> None:
+    request_id = "cr-race"
+    live_stack.create_request(request_id, request_type="redteam")
+    path = live_stack.root / "race.sqlite3"
+    configs = [
+        live_stack.config(worker_id="worker-a", state_path=path),
+        live_stack.config(worker_id="worker-b", state_path=path),
+    ]
 
-        # Tick 1: Assign participant (returns advanced)
-        result1 = self._run_workflow(req)
-        assert result1["outcome"] == "advanced"
-        assert "assigned participant" in result1["detail"]
-
-        # Tick 2: Post workflow_started event (returns advanced)
-        req = self._get_request(request_id)
-        result2 = self._run_workflow(req)
-        assert result2["outcome"] == "advanced"
-        assert "posted workflow_started event" in result2["detail"]
-
-        # Now simulate provider activity (memo, transcript event, evidence)
-        self._simulate_participant_activity(request_id, "committee-strategy_review")
-
-        # Tick 3: Publish memo and create handoff (returns completed)
-        req = self._get_request(request_id)
-        result3 = self._run_workflow(req)
-        assert result3["outcome"] == "completed"
-        assert "gate_handoff" in result3["detail"]
-
-        # Verify memo was published
-        memos_resp = self.client.get(f"/api/consult/memos?request_id={request_id}")
-        assert memos_resp.status_code == 200
-        memos = memos_resp.json()
-        assert len(memos) == 1
-        assert memos[0]["status"] == "published"
-
-        # Verify gate handoff was created
-        handoffs_resp = self.client.get(f"/api/consult/handoffs?request_id={request_id}")
-        assert handoffs_resp.status_code == 200
-        handoffs = handoffs_resp.json()
-        assert len(handoffs) == 1
-        assert handoffs[0]["target_gate"].startswith("consultation.committee.")
-
-    def test_redteam_workflow_runs_from_submitted_request(self) -> None:
-        """Red-team workflow: submitted → assigned → memo submitted + published → handoff created."""
-        request_id = self._create_submitted_request("redteam")
-        req = self._get_request(request_id)
-
-        # Tick 1: assign
-        self._run_workflow(req)
-        # Tick 2: workflow_started
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Simulate provider activity
-        self._simulate_participant_activity(request_id, "redteam-redteam")
-
-        # Tick 3: publish and create handoff
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-
-        assert result["outcome"] == "completed", result
-
-        memos_resp = self.client.get(f"/api/consult/memos?request_id={request_id}")
-        memos = memos_resp.json()
-        published = [m for m in memos if m["status"] == "published"]
-        assert len(published) == 1
-
-        handoffs_resp = self.client.get(f"/api/consult/handoffs?request_id={request_id}")
-        handoffs = handoffs_resp.json()
-        assert len(handoffs) == 1
-        assert handoffs[0]["target_gate"].startswith("consultation.redteam.")
-
-    def test_handoff_idempotent_on_second_tick(self) -> None:
-        """Running the workflow twice produces exactly one handoff (idempotent)."""
-        request_id = self._create_submitted_request("execution_risk")
-        req = self._get_request(request_id)
-
-        # Tick 1: assign
-        self._run_workflow(req)
-        # Tick 2: workflow_started
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Simulate provider activity
-        self._simulate_participant_activity(request_id, "committee-execution_risk")
-
-        # Tick 3: publish and create handoff
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Tick 4: idempotent handoff check
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-        assert result["outcome"] in {"completed", "skipped"}
-
-        handoffs_resp = self.client.get(f"/api/consult/handoffs?request_id={request_id}")
-        handoffs = handoffs_resp.json()
-        assert len(handoffs) == 1, f"Expected exactly 1 handoff, got {len(handoffs)}"
-
-    def test_unknown_request_type_is_blocked(self) -> None:
-        """Requests with unknown type are reported as blocked, not silently skipped."""
-        request_id = self._create_submitted_request("strategy_review")
-        req = self._get_request(request_id)
-        req["request_type"] = "unknown_type_xyz"
-
-        result = self._run_workflow(req)
-
-        assert result["outcome"] == "blocked"
-        assert "unknown request_type" in result["detail"]
-
-    def test_run_tick_processes_all_pending_requests(self) -> None:
-        """run_tick picks up all submitted requests in one cycle."""
-        ids = [
-            self._create_submitted_request("strategy_review"),
-            self._create_submitted_request("redteam"),
-            self._create_submitted_request("capital_pool"),
-        ]
-        # Tick 1: assigns all
-        result1 = self._run_tick()
-        assert result1["requests_found"] >= len(ids)
-        assert result1["advanced"] >= len(ids)
-
-        # Tick 2: posts workflow_started for all
-        result2 = self._run_tick()
-        assert result2["advanced"] >= len(ids)
-
-        # Simulate provider activity for all requests
-        self._simulate_participant_activity(ids[0], "committee-strategy_review")
-        self._simulate_participant_activity(ids[1], "redteam-redteam")
-        self._simulate_participant_activity(ids[2], "committee-capital_pool")
-
-        # Tick 3: publishes memos and creates handoffs for all
-        result3 = self._run_tick()
-        assert result3["completed"] >= len(ids)
-
-    def test_run_tick_with_no_pending_requests(self) -> None:
-        """run_tick returns zero counts when no requests are in actionable states."""
-        result = self._run_tick()
-
-        assert result["requests_found"] == 0
-        assert result["completed"] == 0
-        assert result["errors"] == []
-
-    def test_memo_published_before_handoff_created(self) -> None:
-        """Gate handoff requires a published memo: executor publishes before creating handoff."""
-        request_id = self._create_submitted_request("incident")
-        req = self._get_request(request_id)
-
-        # Tick 1: assign
-        self._run_workflow(req)
-        # Tick 2: workflow_started
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Simulate provider activity
-        self._simulate_participant_activity(request_id, "committee-incident")
-
-        # Tick 3: publish and create handoff
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-        assert result["outcome"] == "completed"
-
-        handoffs_resp = self.client.get(f"/api/consult/handoffs?request_id={request_id}")
-        handoffs = handoffs_resp.json()
-        assert len(handoffs) == 1
-
-        # Memo must be published before handoff was created
-        memos_resp = self.client.get(f"/api/consult/memos?request_id={request_id}")
-        memos = memos_resp.json()
-        assert all(m["status"] == "published" for m in memos)
-
-    def test_second_tick_result_is_completed_not_advanced(self) -> None:
-        """After workflow completes, subsequent ticks report completed (not re-advancing)."""
-        request_id = self._create_submitted_request("data_leakage")
-        req = self._get_request(request_id)
-
-        # Tick 1: assign
-        self._run_workflow(req)
-        # Tick 2: workflow_started
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Simulate provider activity
-        self._simulate_participant_activity(request_id, "redteam-data_leakage")
-
-        # Tick 3: publish and create handoff (drives to completion)
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-        assert result["outcome"] == "completed"
-
-        # Tick 4: subsequent tick (reports completed)
-        req = self._get_request(request_id)
-        result2 = self._run_workflow(req)
-        assert result2["outcome"] in {"completed", "skipped"}, result2
-
-    def test_already_published_request_is_skipped(self) -> None:
-        """Requests already in PUBLISHED state are not re-processed."""
-        request_id = self._create_submitted_request("persona_policy")
-        req = self._get_request(request_id)
-
-        # Tick 1: assign
-        self._run_workflow(req)
-        # Tick 2: workflow_started
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Simulate provider activity
-        self._simulate_participant_activity(request_id, "committee-persona_policy")
-
-        # Tick 3: publish and create handoff
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-
-        # Manually read the now-published request
-        req = self._get_request(request_id)
-        if req["status"] == "published":
-            result = self._run_workflow(req)
-            assert result["outcome"] == "skipped"
-
-    def test_system_memo_rejected_and_workflow_blocked(self) -> None:
-        """System-authored memos must be rejected/blocked from publishing."""
-        request_id = self._create_submitted_request("strategy_review")
-        req = self._get_request(request_id)
-        
-        # Tick 1: Assign participant
-        self._run_workflow(req)
-        # Tick 2: Start transcript event
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-        
-        # Post a real transcript event and attach qualified evidence
-        self.client.post(
-            f"/api/consult/requests/{request_id}/events",
-            json={
-                "request_id": request_id,
-                "event_type": "discussion",
-                "actor": {"actor_type": "committee", "actor_id": "committee-strategy_review"},
-                "content": {"message": "Discussing strategy review"},
-                "evidence_refs": []
-            }
-        )
-        self.client.post(
-            f"/api/consult/requests/{request_id}/evidence",
-            json={
-                "evidence_ref": {
-                    "id": f"ev-{request_id}",
-                    "evidence_type": "artifact_ref",
-                    "link": "http://evidence-link"
-                },
-                "attached_by": {"actor_type": "committee", "actor_id": "committee-strategy_review"},
-                "trace_id": f"trace-{request_id}"
-            }
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda config: run_tick(
+                    config=config,
+                    state=WorkflowStateStore(path),
+                ),
+                configs,
+            )
         )
 
-        # Submit a SYSTEM-authored memo
-        resp = self.client.post(
-            "/api/consult/memos",
-            json={
-                "request_id": request_id,
-                "memo_type": "committee_summary",
-                "author_type": "system",
-                "author_ref": "consultation-workflow-executor",
-                "summary": "System memo summary",
-                "findings": [],
-                "recommendation": "approve",
-                "trace_id": f"trace-{request_id}"
-            }
+    assert sum(result["completed"] for result in results) == 1
+    assert len(live_stack.control.provider_calls) == 1
+    participants = _request_json(
+        live_stack.api_url
+        + f"/api/consult/requests/{request_id}/participants"
+    )
+    memos = _request_json(
+        live_stack.api_url
+        + f"/api/consult/memos?request_id={request_id}"
+    )
+    handoffs = _request_json(
+        live_stack.api_url
+        + f"/api/consult/handoffs?request_id={request_id}"
+    )
+    assert len(participants) == len(memos) == len(handoffs) == 1
+
+
+@pytest.mark.parametrize(
+    "crash_phase",
+    [
+        "contribution_received",
+        "participant_assigned",
+        "transcript_recorded",
+        "evidence_recorded",
+        "memo_submitted",
+        "memo_published",
+        "handoff_persisted",
+        "handoff_acknowledged",
+    ],
+)
+def test_phase_crash_recovers_without_duplicate_provider_or_handoff(
+    live_stack: LiveStack,
+    crash_phase: str,
+) -> None:
+    request_id = "cr-crash-" + crash_phase.replace("_", "-")
+    live_stack.create_request(request_id)
+    path = live_stack.root / f"{request_id}.sqlite3"
+    clock = [100.0]
+    state = WorkflowStateStore(path, now=lambda: clock[0])
+    config = live_stack.config(
+        state_path=path,
+        lease_seconds=1,
+        batch_size=1,
+    )
+    state.ensure_request(tenant_id=TENANT, request_id=request_id)
+    claim = state.claim_next(
+        tenant_id=TENANT,
+        lease_owner="crashing-worker",
+        lease_seconds=1,
+    )
+    assert claim is not None
+
+    class SimulatedCrash(RuntimeError):
+        pass
+
+    def crash(phase: str) -> None:
+        if phase == crash_phase:
+            raise SimulatedCrash(phase)
+
+    before_provider_calls = len(live_stack.control.provider_calls)
+    with pytest.raises(SimulatedCrash, match=crash_phase):
+        execute_claim(
+            config=config,
+            state=state,
+            provider=_provider(config),
+            claim=claim,
+            phase_hook=crash,
         )
-        assert resp.status_code == 201
-        
-        # Try to publish or run workflow (which tries to publish) -> should be blocked
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-        assert result["outcome"] == "blocked"
-        assert "no qualified real participant/provider-authored memo" in result["detail"]
 
-    def test_unassigned_participant_memo_rejected(self) -> None:
-        """Memo authored by an unassigned participant must be blocked."""
-        request_id = self._create_submitted_request("strategy_review")
-        req = self._get_request(request_id)
-        
-        # Tick 1: Assign participant (assigns committee-strategy_review)
-        self._run_workflow(req)
-        # Tick 2: Start transcript event
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-        
-        # Post a real transcript event and attach qualified evidence
-        self.client.post(
-            f"/api/consult/requests/{request_id}/events",
-            json={
-                "request_id": request_id,
-                "event_type": "discussion",
-                "actor": {"actor_type": "committee", "actor_id": "committee-strategy_review"},
-                "content": {"message": "Discussing strategy review"},
-                "evidence_refs": []
-            }
+    clock[0] = 102.0
+    recovered_state = WorkflowStateStore(path, now=lambda: clock[0])
+    recovered_claim = recovered_state.claim_next(
+        tenant_id=TENANT,
+        lease_owner="recovery-worker",
+        lease_seconds=30,
+    )
+    assert recovered_claim is not None
+    outcome = execute_claim(
+        config=replace(config, lease_seconds=30),
+        state=recovered_state,
+        provider=_provider(config),
+        claim=recovered_claim,
+    )
+
+    assert outcome["outcome"] == "completed"
+    assert (
+        len(live_stack.control.provider_calls) - before_provider_calls
+    ) == 1
+    memos = _request_json(
+        live_stack.api_url
+        + f"/api/consult/memos?request_id={request_id}"
+    )
+    handoffs = _request_json(
+        live_stack.api_url
+        + f"/api/consult/handoffs?request_id={request_id}"
+    )
+    assert len(memos) == len(handoffs) == 1
+    assert handoffs[0]["status"] == "acknowledged"
+
+
+def test_bounded_blocking_dead_letters_and_operator_replay(
+    live_stack: LiveStack,
+) -> None:
+    request_id = "cr-dlq"
+    live_stack.create_request(request_id)
+    path = live_stack.root / "dlq.sqlite3"
+    state = WorkflowStateStore(path)
+    consultation_main.workflow_state = state
+    config = live_stack.config(
+        state_path=path,
+        max_blocked_attempts=2,
+        batch_size=1,
+    )
+    live_stack.control.mode = "blocked"
+
+    first = run_tick(config=config, state=state)
+    second = run_tick(config=config, state=state)
+
+    assert first["blocked"] == 1
+    assert second["dead_lettered"] == 1
+    item = state.get(tenant_id=TENANT, request_id=request_id)
+    assert item is not None
+    assert item["status"] == "dead_letter"
+    assert item["blocked_count"] == 2
+    assert "qualified committee provider unavailable" in item["last_error"]
+
+    with pytest.raises(urllib.error.HTTPError) as service_replay:
+        _request_json(
+            live_stack.api_url
+            + f"/api/consult/workflows/dead-letters/{request_id}/replay",
+            method="POST",
+            token=SERVICE_TOKEN,
+            payload={},
         )
-        self.client.post(
-            f"/api/consult/requests/{request_id}/evidence",
-            json={
-                "evidence_ref": {
-                    "id": f"ev-{request_id}",
-                    "evidence_type": "artifact_ref",
-                    "link": "http://evidence-link"
-                },
-                "attached_by": {"actor_type": "committee", "actor_id": "committee-strategy_review"},
-                "trace_id": f"trace-{request_id}"
-            }
-        )
+    assert service_replay.value.code == 403
 
-        # Submit a memo authored by an unassigned participant
-        resp = self.client.post(
-            "/api/consult/memos",
-            json={
-                "request_id": request_id,
-                "memo_type": "committee_summary",
-                "author_type": "committee",
-                "author_ref": "some-other-committee", # Not assigned!
-                "summary": "Unassigned memo summary",
-                "findings": [],
-                "recommendation": "approve",
-                "trace_id": f"trace-{request_id}"
-            }
-        )
-        assert resp.status_code == 201
-        
-        # Should be blocked
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-        assert result["outcome"] == "blocked"
-        assert "no qualified real participant/provider-authored memo" in result["detail"]
+    replayed = _request_json(
+        live_stack.api_url
+        + f"/api/consult/workflows/dead-letters/{request_id}/replay",
+        method="POST",
+        token=OPERATOR_TOKEN,
+        payload={},
+    )
+    assert replayed["replayed"] is True
+    live_stack.control.mode = "complete"
 
-    def test_transcript_without_real_events_blocked(self) -> None:
-        """Workflow is blocked if transcript contains no events from real assigned participant."""
-        request_id = self._create_submitted_request("strategy_review")
-        req = self._get_request(request_id)
-        
-        # Tick 1: Assign participant
-        self._run_workflow(req)
-        # Tick 2: Start transcript event (this event is authored by system/service)
-        req = self._get_request(request_id)
-        self._run_workflow(req)
-        
-        # Submit a qualified memo and attach evidence, but NO real transcript event
-        self.client.post(
-            f"/api/consult/requests/{request_id}/evidence",
-            json={
-                "evidence_ref": {
-                    "id": f"ev-{request_id}",
-                    "evidence_type": "artifact_ref",
-                    "link": "http://evidence-link"
-                },
-                "attached_by": {"actor_type": "committee", "actor_id": "committee-strategy_review"},
-                "trace_id": f"trace-{request_id}"
-            }
-        )
-        self.client.post(
-            "/api/consult/memos",
-            json={
-                "request_id": request_id,
-                "memo_type": "committee_summary",
-                "author_type": "committee",
-                "author_ref": "committee-strategy_review",
-                "summary": "Qualified memo summary",
-                "findings": [],
-                "recommendation": "approve",
-                "trace_id": f"trace-{request_id}"
-            }
-        )
-        
-        # Should be blocked because no real transcript event exists
-        req = self._get_request(request_id)
-        result = self._run_workflow(req)
-        assert result["outcome"] == "blocked"
-        assert "transcript is not qualified" in result["detail"]
+    completed = run_tick(config=config, state=state)
 
-
-# ---------------------------------------------------------------------------
-# Unit tests for pure helper functions (no HTTP)
-# ---------------------------------------------------------------------------
-
-
-class TestHelpers(unittest.TestCase):
-    def test_stable_id_is_deterministic(self) -> None:
-        a = wex._stable_id("trace", "cr-abc123")
-        b = wex._stable_id("trace", "cr-abc123")
-        assert a == b
-        assert a.startswith("trace-")
-
-    def test_stable_id_differs_per_request(self) -> None:
-        a = wex._stable_id("trace", "cr-aaa")
-        b = wex._stable_id("trace", "cr-bbb")
-        assert a != b
-
-    def test_committee_types_route_to_primary_reviewer(self) -> None:
-        for rt in ["strategy_review", "capital_pool", "execution_risk", "incident", "persona_policy"]:
-            spec = wex._request_type_to_participant(rt)
-            assert spec is not None, rt
-            assert spec[2] == "primary_reviewer", rt
-
-    def test_redteam_types_route_to_red_team(self) -> None:
-        for rt in ["redteam", "data_leakage"]:
-            spec = wex._request_type_to_participant(rt)
-            assert spec is not None, rt
-            assert spec[2] == "red_team", rt
-
-    def test_unknown_type_returns_none(self) -> None:
-        assert wex._request_type_to_participant("not_a_type") is None
-
-    def test_memo_type_routing(self) -> None:
-        assert wex._request_type_to_memo_type("redteam") == "redteam_report"
-        assert wex._request_type_to_memo_type("data_leakage") == "redteam_report"
-        assert wex._request_type_to_memo_type("strategy_review") == "committee_summary"
-        assert wex._request_type_to_memo_type("capital_pool") == "committee_summary"
-
-    def test_gate_routing(self) -> None:
-        assert wex._request_type_to_gate("redteam").startswith("consultation.redteam.")
-        assert wex._request_type_to_gate("strategy_review").startswith("consultation.committee.")
-
-    def test_non_actionable_status_skipped(self) -> None:
-        req = {
-            "request_id": "cr-test",
-            "request_type": "strategy_review",
-            "status": "published",
-            "evidence_refs": [],
-        }
-
-        def _mock_get(url: str, *, timeout_seconds: float) -> Any:
-            return []
-
-        def _mock_post(url: str, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
-            raise AssertionError("Should not call POST for published request")
-
-        with (
-            patch.object(wex, "_json_get", _mock_get),
-            patch.object(wex, "_json_post", _mock_post),
-        ):
-            result = wex.execute_workflow(api_url="http://localhost", request=req, timeout_seconds=5.0)
-
-        assert result["outcome"] == "skipped"
-
-
-if __name__ == "__main__":
-    unittest.main()
+    assert completed["completed"] == 1
+    final = state.get(tenant_id=TENANT, request_id=request_id)
+    assert final is not None
+    assert final["status"] == "completed"
+    assert final["replay_count"] == 1

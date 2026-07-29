@@ -131,16 +131,17 @@ never be called from browser code.
 
 ## Strict browser session contract
 
-The product login remains the existing Supabase/OIDC login. After Supabase
-authenticates the human, `execute-plans` registers the current short-lived
-`session.access_token` with the BFF request header provider and sends it as
-`Authorization: Bearer <access_token>`. It must not copy that token into a
+The product login uses GCP Identity Platform. After Identity Platform
+authenticates the human, `execute-plans` registers the current short-lived ID
+token with the BFF request header provider and sends it as
+`Authorization: Bearer <id-token>`. It must not copy that token into a
 build variable, a deployment manifest, `localStorage`, or the static bundle.
 `credentials: include` remains enabled for the optional HttpOnly cookie path,
-but it is not a substitute for registering the current Supabase bearer.
+but it is not a substitute for registering the current Identity Platform
+bearer.
 
-The dev BFF validates that JWT directly. A Supabase-style external IdP setup
-must configure all of the following on the server:
+The dev BFF validates that JWT directly. Configure all of the following on the
+server:
 
 ```sh
 PANTHEON_BFF_AUTH_MODE=strict
@@ -149,35 +150,36 @@ PANTHEON_BFF_JWKS_URI=<idp-jwks-uri>
 # Or set PANTHEON_BFF_OIDC_DISCOVERY_URL instead of a direct JWKS URI.
 PANTHEON_BFF_OIDC_ISSUER=<exact-token-issuer>
 PANTHEON_BFF_OIDC_AUDIENCE=<exact-bff-audience>
-PANTHEON_BFF_ROLE_CLAIMS=app_metadata.roles,roles
+PANTHEON_BFF_ROLE_CLAIMS=roles,role
 PANTHEON_BFF_ROLE_MAP_MODE=strict
 PANTHEON_BFF_ROLE_MAP=<external-operator=operator;external-viewer=viewer;...>
 PANTHEON_BFF_DEFAULT_ROLE=viewer
 ```
 
-The current Pantheon dev Supabase verifier uses public, non-secret metadata:
+The current Pantheon dev GCP Identity verifier uses public, non-secret
+metadata:
 
 ```sh
-PANTHEON_BFF_OIDC_DISCOVERY_URL=https://kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration
-PANTHEON_BFF_OIDC_ISSUER=https://kwjtcynauaulrxngyetk.supabase.co/auth/v1
-PANTHEON_BFF_OIDC_AUDIENCE=authenticated
+PANTHEON_BFF_JWKS_URI=https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
+PANTHEON_BFF_OIDC_ISSUER=https://securetoken.google.com/pantheon-lupin-dev-20260719
+PANTHEON_BFF_OIDC_AUDIENCE=pantheon-lupin-dev-20260719
+PANTHEON_BFF_MFA_CLAIMS=amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor
+PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED=true
 ```
 
-The standard Supabase `role=authenticated` claim is deliberately not a
-Pantheon operator grant. An authenticated user without an allowlisted
-`app_metadata.roles` value resolves to the fail-closed `viewer` default and
-cannot mutate Persona interactions. `user_metadata.roles` is excluded because
-it is browser/user editable.
+An authenticated GCP user without an allowlisted custom `roles` claim resolves
+to the fail-closed `viewer` default and cannot mutate Persona interactions.
 
 The IdP must assign the Pantheon role in a signed server-owned claim (for
-example `app_metadata.roles`). Browser-editable user metadata is not
-an authorization source. Tenant and allowed-tenant claims are likewise signed
-IdP claims or server-owned BFF configuration. `/bff/me` is the frontend's
-authority for effective user, roles, tenant, capabilities and session kind.
+example `roles=["pantheon-operator"]`). Browser profile fields are not an
+authorization source. Tenant and allowed-tenant claims are likewise signed IdP
+claims or server-owned BFF configuration. `/bff/me` is the frontend's authority
+for effective user, roles, tenant, capabilities and session kind.
 
 The operator-live readiness sequence is:
 
-1. Supabase login/refresh produces a short-lived access JWT.
+1. GCP Identity login/refresh produces a short-lived ID token with verified
+   email and TOTP second-factor claims.
 2. The frontend registers that in-memory JWT with the shared BFF auth provider.
 3. `GET /bff/me` must report `authenticated=true`, `session_kind=bearer` (or
    `cookie`), an operator-level role, the exact tenant and Agora capability.
@@ -191,7 +193,7 @@ The operator-live readiness sequence is:
 On token refresh, update the in-memory BFF provider before retrying a request,
 then call `/bff/auth/refresh` with the refreshed bearer if session lifecycle
 readback is needed. On sign-out, call `/bff/logout` with the current bearer and
-then clear the Supabase session and the in-memory BFF provider. A cookie-only
+then clear the GCP Identity session and the in-memory BFF provider. A cookie-only
 mutation must include an allowed `Origin`; the BFF rejects a missing or
 unlisted origin before route execution.
 
@@ -311,6 +313,12 @@ Some historical orchestration scripts and tests still mention
 `front-ai-trading-system`, `lovable-ui-task`, or Lovable publish flows. Do not
 use those paths to route current frontend work until they have been explicitly
 migrated to `execute-plans` and Pantheon-owned dev hosting.
+
+The repo-owned supervisor config keeps the legacy coordination publisher
+disabled for current dev delivery. Do not re-enable `.orchestrator` coordination
+publishing as a live workaround for Management AI, OpenClaw, Pantheon, Agora, or
+`execute-plans` work; use the assistant dev bridge and governed repair-worktree
+routes instead.
 
 Known legacy surfaces include:
 

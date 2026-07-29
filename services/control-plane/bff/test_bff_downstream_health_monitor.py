@@ -37,11 +37,10 @@ def _run(coro):
 from downstream_health_monitor import (
     DownstreamHealthMonitor,
     DownstreamProbeResult,
+    _DurableHealthStore,
     _probe_http,
     _post_json,
     _utc_now_rfc3339,
-    _SENTINEL_BINDING_ID,
-    _SENTINEL_STAGE,
 )
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -94,6 +93,8 @@ class TestDownstreamHealthMonitorState:
         return DownstreamHealthMonitor(
             telemetry_url="http://telemetry:8080",
             incidents_url="http://incidents:8090",
+            telemetry_service_jwt="test-service-jwt",
+            tenant_id="tenant-test",
             probe_interval_seconds=9999,  # don't fire automatically in tests
             failure_threshold=3,
             **kwargs,
@@ -107,14 +108,14 @@ class TestDownstreamHealthMonitorState:
 
     def test_get_state_with_probe_results(self):
         monitor = self._make_monitor()
-        monitor._state["telemetry"] = DownstreamProbeResult(
+        monitor._store.record_probe(DownstreamProbeResult(
             target_name="telemetry",
             ok=True,
             status_code=200,
             latency_ms=5.0,
             checked_at="2026-06-27T00:00:00Z",
-        )
-        monitor._state["incidents"] = DownstreamProbeResult(
+        ))
+        monitor._store.record_probe(DownstreamProbeResult(
             target_name="incidents",
             ok=False,
             status_code=-1,
@@ -122,7 +123,7 @@ class TestDownstreamHealthMonitorState:
             checked_at="2026-06-27T00:00:00Z",
             failure_reason="Connection refused",
             consecutive_failures=2,
-        )
+        ))
         state = monitor.get_state()
         assert state["overall_ok"] is False
         assert "telemetry" in state["targets"]
@@ -131,13 +132,13 @@ class TestDownstreamHealthMonitorState:
 
     def test_get_degraded_targets(self):
         monitor = self._make_monitor()
-        monitor._state["telemetry"] = DownstreamProbeResult(
+        monitor._store.record_probe(DownstreamProbeResult(
             target_name="telemetry", ok=True, status_code=200, latency_ms=5.0, checked_at="2026-06-27T00:00:00Z"
-        )
-        monitor._state["incidents"] = DownstreamProbeResult(
+        ))
+        monitor._store.record_probe(DownstreamProbeResult(
             target_name="incidents", ok=False, status_code=-1, latency_ms=3001.0, checked_at="2026-06-27T00:00:00Z",
             failure_reason="timeout", consecutive_failures=1,
-        )
+        ))
         degraded = monitor.get_degraded_targets()
         assert "incidents" in degraded
         assert "telemetry" not in degraded
@@ -230,6 +231,8 @@ class TestTelemetryEmit:
         return DownstreamHealthMonitor(
             telemetry_url="http://tel:8080",
             incidents_url="",
+            telemetry_service_jwt="test-service-jwt",
+            tenant_id="tenant-test",
             probe_interval_seconds=9999,
             failure_threshold=3,
         )
@@ -256,15 +259,17 @@ class TestTelemetryEmit:
 
         assert len(captured) == 1
         call = captured[0]
-        assert call["url"] == "http://tel:8080/api/telemetry/ingest"
+        assert call["url"] == "http://tel:8080/api/v1/telemetry/infrastructure-health"
         body = call["body"]
-        assert body["event_type"] == "runtime_health"
-        assert body["binding_id"] == _SENTINEL_BINDING_ID
-        assert body["deployment_stage"] == _SENTINEL_STAGE
-        assert body["execution_mode"] == _SENTINEL_STAGE
-        assert body["metrics"]["probe_ok"] == 0
-        assert body["metrics"]["consecutive_failures"] == 1
-        assert body["bff_health_probe"]["target_name"] == "incidents"
+        assert body["event_type"] == "infrastructure_health"
+        assert body["schema_version"] == "pantheon.infrastructure-health/1"
+        assert body["tenant_id"] == "tenant-test"
+        assert body["component"]["service_name"] == "incidents"
+        assert body["observation"]["failure_count"] == 1
+        assert body["observation"]["consecutive_failures"] == 1
+        assert "binding_id" not in body
+        assert "deployment_stage" not in body
+        assert "execution_mode" not in body
 
     def test_emit_telemetry_ok_probe(self):
         monitor = self._make_monitor()
@@ -285,7 +290,8 @@ class TestTelemetryEmit:
             monitor._emit_telemetry_sync(result)
 
         assert len(captured) == 1
-        assert captured[0]["metrics"]["probe_ok"] == 1
+        assert captured[0]["health_status"] == "ok"
+        assert captured[0]["observation"]["failure_count"] == 0
 
     def test_emit_telemetry_skipped_when_no_url(self):
         monitor = DownstreamHealthMonitor(
@@ -333,6 +339,7 @@ class TestIncidentOpen:
         return DownstreamHealthMonitor(
             telemetry_url="",
             incidents_url="http://inc:8090",
+            tenant_id="tenant-test",
             probe_interval_seconds=9999,
             failure_threshold=3,
         )
@@ -357,38 +364,35 @@ class TestIncidentOpen:
         with patch("downstream_health_monitor._post_json", side_effect=mock_post_json):
             inc_id = monitor._open_or_update_incident_sync(result)
 
-        assert inc_id == "bff-downstream-incidents-degraded"
+        assert inc_id.startswith("infra-bff-")
         assert len(captured) == 1
-        assert "/api/incidents" in captured[0]["url"]
+        assert captured[0]["url"].endswith("/api/incidents/consume-infrastructure-health")
         body = captured[0]["body"]
         assert body["severity"] == "high"
         assert body["status"] == "open"
         assert "incidents" in body["title"]
-        assert body["binding_id"] == _SENTINEL_BINDING_ID
-        assert body["deployment_stage"] == _SENTINEL_STAGE
+        assert body["schema_version"] == "pantheon.infrastructure-incident/1"
+        assert body["component"]["service_name"] == "incidents"
+        assert "binding_id" not in body
+        assert "deployment_stage" not in body
 
     def test_incident_idempotent_on_repeat_failure(self):
         monitor = self._make_monitor()
-        monitor._open_incident_ids["incidents"] = "bff-downstream-incidents-degraded"
-
         result = DownstreamProbeResult(
             target_name="incidents", ok=False, status_code=-1, latency_ms=10.0,
             checked_at="2026-06-27T00:00:00Z", failure_reason="timeout", consecutive_failures=5,
         )
-        captured: List[Dict[str, Any]] = []
 
-        def mock_post_json(url, body, timeout):
-            captured.append(body)
-            return True, 201
+        with patch("downstream_health_monitor._post_json", return_value=(True, 201)):
+            first_id = monitor._open_or_update_incident_sync(result)
 
-        with patch("downstream_health_monitor._post_json", side_effect=mock_post_json):
+        with patch("downstream_health_monitor._post_json") as mock_post:
             inc_id = monitor._open_or_update_incident_sync(result)
 
-        # Already tracking an open incident — no new POST
-        assert inc_id == "bff-downstream-incidents-degraded"
-        assert len(captured) == 0
+        assert inc_id == first_id
+        mock_post.assert_not_called()
 
-    def test_incident_409_treated_as_idempotent_ok(self):
+    def test_incident_409_is_dead_letter_not_idempotent_success(self):
         monitor = self._make_monitor()
         result = DownstreamProbeResult(
             target_name="telemetry", ok=False, status_code=-1, latency_ms=5.0,
@@ -401,8 +405,57 @@ class TestIncidentOpen:
         with patch("downstream_health_monitor._post_json", side_effect=mock_post_json):
             inc_id = monitor._open_or_update_incident_sync(result)
 
-        assert inc_id == "bff-downstream-telemetry-degraded"
+        assert inc_id.startswith("infra-bff-")
         assert "telemetry" in monitor._open_incident_ids
+        deliveries = monitor.list_delivery_records()
+        incident_delivery = next(
+            item for item in deliveries if item["channel"] == "incident_open"
+        )
+        assert incident_delivery["status"] == "dead_letter"
+        assert monitor.get_state()["incidents"]["telemetry"]["status"] == "opening"
+
+    def test_delivery_counts_use_summary_and_retention_prunes_history(self, tmp_path):
+        store = _DurableHealthStore(str(tmp_path / "health.sqlite3"))
+        store.queue_delivery(
+            delivery_id="delivered-old",
+            event_id="event-old",
+            channel="telemetry",
+            target_name="telemetry",
+            url="http://telemetry/events",
+            body={"event_id": "event-old"},
+            dependency_ids=[],
+            max_attempts=1,
+        )
+        with store._connect() as connection:
+            connection.execute(
+                """
+                UPDATE delivery_outbox
+                SET status='delivered', updated_at='2026-01-01T00:00:00Z'
+                WHERE delivery_id='delivered-old'
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO error_windows(
+                    target_name, window_started_at, sample_count,
+                    failure_count, latency_total_ms, last_status_code,
+                    last_detail, last_observed_at
+                ) VALUES (
+                    'telemetry', '2026-01-01T00:00:00Z', 1, 1,
+                    5.0, 500, 'old', '2026-01-01T00:00:00Z'
+                )
+                """
+            )
+
+        counts = store.delivery_counts()
+        assert counts["delivered"] == 1
+        pruned = store.prune_retained_history(
+            delivery_history_seconds=60,
+            window_history_seconds=60,
+        )
+        assert pruned["delivery_outbox"] == 1
+        assert pruned["error_windows"] == 1
+        assert store.delivery_counts()["delivered"] == 0
 
     def test_open_incident_skipped_when_no_incidents_url(self):
         monitor = DownstreamHealthMonitor(
@@ -445,7 +498,7 @@ class TestIncidentOpen:
 
 
 class TestRecoveryTracking:
-    def test_recovery_clears_open_incident_tracking(self):
+    def test_recovery_without_incident_authority_keeps_open_tracking(self):
         monitor = DownstreamHealthMonitor(
             telemetry_url="",
             incidents_url="",
@@ -466,8 +519,44 @@ class TestRecoveryTracking:
         with patch("downstream_health_monitor._post_json", return_value=(True, 202)):
             _run(monitor._handle_probe_result(ok_result))
 
-        # Local incident tracking cleared after recovery
+        # No incident authority confirmed resolution, so the durable mapping
+        # must not be falsely cleared.
+        assert "telemetry" in monitor._open_incident_ids
+
+    def test_recovery_calls_incident_resolve(self):
+        monitor = DownstreamHealthMonitor(
+            telemetry_url="http://tel:8080",
+            incidents_url="http://inc:8090",
+            telemetry_service_jwt="test-service-jwt",
+            tenant_id="tenant-test",
+            probe_interval_seconds=9999,
+            failure_threshold=3,
+        )
+        failed = DownstreamProbeResult(
+            target_name="telemetry", ok=False, status_code=-1, latency_ms=5.0,
+            checked_at="2026-06-27T00:00:00Z", failure_reason="timeout",
+            consecutive_failures=3,
+        )
+        with patch("downstream_health_monitor._post_json", return_value=(True, 201)):
+            incident_id = monitor._open_or_update_incident_sync(failed)
+        ok_result = DownstreamProbeResult(
+            target_name="telemetry", ok=True, status_code=200, latency_ms=5.0,
+            checked_at="2026-06-27T00:00:01Z",
+        )
+        captured: List[Dict[str, Any]] = []
+
+        def mock_post_json(url, body, timeout):
+            captured.append({"url": url, "body": body})
+            return True, 200
+
+        with patch("downstream_health_monitor._post_json", side_effect=mock_post_json):
+            _run(monitor._handle_probe_result(ok_result))
+
         assert "telemetry" not in monitor._open_incident_ids
+        resolve_calls = [c for c in captured if "/status" in c["url"]]
+        assert len(resolve_calls) == 1
+        assert resolve_calls[0]["body"]["status"] == "resolved"
+        assert incident_id in resolve_calls[0]["url"]
 
 
 # ---------------------------------------------------------------------------
@@ -479,18 +568,23 @@ class TestBffDownstreamHealthRoute:
     def _make_client(self):
         from fastapi.testclient import TestClient
         import main as bff_main
+        bff_main.downstream_health_monitor = DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="",
+            probe_interval_seconds=9999,
+        )
         return TestClient(bff_main.app), bff_main
 
     def test_downstream_health_route_returns_200(self):
         client, bff_main = self._make_client()
         # Seed some state into the monitor
-        bff_main.downstream_health_monitor._state["telemetry"] = DownstreamProbeResult(
+        bff_main.downstream_health_monitor._store.record_probe(DownstreamProbeResult(
             target_name="telemetry",
             ok=True,
             status_code=200,
             latency_ms=5.0,
             checked_at="2026-06-27T00:00:00Z",
-        )
+        ))
         response = client.get(
             "/bff/v5/downstream-health",
             headers={"Authorization": OPERATOR_TOKEN},
@@ -507,8 +601,11 @@ class TestBffDownstreamHealthRoute:
         from fastapi.testclient import TestClient
         import main as bff_main
 
-        # Clear state
-        bff_main.downstream_health_monitor._state.clear()
+        bff_main.downstream_health_monitor = DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="",
+            probe_interval_seconds=9999,
+        )
         client = TestClient(bff_main.app)
 
         response = client.get(
@@ -524,8 +621,12 @@ class TestBffDownstreamHealthRoute:
         from fastapi.testclient import TestClient
         import main as bff_main
 
-        bff_main.downstream_health_monitor._state.clear()
-        bff_main.downstream_health_monitor._state["incidents"] = DownstreamProbeResult(
+        bff_main.downstream_health_monitor = DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="",
+            probe_interval_seconds=9999,
+        )
+        bff_main.downstream_health_monitor._store.record_probe(DownstreamProbeResult(
             target_name="incidents",
             ok=False,
             status_code=-1,
@@ -533,7 +634,7 @@ class TestBffDownstreamHealthRoute:
             checked_at="2026-06-27T00:00:00Z",
             failure_reason="Connection refused",
             consecutive_failures=4,
-        )
+        ))
         client = TestClient(bff_main.app)
 
         response = client.get(
@@ -596,7 +697,12 @@ class TestDegradedModeIsolation:
         import main as bff_main
 
         # Seed degraded state
-        bff_main.downstream_health_monitor._state["runtime-manager"] = DownstreamProbeResult(
+        bff_main.downstream_health_monitor = DownstreamHealthMonitor(
+            telemetry_url="",
+            incidents_url="",
+            probe_interval_seconds=9999,
+        )
+        bff_main.downstream_health_monitor._store.record_probe(DownstreamProbeResult(
             target_name="runtime-manager",
             ok=False,
             status_code=-1,
@@ -604,7 +710,7 @@ class TestDegradedModeIsolation:
             checked_at="2026-06-27T00:00:00Z",
             failure_reason="Connection refused",
             consecutive_failures=10,
-        )
+        ))
 
         client = TestClient(bff_main.app)
 

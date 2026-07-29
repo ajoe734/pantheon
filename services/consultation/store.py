@@ -318,6 +318,10 @@ class ConsultationStore:
         )
         self._participants[participant.participant_id] = _model_copy(participant)
 
+    def get_participant(self, participant_id: str) -> Optional[ConsultParticipant]:
+        participant = self._participants.get(participant_id)
+        return _model_copy(participant) if participant else None
+
     def list_participants_for_request(self, request_id: str) -> List[ConsultParticipant]:
         return [
             _model_copy(participant)
@@ -368,6 +372,12 @@ class ConsultationStore:
             payload=_model_to_data(attachment),
         )
         self._evidence[attachment.attachment_id] = _model_copy(attachment)
+
+    def get_evidence_attachment(
+        self, attachment_id: str
+    ) -> Optional[ConsultEvidenceAttachment]:
+        attachment = self._evidence.get(attachment_id)
+        return _model_copy(attachment) if attachment else None
 
     def list_evidence_for_request(self, request_id: str) -> List[ConsultEvidenceAttachment]:
         return [

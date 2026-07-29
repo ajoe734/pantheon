@@ -1,0 +1,416 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-FLEET-001 product-level owner closeout gate.",
+    "note": "Closeout manifest over the immutable fleet-specific receipt in the parent directory.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Append-only after the closeout manifest PR merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T09:19:56Z",
+    "evidence_cut_semantics": "Owner closeout over independently approved runtime evidence; no second live restart or policy mutation.",
+    "id": "L12-FLEET-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Fleet Bootstrap",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-FLEET-001",
+    "title": "Restore and prove the eight-slot Codex fleet frontier"
+  },
+  "authorities": {
+    "actual_state": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json",
+      "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "/home/lupin/pantheon/.orchestrator/state.json",
+      "/home/lupin/pantheon/.orchestrator/provider_capabilities.json"
+    ],
+    "desired_state": [
+      ".orchestrator/config.json ready_dispatcher policy",
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-FLEET-001.md"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_fleet_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for fleet reconciliation evidence and owner closeout records",
+    "composes_with": [
+      "LOOP-GAP-FLEET-001",
+      "PR #4135",
+      "PR #4140",
+      "PR #4141"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.sha256",
+      ".orchestrator/task-briefs/l12_fleet_001.md"
+    ],
+    "implementation_changed_files": [
+      "scripts/provision_live_supervisor_config.py",
+      "scripts/check_config_drift.py",
+      "scripts/test_provision_live_supervisor_config.py",
+      "scripts/test_check_config_drift.py"
+    ],
+    "not_changing": "Canonical architecture, live-capital authority, existing catalog tasks, or the reviewer-approved fleet receipt.",
+    "owned_layer": "Split-root supervisor fleet provisioning, drift detection, and acceptance evidence"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "2ed67c6d6c4b95d49ea4210cb6db3c14b5c5cba8",
+        "subject": "LOOP-GAP-FLEET-001 implementation head",
+        "delivery_state": "merged"
+      },
+      {
+        "sha": "e5fe75bcc9c5e8dcdeed7a7603385301bcfadcac",
+        "subject": "L12-FLEET-001: anchor pre-restart evidence",
+        "delivery_state": "merged"
+      },
+      {
+        "sha": "6ccb63133be0d0f57df7dba25297c8bb115be6ea",
+        "subject": "L12-FLEET-001: prove lease-safe eight-slot readiness",
+        "delivery_state": "merged"
+      },
+      {
+        "sha": "4fd2cb089df0e88740e40381ff83fca38cbb25dd",
+        "subject": "L12-FLEET-001: record approved owner closeout",
+        "delivery_state": "merged"
+      }
+    ],
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "2ed67c6d6c4b95d49ea4210cb6db3c14b5c5cba8",
+        "merge_sha": "09159159fbac9b43d3e97011a12a224699677620",
+        "merged_at": "2026-07-26T07:16:09Z",
+        "number": 4135,
+        "url": "https://github.com/ajoe734/pantheon/pull/4135"
+      },
+      {
+        "base": "dev",
+        "head_sha": "6ccb63133be0d0f57df7dba25297c8bb115be6ea",
+        "merge_sha": "91ff33b70acc84283abca541a6dc2d93f65c5174",
+        "merged_at": "2026-07-26T08:49:07Z",
+        "number": 4140,
+        "url": "https://github.com/ajoe734/pantheon/pull/4140"
+      },
+      {
+        "base": "dev",
+        "head_sha": "577cbc4530f88048f4532b8ceddcdc591e4e9937",
+        "merge_sha": "6f2164ffdba35997d7824f99d1b4fc89e07f616a",
+        "merged_at": "2026-07-26T09:13:57Z",
+        "number": 4141,
+        "url": "https://github.com/ajoe734/pantheon/pull/4141"
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "2ed67c6d6c4b95d49ea4210cb6db3c14b5c5cba8",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "6ccb63133be0d0f57df7dba25297c8bb115be6ea",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "577cbc4530f88048f4532b8ceddcdc591e4e9937",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_dispatch_policy.py",
+        "result": "pass",
+        "conclusion": "82 passed in 10.59s"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider .orchestrator/test_supervisor.py::RuntimeConfigTests::test_codex_accounts_allow_four_concurrent_slots .orchestrator/test_supervisor.py::RuntimeConfigTests::test_live_provider_account_schema_is_strict_and_complete",
+        "result": "pass",
+        "conclusion": "2 passed in 1.56s"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile scripts/provision_live_supervisor_config.py scripts/check_config_drift.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/supervisor.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      },
+      {
+        "command": "sha256sum -c evidence.sha256 from docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001",
+        "result": "pass",
+        "conclusion": "evidence.json: OK"
+      },
+      {
+        "command": "installed check_config_drift.py --json",
+        "result": "pass",
+        "conclusion": "drift=[], missing=[], intentional=[], exit_code=0"
+      },
+      {
+        "command": "installed supervisor_runtime_health.py --require-watchdog --json",
+        "result": "pass",
+        "conclusion": "healthy=true with fresh heartbeat and watchdog"
+      }
+    ],
+    "validated_at": "2026-07-26T09:19:56Z",
+    "validated_base_sha": "09159159fbac9b43d3e97011a12a224699677620",
+    "validated_head_sha": "6ccb63133be0d0f57df7dba25297c8bb115be6ea"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev supervisor",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "source_commit": "09159159fbac9b43d3e97011a12a224699677620",
+      "deployed_at": "2026-07-26T08:34:29Z",
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "status_root": "/home/lupin/pantheon",
+      "live_config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "source_sha": "09159159fbac9b43d3e97011a12a224699677620",
+      "supervisor_pid": 1579402,
+      "watchdog_restart_at": "2026-07-26T08:37:05Z"
+    },
+    "post_cut_runtime_observation": {
+      "observed_at": "2026-07-26T09:10:24Z",
+      "healthy": true,
+      "ready_slots": 8,
+      "config_drift": []
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-26T08:33:56Z",
+      "status": "pass",
+      "active_nonprod_deploy_lease": false
+    },
+    "capture_time_hosted_readback": {
+      "observed_at": "2026-07-26T09:10:24Z",
+      "status": "pass",
+      "supervisor_healthy": true,
+      "watchdog_fresh": true,
+      "codex_slots_ready": 8,
+      "config_drift": []
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "Task, queue, approval, and journal counts and hashes were preserved across restart.",
+        "Guarded catalog dry-run reported 21 exact tasks and four unapplied create candidates while six governed surfaces remained byte-identical."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Governed status commands failed closed while command identity differed from the running supervisor.",
+        "Failed deployment leases were left quarantined through expiry and no lease was taken over."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "Journal projection matched all 1,205 events through the task start event.",
+        "Deployment run 30194930965 acquired its lease 47 seconds after watchdog restart and released it normally."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "The governed restart intent replaced supervisor PID 829000 with PID 1579402 after the deployment lease gate cleared.",
+        "Post-restart task, queue, approval, journal, watchdog, and heartbeat readbacks remained healthy and preserved."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "The provisioner and drift guard preserve an exact source-controlled policy projection and fail closed before unsafe mutation.",
+        "No catalog create candidate or live-capital authority was applied during acceptance."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Only the nonprod Pantheon supervisor runtime was reconciled."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "No broker or capital-affecting authority was enabled."
+    },
+    "rbac": {
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Owner Codex and independent reviewer Codex2 remained distinct."
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#policy"
+      ],
+      "id": "AC1",
+      "statement": "Repository and live ready-dispatcher capacity policies agree after provisioning.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#state_preservation",
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#runtime_health"
+      ],
+      "id": "AC2",
+      "statement": "Supervisor and watchdog restart under the governed intent path without losing task state.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#provider_slots",
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#catalog"
+      ],
+      "id": "AC3",
+      "statement": "Codex and Codex2 expose four eligible slots each and a guarded catalog dry-run succeeds.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#lease_gate",
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json#state_preservation"
+      ],
+      "id": "AC4",
+      "statement": "No active deploy lease, approval, queue item, or existing task is lost or duplicated.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "command_root_behind_dev": {
+      "blocking_for_this_task": false,
+      "containment": "Installed source remains exact at 09159159 and check_config_drift reports no policy drift.",
+      "description": "The command root is five commits behind origin/dev at closeout readback.",
+      "expiry": "Next governed dev-root synchronization.",
+      "owner": "Human/Ops",
+      "recheck_trigger": "Before the next supervisor source deployment.",
+      "severity": "low"
+    },
+    "direct_pid_identity_diagnostic": {
+      "blocking_for_this_task": false,
+      "containment": "Lock-held liveness, lifecycle, heartbeat, watchdog, and independent process identity all pass.",
+      "description": "The direct helper PID identity diagnostic remains false while overall runtime health is true.",
+      "expiry": "When process-identity diagnostics are next revised.",
+      "owner": "Human/Ops",
+      "recheck_trigger": "Any supervisor liveness alert or restart.",
+      "severity": "low"
+    },
+    "catalog_candidates_unmaterialized": {
+      "blocking_for_this_task": false,
+      "containment": "The guarded dry-run applied no task or status mutation.",
+      "description": "Four catalog create candidates remain intentionally unapplied.",
+      "expiry": "Their governed catalog dispatch.",
+      "owner": "Human/Ops",
+      "recheck_trigger": "The next twelve-loop catalog materialization.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "ready_dispatcher": "83ad5b2125497853b5250dc737f257427ddccf2cf5f7a86e7ba36ec3e7eb9373"
+    },
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+    "normalized_hosted_readback": {
+      "config_drift": [],
+      "healthy": true,
+      "ready_slots": 8
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest.",
+    "source_artifact_sha256_by_epoch": {
+      "reviewed_fleet_receipt": "85db7846bd9ffb8c3f54d8a15092b61dfa8dd0003077eba9aad011bed2cc2fe3"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T08:50:48Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4140",
+      "sequence": 1,
+      "sha": "6ccb63133be0d0f57df7dba25297c8bb115be6ea",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T09:04:23Z",
+      "reference": "ai-status-event-50dd67d085f517cf6be71dbc3a9fcfadf88b9f45cef564098377793558d5809b",
+      "sequence": 2,
+      "sha": "91ff33b70acc84283abca541a6dc2d93f65c5174",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T09:19:56Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4141",
+      "sequence": 3,
+      "sha": "6f2164ffdba35997d7824f99d1b4fc89e07f616a",
+      "status": "pass"
+    }
+  ]
+}

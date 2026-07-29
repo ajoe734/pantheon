@@ -1,0 +1,227 @@
+{
+  "schema_version": "pantheon.release-platform-task-evidence.v1",
+  "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+  "title": "Unify nightly publish cut engine across Pantheon and execute-plans",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "review_approved",
+  "generated_at": "2026-07-27T16:06:10Z",
+  "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
+  "scope": {
+    "owned": [
+      "Pantheon nightly publish helper and workflow",
+      "execute-plans nightly publish helper and workflow",
+      "deterministic many-tag and idempotency regressions",
+      "Pantheon canonical publish/deploy documentation"
+    ],
+    "not_changing": [
+      "nonprod-deploy exact-pair enforcement",
+      "cross-repository release candidate controller",
+      "publish promotion semantics",
+      "hosted dev deployment state"
+    ],
+    "composes_with": [
+      "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "OPS-PROMOTE-PR-CI-TRIGGER-001"
+    ]
+  },
+  "incident_evidence": [
+    {
+      "repository": "ajoe734/pantheon",
+      "run_id": 30277673883,
+      "conclusion": "failure",
+      "finding": "Cut publish snapshot exited 141 before helper output."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "run_id": 30278537124,
+      "conclusion": "failure",
+      "finding": "Cut publish snapshot exited 141 before helper output."
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "cut_run_id": 30272335370,
+      "deploy_run_id": 30272369330,
+      "finding": "Publish cut dispatched a dev deploy that failed exact Agora pair admission."
+    }
+  ],
+  "repositories": {
+    "pantheon": {
+      "slug": "ajoe734/pantheon",
+      "base_branch": "dev",
+      "base_commit": "436e88de8f4267208b1ceee2283759c6a3e31542",
+      "task_branch": "task/OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "anchor_commit": "b9be76c6aea2fedc4f085da2c1050d446ec0e481",
+      "pr": {
+        "number": 4255,
+        "url": "https://github.com/ajoe734/pantheon/pull/4255"
+      },
+      "review_head": "885f9c34d2d83d08e1564089395fe337ea99b033",
+      "merge_commit": "33e1c4d64e4accceab4d803e7b4ce2324f44306a",
+      "merged_at": "2026-07-27T16:01:28Z"
+    },
+    "execute_plans": {
+      "slug": "ajoe734/execute-plans",
+      "base_branch": "dev",
+      "base_commit": "ebaa05a8ceaa3bec8d43b2d29493efa006681233",
+      "task_branch": "task/OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "anchor_commit": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+      "pr": {
+        "number": 557,
+        "url": "https://github.com/ajoe734/execute-plans/pull/557"
+      },
+      "review_head": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+      "merge_commit": "cbc16830a096077f978b4efe499dd8fa85f166f2",
+      "merged_at": "2026-07-27T16:01:21Z"
+    }
+  },
+  "contract": {
+    "modes": {
+      "now": "Create at most one immutable publish branch and annotated release tag.",
+      "check": "Return 0 when a cut would occur and 10 when dev has not advanced."
+    },
+    "success_output": [
+      "publish_branch=<publish ref>",
+      "release_tag=<release ref>"
+    ],
+    "latest_release_selection": "git for-each-ref --sort=-creatordate --count=1 --format=%(objectname)",
+    "workflow_consumer": "pipeline-free shell read loop",
+    "repeated_cut": "no-op",
+    "deploy_dispatch": false
+  },
+  "acceptance": [
+    {
+      "criterion": "Equivalent producer and consumer contract without early-closing SIGPIPE exposure.",
+      "status": "passed",
+      "evidence": "Both helpers use producer-side --count=1 and both workflows parse publish_branch with a here-string read loop."
+    },
+    {
+      "criterion": "Deterministic many-tag regression reproduces the old failure and proves idempotency.",
+      "status": "passed",
+      "evidence": "Both scripts/git/test_nightly_publish.sh fixtures create 12,000 tags, require historical rc=141, and prove one branch/tag plus repeated no-op/check=10."
+    },
+    {
+      "criterion": "Inadmissible publish candidates do not dispatch dev deployment.",
+      "status": "passed",
+      "evidence": "Neither nightly-publish-cut.yml contains a deploy step or gh workflow run invocation."
+    },
+    {
+      "criterion": "Frontend change remains in execute-plans on dev-based task branch.",
+      "status": "passed",
+      "evidence": "execute-plans worktree is based at ebaa05a8ceaa3bec8d43b2d29493efa006681233 on origin/dev; Pantheon contains no execute-plans mirror."
+    },
+    {
+      "criterion": "PR checks, independent review, merge, and evidence are complete without intermediate hosted deploy.",
+      "status": "passed",
+      "evidence": "Codex2 approved Pantheon head 885f9c34d2d83d08e1564089395fe337ea99b033 and execute-plans head ec9ca4d7eb255b72366c43076ad477a3daa77fcf after independent validation; PR #4255 merged as 33e1c4d64e4accceab4d803e7b4ce2324f44306a and PR #557 merged as cbc16830a096077f978b4efe499dd8fa85f166f2."
+    }
+  ],
+  "validation": [
+    {
+      "repository": "ajoe734/pantheon",
+      "command": "bash scripts/git/test_nightly_publish.sh",
+      "status": "passed",
+      "result": "12,000-tag historical pipeline returned 141; one repaired cut succeeded; repeated now no-op; repeated check returned 10; exactly one remote branch/tag pair."
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_nightly_publish_cut.py scripts/git/test_git_workflow_helpers.py tests/orchestrator/test_release_branch_discipline.py scripts/test_agora_compat_manifest.py",
+      "status": "passed",
+      "result": "78 passed in 17.12s."
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "command": "bash -n publish scripts; py_compile workflow-adjacent Python; parse workflow YAML and evidence JSON; git diff HEAD --check",
+      "status": "passed",
+      "result": "No syntax, parse, or whitespace errors."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "bash scripts/git/test_nightly_publish.sh",
+      "status": "passed",
+      "result": "12,000-tag historical pipeline returned 141; one repaired cut succeeded; repeated now no-op; repeated check returned 10; exactly one remote branch/tag pair."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "python3 scripts/git/test_publish_promote.py; npx vitest run src/test/deploy-safe-defaults.test.ts; npm run typecheck",
+      "status": "passed",
+      "result": "4 promotion tests, 19 deploy-safe tests, and TypeScript typecheck passed."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "VITE_GCP_IDENTITY_API_KEY=<format-valid test value> VITE_GCP_IDENTITY_PROJECT_ID=test-project VITE_GCP_IDENTITY_AUTH_DOMAIN=test.invalid npm run build",
+      "status": "passed",
+      "result": "Production build completed in 51.64s. Existing Rollup circular-chunk, CSS syntax, stale browserslist, and chunk-size warnings remained non-fatal."
+    },
+    {
+      "repository": "cross-repo",
+      "command": "Compare shared helper markers, pipeline-free workflow consumers, no gh workflow run, and absence of tracked execute-plans paths in Pantheon.",
+      "status": "passed",
+      "result": "Equivalent contract markers and repository boundary passed."
+    }
+  ],
+  "validation_notes": [
+    "The first local execute-plans build invocation omitted CI-provided public Identity Platform values and failed closed at VITE_GCP_IDENTITY_API_KEY validation. It was rerun successfully with format-valid non-secret test values.",
+    "actionlint was not installed locally; both workflow files were parsed with PyYAML and will receive repository-visible workflow checks on their PRs."
+  ],
+  "safety": {
+    "hosted_deployment_run": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "real_capital_or_broker_action": false
+  },
+  "review": {
+    "status": "review_approved",
+    "reviewer": "Codex2",
+    "required_scope": [
+      "both exact PR heads",
+      "many-tag rc=141 reproduction and repaired idempotency",
+      "publish-only no-dispatch boundary",
+      "canonical documentation and evidence consistency"
+    ],
+    "decision": {
+      "approved_at": "2026-07-27T15:58:52Z",
+      "pantheon_head": "885f9c34d2d83d08e1564089395fe337ea99b033",
+      "execute_plans_head": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+      "summary": "Exact-head review approved both PRs as open, clean, mergeable, and green. Independent validation reproduced historical rc=141 with 12,000 tags, proved repaired idempotency, passed Pantheon 78 tests plus execute-plans 4+19 tests, typecheck, and production build, and confirmed the matched publish-only contract with no deploy dispatch or hosted deployment."
+    }
+  },
+  "closeout": {
+    "owner": "Codex",
+    "merged_prs": [
+      {
+        "repository": "ajoe734/execute-plans",
+        "pr": 557,
+        "review_head": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+        "merge_commit": "cbc16830a096077f978b4efe499dd8fa85f166f2",
+        "base_branch": "dev"
+      },
+      {
+        "repository": "ajoe734/pantheon",
+        "pr": 4255,
+        "review_head": "885f9c34d2d83d08e1564089395fe337ea99b033",
+        "merge_commit": "33e1c4d64e4accceab4d803e7b4ce2324f44306a",
+        "base_branch": "dev"
+      }
+    ],
+    "merge_verification": "Both reviewed heads and merge commits are ancestors of their repository origin/dev refs.",
+    "validation": [
+      {
+        "repository": "ajoe734/pantheon",
+        "command": "bash scripts/git/test_nightly_publish.sh; .venv-pantheon/bin/python3 -m pytest -q scripts/test_nightly_publish_cut.py scripts/git/test_git_workflow_helpers.py tests/orchestrator/test_release_branch_discipline.py scripts/test_agora_compat_manifest.py",
+        "result": "12,000-tag many-tag/idempotency regression passed; 78 tests passed in 23.21s."
+      },
+      {
+        "repository": "ajoe734/execute-plans",
+        "command": "bash scripts/git/test_nightly_publish.sh; python3 scripts/git/test_publish_promote.py; npx vitest run src/test/deploy-safe-defaults.test.ts; npm run typecheck; VITE_GCP_IDENTITY_API_KEY=<format-valid non-secret test value> VITE_GCP_IDENTITY_PROJECT_ID=test-project VITE_GCP_IDENTITY_AUTH_DOMAIN=test.invalid npm run build",
+        "result": "12,000-tag many-tag/idempotency regression, 4 promotion tests, 19 deploy-safe tests, typecheck, and production build passed."
+      },
+      {
+        "repository": "cross-repo",
+        "command": "git merge-base --is-ancestor <review-head> origin/dev; git merge-base --is-ancestor <merge-commit> origin/dev",
+        "result": "Reviewed heads and merge commits are ancestors of both repository dev refs."
+      }
+    ],
+    "hosted_deployment": "not run; outside this publish-only task boundary"
+  }
+}

@@ -95,6 +95,7 @@ services:
       retries: 5
 
   consultation-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/consultation/Dockerfile
@@ -111,6 +112,13 @@ services:
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
       CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
+      # L12-MANIFEST-001 dev manifest admission: consultation has a source
+      # supported bearer-token boundary. Keep it enabled by default in the
+      # local/dev stack with a non-production placeholder token; hosted
+      # environments override CONSULTATION_SERVICE_TOKEN from their secret
+      # store.
+      CONSULTATION_AUTH_REQUIRED: ${CONSULTATION_AUTH_REQUIRED:-true}
+      CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
     volumes:
       - consultation-data:/data/consultation
     ports:
@@ -130,6 +138,7 @@ services:
       start_period: 5s
 
   source-ingest:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -147,9 +156,10 @@ services:
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
       SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
       SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS: ${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}
+      SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS: ${SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS:-86400}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      # Third-party fetches are denied outside production. Set to `allowlist`
-      # with PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS for a scoped live pull.
+      # Third-party fetches are denied in every environment unless an operator
+      # starts the bounded refresh profile with an exact reviewed host list.
       PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
@@ -199,22 +209,23 @@ services:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
-    restart: unless-stopped
-    # Opt-in only. An always-on 60s tick drives every connector against its
-    # third-party provider, which reads as continuous crawling from one cloud
-    # egress IP. Enable the profile deliberately for a bounded ingest run.
+    restart: "no"
+    # Opt-in, bounded, and non-restarting. The deploy gate requires a finite
+    # tick count and an exact HTTPS host allowlist before enabling this profile.
     profiles: ["source-ingest-scheduler"]
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
       SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}
+      SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}
+      SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_CONTROLLER_ALIVE_PATH: /data/source-ingest/controller_alive
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL: reconciled_live_proof
-      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
+      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_LOOP_ID: source-ingestion
       PANTHEON_CONTROLLER_NAME: source-ingestion-controller
@@ -241,17 +252,42 @@ services:
       retries: 3
       start_period: 90s
 
+  source-ingest-agora-projector:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
+    restart: "no"
+    profiles: ["source-ingest-scheduler"]
+    environment:
+      SOURCE_INGEST_URL: http://source-ingest:8097
+      OUT_DIR: /data/bff
+      AGORA_MARKET_STALE_THRESHOLD_SECONDS: ${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+      source-ingest-scheduler:
+        condition: service_completed_successfully
+
   strategy-distillation-worker:
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.distillation_controller"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      # The source-ingest scheduler deliberately sets its shared max-ticks
+      # input to 1 for bounded provider pulls. Distillation is an always-on
+      # controller, so it must not inherit that one-shot value or Docker will
+      # restart the successful process forever under `unless-stopped`.
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${STRATEGY_DISTILLATION_CONTROLLER_MAX_TICKS:-0}
       DISTILLATION_CONTROLLER_STATE_PATH: /data/source-ingest/distill_controller_state.json
       DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
+      DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS: ${DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS:-300}
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
@@ -269,6 +305,19 @@ services:
         condition: service_healthy
       registry:
         condition: service_healthy
+    # The controller rewrites its alive file in the `finally` of every
+    # reconcile tick, so file freshness is a true liveness heartbeat and does
+    # not flip unhealthy on a single upstream business failure.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=sys.argv[1];sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=float(sys.argv[2]) else 1)' /data/source-ingest/distill_controller_alive ${DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS:-300}",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
 
   alpha-replication-worker:
     build:
@@ -276,6 +325,7 @@ services:
       dockerfile: services/research/Dockerfile
     command: ["python", "-m", "services.research.alpha_replication.replication_controller"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS: ${ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS:-60}
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
@@ -298,8 +348,19 @@ services:
         condition: service_healthy
       registry:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=os.getenv(\"ALPHA_REPLICATION_CONTROLLER_STATE_PATH\",\"/data/research-orchestrator/alpha-replication/controller_state.json\");interval=float(os.getenv(\"ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS\",\"60\"));window=max(2*interval,interval+180);sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=window else 1)'",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   search-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/search/Dockerfile
@@ -349,22 +410,40 @@ services:
       start_period: 5s
 
   search-index-scheduler:
-    profiles: ["search-index-scheduler"]
+    # Default-on: this scheduler only talks to the in-stack search service, so
+    # the runtime manifest — not an operator-selected profile — is the single
+    # source of truth for whether the required loop worker is running.
     build:
       context: .
       dockerfile: services/search/Dockerfile
     command: ["python", "-m", "services.search.scheduler_worker"]
+    restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       SEARCH_API_URL: http://search-svc:8098
       SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
       SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
       SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
       SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
+      SEARCH_INDEX_SCHEDULER_ALIVE_PATH: ${SEARCH_INDEX_SCHEDULER_ALIVE_PATH:-/data/search/search_scheduler_alive}
+    volumes:
+      - search-data:/data/search
     depends_on:
       search-svc:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=os.getenv(\"SEARCH_INDEX_SCHEDULER_ALIVE_PATH\",\"/data/search/search_scheduler_alive\");interval=float(os.getenv(\"SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS\",\"300\"));window=max(2*interval,interval+300);sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=window else 1)'",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   training-session-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -397,6 +476,11 @@ services:
       TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-}
       TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE:-}
       TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-}
+      # L12-MANIFEST-001 dev manifest admission: the persisted teaching API is
+      # strict by default and must render an actual verifier input. This is a
+      # local/dev placeholder secret, not a production credential.
+      TRAINING_SESSION_AUTH_MODE: ${TRAINING_SESSION_AUTH_MODE:-strict}
+      TRAINING_SESSION_JWT_SECRET: ${TRAINING_SESSION_JWT_SECRET:-pantheon-local-training-session-jwt-secret}
     volumes:
       - training-session-data:/data/training-session
       - source-ingest-data:/data/source-ingest:ro
@@ -424,6 +508,7 @@ services:
       dockerfile: services/training-session/Dockerfile
     command: ["python", "services/training-session/preview_eval_worker.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       TRAINING_SESSION_API_URL: http://training-session-svc:8099
       TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
@@ -431,6 +516,8 @@ services:
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
       TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-/data/training-session/preview-worker-alive}
+      TRAINING_SESSION_WORKER_TOKEN: ${TRAINING_SESSION_WORKER_TOKEN:-pantheon-local-training-session-worker}
+      TRAINING_SESSION_TENANT_ID: ${TRAINING_SESSION_TENANT_ID:-default}
     volumes:
       - training-session-data:/data/training-session
     depends_on:
@@ -448,6 +535,7 @@ services:
       start_period: 60s
 
   policy-learning-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
@@ -464,6 +552,23 @@ services:
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       POLICY_LEARNING_STORE_BACKEND: ${POLICY_LEARNING_STORE_BACKEND:-json}
       POLICY_LEARNING_STORE_DSN: ${POLICY_LEARNING_STORE_DSN:-}
+      # Imitation-loop inbound authority (L12-IMIT-001).  The direct
+      # shadow-eval / worker routes are authenticated and tenant-bound, so the
+      # API and the scheduler sidecar below must share one credential and one
+      # tenant scope or every tick is a 401.  The default is a well-known
+      # local-cluster value that `inbound_authority.py` refuses once
+      # PANTHEON_PERSISTENCE_POSTURE is staging or prod; a real deployment
+      # supplies its own POLICY_LEARNING_SERVICE_TOKEN.
+      POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
+      POLICY_LEARNING_SERVICE_TENANTS: ${POLICY_LEARNING_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
+      # Agora DatasetVersion authority (owned by L12-AGORA-001).  Unset means
+      # "follow DATABASE_URL"; set these to read through a dedicated Agora
+      # read role instead of the shared application identity.
+      AGORA_DATASET_STORE_BACKEND: ${AGORA_DATASET_STORE_BACKEND:-}
+      AGORA_DATASET_STORE_DSN: ${AGORA_DATASET_STORE_DSN:-}
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
     volumes:
       - policy-learning-data:/data/policy-learning
     ports:
@@ -483,20 +588,41 @@ services:
       start_period: 5s
 
   policy-learning-shadow-eval-scheduler:
-    profiles: ["policy-learning-shadow-eval-scheduler"]
+    # Default-on. This is the human-imitation shadow-evaluation loop worker;
+    # leaving it behind an opt-in profile meant the loop never ticked on a
+    # normal deploy. It performs no external egress: it authenticates to the
+    # in-stack policy-learning API with the same service token and tenant
+    # scope as that API authorizes.
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
     command: ["python", "services/policy-learning/scheduler_worker.py"]
+    restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
       SHADOW_EVAL_MAX_DATASETS: ${SHADOW_EVAL_MAX_DATASETS:-}
+      SHADOW_EVAL_SCHEDULER_HEALTH_FILE: ${SHADOW_EVAL_SCHEDULER_HEALTH_FILE:-/tmp/policy-learning-shadow-eval-scheduler-health.json}
+      # Same credential and same tenant scope as policy-learning-svc above.
+      # The scheduler presents this token as `Authorization: Bearer` and the
+      # tenant as `X-Tenant-Id`; both must resolve to the same values the API
+      # authorizes, so they are interpolated from the same variables.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
     depends_on:
       policy-learning-svc:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/policy-learning/scheduler_worker.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
 
   research-orchestrator-svc:
     build:
@@ -705,6 +831,7 @@ services:
       start_period: 5s
 
   broker:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/broker/Dockerfile
@@ -731,6 +858,7 @@ services:
       start_period: 5s
 
   runtime-manager:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/runtime-manager/Dockerfile
@@ -757,7 +885,7 @@ services:
       PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_RUNTIME_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
-      PANTHEON_RUNTIME_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}
+      PANTHEON_RUNTIME_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}
       PANTHEON_RUNTIME_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
       PANTHEON_CANARY_EXECUTION_ENABLED: ${PANTHEON_CANARY_EXECUTION_ENABLED:-false}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
@@ -799,7 +927,7 @@ services:
       PANTHEON_GOVERNANCE_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_GOVERNANCE_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
-      PANTHEON_GOVERNANCE_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}
+      PANTHEON_GOVERNANCE_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}
       PANTHEON_GOVERNANCE_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -941,6 +1069,7 @@ services:
       start_period: 5s
 
   operator-bff:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
@@ -1004,7 +1133,19 @@ services:
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
       # Both lifecycle read models are switched through one projector-owned
       # generation symlink, so the BFF can never observe a mixed generation.
-      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/data/bff/lifecycle-projection/current/trade_journey_events.json}
+      # These projector-owned read surfaces are deliberately not host-overridable.
+      # A stale .env override would let readiness observe the canonical controller
+      # while BFF reads remained pinned to legacy snapshots.
+      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: /data/bff/lifecycle-projection/current/trade_journey_events.json
+      LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
+      LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
+      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
+      LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
@@ -1016,10 +1157,13 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
-      PANTHEON_BFF_LOOP_RUN_STORE: ${PANTHEON_BFF_LOOP_RUN_STORE:-/data/bff/lifecycle-projection/current/loop_runs.json}
+      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/lifecycle-projection/current/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      # One bounded PPL-ALLOC-009 acceptance producer. Keep false except for
+      # the exact governed paper proof run; closeout must restore false.
+      PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: ${PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND:-postgres}
       PANTHEON_PERSONA_PROVISIONING_STORE_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1066,7 +1210,7 @@ services:
       # Kernel capabilities must be supplied explicitly for an authorized
       # operator/admin identity; public viewer sessions remain read-only.
       PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
-      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_BFF_JWKS_URI: ${PANTHEON_BFF_JWKS_URI:-}
@@ -1099,8 +1243,9 @@ services:
       PANTHEON_BFF_ROLE_MAP_MODE: ${PANTHEON_BFF_ROLE_MAP_MODE:-passthrough}
       PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-operator}
       PANTHEON_BFF_MFA_REQUIRED: ${PANTHEON_BFF_MFA_REQUIRED:-false}
-      PANTHEON_BFF_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}
+      PANTHEON_BFF_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}
       PANTHEON_BFF_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
+      PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED: ${PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED:-false}
       PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
@@ -1191,7 +1336,11 @@ services:
     ports:
       - "18001:8001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
+      # Compose only owns process liveness. Exact deployment/projector
+      # readiness is revision-bound and bounded by deploy_nonprod_vm.sh after
+      # the stack is running, so a recovering projector must not make Compose
+      # abort the deployment before that gate can observe convergence.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/livez', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -1208,15 +1357,21 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
       LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
       LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
       LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
-      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-30}
+      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
+      LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}
       PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED: ${PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED:-false}
       GIT_SHA: ${GIT_SHA:-unknown}
     volumes:
@@ -1227,12 +1382,7 @@ services:
       telemetry:
         condition: service_healthy
     healthcheck:
-      # Deploy-unblock relaxation (OPS-PROJECTOR-HEALTH-RELAX 2026-07-17): strict CLI health
-      # is stronger than container readiness during startup/recovery. The projector now tracks a
-      # lifecycle-filtered source watermark, while hosted proofs remain the canonical acceptance
-      # gate for zero-backlog live truth. Lenient health still fails on crash (no state file), tick
-      # error (last_error set), or a truly-stuck loop (no poll 600s).
-      test: ["CMD-SHELL", "python -c \"import json,sys,datetime as dt; c=json.load(open('/data/bff/lifecycle-projection/controller_state.json'))['controller']; age=(dt.datetime.now(dt.timezone.utc)-dt.datetime.fromisoformat(c['last_poll_at'].replace('Z','+00:00'))).total_seconds(); sys.exit(0 if (c.get('last_error') is None and age < 600) else 1)\""]
+      test: ["CMD", "python", "-m", "services.trade_journey.lifecycle_projector", "healthcheck"]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -1482,6 +1632,7 @@ services:
       start_period: 5s
 
   capital:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/capital/Dockerfile
@@ -1500,6 +1651,11 @@ services:
       CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
       CAPITAL_AUDIT_BACKEND: ${CAPITAL_AUDIT_BACKEND:-jsonl}
       CAPITAL_AUDIT_DSN: ${CAPITAL_AUDIT_DSN:-}
+      # L12-MANIFEST-001 dev manifest admission: capital is a protected API.
+      # Render strict auth and a local/dev verifier input without enabling live
+      # broker or capital-binding writes.
+      CAPITAL_AUTH_MODE: ${CAPITAL_AUTH_MODE:-strict}
+      CAPITAL_JWT_SECRET: ${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}
     volumes:
       - capital-data:/data/capital
     depends_on:
@@ -1515,6 +1671,7 @@ services:
       start_period: 5s
 
   deployment:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -1552,17 +1709,23 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.deployment.outbox_consumer_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       DEPLOYMENT_API_URL: http://deployment:8095
       DEPLOYMENT_OUTBOX_CONSUMER_NAME: ${DEPLOYMENT_OUTBOX_CONSUMER_NAME:-deployment-outbox-consumer}
       DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS:-10}
       DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS: ${DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS:-0}
-      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-}
+      # Default the heartbeat on. The consumer rewrites this file on every
+      # tick (success or failure), which is what the healthcheck below reads.
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/tmp/deployment-outbox-consumer-health.json}
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}
       # Empty for the default global consumer; task-scoped one-shot recovery can
       # isolate a single saga without racing unrelated pending aggregates.
       DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID: ${DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID:-}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-pantheon-local-deployment-consumer}
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -1574,17 +1737,38 @@ services:
         condition: service_healthy
       runtime-manager:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c 'import os,sys,time;p=sys.argv[1];sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=float(sys.argv[2]) else 1)' ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/tmp/deployment-outbox-consumer-health.json} ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
 
   evolution:
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
+      EVOLUTION_STORE_DSN: ${EVOLUTION_STORE_DSN:-}
+      # Evolution write/read authority is tenant-bound even in the default dev
+      # compose topology. Production deployments must override this local-only
+      # shared credential; missing or mismatched credentials fail closed.
+      EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-token}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_AUTH_ALLOWED_TENANTS: ${EVOLUTION_AUTH_ALLOWED_TENANTS:-pantheon-default}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
     volumes:
@@ -1610,13 +1794,23 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.dispatch_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_DATA_DIR: /data/evolution
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      EVOLUTION_STORE_BACKEND: ${EVOLUTION_STORE_BACKEND:-json}
+      EVOLUTION_STORE_DSN: ${EVOLUTION_STORE_DSN:-}
+      EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-token}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
       EVOLUTION_DISPATCH_ACTOR_ID: ${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}
       EVOLUTION_DISPATCH_INTERVAL_SECONDS: ${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}
       EVOLUTION_DISPATCH_MAX_TICKS: ${EVOLUTION_DISPATCH_MAX_TICKS:-0}
       EVOLUTION_DISPATCH_TIMEOUT_SECONDS: ${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}
       EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}
+    volumes:
+      - evolution-data:/data/evolution
     depends_on:
       evolution:
         condition: service_healthy
@@ -1633,14 +1827,25 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.scheduler_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-token}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_SCHEDULER_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}
       EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
       EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
+      EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/tmp/evolution-scheduler-health.json}
     depends_on:
       evolution:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.scheduler_worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   evolution-threshold-sweep-producer:
     build:
@@ -1648,6 +1853,7 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.threshold_sweep_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
       EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
@@ -1657,6 +1863,7 @@ services:
       EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
       EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
       EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS:-172800}
+      EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE: ${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/tmp/evolution-threshold-sweep-health.json}
     volumes:
       # Bind-mounted so operators can retune threshold values without an
       # image rebuild: edit the host file, then restart this one service.
@@ -1667,6 +1874,12 @@ services:
         condition: service_healthy
       incidents:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.threshold_sweep_worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   lineage-read:
     build:
@@ -1688,6 +1901,7 @@ services:
       start_period: 5s
 
   paper-fleet-reconciler:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/execution/runtime-manager/Dockerfile
@@ -1734,6 +1948,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
+    stop_grace_period: 30s
     command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
     environment:
       SIGNAL_STORE_URL: redis://signal-store:6379
@@ -1742,13 +1957,23 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+      PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/tmp/paper-signal-producer-health.json}
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_CANARY_EXECUTION_ENABLED: "false"
     depends_on:
       runtime-manager:
         condition: service_healthy
       signal-store:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   reconciliation-drift-svc:
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1770,6 +1995,8 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      RECONCILIATION_DRIFT_AUTH_MODE: ${RECONCILIATION_DRIFT_AUTH_MODE:-token}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -1802,6 +2029,7 @@ services:
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/consumer.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
@@ -1811,6 +2039,9 @@ services:
       RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS:-1}
       RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ: ${RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ:-false}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/tmp/reconciliation-drift-consumer-health.json}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -1818,6 +2049,12 @@ services:
         condition: service_healthy
       telemetry:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/consumer.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   reconciliation-drift-scheduler:
     build:
@@ -1825,15 +2062,25 @@ services:
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/scheduler_worker.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS:-300}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/tmp/reconciliation-drift-scheduler-health.json}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/scheduler_worker.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   reconciliation-drift-incident-listener:
     build:
@@ -1841,6 +2088,7 @@ services:
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/incident_listener.py"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
@@ -1849,6 +2097,9 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_STATE_PATH: /data/reconciliation-drift/incident-listener-state.json
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
+      RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -1856,6 +2107,12 @@ services:
         condition: service_healthy
       incidents:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "services/reconciliation-drift/incident_listener.py", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
   research-worker-gateway-svc:
     build:
@@ -2123,6 +2380,7 @@ services:
   # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
   #
   # Run a single service:
+  #   docker compose --profile dormant-smoke up --wait mlflow-dormant-smoke
   #   docker compose --profile dormant-smoke run --rm finrl-dormant-smoke
   #   docker compose --profile dormant-smoke run --rm rllib-dormant-smoke
   #   docker compose --profile dormant-smoke run --rm ray-tune-dormant-smoke
@@ -2134,16 +2392,54 @@ services:
   # Each service exits after the smoke run completes.
   # ===========================================================================
 
+  mlflow-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: services/research/mlflow
+      dockerfile: Dockerfile
+    environment:
+      MLFLOW_HOST: 127.0.0.1
+      MLFLOW_PORT: "5000"
+      MLFLOW_SERVER_ALLOWED_HOSTS: localhost:*,127.0.0.1:*
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: http://localhost:*,http://127.0.0.1:*
+      MLFLOW_SERVER_DISABLE_SECURITY_MIDDLEWARE: "false"
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:5000/health', headers={'Host':'localhost'}), timeout=5).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: "no"
+
   finrl-dormant-smoke:
     profiles: ["dormant-smoke"]
     build:
-      context: .
-      dockerfile: services/research/finrl/Dockerfile
+      context: services/research/finrl
+      dockerfile: Dockerfile
       args:
         PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
       FINRL_BACKEND: "stub"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
     restart: "no"
 
@@ -2156,7 +2452,15 @@ services:
         PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
+      PANTHEON_RLLIB_PREP_ENABLED: "1"
+      PANTHEON_RLLIB_BACKEND: "stub"
       RLLIB_BACKEND: "stub"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     command: ["python", "smoke_test.py", "--enable-deferred-prep", "--deferred-backend", "stub"]
     restart: "no"
 
@@ -2169,7 +2473,15 @@ services:
         PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
+      PANTHEON_RAYTUNE_PREP_ENABLED: "1"
+      PANTHEON_RAYTUNE_BACKEND: "stub"
       RAY_TUNE_BACKEND: "stub"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     command: ["python", "ray_tune_smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
     restart: "no"
 

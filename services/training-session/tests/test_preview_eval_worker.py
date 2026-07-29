@@ -37,6 +37,8 @@ class _Response:
 
 def test_preview_eval_worker_tick_runs_claimable_jobs(monkeypatch) -> None:
     module = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
     requests = []
     heartbeats = []
 
@@ -72,12 +74,17 @@ def test_preview_eval_worker_tick_runs_claimable_jobs(monkeypatch) -> None:
     assert result["retryable"] == 0
     assert result["failed"] == 0
     assert requests[0].full_url.endswith("/api/training/preview-jobs?status=claimable&limit=5")
+    assert requests[0].get_header("Authorization") == "Bearer worker:training-service"
+    assert requests[0].get_header("X-tenant-id") == "tenant-test"
+    assert requests[0].get_header("X-pantheon-service") == "training-session-preview-worker"
     assert json.loads(requests[1].data) == {}
     assert heartbeats == ["alive", "alive"]
 
 
 def test_preview_eval_worker_reports_retryable_failures(monkeypatch) -> None:
     module = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
 
     def fake_urlopen(request, timeout):  # noqa: ANN001
         del timeout
@@ -110,5 +117,20 @@ def test_preview_eval_worker_alive_marker_is_written(tmp_path) -> None:
 
     module._write_alive(str(alive_path))
 
-    assert alive_path.read_text(encoding="utf-8").endswith("Z")
+    marker = json.loads(alive_path.read_text(encoding="utf-8"))
+    assert marker["status"] == "ok"
+    assert marker["completed_at"].endswith("Z")
     assert module.DEFAULT_ALIVE_PATH == "/data/training-session/preview-worker-alive"
+
+
+def test_preview_eval_worker_fails_closed_without_authority(monkeypatch) -> None:
+    module = _load_worker_module()
+    monkeypatch.delenv("TRAINING_SESSION_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("TRAINING_SESSION_TENANT_ID", raising=False)
+
+    try:
+        module.fetch_claimable_jobs(api_url="http://training-session-svc:8099", limit=1)
+    except RuntimeError as exc:
+        assert "inbound authority is incomplete" in str(exc)
+    else:
+        raise AssertionError("worker request must fail closed without service/tenant authority")

@@ -20,6 +20,11 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Any, Mapping, Protocol
 
+try:
+    from ..security import require_secure_ray_runtime
+except ImportError:
+    from security import require_secure_ray_runtime  # type: ignore
+
 from .rllib_adapter import (
     GovernedRLlibTrainEvalAdapter,
     PreparedRLlibDataset,
@@ -289,6 +294,7 @@ class RayTuneImportBackend:
     """Bounded offline Ray Tune search backend for activation-ready prep."""
 
     def run_search(self, prepared: PreparedRayTuneSearch) -> RayTuneSearchResult:
+        require_secure_ray_runtime()
         try:
             ray = importlib.import_module("ray")
             importlib.import_module("ray.tune")

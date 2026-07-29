@@ -40,6 +40,7 @@ from .interaction.router import create_interaction_router
 from .interaction.store import InteractionLifecycleStore
 from .governance.router import create_governance_router
 from .governance.store import ProposalStore
+from .performance.router import create_performance_router
 from .candidate_decisions.adapters import (
     CandidateBindingValidationAdapter,
     ReadStoreApprovalAdapter,
@@ -87,6 +88,7 @@ def create_agora_router(
     get_read_store: Callable[[], Any],
     sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
     canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
+    get_trade_journey_store: Callable[[], Any] = lambda: None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -209,11 +211,21 @@ def create_agora_router(
     ))
     router.include_router(create_research_router(**_kw))
     router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
+    router.include_router(create_performance_router(
+        **_kw,
+        require_write_role=require_write_role,
+        get_trade_journey_store=get_trade_journey_store,
+    ))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))
     router.include_router(create_personalization_router(**_kw))
     router.include_router(create_management_projection_router(**_kw))
-    router.include_router(create_dataset_extraction_router(**_kw))
+    router.include_router(
+        create_dataset_extraction_router(
+            **_kw,
+            require_write_role=require_write_role,
+        )
+    )
     router.include_router(create_interaction_router(
         **_kw,
         require_write_role=require_write_role,

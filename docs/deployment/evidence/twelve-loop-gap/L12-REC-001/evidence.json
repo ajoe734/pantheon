@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-REC-001",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "review_approved",
+  "generated_at": "2026-07-26T11:05:17Z",
+  "scope": {
+    "target_repo": "ajoe734/pantheon",
+    "merge_target": "dev",
+    "branch": "task/L12-REC-001",
+    "base_commit": "1827cce2e9d6c31f7b57ec4400f3c5d1b3bede29",
+    "owner_store_anchor": "9948a1da6be9969df7ce7c052ac64c5214189360",
+    "worker_api_anchor": "e175b29c71b73caa10eb1b2e35c46a4f3bc168f7",
+    "rejected_acceptance_regression_anchor": "23959c7ae2816067fa2a605397cd936f7e2e8eeb",
+    "consumer_recovery_repair_anchor": "f4d9a84d5c79b1669f260f25fd428054e65d45d2",
+    "approved_review_head": "ba5090aa558455aabd2afe39a30cf22be077b32e",
+    "artifacts": [
+      "services/reconciliation-drift",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001"
+    ]
+  },
+  "authority": {
+    "postgres_owner_records": [
+      "drift_evaluations",
+      "alert_handoffs",
+      "reconciliation_records",
+      "drift_reports",
+      "work_claims",
+      "worker_states"
+    ],
+    "json_durability": [
+      "strict full-document parse",
+      "cross-process transaction lock",
+      "atomic replace",
+      "file fsync",
+      "directory fsync"
+    ],
+    "tenant_storage_keyed": true,
+    "legacy_raw_fallback_exact_tenant": true,
+    "completed_window_receipt_immutable": true,
+    "old_lease_token_rejected_after_recovery": true,
+    "consumer_checkpoint_lease_token_cas": true,
+    "consumer_checkpoint_lease_renewal": true
+  },
+  "scheduler": {
+    "window_identity": "tenant_id + floored UTC observation interval",
+    "window_seconds_env": "RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS",
+    "sla_seconds_env": "RECONCILIATION_DRIFT_SCHEDULED_SLA_SECONDS",
+    "timeout_seconds_env": "RECONCILIATION_DRIFT_SCHEDULER_TIMEOUT_SECONDS",
+    "lease_seconds_env": "RECONCILIATION_DRIFT_SCHEDULER_LEASE_SECONDS",
+    "measured_fields": [
+      "duration_seconds",
+      "sla_seconds",
+      "within_sla",
+      "sla_status"
+    ],
+    "timeout_retry_preserves_window": true,
+    "timeout_must_cover_sla": true
+  },
+  "consumer": {
+    "claim_identity": "tenant_id + telemetry event_id",
+    "checkpoint_identity": "tenant_id + telemetry event_id",
+    "lease_seconds_env": "RECONCILIATION_DRIFT_CONSUMER_LEASE_SECONDS",
+    "checkpointed_state": [
+      "pending",
+      "dead_letters",
+      "completed",
+      "last_success_at",
+      "last_failure_at",
+      "lease_owner",
+      "lease_token",
+      "lease_expires_at"
+    ],
+    "checkpoint_requires_acquired_lease_token": true,
+    "release_requires_acquired_lease_token": true,
+    "checkpoint_renews_matching_lease": true,
+    "corrupt_state_overwritten": false,
+    "duplicate_report_storage": false,
+    "duplicate_incident_classification": false,
+    "completed_replay_returns_existing_report": true
+  },
+  "tenant_auth": {
+    "mode_env": "RECONCILIATION_DRIFT_AUTH_MODE",
+    "strict_mode": "token",
+    "token_env": "RECONCILIATION_DRIFT_AUTH_TOKEN",
+    "required_headers": [
+      "Authorization: Bearer <token>",
+      "X-Tenant-Id"
+    ],
+    "constant_time_token_compare": true,
+    "payload_tenant_match_required": true,
+    "tenant_filtered_reads": true,
+    "cross_tenant_incident_rejected": true
+  },
+  "proof": {
+    "two_scheduler_workers": {
+      "dependency_fetch_count": 1,
+      "evaluation_count": 1,
+      "competing_status": "deferred",
+      "competing_lease_status": "lease_active"
+    },
+    "two_consumer_workers": {
+      "report_build_count": 1,
+      "incident_classification_count": 1,
+      "durable_report_count": 1,
+      "competing_status": "deferred"
+    },
+    "consumer_lease_takeover": {
+      "successor_lease_preserved": true,
+      "successor_checkpoint_preserved": true,
+      "stale_checkpoint_rejected": true,
+      "stale_release_rejected": true,
+      "same_worker_id_token_rotation_covered": true
+    },
+    "tenant_event_identity": {
+      "shared_external_event_id": "shared-event-id",
+      "tenant_count": 2,
+      "enqueued_event_count": 2,
+      "delivered_event_count": 2,
+      "completed_receipt_count": 2
+    },
+    "tenant_legacy_fallback": {
+      "json_getters_exact_tenant": true,
+      "postgres_getters_exact_tenant": true,
+      "covered_record_types": [
+        "evaluation",
+        "alert_handoff",
+        "reconciliation_record",
+        "drift_report",
+        "worker_state"
+      ]
+    },
+    "sla": {
+      "duration_seconds": 0.25,
+      "sla_seconds": 1.0,
+      "within_sla": true,
+      "status": "met"
+    },
+    "corruption": {
+      "consumer_source_preserved": true,
+      "work_claim_source_preserved": true,
+      "dependency_fetch_after_corrupt_consumer_state": 0
+    },
+    "tenant_incident_correlation": {
+      "tenant_id": "tenant-a",
+      "incident_id": "incident-tenant-a-001",
+      "source_event_id": "event-tenant-a-001",
+      "telemetry_event_ids": [
+        "event-tenant-a-001"
+      ],
+      "cross_tenant_status_code": 403
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/main.py services/reconciliation-drift/consumer.py services/reconciliation-drift/scheduler_worker.py services/reconciliation-drift/incident_listener.py",
+      "result": "exit 0"
+    },
+    {
+      "command": "pytest -q services/reconciliation-drift/tests",
+      "result": "98 passed, 1 warning in 30.45s"
+    },
+    {
+      "command": "pytest -q services/foundation/tests/test_control_plane_postgres_owner_stores.py services/foundation/tests/test_persistence_posture.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "26 passed in 4.60s"
+    },
+    {
+      "command": "ruff check --select F,E9 services/reconciliation-drift/store.py services/reconciliation-drift/main.py services/reconciliation-drift/consumer.py services/reconciliation-drift/scheduler_worker.py services/reconciliation-drift/incident_listener.py services/reconciliation-drift/tests/test_l12_rec_001_hardening.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py",
+      "result": "All checks passed"
+    }
+  ],
+  "acceptance": {
+    "scheduled_reconciliation_measured_within_configurable_sla": true,
+    "two_workers_cannot_duplicate_logical_window": true,
+    "records_reports_and_worker_state_are_durable_tenant_scoped_authority": true,
+    "stale_consumer_cannot_overwrite_successor_lease_or_checkpoint": true,
+    "equal_event_ids_deliver_independently_per_tenant": true,
+    "legacy_raw_lookup_never_returns_a_foreign_tenant": true,
+    "corrupt_worker_state_fails_closed_without_overwrite": true,
+    "retry_dlq_and_dependency_restart_recover_without_duplicate_incidents": true,
+    "overall": "passed"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "Codex2",
+    "reviewed_at": "2026-07-26T11:05:17Z",
+    "approved_head": "ba5090aa558455aabd2afe39a30cf22be077b32e",
+    "validation": {
+      "rejected_regressions": "4 passed",
+      "reconciliation_suite": "98 passed, 1 known deprecation warning",
+      "affected_persistence_lifecycle_suite": "26 passed",
+      "python_compile": "passed",
+      "evidence_checksum_and_json_assertions": "passed",
+      "git_diff_check": "passed",
+      "required_pr_checks": "6 passed"
+    }
+  },
+  "boundaries": {
+    "reconciliation_remains_advisory": true,
+    "runtime_mutation_added": false,
+    "emergency_control_chain_changed": false,
+    "fixture_claimed_as_live_proof": false,
+    "hosted_activation_claimed": false
+  },
+  "residuals": [
+    "L12-MANIFEST-001 must activate the documented token, tenant, SLA, timeout, and lease settings in the selected hosted manifest.",
+    "A later hosted verification task must prove the merged/deployed implementation against current replacement-dev dependencies.",
+    "The test environment emits one Starlette TestClient/httpx deprecation warning."
+  ]
+}

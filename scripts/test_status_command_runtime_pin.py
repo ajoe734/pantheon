@@ -236,9 +236,13 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
 
     def _base_env(self, *, status_root: Path, worktree: Path, command_root: Path, command_sha: str) -> dict[str, str]:
         env = os.environ.copy()
-        # Clean any inherited status command environment variables to avoid leaking
+        # Clean inherited runtime bindings so synthetic roots do not read or
+        # write the live authoritative journal of the auto worker running this
+        # suite.
         for key in list(env.keys()):
-            if key.startswith("PANTHEON_STATUS_COMMAND_"):
+            if key.startswith("PANTHEON_STATUS_COMMAND_") or key.startswith(
+                "PANTHEON_TASK_STATE_"
+            ):
                 env.pop(key)
         env.update(
             {

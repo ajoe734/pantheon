@@ -1,0 +1,131 @@
+{
+  "bundle_version": "1.13",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_12.json",
+    "bundle_version": "1.12",
+    "bundle_index_sha256": "25ca80c94a622a0845266cbecab617f96fc47daa8a08736a166d1d88c9dec7c6"
+  },
+  "files": {
+    "specs/agora/v14/capability_manifest_v1_13.json": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
+    "sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+  },
+  "source_contracts": [
+    {
+      "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_10.json",
+      "bundle_sha256": "b8469492d1f97f99924de9d5f220eaa3ee430c94c8db2fe130a6d0261b33c775",
+      "manifest_path": "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json",
+      "manifest_sha256": "504a30b33a992f0a02bd2feadf35ce2ab29911c7284e64907f704dcab8b2d25e",
+      "openapi_path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+      "openapi_sha256": "9661492672164de1f79f01c68c6dd5c2d1898404ecda78e60c071aeed8bad69c"
+    },
+    {
+      "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_11.json",
+      "bundle_sha256": "202f97b5099806849511c69349f9c77e08f2c3420294dbe92ec6b1c2b07679a0",
+      "manifest_path": "services/control-plane/specs/agora/v12/capability_manifest_v1_11.json",
+      "manifest_sha256": "dcbe26ba0e3f3529d9ce38590aca16b8c6ae34ff614547b1be1d69894da37a61",
+      "openapi_path": "services/control-plane/openapi/agora_v1_11.openapi.yaml",
+      "openapi_sha256": "ce5e8d634c3518579301a3bc3bacc0998104dc483597ce31e1a6c1a2ef4e54a9"
+    },
+    {
+      "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_12.json",
+      "bundle_sha256": "25ca80c94a622a0845266cbecab617f96fc47daa8a08736a166d1d88c9dec7c6",
+      "manifest_path": "services/control-plane/specs/agora/v13/capability_manifest_v1_12.json",
+      "manifest_sha256": "d35999b82e6b606f22de5baf4e6d260f03ce85d0cc871f5c1aa68145a0543188",
+      "openapi_path": "services/control-plane/openapi/agora_v1_12.openapi.yaml",
+      "openapi_sha256": "88a707090a1e58ebe3159d530ab437f6f0bb0d130f26e396edf6f1de3678f53f"
+    }
+  ],
+  "required_definition_checksums": {
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/AdjustmentSuggestion": "4beb66a7c297d6fc8471687e8656c3e56725e54259b182b28c4ac749de0cc362",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/ComplianceMetric": "b43047bee764f740e4fc7c6748ab1416a50222b548d2b09e818820536bfbd63c",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/ExecutionHistoryRow": "1cca8915e988748e56df6603893364212eb035956c141a9e45ee2c33c996a590",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/InterventionRecord": "cb6d47a6d063574e21314757dfcaaee6ba324928021ebadccdcc601fe2994821",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/PerformanceProjectionEnvelope": "4c75bae6d277d2e29811c58f96d8f359448aad1792a3989fb65a30883c6d31ae",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/PerformanceWarning": "40fc759d5a57e00e2a8ad7d53458b76ede3ac8367e0c0c1786c389507f6350ce",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/SourceAvailability": "ea6786ca80d701d32e42d14df83d3890aa7c3e8f191d01b22f9d026057ecb543",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/StrategyPerformanceProjection": "45cba7ea036748885279dab02fe72ac0f77080fc235b5112c49b08dfb8d22e6a",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionEnvelope": "6b55f84cb4bee233ee136edbcc0bda6f5183a8f8dfc0d5121a1510b8f2f66f10",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionReceipt": "cef31a45bd53e84263fa8f62dc3f3c2d58affbdd39607492abc1edd99e2efe4f",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionRequest": "db7af82a71071b0f904b8ed105689b7abce2fdee71ef7aaa18bc3003968e6022",
+    "services/control-plane/specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionProvenance": "56c09b2ecde3f96ed3988b7d4fdae5df60c76d8c354ebdf4d31a3fea7c83f47a",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/AuthoritativeStrategySpecReadback": "b0268fb83c46067c6a56c235ab0fd08ba08caf81684b185445ceaaeb567be47a",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/LegacyVersionBackfillRule": "39a7fb43d285f56c0088015bdee1fb5112c20765673c4f1742b8c4a266dd2f6b",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionCreateEnvelope": "a6f40d565138cb4cf757967b99e6d728477c56a337215600c020f5ffbf130873",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionLink": "a2488b6b367bb0b3ea21217f904a3246974a595123d46084d8665dbd907fc8a6",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionListEnvelope": "167666ab48c6ca012aec3869c69fb2ce15f9b381c59557feb2be00487a2d2b40",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionResource": "772e2e763ea8f0e14417b4a44460accdde542d64f4c990bd2d1accf80e44b716",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionSelectEnvelope": "b0a7c22b8010a34758ab898889b1a24437dc3b4ef5899df87783560da906393a",
+    "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionSelectResource": "ec774c2ea5868b67a91f8fa30cc5ed3bd14e540888e8c95b6c4a7b612637e889",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConcludeEnvelope": "94023dbdd4d75bb39bab36800079c936e06b727e8e48ca327627830d7beadc6a",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConcludeFinalVersionRule": "baf78e96d8615d524ad6e9241699c4b295fa16634b7f32712bc502532e3a1a6f",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConcludeResource": "6941fcc09dde716bdba5a94b2595771b85876ce36a4de71cf08f4ce4cf0ba380",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConsultationEnvelope": "2a29bf9b08936c7e2f749b80277e600974336d34047743a6ab1d966ca04fc82b",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConsultationResource": "8fb67e74112828c4dd5065de82ec0fcb70bd8126477baae691c80a256a2029cc",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopOperationCommandReceipt": "3d8faad82cac37b9d45c565ca0bd27e3e0eec69464ee10a490e1a8f1402ca875",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopOperationDurabilityRule": "5ba628b03ca50bb6842b71a1cf8221a1a87d21324709bdb02c488a3bd758f994",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopResearchRunEnvelope": "6cb2a0ea0af270c2401f727fcf15c50978bbc970c6d2ee44184ab2c950be79d8",
+    "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopResearchRunResource": "41ec44a335db903b8c5e171c35c180d4acb3300fb58f156891af99e24fea0b14",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsAvailableField": "83c79e78017abeb23a1c170a093fa89926519a97b7cc86be9f9f414dbc84d550",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsFieldState": "3e8ca3d8cf3ae9540f2602395f7969fa5be28c56e8674c8fd364afad5d683d3e",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsValue": "bf4cd0551ee4daf7f8502acf34f02645f2dc542b7920a8ea75470914e30f7d42",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsAvailableField": "e27b48281da0e697e9132502cca0eeaa8d6e2753ea1c08d49547fe9c9d72416f",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsFieldState": "7949795c7105708d29f59405d1c333c28f58e0a4c9fd1b98cc9beb9a643ebaa2",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsValue": "8fc046c635068576d3b31c0666eeca28527a752f3cc261ca07d83ac6360d1dc2",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceAvailableField": "e6d920bf37f741202dc18e9093e954bfbdc2c4907b498a2070fa96e324e1e4e6",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceFieldState": "59b406855e46061d0a091e3f64b0030e3e417c9f862f695687ea74bc13f19a28",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceItem": "41d3a22b29ab2248c539fce5a1c311663075a17b772cba865c591e076c04be08",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceValue": "f7af8046d6818eaa3951a326a6d98cbf68626bbf259d4f65dcff4253772ec759",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateFieldState": "3449c12be31303a6b4a40c62ec4994dcb45dde979c074a12697eb1967932bbf0",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberListFreshness": "c9261381ba7863efd80c292a8383274481698371534ea16b4d950318b47d3a2b",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberPageInfo": "8e73a26817629b4119796cf3306b3202d2ab259435b348418070e33c9e95850c",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberTruthProjection": "06ef01762b711571d0efbc8ba92aa64dbf6ba6af5024eb1dec28beeaa7c2b468",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventAvailableField": "0cdef977c3bd1aa444ef444b67f0e5813bce9053567cc88579a5986fc6c41102",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventFieldState": "ee682f3511a6cdcf371a69c06ba274d8cb63b459ea491c011ecf4c7b7d11e528",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventValue": "a90919753378fc5e0c0d7dcf0788243ab2c09a91107d0d4e91f7ed7cddc6e6c5",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleAvailableField": "c99e997e306131c0d4dab009291d6ee79a4ae4e73c6454b03cdb483c7bbef057",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleFieldState": "cdfc2d13da8ece7d9fb69155bf6fcd7920b6d8595308733c7c0eeeaf7803d16f",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleValue": "2c4ba5976a7f5cd0b73b3e70f17be208942e4bacb6afbdf5df3d066089047227",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateScoreSemantics": "19084530d965afb99a09fabca71b786445ebbe6cba0e4694cc339c3c7e923691",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateTruthFields": "8811b326f5537ca2df0a3e1fc4136972d5b1c44348b894d1c0d6778f88a3c751",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/ComponentDigest": "cbbe123d963001623e4efddd6ec88c9c743ed4638989b0cec3538bfc3134f896",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/FieldProvenance": "ed99cbd2b7c11da08e1930c2e35bc42863b64ced84adcc949f4fb414aa4814da",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/ScoreSemanticsEntry": "6db56f38dfda15c5dd7be7e056d9c26ceb96ee333e52bf4f2d6c1f5e621c93bf",
+    "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/UnavailableField": "106646eba2a84192d8143a48ae7e9a3f32e8de1251a288549ef42e8658b21942"
+  },
+  "route_families": {
+    "agora.performance.truth.v1": [
+      "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
+      "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
+      "GET /bff/agora/performance/action-receipts/{receipt_id}"
+    ],
+    "agora.workshop.versions.durable.v1": [
+      "GET /bff/agora/workshops/{workshop_id}/versions",
+      "POST /bff/agora/workshops/{workshop_id}/versions",
+      "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select"
+    ],
+    "agora.workshop.operations.durable.v1": [
+      "POST /bff/agora/workshops/{workshop_id}/research-runs",
+      "POST /bff/agora/workshops/{workshop_id}/consultations",
+      "POST /bff/agora/workshops/{workshop_id}/conclude"
+    ],
+    "agora.candidate.truth.v1": [
+      "GET /bff/agora/candidate-pools/{pool_id}/members",
+      "GET /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}"
+    ]
+  },
+  "implementation_status": "implemented",
+  "compatibility_status": "pending",
+  "blocking_reasons": [
+    "frontend-generated-contract-commit-not-supplied",
+    "frontend-generated-types-not-supplied",
+    "frontend-runtime-commit-not-supplied"
+  ],
+  "hash_policy": {
+    "file_hash": "sha256-exact-git-bytes-v1",
+    "definition_hash": "sha256-canonical-json-sort-keys-compact-v1"
+  },
+  "note": "AG-COMPAT-001-BE aggregate over exact v1.10-v1.12 leaves. Frontend identity and generated-type evidence are intentionally absent, so compatibility is pending."
+}

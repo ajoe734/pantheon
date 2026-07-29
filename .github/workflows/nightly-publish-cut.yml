@@ -1,7 +1,8 @@
 name: Hourly Publish Cut
 
 # Cut a publish snapshot from dev every hour (or on demand) when dev has
-# advanced since the latest release tag, then auto-deploy it to the dev VM.
+# advanced since the latest release tag. Publish cuts only create immutable
+# promotion inputs; dev deployment is a separate exact-pair-admitted operation.
 # Per docs/conventions/GIT_WORKFLOW.md §3 (per-task PR model, 2026-05-17).
 #
 # Trigger:
@@ -12,10 +13,8 @@ name: Hourly Publish Cut
 # can run the same sequence locally. The version suffix (vYYYY.MM.DD.N) auto-
 # increments within a UTC day, so multiple cuts per day never collide.
 #
-# Deploy: nonprod-deploy.yml's `on: push: publish/v*` trigger does NOT fire for
-# branches pushed with GITHUB_TOKEN (GitHub suppresses recursive workflow runs),
-# so after a successful cut we explicitly dispatch it via the API. workflow_dispatch
-# IS exempt from the GITHUB_TOKEN suppression, so this reliably rolls dev forward.
+# No deploy dispatch lives here. A publish candidate may exist before the
+# accepted FE/BFF pair is ready, and must not create a doomed deploy run.
 
 on:
   schedule:
@@ -30,7 +29,6 @@ on:
 
 permissions:
   contents: write
-  actions: write   # dispatch nonprod-deploy after a cut
 
 concurrency:
   group: nightly-publish-cut
@@ -86,30 +84,24 @@ jobs:
         run: |
           out=$(bash scripts/git/nightly_publish.sh now)
           echo "$out"
-          # nightly_publish.sh prints "  branch: publish/vYYYY.MM.DD.N" on success.
+          # The helper emits one machine-readable publish_branch line on success.
           # If dev did not actually advance between the check and now (e.g. a
           # back-to-back queued run already cut this SHA), `now` no-ops and prints
           # no branch line — that is a benign skip, not a failure.
-          branch=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*branch:[[:space:]]*//p' | head -1)
+          branch=""
+          while IFS= read -r line; do
+            case "$line" in
+              publish_branch=*)
+                branch="${line#publish_branch=}"
+                break
+                ;;
+            esac
+          done <<< "$out"
           if [[ -z "$branch" ]]; then
-            echo "no snapshot cut this run (dev did not advance); skipping deploy"
+            echo "no snapshot cut this run (dev did not advance)"
           else
             echo "publish_branch=$branch" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Deploy snapshot to dev
-        if: steps.check.outputs.should_cut == 'true' && steps.cut.outputs.publish_branch != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          branch="${{ steps.cut.outputs.publish_branch }}"
-          echo "Dispatching nonprod-deploy for ${branch} -> dev"
-          # workflow_dispatch (unlike push) IS triggered by GITHUB_TOKEN, so this
-          # reliably rolls the dev VM forward to the freshly cut snapshot.
-          gh workflow run nonprod-deploy.yml \
-            -f environment=dev \
-            -f component=auto \
-            -f ref="${branch}"
 
       - name: Summary
         if: always()
@@ -119,4 +111,5 @@ jobs:
             echo "- should_cut: ${{ steps.check.outputs.should_cut }}"
             echo "- trigger: ${{ github.event_name }}"
             echo "- publish_branch: ${{ steps.cut.outputs.publish_branch }}"
+            echo "- deploy_dispatched: false"
           } >> "$GITHUB_STEP_SUMMARY"

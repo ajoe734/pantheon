@@ -1,0 +1,360 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-DEP-001 product-level owner closeout gate.",
+    "note": "Closeout manifest over the independently reviewed dispatcher receipt in the parent directory.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Append-only after the closeout manifest PR merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T10:43:29Z",
+    "evidence_cut_semantics": "Owner closeout over independently approved deterministic controller and service evidence; no Compose activation or live-capital mutation.",
+    "id": "L12-DEP-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Deployment",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-DEP-001",
+    "title": "Lease and authenticate the Deployment saga dispatcher"
+  },
+  "authorities": {
+    "actual_state": [
+      "DeploymentSaga and canonical outbox/inbox records",
+      "deployment_outbox_leases.json",
+      "RuntimeBinding authoritative readback",
+      "outbox retry, DLQ, replay, and compensation receipts"
+    ],
+    "desired_state": [
+      "immutable approved artifact",
+      "ApprovalDecision",
+      "DeploymentPlan",
+      "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DEP-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Deployment owns plans, sagas, outbox/inbox, and lease receipts; Runtime Manager remains sole RuntimeBinding writer.",
+    "composes_with": [
+      "L12-MANIFEST-001",
+      "existing L1 DeploymentSaga outbox/inbox and RuntimeBinding contracts",
+      "PR #4153"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_dep_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/deployment/auth.py",
+      "services/deployment/models.py",
+      "services/deployment/outbox_consumer_worker.py",
+      "services/deployment/outbox_lease.py",
+      "services/deployment/promote_pipeline.py",
+      "services/deployment/service.py",
+      "services/promotion/main.py"
+    ],
+    "not_changing": "RuntimeBinding write ownership, Compose or deployment manifest activation, approval gate semantics, or live-capital authority.",
+    "owned_layer": "Deployment and promotion authentication/tenant boundary plus Deployment outbox dispatcher ownership and recovery"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "e3dbda3b0046f439709c6cd47d3fb0ac1bacfb79",
+        "subject": "L12-DEP-001: anchor authenticated outbox lease",
+        "delivery_state": "merged"
+      },
+      {
+        "sha": "b72a2edccc1f0e214e6b1b30aa09b49f9e7c160c",
+        "subject": "L12-DEP-001: anchor deployment dispatcher layer",
+        "delivery_state": "merged"
+      },
+      {
+        "sha": "d9bc76c2d9580d7da9130247f428bd7668d8ab57",
+        "subject": "L12-DEP-001: prove authenticated dispatcher recovery",
+        "delivery_state": "merged"
+      },
+      {
+        "sha": "22e9e319ef340b2822d7382ad49890ca09207110",
+        "subject": "L12-DEP-001: record approved owner closeout",
+        "delivery_state": "merged"
+      }
+    ],
+    "pull_request": {
+      "number": 4153,
+      "url": "https://github.com/ajoe734/pantheon/pull/4153",
+      "head_sha": "d18f9a4b9353aeeb9ea721a010fc98757d58b96e",
+      "base": "dev",
+      "merged_at": "2026-07-26T10:38:02Z"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 30198574548,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30198574548",
+        "head_sha": "d18f9a4b9353aeeb9ea721a010fc98757d58b96e",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/deployment services/promotion",
+        "result": "pass",
+        "conclusion": "166 passed, 1 existing warning after updating the task branch with the latest dev"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile services/deployment/auth.py services/deployment/outbox_lease.py services/deployment/models.py services/deployment/service.py services/deployment/outbox_consumer_worker.py services/deployment/promote_pipeline.py services/promotion/main.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      },
+      {
+        "command": "sha256sum -c evidence.sha256 from docs/deployment/evidence/twelve-loop-gap/L12-DEP-001",
+        "result": "pass",
+        "conclusion": "evidence.json: OK"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ],
+    "validated_at": "2026-07-26T10:39:03Z",
+    "validated_base_sha": "eea102e4e1188729708d5028ce651dd64f91815e",
+    "validated_head_sha": "d18f9a4b9353aeeb9ea721a010fc98757d58b96e"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "dev",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "status": "not_applicable",
+      "reason": "This task reconciles the dispatcher contract and fails closed until L12-MANIFEST-001 activates its credentials."
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable",
+      "reason": "No service deployment or restart is part of L12-DEP-001."
+    },
+    "identity_admission": {
+      "status": "pass",
+      "proof": "Service-token and tenant identity are mandatory at the boundary; missing deployment wiring fails closed."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-26T10:39:03Z",
+      "status": "pass",
+      "mode": "deterministic service acceptance before manifest activation",
+      "controller_liveness": "A clean idle poll restores degraded dispatcher health and records last_idle_success and last_recovered_at.",
+      "terminal_readback": "RuntimeBinding and DEP-003 terminal projections are authoritatively re-read before outbox acknowledgement.",
+      "activation_boundary": "L12-MANIFEST-001 remains responsible for dev token, tenant, and auth-mode wiring."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "Two concurrent store instances race on one event and exactly one receives a process-safe lease claim.",
+        "A RuntimeBinding response-loss crash followed by lease recovery reuses the recorded binding id and leaves RuntimeManagerClient.deploy called once."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Missing bearer identity, unauthorized roles, missing tenants, and cross-tenant reads fail closed.",
+        "Retry scheduling, dead-letter state, governed replay, compensation sequencing, and clean-idle health recovery are observable."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "DeploymentPlan tenant is copied to DeploymentSaga metadata.",
+        "The dispatcher copies the authenticated tenant and foundation correlation id into RuntimeBinding dispatch metadata and re-reads current terminal state before receipt."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "Lease expiry increments recovery_count, rejects the prior owner's stale acknowledgement, and permits one recovered owner.",
+        "A successful empty poll restores degraded worker health and records the recovery transition."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "Kill-switch and safe-mode containment retain priority over rollback compensation.",
+        "Terminal predecessor acknowledgement unblocks compensation in order, while retry, DLQ, replay, and compensation receipts remain observable."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "The task changes service behavior and evidence only; it does not activate a dev Compose manifest."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "Service-to-service bearer authentication is in scope; interactive operator MFA policy is unchanged."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "No broker, allocation, or live-capital authority is enabled."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Deployment and promotion protected routes require an accepted authenticated service, operator, or governance role."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Persisted plan, saga, outbox/inbox, approval, and promotion ownership is filtered or rejected at the authenticated tenant boundary."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Owner Codex2 and independent reviewer Codex remained distinct; Codex approved implementation commit d9bc76c2d9580d7da9130247f428bd7668d8ab57."
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/deployment/test_service.py::test_deployment_boundary_requires_authenticated_actor_and_tenant",
+        "services/deployment/test_service.py::test_deployment_plan_actor_and_tenant_are_server_authoritative",
+        "services/promotion/test_service.py::test_promotion_boundary_requires_authenticated_actor_and_tenant"
+      ],
+      "id": "AC1",
+      "statement": "Deployment mutations authenticate authoritative actor and tenant.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/deployment/test_l12_dep_001_dispatcher.py::test_concurrent_consumers_cannot_claim_the_same_event"
+      ],
+      "id": "AC2",
+      "statement": "Two consumers cannot concurrently own the same outbox event.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/deployment/test_l12_dep_001_dispatcher.py::test_crash_after_runtime_binding_side_effect_recovers_without_duplicate",
+        "services/deployment/test_runtime_manager_dispatch_adapter.py::TestIdempotentReplay::test_binding_created_response_loss_allows_only_plan_lifecycle_drift"
+      ],
+      "id": "AC3",
+      "statement": "Crash after RuntimeBinding side effect and before acknowledgement does not duplicate the binding.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/deployment/test_service.py::test_saga_progress_exposes_dlq_block_and_idempotent_replay",
+        "services/deployment/test_outbox_consumer_worker.py::TestMain::test_successful_idle_poll_recovers_degraded_health",
+        "services/deployment/test_outbox_consumer_worker.py::TestRunPoll::test_terminal_predecessor_ack_unblocks_compensation_sequence"
+      ],
+      "id": "AC4",
+      "statement": "Retry, DLQ, replay, compensation, and idle health recovery are visible.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/deployment/test_outbox_consumer_worker.py::TestRunPoll::test_binding_requested_downstream_success_before_receipt",
+        "services/deployment/test_outbox_consumer_worker.py::TestRunPoll::test_completed_runtime_load_revalidates_terminal_projection_before_receipt"
+      ],
+      "id": "AC5",
+      "statement": "Approval, plan, saga, binding, and runtime stages retain shared correlation and current downstream terminal readback.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "manifest_activation_pending": {
+      "blocking_for_this_task": false,
+      "containment": "The worker fails closed when the service token or tenant is missing.",
+      "description": "Compose and dev environment must inject the dispatcher service token, tenant, and selected auth mode before activation.",
+      "expiry": "L12-MANIFEST-001 completion.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "L12-MANIFEST-001 validation.",
+      "severity": "medium"
+    },
+    "file_lease_topology": {
+      "blocking_for_this_task": false,
+      "containment": "fcntl serialization and atomic replace prevent concurrent ownership on the shared path; a future distributed store must preserve compare-and-set semantics.",
+      "description": "The reconciled file-backed baseline assumes all dispatcher replicas share one POSIX lease path.",
+      "expiry": "Before multi-host dispatcher scaling.",
+      "owner": "Deployment",
+      "recheck_trigger": "Any change from a shared POSIX path to multi-host dispatcher replicas.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+    "normalized_hosted_readback": {
+      "status": "pass",
+      "mode": "deterministic service acceptance before manifest activation",
+      "controller_liveness": "idle recovery and terminal downstream readback proved"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest.",
+    "source_artifact_sha256_by_epoch": {
+      "reviewed_dispatcher_receipt": "6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T10:07:02Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json",
+      "sequence": 1,
+      "sha": "d9bc76c2d9580d7da9130247f428bd7668d8ab57",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T10:21:43Z",
+      "reference": ".orchestrator/task-briefs/l12_dep_001.md",
+      "sequence": 2,
+      "sha": "d9bc76c2d9580d7da9130247f428bd7668d8ab57",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T10:43:29Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4153",
+      "sequence": 3,
+      "sha": "7e62bc6fde22f9abe93090be893f02faf70631d5",
+      "status": "pass"
+    }
+  ]
+}

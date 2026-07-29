@@ -1,0 +1,880 @@
+openapi: 3.1.0
+info:
+  title: Pantheon Agora API v1.13 Complete Backend Contract
+  version: 1.13.0
+  description: Deterministic additive aggregate over the exact v1.12 bundle for frontend generation. It
+    combines the implemented Strategy Performance truth, durable Workshop version and operation lifecycle,
+    and candidate member truth leaves. Availability/provenance envelopes and governed write receipts are
+    preserved; no route in this aggregate has execution authority or a deferred/501 disposition.
+  x-extends-contract: services/control-plane/specs/agora/bundle_index.v1_12.json
+  x-capability-manifest: services/control-plane/specs/agora/v14/capability_manifest_v1_13.json
+  x-implementation-status: implemented
+  x-source-contracts:
+  - services/control-plane/openapi/agora_v1_10.openapi.yaml
+  - services/control-plane/openapi/agora_v1_11.openapi.yaml
+  - services/control-plane/openapi/agora_v1_12.openapi.yaml
+servers:
+- url: '{bff_base}'
+  variables:
+    bff_base:
+      default: https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
+security:
+- BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+    CookieSession:
+      type: apiKey
+      in: cookie
+      name: pantheon_session
+  parameters:
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    SuggestionId:
+      name: suggestion_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    ReceiptId:
+      name: receipt_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    WorkshopId:
+      name: workshop_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: ^W/"workshop:.+:v[0-9]+"$
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    PerformanceIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    XMfaToken:
+      name: X-MFA-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+    PoolId:
+      name: pool_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    LifecycleState:
+      name: lifecycle_state
+      in: query
+      schema:
+        type: string
+        enum:
+        - candidate
+        - review
+        - approved
+        - rejected
+    Band:
+      name: band
+      in: query
+      schema:
+        type: string
+        enum:
+        - priority_review
+        - discuss
+        - needs_research
+        - park
+        - suppressed
+    MemberPageToken:
+      name: page_token
+      in: query
+      schema:
+        type: string
+        pattern: ^cpm-offset-[0-9]+$
+        description: Opaque stable-order offset token issued by a previous page.
+    MemberPageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+  schemas:
+    PerformanceProjectionEnvelope:
+      $ref: ../specs/agora/v11/performance_truth.schema.json#/definitions/PerformanceProjectionEnvelope
+    SuggestionActionRequest:
+      $ref: ../specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionRequest
+    SuggestionActionEnvelope:
+      $ref: ../specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionEnvelope
+    WorkshopVersionCreateRequest:
+      $ref: ../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopVersionCreateRequest
+    WorkshopVersionListEnvelope:
+      $ref: ../specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionListEnvelope
+    WorkshopVersionCreateEnvelope:
+      $ref: ../specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionCreateEnvelope
+    WorkshopVersionSelectEnvelope:
+      $ref: ../specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionSelectEnvelope
+    ErrorEnvelope:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+      additionalProperties: false
+    WorkshopResearchRunRequest:
+      $ref: ../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopResearchRunRequest
+    WorkshopConsultationRequest:
+      $ref: ../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopConsultationRequest
+    WorkshopConcludeRequest:
+      $ref: ../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopConcludeRequest
+    WorkshopResearchRunEnvelope:
+      $ref: ../specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopResearchRunEnvelope
+    WorkshopConsultationEnvelope:
+      $ref: ../specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConsultationEnvelope
+    WorkshopConcludeEnvelope:
+      $ref: ../specs/agora/v12/workshop_operation_lifecycle.schema.json#/definitions/WorkshopConcludeEnvelope
+    CandidateFieldState:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateFieldState
+    CandidateRationaleFieldState:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleFieldState
+    CandidateConcernsFieldState:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsFieldState
+    CandidateNextEventFieldState:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventFieldState
+    CandidateEvidenceFieldState:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceFieldState
+    CandidateDetailsFieldState:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsFieldState
+    CandidateTruthFields:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateTruthFields
+    CandidateScoreSemantics:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateScoreSemantics
+    CandidateMemberTruthProjection:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberTruthProjection
+    CandidateMemberPageInfo:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberPageInfo
+    CandidateMemberListFreshness:
+      $ref: ../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberListFreshness
+    CandidateMemberListItem:
+      description: 'Frozen v1.4 member projection (artifact_id, strategy_ref, title,
+
+        lifecycle_state, producing_persona_id, sharpe_summary, run_ref,
+
+        created_at, and post-score current_score/band/rank/effective_score)
+
+        merged with the additive CandidateMemberTruthProjection keys.
+
+        '
+      allOf:
+      - $ref: '#/components/schemas/CandidateMemberTruthProjection'
+      - type: object
+        properties:
+          strategy_ref:
+            type: string
+          title:
+            type:
+            - string
+            - 'null'
+          lifecycle_state:
+            type: string
+          producing_persona_id:
+            type:
+            - string
+            - 'null'
+          sharpe_summary:
+            type:
+            - number
+            - 'null'
+          run_ref:
+            type:
+            - string
+            - 'null'
+          created_at:
+            type: string
+          current_score:
+            type: object
+            description: Score projection with component explanations omitted on every list response.
+            additionalProperties: true
+          band:
+            type:
+            - string
+            - 'null'
+          rank:
+            type:
+            - integer
+            - 'null'
+          effective_score:
+            type:
+            - number
+            - 'null'
+        additionalProperties: true
+    CandidateMemberListEnvelope:
+      type: object
+      required:
+      - items
+      - page_info
+      - meta
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CandidateMemberListItem'
+        page_info:
+          $ref: '#/components/schemas/CandidateMemberPageInfo'
+        meta:
+          type: object
+          required:
+          - snapshot_at
+          - capability
+          - audience
+          - no_order_route_proof
+          - freshness
+          properties:
+            snapshot_at:
+              type: string
+              format: date-time
+            capability:
+              const: agora.research.v1
+            audience:
+              type: string
+              pattern: ^tenant:.+:user:.+$
+            no_order_route_proof:
+              const: candidate_pool_bff_request_only_no_order_route
+            freshness:
+              $ref: '#/components/schemas/CandidateMemberListFreshness'
+          additionalProperties: true
+      additionalProperties: false
+    CandidateMemberDetailEnvelope:
+      type: object
+      required:
+      - object_ref
+      - status
+      - lifecycle_state
+      - allowedActions
+      - data
+      - meta
+      - links
+      properties:
+        object_ref:
+          type: object
+          required:
+          - type
+          - id
+          properties:
+            type:
+              const: candidate_pool_member
+            id:
+              type: string
+              minLength: 1
+          additionalProperties: false
+        status:
+          type: string
+        lifecycle_state:
+          type: string
+        allowedActions:
+          type: object
+          additionalProperties:
+            type: boolean
+        data:
+          description: 'Frozen v1.4 detail keys (candidate, score, reviews, monitoring,
+
+            negative_examples, lifecycle_state) merged with the additive
+
+            CandidateMemberTruthProjection keys minus artifact_id (carried by
+
+            object_ref). Evidence summaries are populated only for
+
+            operator-grade roles; viewer-only callers receive
+
+            summary_redacted=true with redaction_reason=viewer_role.
+
+            '
+          type: object
+          required:
+          - candidate
+          - fields
+          - as_of
+          - score_semantics
+          properties:
+            candidate:
+              type: object
+              additionalProperties: true
+            score:
+              type:
+              - object
+              - 'null'
+              description: Full score for operator-grade callers; component explanations omitted for viewer-only
+                callers.
+              additionalProperties: true
+            reviews:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            monitoring:
+              type:
+              - object
+              - 'null'
+              additionalProperties: true
+            negative_examples:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            lifecycle_state:
+              type:
+              - string
+              - 'null'
+            fields:
+              $ref: '#/components/schemas/CandidateTruthFields'
+            as_of:
+              type: string
+              minLength: 1
+            score_semantics:
+              $ref: '#/components/schemas/CandidateScoreSemantics'
+          additionalProperties: true
+        meta:
+          type: object
+          additionalProperties: true
+        links:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
+  responses:
+    BadRequest:
+      description: Required command headers or request payload are invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthorized:
+      description: Authentication or MFA proof is missing
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    V110Forbidden:
+      description: Role, tenant, user, or Strategy Registry scope is denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    V110NotFound:
+      description: Resource is not visible in the actor scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    V110Conflict:
+      description: Stale ETag, idempotency mismatch, immutable digest mismatch, or projection conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    V111Forbidden:
+      description: Role, tenant, user, or approval-actor scope is denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    V111NotFound:
+      description: Workshop is not visible in the actor scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    V111Conflict:
+      description: Stale ETag, idempotency mismatch, unselected or incomplete final version, previously
+        failed key, or terminal workshop
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UpstreamInvalid:
+      description: Authoritative downstream readback is invalid or incomplete
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    DependencyUnavailable:
+      description: Canonical downstream service or durable workshop store is unavailable; the failed receipt
+        is durable and a new Idempotency-Key may retry
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+paths:
+  /bff/agora/trading-room/strategies/{strategy_id}/performance:
+    get:
+      operationId: getAgoraStrategyPerformance
+      summary: Read authoritative Strategy Performance detail
+      parameters:
+      - $ref: '#/components/parameters/StrategyId'
+      - $ref: '#/components/parameters/XTenantId'
+      - name: period
+        in: query
+        schema:
+          enum:
+          - latest
+          - 7d
+          - 30d
+          - all
+          default: latest
+      - name: environment
+        in: query
+        schema:
+          enum:
+          - paper
+          - broker_sandbox
+          - canary
+          - live
+          default: paper
+      responses:
+        '200':
+          description: Scoped projection, including typed unavailable sections.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceProjectionEnvelope'
+        '401':
+          description: Authentication required
+        '403':
+          description: Role or tenant scope denied
+  /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions:
+    post:
+      operationId: actOnAgoraPerformanceSuggestion
+      summary: Apply, reject, or return a governed suggestion to Workshop
+      parameters:
+      - $ref: '#/components/parameters/StrategyId'
+      - $ref: '#/components/parameters/SuggestionId'
+      - $ref: '#/components/parameters/PerformanceIdempotencyKey'
+      - $ref: '#/components/parameters/XTenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuggestionActionRequest'
+      responses:
+        '200':
+          description: Durable audited receipt and authoritative readback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestionActionEnvelope'
+        '400':
+          description: Missing or invalid idempotency key
+        '401':
+          description: Authentication required
+        '403':
+          description: Write role or tenant scope denied
+        '404':
+          description: Suggestion absent from the exact caller scope
+        '409':
+          description: Idempotency
+          terminal-state: null
+          or version conflict: null
+  /bff/agora/performance/action-receipts/{receipt_id}:
+    get:
+      operationId: getAgoraPerformanceActionReceipt
+      summary: Read a durable suggestion action receipt
+      parameters:
+      - $ref: '#/components/parameters/ReceiptId'
+      - $ref: '#/components/parameters/XTenantId'
+      responses:
+        '200':
+          description: Exact tenant/user-scoped receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestionActionEnvelope'
+        '401':
+          description: Authentication required
+        '403':
+          description: Role or tenant scope denied
+        '404':
+          description: Receipt absent from the exact caller scope
+  /bff/agora/workshops/{workshop_id}/versions:
+    get:
+      operationId: listDurableAgoraWorkshopVersions
+      summary: List durable version links with authoritative StrategySpec readback
+      x-implementation-status: implemented
+      parameters:
+      - $ref: '#/components/parameters/WorkshopId'
+      - $ref: '#/components/parameters/XTenantId'
+      responses:
+        '200':
+          description: Tenant/user-scoped version projection and current ETag
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopVersionListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/V110Forbidden'
+        '404':
+          $ref: '#/components/responses/V110NotFound'
+        '409':
+          $ref: '#/components/responses/V110Conflict'
+        '502':
+          description: Authoritative Strategy Registry readback is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: Strategy Registry or durable workshop store is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      operationId: createDurableAgoraWorkshopVersion
+      summary: Create one immutable Registry version and durable Workshop link
+      x-implementation-status: implemented
+      parameters:
+      - $ref: '#/components/parameters/WorkshopId'
+      - $ref: '#/components/parameters/XTenantId'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/XMfaToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkshopVersionCreateRequest'
+      responses:
+        '201':
+          description: Idempotent durable receipt, immutable link, and Registry readback
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopVersionCreateEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/V110Forbidden'
+        '404':
+          $ref: '#/components/responses/V110NotFound'
+        '409':
+          $ref: '#/components/responses/V110Conflict'
+  /bff/agora/workshops/{workshop_id}/versions/{version_id}/select:
+    post:
+      operationId: selectDurableAgoraWorkshopVersion
+      summary: Atomically select one workshop-owned immutable version
+      x-implementation-status: implemented
+      parameters:
+      - $ref: '#/components/parameters/WorkshopId'
+      - $ref: '#/components/parameters/VersionId'
+      - $ref: '#/components/parameters/XTenantId'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/XMfaToken'
+      responses:
+        '200':
+          description: Selected pointers, command receipt, and authoritative readback
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopVersionSelectEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/V110Forbidden'
+        '404':
+          $ref: '#/components/responses/V110NotFound'
+        '409':
+          $ref: '#/components/responses/V110Conflict'
+  /bff/agora/workshops/{workshop_id}/research-runs:
+    post:
+      operationId: dispatchDurableAgoraWorkshopResearchRun
+      summary: Dispatch one governed research run bound to a durable workshop version
+      x-implementation-status: implemented
+      parameters:
+      - $ref: '#/components/parameters/WorkshopId'
+      - $ref: '#/components/parameters/XTenantId'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/XMfaToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkshopResearchRunRequest'
+      responses:
+        '202':
+          description: Durable receipt with authoritative research task/run readback; truthful non-terminal
+            downstream status
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopResearchRunEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/V111Forbidden'
+        '404':
+          $ref: '#/components/responses/V111NotFound'
+        '409':
+          $ref: '#/components/responses/V111Conflict'
+        '422':
+          description: Request body invalid or research targets a forbidden environment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '502':
+          $ref: '#/components/responses/UpstreamInvalid'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /bff/agora/workshops/{workshop_id}/consultations:
+    post:
+      operationId: openDurableAgoraWorkshopConsultation
+      summary: Open one governed consultation bound to the selected workshop version
+      x-implementation-status: implemented
+      parameters:
+      - $ref: '#/components/parameters/WorkshopId'
+      - $ref: '#/components/parameters/XTenantId'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/XMfaToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkshopConsultationRequest'
+      responses:
+        '201':
+          description: Durable receipt with authoritative consultation readback; workshop commit failure
+            cancels the downstream request
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopConsultationEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/V111Forbidden'
+        '404':
+          $ref: '#/components/responses/V111NotFound'
+        '409':
+          $ref: '#/components/responses/V111Conflict'
+        '422':
+          description: Request body or consultation type is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '502':
+          $ref: '#/components/responses/UpstreamInvalid'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /bff/agora/workshops/{workshop_id}/conclude:
+    post:
+      operationId: concludeDurableAgoraWorkshop
+      summary: Atomically conclude the workshop on its complete selected final version
+      x-implementation-status: implemented
+      parameters:
+      - $ref: '#/components/parameters/WorkshopId'
+      - $ref: '#/components/parameters/XTenantId'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/XRequestId'
+      - $ref: '#/components/parameters/XMfaToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkshopConcludeRequest'
+      responses:
+        '200':
+          description: Terminal workshop state with two-person proof, digest-validated final version,
+            and no-direct-action proof
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopConcludeEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/V111Forbidden'
+        '404':
+          $ref: '#/components/responses/V111NotFound'
+        '409':
+          $ref: '#/components/responses/V111Conflict'
+        '422':
+          description: Request body is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '502':
+          $ref: '#/components/responses/UpstreamInvalid'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /bff/agora/candidate-pools/{pool_id}/members:
+    get:
+      operationId: listCandidatePoolMembersTruth
+      summary: List candidate pool members with per-field truth projection
+      description: 'Stable-order (created_at, artifact_id) paginated member list. Every
+
+        item carries fields/as_of/score_semantics; incomplete candidates
+
+        return typed unavailable field states, never static defaults.
+
+        Evidence summaries are always redacted in list responses.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/PoolId'
+      - $ref: '#/components/parameters/XTenantId'
+      - $ref: '#/components/parameters/LifecycleState'
+      - $ref: '#/components/parameters/Band'
+      - $ref: '#/components/parameters/MemberPageToken'
+      - $ref: '#/components/parameters/MemberPageSize'
+      responses:
+        '200':
+          description: Candidate member list with truth projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateMemberListEnvelope'
+        '403':
+          description: Tenant denied or pool not owned by the caller.
+        '404':
+          description: Candidate pool not found.
+        '422':
+          description: Invalid page_token.
+  /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}:
+    get:
+      operationId: getCandidatePoolMemberTruth
+      summary: Get one candidate pool member with per-field truth projection
+      parameters:
+      - $ref: '#/components/parameters/PoolId'
+      - $ref: '#/components/parameters/ArtifactId'
+      - $ref: '#/components/parameters/XTenantId'
+      responses:
+        '200':
+          description: Candidate member detail with truth projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateMemberDetailEnvelope'
+        '403':
+          description: Tenant denied or pool not owned by the caller.
+        '404':
+          description: Candidate pool or member not found.

@@ -291,6 +291,7 @@ def test_control_patch_rejects_unknown_key_and_accepts_known_key() -> None:
         session_id,
         {
             "session_id": session_id,
+            "tenant_id": "tenant-test",
             "controls": [
                 {
                     "parameter_key": "risk.max_drawdown",
@@ -325,6 +326,7 @@ def test_complete_upgrades_legacy_session_to_schema_contract() -> None:
             "id": "trn-legacy-001",
             "session_id": "trn-legacy-001",
             "persona_id": "persona-alpha",
+            "tenant_id": "tenant-test",
             "session_type": "trainer",
             "objective": "Legacy trainer session",
             "status": "active",
@@ -606,6 +608,14 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
     module = _load_service_module()
     client = TestClient(module.app)
     fixture = module._strict_authority_fixture
+    target_commit = module._commit_authoritative_persona_target
+    persona_mutations: list[str] = []
+
+    def counted_target_commit(**kwargs):
+        persona_mutations.append(str(kwargs["session_id"]))
+        return target_commit(**kwargs)
+
+    module._commit_authoritative_persona_target = counted_target_commit
 
     failing_policy = dict(fixture.policy)
     failing_policy["min_sharpe_ratio"] = 99.0
@@ -629,6 +639,11 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
     complete = client.post(f"/api/training/sessions/{session_id}/complete")
     assert complete.status_code == 409
     assert "evaluation governance gate is not passed" in complete.text
+    assert persona_mutations == []
+    degraded = client.get("/readyz")
+    assert degraded.status_code == 503
+    assert degraded.json()["dependencies"]["functional"]["status"] == "degraded"
+    assert degraded.json()["dependencies"]["functional"]["failure_count"] == 1
 
     fixture.policy_path.write_text(json.dumps(fixture.policy), encoding="utf-8")
 
@@ -657,6 +672,10 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
         headers={"Idempotency-Key": "pass-commit"},
     )
     assert commit_pass.status_code == 200, commit_pass.text
+    assert persona_mutations == [session_id_pass]
+    recovered = client.get("/readyz")
+    assert recovered.status_code == 200
+    assert recovered.json()["dependencies"]["functional"]["status"] == "ok"
 
     records = module._runtime_evidence_log().read_verified()
     event_types = {record["event_type"] for record in records}

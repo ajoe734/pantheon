@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "task_id": "OPS-TASK-PR-TRIAGE-001",
+  "archived_at": "2026-07-22T23:04:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-TASK-PR-TRIAGE-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-TASK-PR-TRIAGE-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "scripts/git",
+      "docs/operations",
+      "docs/deployment/evidence"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "ops-repository-triage",
+    "id": "OPS-TASK-PR-TRIAGE-001",
+    "last_update": "2026-07-22T23:04:49Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #3982 merged at 60f3e9b7 and task-scoped closeout PR #3986 merged at c016193e; 24/24 unittest, py_compile, 29-PR/2098-branch/1148-candidate report validation, ancestry and live closure/replacement readbacks, and zero-deletion safety checks passed; branch deletions remain 0.",
+    "owner": "Codex2",
+    "phase": "Delivery Control / Wave 0 repository triage",
+    "priority": "P2",
+    "repository_id": "pantheon",
+    "review_file": "docs/deployment/evidence/ops-task-pr-triage-001/README.md",
+    "review_notes_zh": [
+      "獨立重跑 24/24 unittest、py_compile、完整 report/ancestry validation 與 git diff --check，全部通過",
+      "固定 cohort 為 29 = 23 open + 6 resolved；每筆都有 disposition 與 owner，全域 open task PR 另列，未混入 cohort 計數",
+      "最新 refs generate/validate 通過；四筆 closure 的 comment、replacement merge、原 branch head SHA 均完成 live readback",
+      "deletion manifest 僅 dry-run-only，1,148 候選與 report 精確一致，tool 無 branch deletion 子命令且實際刪除數為 0",
+      "PR #3982 head 6258dfe683521b2140eab61631af7260f4ef09f7 已由 merge commit 60f3e9b7e931057ce83e8877134a5ab95a79edb1 合入 dev"
+    ],
+    "reviewer": "Codex",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-TASK-PR-TRIAGE-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "把 29 個 overdue task PR 與 no-open-PR branches 依 dev reachability、PR history、archive evidence 分類；只關閉明確 superseded PR，僅產生 branch deletion dry run。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Evidence-based overdue PR and branch triage",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T23:04:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-task-pr-triage-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-TASK-PR-TRIAGE-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "fb2df8ec805754a3bf7a83ea544138ca9c32c521",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-task-pr-triage-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "268b552b0a7929cd0a3ddf4d8f258b287fc088a4",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-TASK-PR-TRIAGE-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c016193e03e34bf274c2c5fd740a8028953a8b81",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:17:12Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-22T17:21:17Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T17:49:52Z",
+      "from": "Codex2",
+      "message": "PR #3961 is ready for independent review. Anchor e4659a65a and delivery 9e5004065 implement fail-closed triage tooling, 19 tests, operations contract, and a validated 29-PR/2091-branch report at dev SHA 9a24478e. Dispositions: 11 active-repair, 8 conflict-needs-owner, 4 protected-retain, 5 superseded, 1 merged-reachable. Explicit evidence closures #3058/#3317/#3334/#3372 are live CLOSED with recorded comments; all four remote branches remain; deletion dry run has 0 candidates and no deletion code. Branch updated by normal merge to ce1fe3bd0; no force push.",
+      "resolved_at": "2026-07-22T17:51:23Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-22T17:51:23Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-TASK-PR-TRIAGE-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-07-22T18:06:34Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T18:06:34Z",
+      "from": "Codex",
+      "message": "Reviewer changes required: (1) fix snapshot binding so --refresh completes before base_sha capture and every ancestry decision is computed against that immutable base SHA; regenerate report/README/manifest and add validation/regression coverage. The committed report mislabels 1,643/2,091 branch rows versus its own beef87e0 base (for example AG-BE-CP-001 head 2b29d871 is an ancestor but reported false), while validate still passes. (2) update the published fixed-cohort reproduce command to include task-closed PRs #3058/#3317/#3334/#3372 as well as #3936/#3948; the documented command now fails with expected 29, found 25. Re-run unit tests, py_compile, report validation, immutable-SHA ancestry reconciliation, and git diff --check before handoff.",
+      "resolved_at": "2026-07-22T18:06:34Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T18:49:08Z",
+      "from": "Codex2",
+      "message": "Reviewer fixes are merged in Pantheon PR #3970 (merge 0ad37f1db8a48bf1601966cc4da67cd0f8e157fc; task commit 60bb954df0117c82668053f7ac236985277a8ecd) and ready for re-review. Revalidated 22/22 unittest cases, py_compile, committed evidence validation at immutable base ea1a8607 (29 PRs/2096 branches/1148 deletion dry-run candidates), and git diff --check. Fresh documented reproduction after --refresh bound report base exactly to origin/dev 6487e0699bb9fdc92cbace38f54ee4ac2d39ce4d, retained all six resolved cohort PRs #3058/#3317/#3334/#3372/#3936/#3948, and passed full ancestry validation for 29 PRs/2098 branches with the same 1148 dry-run candidates. No branch deletion or additional GitHub mutation was performed.",
+      "resolved_at": "2026-07-22T19:02:59Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T19:02:59Z",
+      "from": "Codex",
+      "message": "Reviewer changes required after fresh documented reproduction: prior immutable-SHA ancestry and six resolved fixed-cohort fixes are verified, but render_markdown mislabels summary.open_task_pr_count (all currently open task PRs) as the fixed cohort open count. At base 1065a024be51142d26ebce69024dd7217d66a607, validation passes 29 PRs/2098 branches/1148 dry-run candidates, while the cohort is 23 OPEN + 6 resolved; README incorrectly says 24 open + 6 resolved because recent non-cohort PR #3975 is counted. Add explicit cohort open/resolved counts derived from cohort, render those (keep any global open count separately and clearly labeled), add a regression with a recent open task PR excluded from the overdue cohort, regenerate evidence, and rerun unittest, py_compile, full ancestry validation, fresh documented reproduction, and git diff --check. No branch deletion or GitHub mutation is needed.",
+      "resolved_at": "2026-07-22T19:02:59Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T22:37:34Z",
+      "from": "Codex2",
+      "message": "PR #3982 is ready for independent re-review. Commits dcec9a10e/cc3c0186d separate fixed-cohort counts (29 = 23 open + 6 resolved) from 25 global open task PRs, add recent-non-cohort regression and summary invariants, normalize as_of before age calculations, and regenerate evidence at immutable dev fb2df8ec (2098 branches; 1148 dry-run candidates; 0 new closure candidates). Verified 24/24 unittest, py_compile, full ancestry validation, byte-identical same-snapshot reproduction, four prior closure/head live readbacks, retained remote branches, zero branch deletions, and git diff --check.",
+      "resolved_at": "2026-07-22T22:48:28Z",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T22:48:28Z",
+      "from": "Codex",
+      "message": "Independent review approved: PR #3982 is merged at 60f3e9b7; 24/24 tests, py_compile, immutable/full ancestry validation, live regeneration, closure/replacement/retained-head readbacks, and zero-deletion safety checks passed. Returned to Codex2 for formal closeout.",
+      "status": "done",
+      "task_id": "OPS-TASK-PR-TRIAGE-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-22T23:04:50Z"
+    }
+  ],
+  "blockers": []
+}

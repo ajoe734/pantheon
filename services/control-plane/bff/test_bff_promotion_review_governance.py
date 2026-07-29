@@ -297,6 +297,8 @@ def test_quarterly_recommendation_submit_rejects_caller_source_snapshot_tamperin
 
 def test_quarterly_recommendation_submit_rejects_tuple_tampering_before_and_on_replay() -> None:
     tamper_cases = {
+        "review_id": "forged-review-revision",
+        "promotion_review_id": "forged-review-revision",
         "stage": "forged_stage",
         "stage_from": "forged_stage",
         "current_weight": 0.99,
@@ -461,6 +463,24 @@ def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
 
 def test_human_inbox_ignores_decision_with_mismatched_target_aliases() -> None:
     with _isolated_client() as client:
+        # This test needs two independent reviews to exercise alias mismatch.
+        # Seed both through the paper-fleet lifecycle owner so the fixture does
+        # not depend on the deprecated persona-session fallback.
+        bff_main.read_store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
+            lambda: [
+                {
+                    "session_id": f"monitoring-{runtime_id}",
+                    "session_type": "paper_runtime_monitoring",
+                    "status": "running",
+                    "deployment_stage": "paper",
+                    "runtime_id": runtime_id,
+                }
+                for runtime_id in (
+                    "runtime-us-equity-paper",
+                    "runtime-crypto-paper",
+                )
+            ]
+        )
         response = client.get(
             "/bff/management/promotion-reviews",
             headers=OPERATOR_HEADERS,
@@ -1153,6 +1173,7 @@ def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> No
         second_body = second.json()
         assert first_body["data"]["command_id"] == second_body["data"]["command_id"]
         assert second_body["meta"]["idempotency"]["replayed"] is True
+        assert second_body["meta"]["idempotency"]["idempotencyKey"] == idem_key
         assert second_body["meta"]["live_capital_mutation"] is False
         assert second_body["data"]["live_capital_mutation"] is False
 

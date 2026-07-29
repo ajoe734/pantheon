@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "AG-HOSTED-CLOSE-002",
+  "archived_at": "2026-07-24T06:23:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Public deployment manifest proves accepted exact FE/BFF pair with live strict mode and safe write defaults",
+      "Hosted Governance/Registry/Workshop seed and post-restart readback pass with canonical strategy_workshop and distinct identities",
+      "BFF readyz remains healthy after governed restart",
+      "Final remaining-work and execution-task docs record resolved blocker and evidence links",
+      "Changes pass validation are committed pushed reviewed merged to dev and task is archived done"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-HOSTED-CLOSE-001.md",
+      "docs/deployment/evidence/agora"
+    ],
+    "depends_on": [
+      "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "OPS-DEV-LIFECYCLE-FRESHNESS-001"
+    ],
+    "id": "AG-HOSTED-CLOSE-002",
+    "last_update": "2026-07-24T06:23:50Z",
+    "next": "Closeout finalized. Evidence packet + reprobe artifacts merged to dev in PR #4050 (50cf5f43f -> merge 874103d1a). review_approved recorded on task brief and merged via PR #4051 (324d7b5ef -> merge cd4f42c4). Server-side dev HEAD = cd4f42c4 (gh compare: identical). Acceptance: accepted FE e4399e3ec68f / BFF f71c1f8b exact pair, manifest d61e11cf, strict auth (auth_stub=false), /readyz 200 non-stale (51s<300s), seed+post-restart readback in qualification-20260724T045953Z.json.",
+    "owner": "Claude2",
+    "phase": "Hosted acceptance",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "承接已歸檔 AG-HOSTED-CLOSE-001；以已修復 canonical strategy_workshop、distinct Registry/strategy identity、strict auth 與 accepted FE/BFF exact pair 完成 hosted 最終驗收與文件關閉。",
+    "title": "AG hosted exact-pair final closeout",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T06:23:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-hosted-close-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-HOSTED-CLOSE-002",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-hosted-close-002",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "324d7b5ef0d18d8014039b3fcaaaca3305245eca",
+      "commit_subject": "AG-HOSTED-CLOSE-002: record review_approved on hosted closeout brief",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief status line for the Agora hosted exact-pair",
+        "Not changing": "the evidence packet and reprobe artifacts already merged",
+        "Composes with": "canonical ai-status closeout via scripts/ai-status.sh done.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-HOSTED-CLOSE-002",
+        "Reviewer": "Antigravity",
+        "Verified": "git ancestry check (50cf5f43f on origin/dev); no code changes"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd4f42c4fb1a98e7eee82f8de6faedeb81c44bb4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T06:08:50Z",
+      "from": "Claude2",
+      "message": "Closeout complete and merged to dev via PR #4050 (commit 50cf5f43f -> merge 874103d1a). Reviewer-consumable packet: docs/deployment/evidence/agora/ag-hosted-close-002.md. Accepted exact pair FE e4399e3ec68f / BFF f71c1f8b, pair ec91a4aa...c3de2, manifest d61e11cf..., contract family agora.v1.13. Blocker resolved (strategy_workshop 422 / APPROVAL_TARGET_TYPE_MISMATCH 409 / STRATEGY_SPEC_STRATEGY_ID_MISMATCH) via AG-GOV-WORKSHOP-CONTRACT-001 (#4036/#4037) + AG-GOV-WORKSHOP-COMPAT-DEPLOY-001. Seed+post-restart readback proven; owner independent read-only re-probe 2026-07-24T05:58Z confirms accepted read-only strict pair, /readyz 200 not-stale (freshness 51s<300). Gap doc + exec-task INDEX/AG-HOSTED-CLOSE-001 brief updated. Please review and approve so I can finalize to done.",
+      "resolved_at": "2026-07-24T06:11:34Z",
+      "status": "done",
+      "task_id": "AG-HOSTED-CLOSE-002",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T06:11:34Z",
+      "from": "Antigravity",
+      "message": "Verified Agora hosted exact-pair final closeout evidence: (1) Blocker resolved via AG-GOV-WORKSHOP-CONTRACT-001 (#4036/#4037) and AG-GOV-WORKSHOP-COMPAT-DEPLOY-001 (#4047). (2) Exact accepted pair FE e4399e3ec68f / BFF f71c1f8b (pair ID ec91a4aa...c3de2) and manifest d61e11cf... verified via governed workflows (#30065241892, #30003411349, #30067684910, #30068077516). (3) Seed and post-restart readback proven in qualification-20260724T045953Z.json. (4) As-of-now independent re-probe (2026-07-24T05:58Z) confirms exact accepted read-only pair, auth_stub=false/strict auth, /readyz 200 with non-stale freshness (51s < 300s). (5) Code merged to dev via PR #4050 (commit 50cf5f43f -> merge 874103d1a). Closeout packet in docs/deployment/evidence/agora/ag-hosted-close-002.md complete.",
+      "status": "done",
+      "task_id": "AG-HOSTED-CLOSE-002",
+      "to": "Claude2",
+      "resolved_at": "2026-07-24T06:23:50Z"
+    }
+  ],
+  "blockers": []
+}

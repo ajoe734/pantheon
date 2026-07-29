@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -25,7 +26,28 @@ from fastapi.testclient import TestClient
 from services.incident.incident import IncidentConcurrencyError, IncidentStore
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
-from services.incidents.main import app, outbox_store, store
+
+# The route module constructs CanonicalReferenceValidator at import time.  These
+# tests replace that validator with an in-memory accept/reject double before
+# exercising routes, but import itself still needs an explicit non-local
+# RuntimeManager endpoint so RuntimeManagerClient does not fail closed.  Restore
+# the process environment immediately after import so later tests in the same
+# pytest process do not discover a fake runtime-manager target.
+_PREV_RUNTIME_MANAGER_URL = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
+_PREV_RUNTIME_MANAGER_TOKEN = os.environ.get("PANTHEON_RUNTIME_MANAGER_TOKEN")
+os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
+os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_TOKEN", "incident-route-test-token")
+try:
+    from services.incidents.main import app, outbox_store, store
+finally:
+    if _PREV_RUNTIME_MANAGER_URL is None:
+        os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
+    else:
+        os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = _PREV_RUNTIME_MANAGER_URL
+    if _PREV_RUNTIME_MANAGER_TOKEN is None:
+        os.environ.pop("PANTHEON_RUNTIME_MANAGER_TOKEN", None)
+    else:
+        os.environ["PANTHEON_RUNTIME_MANAGER_TOKEN"] = _PREV_RUNTIME_MANAGER_TOKEN
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +146,28 @@ def _drift_report_payload(**overrides):
             "reconciliation_record:recon-run-001",
         ],
         "generated_at": "2026-06-27T15:00:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _infrastructure_incident_payload(**overrides):
+    payload = {
+        "schema_version": "pantheon.infrastructure-incident/1",
+        "incident_id": f"infra-bff-{uuid.uuid4().hex[:12]}",
+        "tenant_id": "tenant-test",
+        "producer": "control-plane-bff",
+        "source_event_id": f"infra-event-{uuid.uuid4().hex[:12]}",
+        "title": "BFF downstream degradation: incidents",
+        "status": "open",
+        "severity": "high",
+        "component": {
+            "service_name": "incidents",
+            "component_kind": "fastapi-service",
+            "endpoint": "http://incidents:8090/__health__",
+        },
+        "telemetry_event_ids": ["infra-event-extra"],
+        "evidence_summary": "health_probe observed 3/3 failures",
     }
     payload.update(overrides)
     return payload
@@ -593,6 +637,106 @@ def test_consume_drift_report_returns_retryable_after_cas_budget(monkeypatch):
     assert retried.status_code == 503, retried.text
     assert attempts == 3
     assert "retry budget" in retried.json()["detail"]
+
+
+def test_consume_infrastructure_health_creates_non_runtime_incident():
+    payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-incidents-down-001",
+        source_event_id="infra-event-incidents-down-001",
+    )
+
+    r = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["incident_id"] == "infra-bff-incidents-down-001"
+    assert body["status"] == "open"
+    assert body["severity"] == "high"
+    assert body["binding_id"].startswith("infra-subject-")
+    assert body["deployment_stage"] == "paper"
+    assert body["runtime_id"].startswith("infra-endpoint-")
+    assert body["trace_id"] == "infra-event-incidents-down-001"
+    assert body["telemetry_event_ids"][0] == "infra-event-incidents-down-001"
+    assert body["incident_cluster_id"].startswith("infrastructure:")
+    assert "non_trading_infrastructure_incident=true" in body["evidence_summary"]
+    assert store.get_incident("infra-bff-incidents-down-001") is not None
+
+
+def test_consume_infrastructure_health_idempotent_replay_returns_existing():
+    payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-telemetry-down-001",
+        source_event_id="infra-event-telemetry-down-001",
+        component={
+            "service_name": "telemetry",
+            "component_kind": "flask-service",
+            "endpoint": "http://telemetry:8080/healthz",
+        },
+    )
+
+    first = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+    replay = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+
+    assert first.status_code == 201, first.text
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == first.json()
+    assert len(store.list_incidents()) == 1
+
+
+def test_consume_infrastructure_health_conflicting_replay_rejected():
+    first_payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-conflict-001",
+        source_event_id="infra-event-conflict-a",
+    )
+    conflicting_payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-conflict-001",
+        source_event_id="infra-event-conflict-b",
+    )
+
+    first = client.post("/api/incidents/consume-infrastructure-health", json=first_payload)
+    conflict = client.post("/api/incidents/consume-infrastructure-health", json=conflicting_payload)
+
+    assert first.status_code == 201, first.text
+    assert conflict.status_code == 409, conflict.text
+    assert "different subject or source_event_id" in conflict.json()["detail"]
+    assert store.get_incident("infra-bff-conflict-001").trace_id == "infra-event-conflict-a"
+
+
+def test_consume_infrastructure_health_ignores_runtime_binding_payload_shape():
+    payload = _infrastructure_incident_payload(
+        binding_id="rb-fake-runtime-binding",
+        deployment_stage="live",
+    )
+
+    r = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["binding_id"] != "rb-fake-runtime-binding"
+    assert body["deployment_stage"] == "paper"
+    assert body["binding_id"].startswith("infra-subject-")
+
+
+def test_infrastructure_health_incident_resolves_through_status_route():
+    payload = _infrastructure_incident_payload(
+        incident_id="infra-bff-resolve-001",
+        source_event_id="infra-event-resolve-open",
+    )
+    created = client.post("/api/incidents/consume-infrastructure-health", json=payload)
+    assert created.status_code == 201, created.text
+
+    resolved = client.post(
+        "/api/incidents/infra-bff-resolve-001/status",
+        json={
+            "status": "resolved",
+            "resolved_at": "2026-07-27T19:45:00Z",
+            "source_event_id": "infra-event-resolve-ok",
+            "telemetry_event_ids": ["infra-event-resolve-ok"],
+        },
+    )
+
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "resolved"
+    assert resolved.json()["resolved_at"] == "2026-07-27T19:45:00Z"
 
 
 # ---------------------------------------------------------------------------

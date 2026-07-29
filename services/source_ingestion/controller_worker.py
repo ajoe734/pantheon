@@ -24,6 +24,9 @@ from .scheduler_worker import run_tick as run_schedule_tick
 DEFAULT_DESIRED_STATE_PATH = Path(__file__).with_name("default_desired_state.json")
 LOOP_ID = "source_ingestion"
 NON_TERMINAL_TRUTH_LEVEL = "scheduled_tick"
+RECONCILE_ONLY_MODE = "reconcile_only"
+RECONCILE_AND_PULL_MODE = "reconcile_and_pull"
+CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
 CADENCE_SOURCE_AGE_LIMIT_SECONDS = {
     "realtime": 300,
     "minutely": 300,
@@ -53,6 +56,16 @@ def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     if value < minimum:
         raise ValueError(f"{name} must be >= {minimum}")
     return value
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            value
+            for value in (item.strip() for item in str(os.getenv(name) or "").split(","))
+            if value
+        )
+    )
 
 
 def _canonical_json(value: Any) -> str:
@@ -613,6 +626,135 @@ def _validate_terminal_readback(
         )
 
 
+def _validate_due_state_readback(
+    *,
+    reconcile: Mapping[str, Any],
+    pre_actual: Mapping[str, Any],
+    actual: Mapping[str, Any],
+    expected_controller_id: str,
+    expected_sequence_no: int,
+    expected_deployment: Mapping[str, Any],
+) -> None:
+    """Accept connector/schedule convergence without claiming provider proof.
+
+    This is the always-safe half of the source loop.  It proves that admitted
+    persona requirements became configured connectors and enabled schedules,
+    while also proving that the reconciliation tick did not enqueue work,
+    execute a provider, or append SourceRecords.  Provider execution remains a
+    separate, explicitly governed bounded operation.
+    """
+
+    if actual.get("schema_version") != "source_ingest_controller_readback.v1":
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback schema is missing or unsupported",
+            reconcile=reconcile,
+            actual_readback=actual,
+        )
+    captured_at = parse_utc(str(actual.get("captured_at") or ""))
+    if captured_at is None or (datetime.now(timezone.utc) - captured_at).total_seconds() > 300:
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback is stale",
+            reconcile=reconcile,
+            actual_readback=actual,
+        )
+    controller_state = actual.get("controller_state")
+    deployment = controller_state.get("deployment") if isinstance(controller_state, Mapping) else None
+    identity_fields = ("git_sha", "image_digest", "build_time", "deployment_id", "runtime_instance_id")
+    if (
+        not isinstance(controller_state, Mapping)
+        or controller_state.get("controller_id") != expected_controller_id
+        or int(controller_state.get("sequence_no") or -1) != expected_sequence_no
+        or not isinstance(deployment, Mapping)
+        or deployment.get("identity_complete") is not True
+        or any(str(deployment.get(field) or "").strip() in {"", "unknown", "unresolved", "local-dev"} for field in identity_fields)
+        or any(deployment.get(field) != expected_deployment.get(field) for field in identity_fields)
+    ):
+        raise ControllerTickError(
+            "actual_readback",
+            "controller deployment identity is missing from authoritative readback",
+            reconcile=reconcile,
+            actual_readback=actual,
+        )
+    requirement_snapshot = actual.get("requirement_snapshot")
+    if (
+        not isinstance(requirement_snapshot, Mapping)
+        or requirement_snapshot.get("desired_state_sha256") != reconcile.get("desired_state_sha256")
+        or requirement_snapshot.get("authoritative") is not True
+    ):
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative requirement snapshot is missing or contradicted by actual readback",
+            reconcile=reconcile,
+            actual_readback=actual,
+        )
+
+    immutable_execution_counts = ("source_record_count", "dlq_count", "frontier_backlog")
+    changed_execution_counts = [
+        field
+        for field in immutable_execution_counts
+        if type(pre_actual.get(field)) is not int
+        or type(actual.get(field)) is not int
+        or pre_actual.get(field) != actual.get(field)
+    ]
+    if changed_execution_counts:
+        raise ControllerTickError(
+            "provider_boundary",
+            "reconcile-only tick changed provider execution state: " + ", ".join(changed_execution_counts),
+            reconcile=reconcile,
+            actual_readback=actual,
+        )
+
+    wanted_requirements: dict[str, list[dict[str, Any]]] = {}
+    for result in reconcile.get("results") or []:
+        if not isinstance(result, Mapping):
+            continue
+        for action in result.get("actions") or []:
+            if not isinstance(action, Mapping) or not action.get("connector_id") or action.get("status") == "skipped":
+                continue
+            wanted_requirements.setdefault(str(action["connector_id"]), []).append(dict(action))
+    actual_connectors = {
+        str(item.get("connector_id")): item
+        for item in actual.get("connectors") or []
+        if isinstance(item, Mapping) and item.get("connector_id")
+    }
+    invalid: list[str] = []
+    for connector_id, requirements in sorted(wanted_requirements.items()):
+        item = actual_connectors.get(connector_id)
+        if item is None:
+            invalid.append(f"{connector_id}:connector_missing")
+            continue
+        desired_state = item.get("desired_state") if isinstance(item.get("desired_state"), Mapping) else {}
+        schedule = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
+        expected_datasets = {str(action.get("dataset") or "") for action in requirements}
+        if item.get("configured") is not True:
+            invalid.append(f"{connector_id}:connector_unconfigured")
+        if str(desired_state.get("dataset") or "") not in expected_datasets:
+            invalid.append(f"{connector_id}:desired_dataset_mismatch")
+        source_class = str(desired_state.get("source_class") or "")
+        if source_class != "live_push" and (
+            schedule.get("enabled") is not True or int(schedule.get("interval_seconds") or 0) <= 0
+        ):
+            invalid.append(f"{connector_id}:schedule_inactive")
+        gate_results = (
+            desired_state.get("policy_gate_results")
+            if isinstance(desired_state.get("policy_gate_results"), Mapping)
+            else {}
+        )
+        for gate in desired_state.get("policy_gates") or []:
+            result = gate_results.get(str(gate)) if isinstance(gate_results, Mapping) else None
+            if not isinstance(result, Mapping) or result.get("passed") is not True:
+                invalid.append(f"{connector_id}:policy_gate_not_admitted[{gate}]")
+    if invalid:
+        raise ControllerTickError(
+            "actual_readback",
+            "due-state reconciliation failed closed: " + ", ".join(invalid),
+            reconcile=reconcile,
+            actual_readback=actual,
+        )
+
+
 def build_loop_writer(*, dsn: str, state: ControllerState) -> LoopControllerWriterLike:
     if not dsn:
         raise ControllerTickError("controller_store", "DATABASE_URL is required for durable controller truth")
@@ -644,20 +786,35 @@ class ControllerConfig:
     lease_seconds: int
     truth_level: str
     controller_token: str
+    mode: str = RECONCILE_AND_PULL_MODE
+    force_connector_ids: tuple[str, ...] = ()
+    exclusive_connector_ids: tuple[str, ...] = ()
 
 
 def config_from_env() -> ControllerConfig:
     interval = _env_int("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS", 60, minimum=1)
     alive = str(os.getenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH") or "").strip()
+    mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_AND_PULL_MODE).strip()
+    if mode not in CONTROLLER_MODES:
+        raise ValueError("SOURCE_INGEST_CONTROLLER_MODE is invalid")
     truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or "reconciled_live_proof").strip()
     if truth_level not in {"scheduled_tick", "reconciled_live_proof"}:
         raise ValueError("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL is invalid")
+    if mode == RECONCILE_ONLY_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
+        raise ValueError("reconcile_only mode must use scheduled_tick truth")
+    max_ticks = _env_int("SOURCE_INGEST_CONTROLLER_MAX_TICKS", 0, minimum=0)
+    force_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS")
+    exclusive_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS")
+    if mode == RECONCILE_AND_PULL_MODE and not 1 <= max_ticks <= 24:
+        raise ValueError("reconcile_and_pull mode requires SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24")
+    if mode == RECONCILE_ONLY_MODE and (force_connector_ids or exclusive_connector_ids):
+        raise ValueError("reconcile_only mode must not select provider connector execution")
     return ControllerConfig(
         api_url=str(os.getenv("SOURCE_INGEST_API_URL") or "http://127.0.0.1:8097"),
         database_url=str(os.getenv("DATABASE_URL") or ""),
         interval_seconds=interval,
         max_concurrency=_env_int("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", 2, minimum=1),
-        max_ticks=_env_int("SOURCE_INGEST_CONTROLLER_MAX_TICKS", 0, minimum=0),
+        max_ticks=max_ticks,
         state_path=Path(os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH") or "/tmp/pantheon/source-ingest/controller_state.json"),
         alive_path=Path(alive) if alive else None,
         timeout_seconds=float(os.getenv("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS") or "30"),
@@ -668,6 +825,9 @@ def config_from_env() -> ControllerConfig:
             or "/data/source-ingest/controller_token",
             create=False,
         ),
+        mode=mode,
+        force_connector_ids=force_connector_ids,
+        exclusive_connector_ids=exclusive_connector_ids,
     )
 
 
@@ -786,22 +946,48 @@ def run_controller_tick(
             controller_token=config.controller_token,
             timeout_seconds=config.timeout_seconds,
         )
-        schedule = run_schedule_tick(
-            api_url=config.api_url,
-            max_concurrency=config.max_concurrency,
-            timeout_seconds=config.timeout_seconds,
-            force_connector_ids=_mutated_connector_ids(reconcile),
-            controller_token=config.controller_token,
-        )
-        actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
-        _validate_terminal_readback(
-            reconcile=reconcile,
-            schedule=schedule,
-            actual=actual,
-            expected_controller_id=state.controller_id,
-            expected_sequence_no=state.sequence_no,
-            expected_deployment=state.deployment,
-        )
+        if config.mode == RECONCILE_ONLY_MODE:
+            schedule = {
+                "mode": RECONCILE_ONLY_MODE,
+                "provider_egress_attempted": False,
+                "summary": {
+                    "total_reconciled_connectors": len(_connector_ids(reconcile)),
+                    "total_provider_pulls": 0,
+                },
+            }
+            actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+            _validate_due_state_readback(
+                reconcile=reconcile,
+                pre_actual=pre_actual,
+                actual=actual,
+                expected_controller_id=state.controller_id,
+                expected_sequence_no=state.sequence_no,
+                expected_deployment=state.deployment,
+            )
+        else:
+            exclusive_connector_ids = sorted(set(config.exclusive_connector_ids))
+            forced_connector_ids = (
+                exclusive_connector_ids
+                if exclusive_connector_ids
+                else sorted(set(_mutated_connector_ids(reconcile)) | set(config.force_connector_ids))
+            )
+            schedule = run_schedule_tick(
+                api_url=config.api_url,
+                max_concurrency=config.max_concurrency,
+                timeout_seconds=config.timeout_seconds,
+                force_connector_ids=forced_connector_ids,
+                exclusive_connector_ids=exclusive_connector_ids,
+                controller_token=config.controller_token,
+            )
+            actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+            _validate_terminal_readback(
+                reconcile=reconcile,
+                schedule=schedule,
+                actual=actual,
+                expected_controller_id=state.controller_id,
+                expected_sequence_no=state.sequence_no,
+                expected_deployment=state.deployment,
+            )
         wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [
             str(item.get("latest_source_record", {}).get("source_id"))
@@ -828,12 +1014,18 @@ def run_controller_tick(
             writer.record_success(
                 LOOP_ID,
                 config.truth_level,
-                summary="desired state reconciled; scheduled ingestion terminal readback accepted",
+                summary=(
+                    "desired connector and schedule state reconciled; provider egress not attempted"
+                    if config.mode == RECONCILE_ONLY_MODE
+                    else "desired state reconciled; scheduled ingestion terminal readback accepted"
+                ),
                 backlog=int(actual.get("frontier_backlog") or 0),
                 lag=int(actual.get("max_lag_seconds") or 0),
                 dlq_count=int(actual.get("unresolved_dlq_count") or 0),
                 evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
                 payload={
+                    "controller_mode": config.mode,
+                    "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
                     "desired_state": desired_meta,
                     "reconcile_summary": reconcile.get("summary"),
                     "schedule_summary": schedule.get("summary"),
@@ -859,6 +1051,8 @@ def run_controller_tick(
         store.save(state)
         return {
             "status": "ok",
+            "controller_mode": config.mode,
+            "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
             "state_sequence_no": state.sequence_no,
             "desired_state": desired_meta,
             "reconcile_summary": reconcile.get("summary"),

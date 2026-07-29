@@ -33,9 +33,9 @@ def test_find_drift_allowlisted_override_is_not_drift() -> None:
     assert report["intentional"][0]["path"] == "coordination.enabled"
 
 
-def test_coordination_disable_is_actionable_with_default_overrides() -> None:
-    repo = {"coordination": {"enabled": True}}
-    live = {"coordination": {"enabled": False}}
+def test_coordination_enable_is_actionable_with_default_overrides() -> None:
+    repo = {"coordination": {"enabled": False}}
+    live = {"coordination": {"enabled": True}}
 
     report = find_drift(
         repo,
@@ -46,7 +46,7 @@ def test_coordination_disable_is_actionable_with_default_overrides() -> None:
 
     assert report["intentional"] == []
     assert report["drift"] == [
-        {"path": "coordination.enabled", "repo": True, "live": False}
+        {"path": "coordination.enabled", "repo": False, "live": True}
     ]
 
 
@@ -81,6 +81,79 @@ def test_progress_lease_policy_drift_is_actionable_by_default() -> None:
         "worker_runtime.worker_lease_seconds",
         "worker_runtime.work_progress_stale_seconds",
     }
+
+
+def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
+    repo = {
+        "ready_dispatcher": {
+            "disabled_agents": ["Copilot"],
+            "sidecar_only_agents": [],
+            "target_workload": {"Codex": 30, "Codex2": 30},
+            "max_tasks_per_agent_by_agent": {"Codex": 4, "Codex2": 4},
+            "max_dispatches_per_tick": 10,
+            "max_active_workers_per_task": 1,
+            "max_concurrent_workers": 13,
+        }
+    }
+    live = {
+        "ready_dispatcher": {
+            "disabled_agents": ["Copilot", "Codex", "Codex2"],
+            "sidecar_only_agents": ["Codex"],
+            "target_workload": {"Codex": 0, "Codex2": 0},
+            "max_tasks_per_agent_by_agent": {"Codex": 0, "Codex2": 0},
+            "max_dispatches_per_tick": 1,
+            "max_active_workers_per_task": 2,
+            "max_concurrent_workers": 1,
+        }
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert {item["path"] for item in report["drift"]} == {
+        "ready_dispatcher.disabled_agents",
+        "ready_dispatcher.sidecar_only_agents",
+        "ready_dispatcher.target_workload",
+        "ready_dispatcher.max_tasks_per_agent_by_agent",
+        "ready_dispatcher.max_dispatches_per_tick",
+        "ready_dispatcher.max_active_workers_per_task",
+        "ready_dispatcher.max_concurrent_workers",
+    }
+
+
+def test_helper_claim_disable_is_actionable_by_default() -> None:
+    # Regression for 2026-07-27: live helper_claim.enabled was flipped false with
+    # no commit and no activity-log record, and the drift guard could not see it
+    # because the nested flag was not on the critical list.
+    repo = {"ready_dispatcher": {"helper_claim": {"enabled": True, "task_statuses": ["todo"]}}}
+    live = {"ready_dispatcher": {"helper_claim": {"enabled": False, "task_statuses": ["todo"]}}}
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert [item["path"] for item in report["drift"]] == ["ready_dispatcher.helper_claim.enabled"]
+    # Sibling helper_claim tuning stays live-owned; only the on/off toggle is critical.
+    assert all(item["path"] != "ready_dispatcher.helper_claim.task_statuses" for item in report["drift"])
+
+
+def test_helper_claim_fix_restores_enabled_without_touching_siblings(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo.json"
+    live_path = tmp_path / "live.json"
+    repo_path.write_text(
+        json.dumps({"ready_dispatcher": {"helper_claim": {"enabled": True, "claim_idle_work": False}}}),
+        encoding="utf-8",
+    )
+    live_path.write_text(
+        json.dumps({"ready_dispatcher": {"helper_claim": {"enabled": False, "claim_idle_work": True}}}),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--repo-config", str(repo_path), "--live-config", str(live_path), "--fix"])
+
+    assert exit_code == 0
+    fixed = json.loads(live_path.read_text(encoding="utf-8"))["ready_dispatcher"]["helper_claim"]
+    assert fixed["enabled"] is True
+    assert fixed["claim_idle_work"] is True
 
 
 def test_task_state_shadow_mode_drift_is_actionable_by_default() -> None:
@@ -134,11 +207,24 @@ def test_set_get_dotted_roundtrip() -> None:
 
 
 def test_git_commits_behind_parses_count() -> None:
+    commands = []
+
     def runner(cmd, **kwargs):
+        commands.append(cmd)
         if "rev-list" in cmd:
             return types.SimpleNamespace(returncode=0, stdout="22\n")
         return types.SimpleNamespace(returncode=0, stdout="")
+
     assert git_commits_behind(Path("/x"), "origin/dev", runner=runner) == 22
+    assert commands[0] == [
+        "git",
+        "-C",
+        "/x",
+        "fetch",
+        "--quiet",
+        "origin",
+        "dev:refs/remotes/origin/dev",
+    ]
 
 
 def test_git_commits_behind_none_on_failure() -> None:

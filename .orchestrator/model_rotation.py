@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from common import config_path
+from common import config_path, normalize_agent_id
 
 COOLDOWN_FILENAME = "model-rotation-cooldowns.json"
 DEFAULT_COOLDOWN_SECONDS = 900
@@ -54,10 +54,45 @@ def cooldown_file_path(config: dict[str, Any]) -> Path:
     return config_path(config, "state_file").parent / COOLDOWN_FILENAME
 
 
+def resolve_provider_entry(config: dict[str, Any] | None, provider_id: str | None) -> tuple[str, dict[str, Any]]:
+    """Resolve a provider config entry regardless of the id form used by the caller.
+
+    Provider ids reach this module in two spellings: config-key form (``antigravity1-1``)
+    from the dispatch adapters and ``normalize_agent_id`` form (``antigravity1_1``) from
+    the supervisor failure path. Config keys themselves may use either. Try the exact key
+    first, then match on the normalized form so both callers resolve the same entry.
+    """
+    providers = ((config or {}).get("providers", {}) or {})
+    raw_id = str(provider_id or "").strip()
+    if not raw_id:
+        return "", {}
+    entry = providers.get(raw_id)
+    if isinstance(entry, dict):
+        return raw_id, entry
+    wanted = normalize_agent_id(raw_id)
+    if wanted:
+        for key, value in providers.items():
+            if isinstance(value, dict) and normalize_agent_id(str(key)) == wanted:
+                return str(key), value
+    return "", {}
+
+
+def rotation_state_key(config: dict[str, Any] | None, provider_id: str | None) -> str:
+    """Return the cooldown-state key shared by every provider on the same account.
+
+    Model quota is account-level, so when one dispatch slot (``antigravity1-3``)
+    exhausts a model every sibling slot on that account is exhausted too. Keying the
+    cooldown state by the provider's ``account`` makes one failure rotate the whole
+    group instead of requiring each slot to fail once.
+    """
+    key, entry = resolve_provider_entry(config, provider_id)
+    account = str(entry.get("account") or "").strip() if isinstance(entry, dict) else ""
+    return account or key or normalize_agent_id(provider_id or "")
+
+
 def rotation_settings(config: dict[str, Any] | None, provider_id: str | None) -> dict[str, Any]:
     """Return the normalized model_rotation block for a provider."""
-    providers = ((config or {}).get("providers", {}) or {})
-    provider = providers.get(str(provider_id or "")) or {}
+    _, provider = resolve_provider_entry(config, provider_id)
     raw = provider.get("model_rotation") if isinstance(provider, dict) else None
     if not isinstance(raw, dict):
         return {"enabled": False, "primary": "", "fallback": "", "cooldown_seconds": DEFAULT_COOLDOWN_SECONDS}
@@ -114,7 +149,7 @@ def _save_all(config: dict[str, Any], data: dict[str, Any]) -> None:
 
 
 def _provider_entry(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
-    entry = _load_all(config).get(provider_id)
+    entry = _load_all(config).get(rotation_state_key(config, provider_id))
     return entry if isinstance(entry, dict) else {}
 
 
@@ -154,10 +189,11 @@ def cool_slot(
     until = (now + timedelta(seconds=max(MIN_COOLDOWN_SECONDS, duration))).replace(microsecond=0)
     until_iso = until.isoformat().replace("+00:00", "Z")
     data = _load_all(config)
-    entry = data.get(provider_id)
+    state_key = rotation_state_key(config, provider_id)
+    entry = data.get(state_key)
     if not isinstance(entry, dict):
         entry = {}
-        data[provider_id] = entry
+        data[state_key] = entry
     entry[_SLOT_UNTIL_KEY[slot]] = until_iso
     _save_all(config, data)
     return until_iso

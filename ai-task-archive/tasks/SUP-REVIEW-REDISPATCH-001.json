@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "SUP-REVIEW-REDISPATCH-001",
+  "archived_at": "2026-07-24T01:31:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "A non-terminal reviewer exit with task still in review requeues exactly once",
+      "A redispatched review uses a clean isolated task worktree",
+      "The unchanged review handoff does not require a synthetic task-state note",
+      "Duplicate scans cannot create duplicate reviewer workers",
+      "Focused supervisor tests cover recovery and dedupe"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/dispatch_policy.py"
+    ],
+    "auto_created_by": "operator-review-recovery-20260724",
+    "auto_generated": false,
+    "depends_on": [
+      "OPS-DISPATCH-AUTHORITY-RECOVERY-001"
+    ],
+    "id": "SUP-REVIEW-REDISPATCH-001",
+    "last_update": "2026-07-24T01:31:16Z",
+    "mutates_canonical": true,
+    "next": "Owner finalized reviewed delivery: implementation PR #4022 and closeout-evidence PR #4025 are merged into dev; verified python3 .orchestrator/test_supervisor.py (327/327), pytest .orchestrator/test_dispatch_policy.py (26/26), py_compile, and git diff --check.",
+    "owner": "Codex2",
+    "phase": "Supervisor reliability",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "修 reviewer worker 在 supervisor recovery／runtime 更新中止後，seen event 已消耗卻不會重派的缺陷；用 task/handoff 狀態與 terminal worker evidence 做一次性、隔離 worktree 的 governed redispatch。",
+    "task_class": "execution",
+    "title": "Redispatch interrupted governed reviews exactly once",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T01:31:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-review-redispatch-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-REVIEW-REDISPATCH-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "dadb5240df78cc3412f62ff91da11a8cb87de494",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-review-redispatch-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "dbe18ed5a6a5c714a6412b4647605f5c2153abf3",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SUP-REVIEW-REDISPATCH-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 3,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "be3cf913091279fc893846244c422cd50609505e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T01:09:33Z",
+      "from": "Codex2",
+      "message": "Review PR #4022: pending-handoff plus terminal-worker evidence bypasses unchanged-signature cooldown exactly once, forces isolated worktree, and does not mutate task/handoff truth. Verified supervisor 327/327, dispatch-policy 26/26, focused recovery/dedupe 5/5, py_compile, and diff check.",
+      "resolved_at": "2026-07-24T01:12:15Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-REDISPATCH-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T01:12:15Z",
+      "from": "Antigravity",
+      "message": "Reviewed implementation & tests for SUP-REVIEW-REDISPATCH-001: PR #4022 (commit ddd08be87 merged into task branch tip 86ff5fb2a) correctly resolves reviewer worker redispatch on supervisor recovery/runtime replacement without signature cooldown deadlocks, forcing an isolated worktree and preserving handoff truth. Verified test_supervisor (327 tests), test_dispatch_policy (26 tests), py_compile, and git diff.",
+      "status": "done",
+      "task_id": "SUP-REVIEW-REDISPATCH-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-24T01:31:16Z"
+    }
+  ],
+  "blockers": []
+}

@@ -69,6 +69,11 @@
     "producer": {
       "type": "string"
     },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Authenticated tenant scope injected by telemetry ingest."
+    },
     "causation_id": {
       "type": ["string", "null"],
       "format": "uuid"

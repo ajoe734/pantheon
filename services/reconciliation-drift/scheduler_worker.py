@@ -10,15 +10,20 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from services.background_worker_health import (
+    healthcheck as check_worker_health,
+    write_health,
+)
 
 SleepFn = Callable[[float], None]
+_WORKER_NAME = "reconciliation-drift-scheduler"
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -39,8 +44,35 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _new_tick_id() -> str:
-    return f"scheduler-{_utc_now()}-{uuid.uuid4().hex[:8]}"
+def _window_id(
+    *,
+    tenant_id: str,
+    window_seconds: int,
+    now: datetime | None = None,
+) -> str:
+    if not tenant_id.strip():
+        raise ValueError("tenant_id must not be empty")
+    if window_seconds < 1:
+        raise ValueError("window_seconds must be >= 1")
+    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    start_epoch = int(observed.timestamp())
+    start_epoch -= start_epoch % window_seconds
+    start = datetime.fromtimestamp(start_epoch, tz=timezone.utc)
+    start_text = start.isoformat().replace("+00:00", "Z")
+    return f"scheduled:{tenant_id}:{start_text}:PT{window_seconds}S"
+
+
+def _new_tick_id(
+    *,
+    tenant_id: str = "default",
+    window_seconds: int = 300,
+    now: datetime | None = None,
+) -> str:
+    return _window_id(
+        tenant_id=tenant_id,
+        window_seconds=window_seconds,
+        now=now,
+    )
 
 
 def _error_record(exc: Exception, *, attempt: int, phase: str) -> dict[str, Any]:
@@ -102,7 +134,12 @@ def run_tick(
     *,
     api_url: str,
     tick_id: str | None = None,
-    timeout_seconds: float = 30.0,
+    window_id: str | None = None,
+    tenant_id: str = "default",
+    worker_id: str = "reconciliation-scheduler",
+    window_seconds: int = 300,
+    sla_seconds: float = 60.0,
+    timeout_seconds: float = 90.0,
     max_attempts: int = 1,
     retry_backoff_seconds: float = 0.0,
     sleep_fn: SleepFn = time.sleep,
@@ -110,22 +147,62 @@ def run_tick(
     """Run one idempotent scheduler tick with bounded transport retries."""
     if not api_url.strip():
         raise ValueError("api_url must not be empty")
+    if not tenant_id.strip() or not worker_id.strip():
+        raise ValueError("tenant_id and worker_id must not be empty")
+    if window_seconds < 1:
+        raise ValueError("window_seconds must be >= 1")
+    if not math.isfinite(sla_seconds) or sla_seconds <= 0:
+        raise ValueError("sla_seconds must be a finite number > 0")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be a finite number > 0")
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     if not math.isfinite(retry_backoff_seconds) or retry_backoff_seconds < 0:
         raise ValueError("retry_backoff_seconds must be a finite number >= 0")
 
-    effective_tick_id = tick_id or _new_tick_id()
-    payload = json.dumps({"tick_id": effective_tick_id}).encode("utf-8")
+    effective_window_id = window_id or tick_id or _new_tick_id(
+        tenant_id=tenant_id,
+        window_seconds=window_seconds,
+    )
+    effective_tick_id = tick_id or effective_window_id
+    payload = json.dumps(
+        {
+            "tenant_id": tenant_id,
+            "tick_id": effective_tick_id,
+            "window_id": effective_window_id,
+            "worker_id": worker_id,
+            "sla_seconds": sla_seconds,
+        }
+    ).encode("utf-8")
     attempts: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    last_payload: dict[str, Any] = {"status": "error"}
+    last_payload: dict[str, Any] = {
+        "status": "error",
+        "window_id": effective_window_id,
+        "tenant_id": tenant_id,
+        "worker_id": worker_id,
+        "sla_seconds": sla_seconds,
+    }
 
     for attempt in range(1, max_attempts + 1):
         request = urllib.request.Request(
             api_url.rstrip("/") + "/api/reconciliation-drift/scheduled-reconcile",
             data=payload,
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Tenant-Id": tenant_id,
+                **(
+                    {
+                        "Authorization": (
+                            "Bearer "
+                            + os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "")
+                        )
+                    }
+                    if os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "")
+                    else {}
+                ),
+            },
             method="POST",
         )
         try:
@@ -134,10 +211,23 @@ def run_tick(
             decoded = json.loads(response_body) if response_body else {}
             if not isinstance(decoded, dict):
                 raise ValueError("scheduled reconcile response must be a JSON object")
+            decoded.setdefault("window_id", effective_window_id)
+            decoded.setdefault("tenant_id", tenant_id)
+            decoded.setdefault("worker_id", worker_id)
+            decoded.setdefault("sla_seconds", sla_seconds)
             last_payload = decoded
             downstream_status = str(decoded.get("status") or "unobserved").lower()
             observed_at = _utc_now()
-            if downstream_status in {"error", "failed", "failure", "unavailable"}:
+            if decoded.get("within_sla") is False:
+                downstream_status = "failure"
+                decoded.setdefault("detail", "scheduled reconciliation SLA breached")
+            if downstream_status in {
+                "deferred",
+                "error",
+                "failed",
+                "failure",
+                "unavailable",
+            }:
                 error = {
                     "attempt": attempt,
                     "phase": "scheduled_reconcile",
@@ -192,7 +282,56 @@ def _configuration_error(exc: Exception) -> dict[str, Any]:
     }
 
 
+def healthcheck() -> int:
+    try:
+        interval_seconds = _env_float(
+            "RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS",
+            300.0,
+            minimum=0.001,
+        )
+        max_age_seconds = _env_float(
+            "RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS",
+            900.0,
+            minimum=0.001,
+        )
+    except (TypeError, ValueError):
+        return 1
+    return check_worker_health(
+        health_file=os.getenv(
+            "RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE",
+            "",
+        ),
+        interval_seconds=interval_seconds,
+        max_age_seconds=max_age_seconds,
+        worker_name=_WORKER_NAME,
+    )
+
+
+def _health_failure_reason(result: dict[str, Any]) -> str | None:
+    errors = result.get("errors")
+    if isinstance(errors, list) and errors:
+        first = errors[0]
+        if isinstance(first, dict):
+            return str(first.get("detail") or first)
+        return str(first)
+    return None
+
+
 def main() -> int:
+    health_file = os.getenv("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE", "")
+    health: dict[str, Any] = {
+        "worker_name": _WORKER_NAME,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "controller_status": "starting",
+        "pid": os.getpid(),
+    }
+    write_health(health_file, health)
+
     try:
         api_url = os.getenv(
             "RECONCILIATION_DRIFT_URL", "http://reconciliation-drift-svc:8102"
@@ -211,6 +350,33 @@ def main() -> int:
         retry_backoff_seconds = _env_float(
             "RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS", 1.0, minimum=0.0
         )
+        timeout_seconds = _env_float(
+            "RECONCILIATION_DRIFT_SCHEDULER_TIMEOUT_SECONDS", 90.0, minimum=0.001
+        )
+        sla_seconds = _env_float(
+            "RECONCILIATION_DRIFT_SCHEDULED_SLA_SECONDS", 60.0, minimum=0.001
+        )
+        window_seconds = _env_int(
+            "RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS",
+            interval_seconds,
+            minimum=1,
+        )
+        tenant_id = (
+            os.getenv("PANTHEON_TENANT_ID")
+            or os.getenv("RECONCILIATION_DRIFT_DEFAULT_TENANT_ID")
+            or "default"
+        ).strip()
+        worker_id = os.getenv(
+            "RECONCILIATION_DRIFT_SCHEDULER_WORKER_ID",
+            f"{os.getenv('HOSTNAME', 'scheduler')}:{os.getpid()}",
+        ).strip()
+        if not tenant_id or not worker_id:
+            raise ValueError("scheduler tenant_id and worker_id must not be empty")
+        if timeout_seconds < sla_seconds:
+            raise ValueError(
+                "RECONCILIATION_DRIFT_SCHEDULER_TIMEOUT_SECONDS must be >= "
+                "RECONCILIATION_DRIFT_SCHEDULED_SLA_SECONDS"
+            )
     except (TypeError, ValueError) as exc:
         print(json.dumps(_configuration_error(exc), sort_keys=True), flush=True)
         return 2
@@ -221,6 +387,11 @@ def main() -> int:
         try:
             result = run_tick(
                 api_url=api_url,
+                tenant_id=tenant_id,
+                worker_id=worker_id,
+                window_seconds=window_seconds,
+                sla_seconds=sla_seconds,
+                timeout_seconds=timeout_seconds,
                 max_attempts=max_attempts,
                 retry_backoff_seconds=retry_backoff_seconds,
             )
@@ -238,6 +409,22 @@ def main() -> int:
             }
         controller_status = str(result.get("controller_status") or "unhealthy")
         result.setdefault("controller_status", controller_status)
+        tick_at = _utc_now()
+        health.update(
+            {
+                "status": "ok",
+                "ticks": tick,
+                "last_tick_at": tick_at,
+                "controller_status": controller_status,
+            }
+        )
+        if controller_status == "healthy":
+            health["last_success_at"] = tick_at
+            health["last_failure_reason"] = None
+        else:
+            health["last_failure_at"] = tick_at
+            health["last_failure_reason"] = _health_failure_reason(result)
+        write_health(health_file, health)
         print(
             json.dumps(
                 {"tick": tick, "controller_status": controller_status, "result": result},
@@ -251,4 +438,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
+    if sys.argv[1:]:
+        print(
+            "usage: python services/reconciliation-drift/scheduler_worker.py "
+            "[healthcheck]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     raise SystemExit(main())

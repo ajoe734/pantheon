@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-13",
+    "snapshot_date": "2026-07-24",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 644,
+    "total_routes": 670,
     "status_values": [
       "implemented",
       "alias",
@@ -122,6 +122,24 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/dataset-worker/backlog",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/dataset-worker/dlq",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/dataset-worker/handoffs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/datasets/{param}",
       "family": "agora-core",
       "status": "implemented"
@@ -170,6 +188,30 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/interactions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/interactions/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/interactions/{param}/stream",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/interactions/{param}/timeline",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/journal",
       "family": "agora-core",
       "status": "implemented"
@@ -206,6 +248,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/performance/action-receipts/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/postmortems",
       "family": "agora-core",
       "status": "implemented"
@@ -218,7 +266,37 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/proposals/{param}/candidate",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/proposals/{param}/candidate-decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/proposals/{param}/formal-approvals/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/proposals/{param}/review-readiness",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/proposals/{param}/revisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/proposals/{param}/validations/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -339,6 +417,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/trading-room/strategies/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/strategies/{param}/performance",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -536,6 +620,18 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/dataset-worker/dlq/{param}/replay",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/dataset-worker/process",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/feedback",
       "family": "agora-core",
       "status": "implemented"
@@ -578,6 +674,24 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/interactions/{param}/recommended-measures/{param}/candidates",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/interactions/{param}:retry",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/interactions:recover",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/journal",
       "family": "agora-core",
       "status": "implemented"
@@ -615,6 +729,24 @@
     {
       "method": "POST",
       "path": "/bff/agora/proposals/{param}/actions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/proposals/{param}/candidate-decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/proposals/{param}/formal-approvals/{param}:link",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/proposals/{param}/validations",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -723,6 +855,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/trading-room/decision-events/{param}/decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/strategies/{param}/performance/suggestions/{param}/actions",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -2690,6 +2828,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/auth/readiness",
+      "family": "session-auth-me",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/me",
       "family": "session-auth-me",
       "status": "implemented"
@@ -3003,6 +3147,12 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/actions/{param}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/reconcile",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -3796,6 +3946,12 @@
     {
       "method": "POST",
       "path": "/bff/management/personas/create-paper-bundle",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/{param}/ppl-alloc-009-paper-eligibility-proof",
       "family": "unknown",
       "status": "implemented"
     },

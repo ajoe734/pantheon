@@ -6,6 +6,8 @@ import hashlib
 import os
 import shutil
 import subprocess
+
+import model_rotation
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -677,6 +679,47 @@ def _antigravity_auth_metadata(config: dict[str, Any], provider_id: str, env: di
     }
 
 
+def _antigravity_credential_group(config: dict[str, Any], provider_id: str) -> str:
+    """Identify the quota account behind one Antigravity provider alias.
+
+    ``antigravity`` and ``antigravity1-1`` ... ``antigravity1-4`` all resolve to
+    the same ``$HOME/.gemini/antigravity-cli`` OAuth token, so they are one
+    account's quota rather than five independent worker lanes.  Group by the
+    declared account/quota group when the config states one, otherwise by the
+    resolved credential home plus OAuth token path.
+    """
+    provider_cfg = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
+    for key in ("account", "account_group", "quota_group"):
+        declared = str(provider_cfg.get(key) or "").strip()
+        if declared:
+            return normalize_agent_id(f"antigravity_{declared}")
+    home = str(_antigravity_home(config, provider_id))
+    token = str(_antigravity_oauth_token_path(config, provider_id))
+    digest = hashlib.sha256(f"antigravity:{home}\0{token}".encode("utf-8")).hexdigest()[:16]
+    return normalize_agent_id(f"antigravity_account_{digest}")
+
+
+def _share_auth_probe_across_credential_group(
+    probe: dict[str, Any],
+    provider_id: str,
+    *,
+    credential_group: str,
+    shared_with: str,
+) -> dict[str, Any]:
+    """Reuse one credential group's probe result for a sibling alias.
+
+    The aliases share a single OAuth token, so a second ``agy --prompt`` smoke
+    proves nothing new and a quota/auth failure on one of them is a failure for
+    every alias in the group.
+    """
+    record = dict(probe)
+    record["provider"] = provider_id
+    record["credential_group"] = credential_group
+    record["shared_with"] = shared_with
+    record["source"] = "shared_credential_group"
+    return record
+
+
 def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tuple[bool, str | None, str]:
     """Decide whether an `agy --prompt` smoke probe proves non-interactive auth.
 
@@ -688,14 +731,18 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
     not-logged-in marker to fail, and non-empty stdout before declaring ready.
     """
     lowered = combined.lower()
-    if returncode != 0:
-        return False, _compact_auth_error(combined), f"exit_{returncode}"
+    # Quota exhaustion must be classified before the exit-code check: the CLI
+    # exits 1 on a quota error, and "quota_reached" (a per-model condition the
+    # rotation layer can route around) must not be reported as a generic
+    # auth-down "exit_1".
     if "quota reached" in lowered or "individual quota" in lowered:
         return (
             False,
             "Antigravity account quota is exhausted; enable overages or wait for reset.",
             "quota_reached",
         )
+    if returncode != 0:
+        return False, _compact_auth_error(combined), f"exit_{returncode}"
     if "not logged into antigravity" in lowered or "not authenticated" in lowered:
         return (
             False,
@@ -751,49 +798,99 @@ def _antigravity_auth_probe(
     settings = _auth_probe_settings(config, provider_id)
     prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
     timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
-    command = [binary]
-    model = str(provider_settings.get("model") or "").strip()
-    if model:
-        command.extend(["--model", model])
     print_timeout = str(settings.get("print_timeout") or provider_settings.get("probe_print_timeout") or "90s").strip()
-    if print_timeout:
-        command.extend(["--print-timeout", print_timeout])
-    command.extend(["--prompt", prompt])
-    try:
-        result = run_command(command, timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
+
+    # The probe must exercise the same model the dispatch adapter would pick:
+    # auth (the OAuth token) and per-model-family quota are separate failure
+    # domains, and Gemini quota exhaustion must not report the account as
+    # auth-down while the rotation fallback model still has quota.
+    rotation = model_rotation.rotation_settings(config, provider_id)
+    rotation_slot: str | None = None
+    model = str(provider_settings.get("model") or "").strip()
+    if rotation.get("enabled"):
+        rotation_slot = model_rotation.active_slot(config, provider_id)
+        if rotation_slot is None:
+            # Every rotation model is already cooling, so there is nothing left
+            # to probe: re-probing the exhausted primary cannot succeed, and the
+            # quota_reached path below would call cool_slot again and SHORTEN the
+            # running cooldown to a fresh interval. Report not-ready without
+            # spending a call; the next probe after a cooldown expires retries.
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method=method,
+                error="Every Antigravity rotation model is cooling after quota exhaustion.",
+                status="rotation_models_cooling",
+                metadata={**metadata, "rotation_slot": None},
+            )
+        slot_model = model_rotation.model_for_slot(rotation, rotation_slot)
+        if slot_model:
+            model = slot_model
+
+    def _probe_once(probe_model: str, slot: str | None) -> dict[str, Any]:
+        probe_metadata = dict(metadata)
+        if probe_model:
+            probe_metadata["probe_model"] = probe_model
+        if slot is not None:
+            probe_metadata["rotation_slot"] = slot
+        command = [binary]
+        if probe_model:
+            command.extend(["--model", probe_model])
+        if print_timeout:
+            command.extend(["--print-timeout", print_timeout])
+        command.extend(["--prompt", prompt])
+        try:
+            result = run_command(command, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method=method,
+                error=f"Antigravity auth probe timed out after {timeout:g}s.",
+                status="probe_timeout",
+                metadata=probe_metadata,
+            )
+        except OSError as exc:
+            return _auth_probe_record(
+                provider_id,
+                "antigravity",
+                ready=False,
+                method=method,
+                error=f"{type(exc).__name__}: {exc}",
+                status="probe_error",
+                metadata=probe_metadata,
+            )
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        ready, error, status = _antigravity_probe_ready(
+            result.returncode, (result.stdout or "").strip(), output
+        )
         return _auth_probe_record(
             provider_id,
             "antigravity",
-            ready=False,
+            ready=ready,
             method=method,
-            error=f"Antigravity auth probe timed out after {timeout:g}s.",
-            status="probe_timeout",
-            metadata=metadata,
+            error=error,
+            status=status,
+            metadata=probe_metadata,
         )
-    except OSError as exc:
-        return _auth_probe_record(
-            provider_id,
-            "antigravity",
-            ready=False,
-            method=method,
-            error=f"{type(exc).__name__}: {exc}",
-            status="probe_error",
-            metadata=metadata,
-        )
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-    ready, error, status = _antigravity_probe_ready(
-        result.returncode, (result.stdout or "").strip(), output
-    )
-    return _auth_probe_record(
-        provider_id,
-        "antigravity",
-        ready=ready,
-        method=method,
-        error=error,
-        status=status,
-        metadata=metadata,
-    )
+
+    record = _probe_once(model, rotation_slot)
+    if (
+        record.get("status") == "quota_reached"
+        and rotation.get("enabled")
+        and rotation_slot is not None
+    ):
+        # The probed model is out of quota, not the account's auth. Cool that
+        # slot so dispatch rotates too, and re-probe on the alternate model;
+        # only when every rotation model is exhausted is the lane really down.
+        model_rotation.cool_slot(config, provider_id, rotation_slot)
+        alternate_slot = model_rotation.active_slot(config, provider_id)
+        if alternate_slot is not None and alternate_slot != rotation_slot:
+            alternate_model = model_rotation.model_for_slot(rotation, alternate_slot)
+            record = _probe_once(alternate_model, alternate_slot)
+    return record
 
 
 def _read_text(path: Path) -> str:
@@ -1371,21 +1468,43 @@ def _gemini_provider_report(
     }
 
 
-def _antigravity_provider_report(config: dict[str, Any], *, provider_id: str) -> dict[str, Any]:
+def _antigravity_provider_report(
+    config: dict[str, Any],
+    *,
+    provider_id: str,
+    credential_group: str | None = None,
+    shared_probe: dict[str, Any] | None = None,
+    shared_probe_provider: str | None = None,
+) -> dict[str, Any]:
     provider_config = (config.get("providers", {}).get(provider_id, {}) or {})
     antigravity_runtime = provider_config.get("antigravity", {}) or {}
     selected_model = str(antigravity_runtime.get("model") or "").strip() or None
     provider_binary = _configured_provider_binary(config, provider_id, "antigravity", "agy")
-    auth_probe = _antigravity_auth_probe(config, provider_id, provider_binary)
+    group = credential_group or _antigravity_credential_group(config, provider_id)
+    if shared_probe is not None:
+        auth_probe = _share_auth_probe_across_credential_group(
+            shared_probe,
+            provider_id,
+            credential_group=group,
+            shared_with=str(shared_probe_provider or ""),
+        )
+    else:
+        auth_probe = _antigravity_auth_probe(config, provider_id, provider_binary)
+        auth_probe["credential_group"] = group
     auth_ready = bool(auth_probe.get("ready"))
     installed = bool(provider_binary)
     notes = [
         "Antigravity workers use the local `agy` CLI with the provider-specific HOME/profile.",
         "The auth watchdog verifies non-interactive auth with a low-frequency `agy --prompt` smoke probe.",
+        "Aliases sharing one OAuth token/home are one quota account: they share a single probe result "
+        "and are not independent schedulable capacity.",
     ]
     if provider_id != "antigravity":
         notes.append(f"Provider `{provider_id}` uses its configured Antigravity CLI home/env profile when provided.")
     return {
+        "account_group": group,
+        "credential_group": group,
+        "quota_group": provider_config.get("quota_group"),
         "installed": installed,
         "host_layer": "CLI" if provider_binary else "unavailable",
         "delivery_mode": provider_config.get("delivery_mode", "antigravity"),
@@ -1429,6 +1548,35 @@ def _antigravity_provider_report(config: dict[str, Any], *, provider_id: str) ->
         },
         "notes": notes,
     }
+
+
+def _antigravity_provider_reports(
+    config: dict[str, Any],
+    provider_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Build every Antigravity alias report with one probe per quota account.
+
+    Probing each alias separately both burned N ``agy --prompt`` smokes per
+    report and let a quota-dead account keep publishing N independently
+    ``auth_ready`` lanes.  One probe per credential group fixes both: every
+    alias in a failed group is reported unschedulable.
+    """
+    reports: dict[str, dict[str, Any]] = {}
+    group_probes: dict[str, tuple[str, dict[str, Any]]] = {}
+    for provider_id in provider_ids:
+        group = _antigravity_credential_group(config, provider_id)
+        shared = group_probes.get(group)
+        report = _antigravity_provider_report(
+            config,
+            provider_id=provider_id,
+            credential_group=group,
+            shared_probe=shared[1] if shared else None,
+            shared_probe_provider=shared[0] if shared else None,
+        )
+        if shared is None:
+            group_probes[group] = (provider_id, report["auth_probe"])
+        reports[provider_id] = report
+    return reports
 
 
 def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1552,7 +1700,12 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
         profile = provider_settings.get("codex", {}) or codex_profile
         provider_binary = _configured_provider_binary(config, provider_id, "codex", "codex") or codex_binary
-        auth_probe = _codex_auth_probe(config, provider_id, provider_binary, force=True)
+        # Telemetry refresh, not a launch gate: honour provider_auth
+        # probe_interval_seconds and reuse the recent probe. The supervisor runs
+        # this report before every loop, so forcing it here re-ran `codex exec`
+        # for every Codex alias on every tick. The authoritative pre-dispatch
+        # check stays `probe_provider_auth(config, provider, force=True)`.
+        auth_probe = _codex_auth_probe(config, provider_id, provider_binary)
         auth_ready = bool(auth_probe.get("ready"))
         installed = bool(openai_path or provider_binary)
         config_path_for_provider = _codex_config_path(config, provider_id)
@@ -1651,7 +1804,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 )
                 for provider_id in gemini_provider_ids
             },
-            **{provider_id: _antigravity_provider_report(config, provider_id=provider_id) for provider_id in antigravity_provider_ids},
+            **_antigravity_provider_reports(config, antigravity_provider_ids),
             **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
             "copilot": {
                 "installed": copilot_installed,

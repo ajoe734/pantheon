@@ -14,18 +14,26 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Dict, Mapping, Optional
 
 
 @dataclass(frozen=True)
 class CanonicalOperationError(RuntimeError):
-    """A sanitized failure returned by a canonical downstream authority."""
+    """A sanitized failure returned by a canonical downstream authority.
+
+    ``partial_effects`` carries the downstream identifiers that were already
+    durably created before the failing step (for example a research task that
+    exists even though its run dispatch failed).  The router persists these in
+    the failed command receipt so a new-key retry can resume the recorded
+    downstream resources instead of creating duplicates.
+    """
 
     authority: str
     reason: str
     status_code: Optional[int] = None
     retryable: bool = False
+    partial_effects: Optional[Mapping[str, Any]] = field(default=None, compare=False)
 
     def __str__(self) -> str:
         suffix = f" (HTTP {self.status_code})" if self.status_code else ""
@@ -179,49 +187,134 @@ class WorkshopCanonicalOperations:
 
     # -- Research Orchestrator --------------------------------------------
 
+    @staticmethod
+    def _with_partial_effects(
+        error: CanonicalOperationError,
+        effects: Mapping[str, Any],
+    ) -> CanonicalOperationError:
+        """Attach the already-created downstream identifiers to a failure."""
+
+        merged = {key: value for key, value in dict(effects).items() if value}
+        if error.partial_effects:
+            merged.update(dict(error.partial_effects))
+        if not merged:
+            return error
+        return replace(error, partial_effects=merged)
+
     def dispatch_research_run(
         self,
         *,
         task_payload: Dict[str, Any],
         run_payload: Dict[str, Any],
+        resume: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
-        task = self._request_json(
-            "research_orchestrator",
-            "POST",
-            self.research_base_url,
-            "/api/research-orchestrator/tasks",
-            task_payload,
-        )
-        task_id = str((task or {}).get("task_id") or (task or {}).get("id") or "")
+        """Create-or-adopt the canonical research task and run.
+
+        ``resume`` carries downstream identifiers recorded by a prior failed
+        attempt.  Recorded resources are adopted with authoritative readback
+        instead of re-created; a recorded id that the downstream authority no
+        longer knows (404) falls back to creation so the retry stays truthful.
+        Any failure after a downstream resource exists raises with
+        ``partial_effects`` naming that resource.
+        """
+
+        resume_state = dict(resume or {})
+        task_id = str(resume_state.get("research_task_id") or "")
+        run_id = str(resume_state.get("research_run_id") or "")
+        task_readback: Optional[Dict[str, Any]] = None
+        if task_id:
+            try:
+                task_readback = self._request_json(
+                    "research_orchestrator",
+                    "GET",
+                    self.research_base_url,
+                    f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}",
+                )
+            except CanonicalOperationError as exc:
+                if exc.status_code == 404:
+                    # Downstream never durably admitted the recorded task, so
+                    # the retry must create it (same downstream idempotency
+                    # key, derived by the router from the recorded digest).
+                    task_id = ""
+                    run_id = ""
+                else:
+                    raise self._with_partial_effects(
+                        exc,
+                        {"research_task_id": task_id, "research_run_id": run_id},
+                    ) from exc
         if not task_id:
-            raise CanonicalOperationError(
+            task = self._request_json(
                 "research_orchestrator",
-                "canonical research task response is missing task_id",
+                "POST",
+                self.research_base_url,
+                "/api/research-orchestrator/tasks",
+                task_payload,
             )
-        task_readback = self._request_json(
-            "research_orchestrator",
-            "GET",
-            self.research_base_url,
-            f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}",
-        )
-        run = self._request_json(
-            "research_orchestrator",
-            "POST",
-            self.research_base_url,
-            f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/runs",
-            run_payload,
-        )
-        run_id = str((run or {}).get("run_id") or (run or {}).get("id") or "")
+            task_id = str((task or {}).get("task_id") or (task or {}).get("id") or "")
+            if not task_id:
+                raise CanonicalOperationError(
+                    "research_orchestrator",
+                    "canonical research task response is missing task_id",
+                )
+            try:
+                task_readback = self._request_json(
+                    "research_orchestrator",
+                    "GET",
+                    self.research_base_url,
+                    f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}",
+                )
+            except CanonicalOperationError as exc:
+                raise self._with_partial_effects(
+                    exc, {"research_task_id": task_id}
+                ) from exc
+        run_readback: Optional[Dict[str, Any]] = None
+        if run_id:
+            try:
+                run_readback = self.get_research_run(run_id)
+            except CanonicalOperationError as exc:
+                if exc.status_code == 404:
+                    run_id = ""
+                else:
+                    raise self._with_partial_effects(
+                        exc,
+                        {"research_task_id": task_id, "research_run_id": run_id},
+                    ) from exc
         if not run_id:
-            raise CanonicalOperationError(
-                "research_orchestrator",
-                "canonical research dispatch response is missing run_id",
-            )
-        run_readback = self.get_research_run(run_id)
-        if str(run_readback.get("task_id") or "") != task_id:
-            raise CanonicalOperationError(
-                "research_orchestrator",
-                "authoritative research run readback task mismatch",
+            try:
+                run = self._request_json(
+                    "research_orchestrator",
+                    "POST",
+                    self.research_base_url,
+                    f"/api/research-orchestrator/tasks/{urllib.parse.quote(task_id, safe='')}/runs",
+                    run_payload,
+                )
+            except CanonicalOperationError as exc:
+                raise self._with_partial_effects(
+                    exc, {"research_task_id": task_id}
+                ) from exc
+            run_id = str((run or {}).get("run_id") or (run or {}).get("id") or "")
+            if not run_id:
+                raise self._with_partial_effects(
+                    CanonicalOperationError(
+                        "research_orchestrator",
+                        "canonical research dispatch response is missing run_id",
+                    ),
+                    {"research_task_id": task_id},
+                )
+            try:
+                run_readback = self.get_research_run(run_id)
+            except CanonicalOperationError as exc:
+                raise self._with_partial_effects(
+                    exc,
+                    {"research_task_id": task_id, "research_run_id": run_id},
+                ) from exc
+        if str((run_readback or {}).get("task_id") or "") != task_id:
+            raise self._with_partial_effects(
+                CanonicalOperationError(
+                    "research_orchestrator",
+                    "authoritative research run readback task mismatch",
+                ),
+                {"research_task_id": task_id, "research_run_id": run_id},
             )
         return {"task": task_readback, "run": run_readback}
 
@@ -246,36 +339,85 @@ class WorkshopCanonicalOperations:
         *,
         payload: Dict[str, Any],
         request_id: str,
+        resume: bool = False,
     ) -> Dict[str, Any]:
-        create_payload = dict(payload)
-        create_payload["request_id"] = request_id
-        created = self._request_json(
-            "consultation_service",
-            "POST",
-            self.consultation_base_url,
-            "/api/consult/requests",
-            create_payload,
-        )
-        created_id = str((created or {}).get("request_id") or "")
-        if created_id != request_id:
-            raise CanonicalOperationError(
-                "consultation_service",
-                "canonical consultation create response id mismatch",
-            )
+        """Create-or-adopt the canonical consultation request and submit it.
+
+        With ``resume`` the adapter first reads ``request_id`` back: a prior
+        failed attempt may already have created it downstream.  An existing
+        request is adopted (and submitted if still draft) instead of being
+        re-created.  Failures once creation succeeded — or when the create
+        outcome is unknown (retryable transport failure) — raise with
+        ``partial_effects`` carrying ``consultation_request_id`` so the router
+        can persist resumable lineage.
+        """
+
+        created: Optional[Dict[str, Any]] = None
+        if resume:
+            try:
+                created = self.get_consultation(request_id)
+            except CanonicalOperationError as exc:
+                if exc.status_code != 404:
+                    raise self._with_partial_effects(
+                        exc, {"consultation_request_id": request_id}
+                    ) from exc
+                created = None
+        if created is None:
+            create_payload = dict(payload)
+            create_payload["request_id"] = request_id
+            try:
+                created = self._request_json(
+                    "consultation_service",
+                    "POST",
+                    self.consultation_base_url,
+                    "/api/consult/requests",
+                    create_payload,
+                )
+            except CanonicalOperationError as exc:
+                if exc.retryable:
+                    # Unknown outcome: the request may exist downstream even
+                    # though the response was lost.  Record the deterministic
+                    # id so a retry adopts rather than duplicates it.
+                    raise self._with_partial_effects(
+                        exc, {"consultation_request_id": request_id}
+                    ) from exc
+                raise
+            created_id = str((created or {}).get("request_id") or "")
+            if created_id != request_id:
+                raise self._with_partial_effects(
+                    CanonicalOperationError(
+                        "consultation_service",
+                        "canonical consultation create response id mismatch",
+                    ),
+                    {"consultation_request_id": request_id},
+                )
         status = str((created or {}).get("status") or "").lower()
         if status == "draft":
-            self._request_json(
-                "consultation_service",
-                "POST",
-                self.consultation_base_url,
-                f"/api/consult/requests/{urllib.parse.quote(request_id, safe='')}/submit",
-                {},
-            )
-        readback = self.get_consultation(request_id)
+            try:
+                self._request_json(
+                    "consultation_service",
+                    "POST",
+                    self.consultation_base_url,
+                    f"/api/consult/requests/{urllib.parse.quote(request_id, safe='')}/submit",
+                    {},
+                )
+            except CanonicalOperationError as exc:
+                raise self._with_partial_effects(
+                    exc, {"consultation_request_id": request_id}
+                ) from exc
+        try:
+            readback = self.get_consultation(request_id)
+        except CanonicalOperationError as exc:
+            raise self._with_partial_effects(
+                exc, {"consultation_request_id": request_id}
+            ) from exc
         if str(readback.get("status") or "").lower() == "draft":
-            raise CanonicalOperationError(
-                "consultation_service",
-                "authoritative consultation readback remained draft",
+            raise self._with_partial_effects(
+                CanonicalOperationError(
+                    "consultation_service",
+                    "authoritative consultation readback remained draft",
+                ),
+                {"consultation_request_id": request_id},
             )
         return readback
 

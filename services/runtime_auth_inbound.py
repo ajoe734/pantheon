@@ -66,10 +66,14 @@ PANTHEON_RUNTIME_ROLE_MAP_MODE
     (only mapped values become Pantheon roles).
 PANTHEON_RUNTIME_MFA_CLAIMS
     Comma-separated claim paths used to resolve IdP-confirmed MFA. Defaults to
-    ``amr,acr,mfa,mfa_verified``.
+    ``amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor``.
 PANTHEON_RUNTIME_MFA_VALUES
     Comma-separated values treated as MFA proof. Defaults to common true/MFA
     markers such as ``true,mfa,otp,totp,webauthn``.
+PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED
+    ``true`` to require the verified JWT to contain ``email_verified=true``.
+    This is enabled for browser tokens issued by GCP Identity Platform so an
+    unverified first-factor session cannot cross the BFF boundary.
 """
 from __future__ import annotations
 
@@ -282,7 +286,13 @@ _JWKS_ALLOWED_ALGS = frozenset({"RS256", "ES256"})
 _OIDC_DISCOVERY_CACHE: dict[str, tuple[dict[str, Any], float]] = {}
 _OIDC_DISCOVERY_CACHE_LOCK = threading.Lock()
 _DEFAULT_ROLE_CLAIMS = ("roles", "role")
-_DEFAULT_MFA_CLAIMS = ("amr", "acr", "mfa", "mfa_verified")
+_DEFAULT_MFA_CLAIMS = (
+    "amr",
+    "acr",
+    "mfa",
+    "mfa_verified",
+    "firebase.sign_in_second_factor",
+)
 _DEFAULT_MFA_VALUES = frozenset({"true", "1", "yes", "mfa", "otp", "totp", "webauthn"})
 
 
@@ -697,6 +707,23 @@ def _claims_to_context(
     )
 
 
+def _enforce_verified_claim_requirements(
+    claims: Mapping[str, Any],
+    *,
+    env: Optional[Mapping[str, str]] = None,
+) -> None:
+    if (
+        _env(env, "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED", "false").lower()
+        == "true"
+        and claims.get("email_verified") is not True
+    ):
+        raise AuthError(
+            "AUTH_EMAIL_UNVERIFIED",
+            "Verified email is required",
+            401,
+        )
+
+
 def _env(env: Optional[Mapping[str, str]], key: str, default: str = "") -> str:
     src = env if env is not None else os.environ
     return str(src.get(key, default)).strip()
@@ -756,6 +783,7 @@ def validate_request_auth(
                 issuer=oidc_issuer,
                 audience=oidc_audience,
             )
+            _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
                 default_role=default_role,
@@ -775,6 +803,7 @@ def validate_request_auth(
                 issuer=oidc_issuer,
                 audience=oidc_audience,
             )
+            _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
                 default_role=default_role,
@@ -797,6 +826,7 @@ def validate_request_auth(
                 issuer=issuer,
                 audience=audience,
             )
+            _enforce_verified_claim_requirements(claims, env=env)
             ctx = _claims_to_context(
                 claims,
                 default_role=default_role,

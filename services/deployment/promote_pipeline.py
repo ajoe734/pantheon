@@ -84,6 +84,8 @@ class HttpxServiceTransport:
         self,
         base_urls: Mapping[str, str],
         *,
+        deployment_bearer_token: str | None = None,
+        deployment_tenant_id: str | None = None,
         runtime_bearer_token: str | None = None,
         runtime_mfa_token: str | None = None,
         timeout_seconds: float = 10.0,
@@ -95,6 +97,10 @@ class HttpxServiceTransport:
             if url:
                 normalized[str(name)] = url
         self.base_urls = normalized
+        self._deployment_bearer_token = str(
+            deployment_bearer_token or ""
+        ).strip()
+        self._deployment_tenant_id = str(deployment_tenant_id or "").strip()
         self._runtime_bearer_token = str(runtime_bearer_token or "").strip()
         self._runtime_mfa_token = str(runtime_mfa_token or "").strip()
         self._owns_client = client is None
@@ -142,6 +148,11 @@ class HttpxServiceTransport:
         }
         return cls(
             base_urls,
+            deployment_bearer_token=first(
+                "PANTHEON_DEPLOYMENT_SERVICE_TOKEN",
+                "PANTHEON_DEPLOYMENT_AUTH_TOKEN",
+            ),
+            deployment_tenant_id=first("PANTHEON_DEPLOYMENT_TENANT_ID"),
             runtime_bearer_token=first(
                 "PANTHEON_RUNTIME_MANAGER_TOKEN", "PANTHEON_RUNTIME_AUTH_TOKEN"
             ),
@@ -169,6 +180,20 @@ class HttpxServiceTransport:
         headers: dict[str, str] = {"Accept": "application/json"}
         if json is not None:
             headers["Content-Type"] = "application/json"
+        if service == "deployment":
+            if not self._deployment_bearer_token:
+                raise PromotePipelineError(
+                    "PANTHEON_DEPLOYMENT_SERVICE_TOKEN is required for deployment API calls"
+                )
+            if not self._deployment_tenant_id:
+                raise PromotePipelineError(
+                    "PANTHEON_DEPLOYMENT_TENANT_ID is required for deployment API calls"
+                )
+            token = self._deployment_bearer_token
+            headers["Authorization"] = (
+                token if token.lower().startswith("bearer ") else f"Bearer {token}"
+            )
+            headers["X-Tenant-Id"] = self._deployment_tenant_id
         if service == "runtime_manager":
             if self._runtime_bearer_token:
                 token = self._runtime_bearer_token
@@ -213,6 +238,7 @@ class PromoteRequest:
     expected_runtime_id: str
     source_task_id: str
     created_by: str
+    tenant_id: str
 
     def __post_init__(self) -> None:
         missing = [
@@ -225,6 +251,7 @@ class PromoteRequest:
                 "expected_runtime_id",
                 "source_task_id",
                 "created_by",
+                "tenant_id",
             )
             if not str(getattr(self, name) or "").strip()
         ]
@@ -440,6 +467,7 @@ class PromotePipeline:
             "registry_entry": registry_entry_payload,
             "metadata": {
                 "promotion_pipeline": "EVOLOOP-006",
+                "tenant_id": req.tenant_id,
                 "current_binding_id": req.current_binding_id,
                 "expected_runtime_id": req.expected_runtime_id,
             },
@@ -1034,6 +1062,9 @@ class PromotePipeline:
         self._require_value(
             decision, "decision_id", req.approval_decision_id, "ApprovalDecision"
         )
+        self._require_value(
+            decision, "tenant_id", req.tenant_id, "ApprovalDecision"
+        )
         state = _text(decision.get("decision_state") or decision.get("state"))
         outcome = _text(decision.get("decision") or decision.get("outcome"))
         if state != "decided":
@@ -1287,6 +1318,7 @@ class PromotePipeline:
             ],
             "metadata": {
                 "source_task_id": req.source_task_id,
+                "tenant_id": req.tenant_id,
                 "strategy_id": artifact.get("strategy_id"),
                 "strategy_artifact_id": artifact.get("artifact_id"),
                 "expected_runtime_id": req.expected_runtime_id,

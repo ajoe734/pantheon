@@ -54,6 +54,8 @@ from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.evolution.threshold_sweep_worker import (
     DEFAULT_BASELINES_PATH,
     DEFAULT_CONFIG_PATH,
+    approved_baseline_value,
+    assess_input_coverage,
     evaluate_breaches,
     load_baselines,
     load_thresholds,
@@ -102,7 +104,14 @@ THRESHOLDS = [
     },
 ]
 
-BASELINES = {"artifact-evochain-001": {"expected_drawdown": 0.12}}
+BASELINES = {
+    "artifact-evochain-001": {
+        "expected_drawdown": 0.12,
+        # A baseline only counts as approved when it names the governance
+        # decision that set it; load_baselines() drops entries without one.
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1 test baseline",
+    }
+}
 
 # Fixed reference "now" for freshness checks: 30 seconds after the fixtures'
 # heartbeat/metric as-of times below — within RuntimeSummaryProjectionStore's
@@ -137,6 +146,31 @@ def _summary(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def _threshold_config_without_valid_entries(tmp_path: Path, kind: str) -> str:
+    path = tmp_path / f"{kind}.json"
+    if kind == "missing":
+        return str(path)
+    if kind == "malformed":
+        path.write_text("{not json", encoding="utf-8")
+    elif kind == "empty":
+        path.write_text(json.dumps({"thresholds": []}), encoding="utf-8")
+    elif kind == "all-disabled":
+        path.write_text(
+            json.dumps(
+                {
+                    "thresholds": [
+                        {**threshold, "enabled": False}
+                        for threshold in THRESHOLDS
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+    else:  # pragma: no cover - test helper guard
+        raise AssertionError(f"unknown threshold config kind: {kind}")
+    return str(path)
 
 
 def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) -> dict:
@@ -237,6 +271,35 @@ def test_load_thresholds_drops_disabled_entries(tmp_path):
     disabled_entry["enabled"] = False
     cfg.write_text(json.dumps({"thresholds": [disabled_entry]}), encoding="utf-8")
     assert load_thresholds(str(cfg)) == []
+
+
+@pytest.mark.parametrize("config_kind", ["empty", "missing", "malformed", "all-disabled"])
+def test_input_coverage_fails_closed_when_threshold_config_has_no_valid_entries(
+    tmp_path, config_kind
+):
+    config_path = _threshold_config_without_valid_entries(tmp_path, config_kind)
+    thresholds = load_thresholds(config_path)
+    summary = _summary()
+    summary.pop("drawdown")
+    summary.pop("drawdown_at")
+    summary.pop("drawdown_binding_id")
+
+    coverage = assess_input_coverage(
+        [summary],
+        thresholds,
+        baselines={},
+        now=_NOW,
+    )
+
+    assert coverage["thresholds_considered"] == []
+    assert coverage["monitored_artifacts"] == 1
+    assert coverage["complete_artifacts"] == 0
+    assert coverage["incomplete_artifacts"] == 1
+    assert coverage["coverage_complete"] is False
+    assert coverage["artifacts"][0]["metrics"] == []
+    assert coverage["artifacts"][0]["complete"] is False
+    assert any("no valid enabled thresholds" in gap for gap in coverage["artifacts"][0]["gaps"])
+    assert any("no valid enabled thresholds" in item for item in coverage["diagnostics"])
 
 
 def test_load_thresholds_drops_truthy_non_bool_enabled(tmp_path):
@@ -344,6 +407,49 @@ def test_load_baselines_reads_per_artifact_values(tmp_path):
     cfg = tmp_path / "baselines.json"
     cfg.write_text(json.dumps({"baselines": BASELINES}), encoding="utf-8")
     assert load_baselines(str(cfg)) == BASELINES
+
+
+def test_load_baselines_drops_entries_without_approving_policy_source(tmp_path):
+    """An unapproved number must never become a ratio denominator.
+
+    A baseline with no ``policy_source`` has no governance decision behind it,
+    so it is exactly the fabricated-baseline case the sweep must fail closed
+    on (L12-EVO-001 acceptance 1).
+    """
+    cfg = tmp_path / "baselines.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "baselines": {
+                    "artifact-approved-001": {
+                        "expected_drawdown": 0.10,
+                        "policy_source": "docs/example-governed-baseline.md#decision",
+                    },
+                    "artifact-unapproved-001": {"expected_drawdown": 0.10},
+                    "artifact-blank-source-001": {
+                        "expected_drawdown": 0.10,
+                        "policy_source": "   ",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_baselines(str(cfg))
+    assert set(loaded) == {"artifact-approved-001"}
+
+
+def test_approved_baseline_value_fails_closed_on_unusable_numbers():
+    baselines = {
+        "artifact-a": {"expected_drawdown": 0.12, "policy_source": "doc#d"},
+        "artifact-zero": {"expected_drawdown": 0.0, "policy_source": "doc#d"},
+        "artifact-negative": {"expected_drawdown": -0.5, "policy_source": "doc#d"},
+        "artifact-bool": {"expected_drawdown": True, "policy_source": "doc#d"},
+        "artifact-text": {"expected_drawdown": "0.12", "policy_source": "doc#d"},
+    }
+    assert approved_baseline_value(baselines, "artifact-a", "expected_drawdown") == 0.12
+    for artifact_id in ("artifact-zero", "artifact-negative", "artifact-bool", "artifact-text", "artifact-missing"):
+        assert approved_baseline_value(baselines, artifact_id, "expected_drawdown") is None
 
 
 # ---------------------------------------------------------------------------
@@ -952,8 +1058,36 @@ def test_run_tick_fails_closed_when_no_thresholds_configured():
         fetch_summaries=fetch,
     )
     assert result["candidates"] == 0
-    assert not calls
+    assert calls == ["fetch"]
+    assert result["input_coverage"]["coverage_complete"] is False
+    assert result["input_coverage"]["incomplete_artifacts"] == 1
     assert any("no valid thresholds" in d for d in result["diagnostics"])
+    assert any("no valid enabled thresholds" in d for d in result["diagnostics"])
+
+
+@pytest.mark.parametrize("config_kind", ["empty", "missing", "malformed", "all-disabled"])
+def test_run_tick_reports_incomplete_coverage_for_invalid_threshold_config(
+    tmp_path, config_kind
+):
+    config_path = _threshold_config_without_valid_entries(tmp_path, config_kind)
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        config_path=config_path,
+        baselines={},
+        fetch_summaries=lambda *_args, **_kwargs: [_summary()],
+        state_path=str(tmp_path / "state.json"),
+        now=_NOW,
+    )
+
+    assert result["summaries_evaluated"] == 1
+    assert result["candidates"] == 0
+    assert result["input_coverage"]["coverage_complete"] is False
+    assert result["input_coverage"]["complete_artifacts"] == 0
+    assert result["input_coverage"]["incomplete_artifacts"] == 1
+    assert any("no valid thresholds loaded" in item for item in result["diagnostics"])
+    assert any("no valid enabled thresholds" in item for item in result["diagnostics"])
 
 
 def test_run_tick_fails_closed_when_telemetry_fetch_errors():
@@ -1634,7 +1768,7 @@ def test_run_tick_retains_undelivered_incidents_across_day_rollover(tmp_path):
 # EVOCHAIN-001 Regressions (duplicate retries, WAL fail-closed, and rollover)
 # ---------------------------------------------------------------------------
 
-def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canonical():
+def test_telemetry_duplicate_retry_requires_exact_content_and_preserves_canonical():
     """Verify that duplicate telemetry event_id retries run schema/evidence
     validation and reject same-ID content mismatch, while lineage repair uses
     the immutable originally accepted payload."""
@@ -1690,11 +1824,17 @@ def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canoni
     assert ok_retry is False  # Rejected content mismatch
     assert len(lineage.admitted) == 1  # No new admission
 
-    # Ingest duplicate retry with identical content (except created_at)
-    valid_retry = dict(original_event)
-    valid_retry["created_at"] = "2026-07-13T00:01:00Z"  # time can change
+    # A duplicate event id is immutable, including its observation timestamp.
+    # The threshold worker persists and reuses the exact canonical payload on
+    # retry, so allowing created_at to drift here would weaken the telemetry
+    # owner's duplicate-content fence.
+    timestamp_mismatch = dict(original_event)
+    timestamp_mismatch["created_at"] = "2026-07-13T00:01:00Z"
+    mismatch_retry = asyncio.run(ingest.ingest(timestamp_mismatch))
+    assert mismatch_retry is False
+    assert len(lineage.admitted) == 1
 
-    ok_valid_retry = asyncio.run(ingest.ingest(valid_retry))
+    ok_valid_retry = asyncio.run(ingest.ingest(dict(original_event)))
     assert ok_valid_retry is True  # Allowed as idempotent skip
     assert len(lineage.admitted) == 2
     # Ensure lineage repair used the immutable original event, not the retry body!

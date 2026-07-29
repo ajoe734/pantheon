@@ -1,0 +1,246 @@
+{
+  "schema_version": "l12_manifest_health_workstream.v1",
+  "task": {
+    "id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+    "title": "L12 manifest imitation/capital health heartbeat workstream",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "review_pending",
+    "branch": "task/L12-MANIFEST-HC-IMIT-CAP-20260729",
+    "base_branch": "dev",
+    "repository": "ajoe734/pantheon",
+    "evidence_cut_at": "2026-07-29T02:50:45Z",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Container-local heartbeat publication, scheduler-style worker health validation, Compose health probes, and paper-signal-producer live/canary fail-closed configuration.",
+    "not_changing": [
+      "Hosted dev deployment or container readback",
+      "L12-MANIFEST-001 parent evidence",
+      "Live broker or live capital activation authority",
+      "Lifecycle telemetry outbox behavior"
+    ],
+    "composes_with": [
+      "L12-MANIFEST-001",
+      "L12-VERIFY-LEARN-001",
+      "L12-VERIFY-RUNTIME-001"
+    ],
+    "integration_base_sha": "d9cbbbfa2b0d4076f939a6d0fcc921406993d7af",
+    "anchor_commit": "f3e55652b7d118b68a364860c0d43b77eab2abd0"
+  },
+  "implementation": {
+    "shared_health_contract": {
+      "path": "services/worker_health.py",
+      "atomic_write": true,
+      "requires_matching_worker_identity": true,
+      "requires_successful_tick": true,
+      "freshness_seconds": "max(60, interval_seconds * 3)",
+      "supports_required_safety_markers": true
+    },
+    "workers": [
+      {
+        "service": "policy-learning-shadow-eval-scheduler",
+        "worker_path": "services/policy-learning/scheduler_worker.py",
+        "heartbeat_env": "SHADOW_EVAL_SCHEDULER_HEALTH_FILE",
+        "heartbeat_default": "/tmp/policy-learning-shadow-eval-scheduler-health.json",
+        "compose_healthcheck": [
+          "CMD",
+          "python",
+          "services/policy-learning/scheduler_worker.py",
+          "healthcheck"
+        ],
+        "success_marker": {
+          "production_training": "fail_closed"
+        },
+        "failure_behavior": "A failed tick or claim cycle writes status=degraded; missing, starting, degraded, stale, or safety-mismatched heartbeat fails the probe."
+      },
+      {
+        "service": "paper-signal-producer",
+        "worker_path": "services/execution/lean_runtime/paper_signal_producer.py",
+        "heartbeat_env": "PAPER_PRODUCER_HEALTH_FILE",
+        "heartbeat_default": "/tmp/paper-signal-producer-health.json",
+        "compose_healthcheck": [
+          "CMD",
+          "python",
+          "-m",
+          "services.execution.lean_runtime.paper_signal_producer",
+          "healthcheck"
+        ],
+        "success_markers": {
+          "execution_mode": "paper",
+          "live_capital_enabled": false,
+          "live_order_submission_enabled": false
+        },
+        "failure_behavior": "Runtime-manager discovery or production failure writes status=degraded; live broker or canary execution flags fail closed before the loop starts."
+      }
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "policy-learning-shadow-eval-scheduler health heartbeat gap closed or waived",
+      "status": "pass",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/worker_health.py",
+        "services/policy-learning/scheduler_worker.py",
+        "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py::test_scheduler_health_requires_recent_successful_fail_closed_tick"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "paper-signal-producer health heartbeat gap closed or waived",
+      "status": "pass",
+      "evidence_refs": [
+        "docker-compose.yml",
+        "services/worker_health.py",
+        "services/execution/lean_runtime/paper_signal_producer.py",
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestPaperSignalProducer::test_health_requires_recent_paper_only_tick"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "no-live-capital safety preserved",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/test_paper_runtime_topology_contract.py::test_default_root_stack_uses_binding_scoped_paper_fleet",
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestPaperSignalProducer::test_paper_producer_refuses_live_execution_flags",
+        "services/execution/lean_runtime/test_runtime_bootstrap.py",
+        "services/execution/lean_runtime/test_algorithm_smoke.py"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "workstream output is integrable by L12-MANIFEST-001 owner",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/README.md",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json",
+        "docker-compose.yml"
+      ]
+    }
+  ],
+  "validation": {
+    "owner_closeout_post_dev_refresh": {
+      "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
+      "result": "pass",
+      "conclusion": "57 passed, 4 skipped, 1 warning in 29.63s; py_compile, exact rendered Compose healthcheck argv, literal false live/canary flags, and git diff --check also passed.",
+      "validated_head_sha": "5ba43460682dd807dc6562224618ffa696e1a003",
+      "refreshed_dev_sha": "97d9ecd85826296d56d323ad6d8298c05c07ce08",
+      "task_owned_diff_vs_reviewed_head": "none; refresh commit merges dev-only restart-proof evidence without changing this task's implementation or evidence paths"
+    },
+    "final_post_rebase": {
+      "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py scripts/test_paper_runtime_topology_contract.py",
+      "result": "pass",
+      "conclusion": "57 passed, 4 skipped, 1 warning in 15.77s",
+      "validated_base_sha": "d9cbbbfa2b0d4076f939a6d0fcc921406993d7af"
+    },
+    "commands": [
+      {
+        "command": "python -m pytest -q services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/execution/lean_runtime/test_paper_signal_producer.py scripts/test_paper_runtime_topology_contract.py",
+        "result": "pass",
+        "conclusion": "27 passed, 1 warning in 15.68s"
+      },
+      {
+        "command": "python -m pytest -q services/test_worker_health_contract.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py services/policy-learning/tests/test_policy_learning_compose_activation.py services/execution/lean_runtime/test_tw_signal_producer.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_algorithm_smoke.py",
+        "result": "pass",
+        "conclusion": "30 passed, 4 skipped, 1 warning in 11.78s"
+      },
+      {
+        "command": "docker compose -f docker-compose.yml --env-file /dev/null config --format json",
+        "result": "pass",
+        "conclusion": "Rendered valid JSON with both workers default-on and both healthchecks present."
+      },
+      {
+        "command": "jq rendered Compose healthcheck and paper safety assertions",
+        "result": "pass",
+        "conclusion": "Both exact healthcheck argv arrays rendered; paper live-broker and canary flags rendered as literal false."
+      },
+      {
+        "command": "python3 -m py_compile services/worker_health.py services/policy-learning/scheduler_worker.py services/execution/lean_runtime/paper_signal_producer.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      },
+      {
+        "command": "docker compose -f docker-compose.yml --env-file /dev/null build policy-learning-shadow-eval-scheduler paper-signal-producer",
+        "result": "pass",
+        "conclusion": "Both service images built successfully and included services/worker_health.py."
+      },
+      {
+        "command": "docker compose run --rm --no-deps paper-signal-producer with PAPER_PRODUCER_MAX_TICKS=1, followed by the in-container healthcheck",
+        "result": "pass",
+        "conclusion": "The paper producer completed a real zero-binding tick under literal false live/canary flags and its healthcheck exited 0."
+      },
+      {
+        "command": "docker compose run --rm --no-deps policy-learning-shadow-eval-scheduler with an atomically seeded fail-closed heartbeat, followed by the scheduler in-container healthcheck",
+        "result": "pass",
+        "conclusion": "The built scheduler image imported the shared health contract and its CLI probe exited 0."
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ],
+    "baseline_only_failure": {
+      "command": "python -m pytest -q services/execution/lean_runtime/test_devloop_wire.py",
+      "task_branch_result": "2 failed, 2 passed",
+      "origin_dev_sha": "d9cbbbfa2b0d4076f939a6d0fcc921406993d7af",
+      "origin_dev_result": "2 failed, 2 passed",
+      "reason": "The existing test defaults lifecycle outbox persistence to unwritable /data/runtime/lifecycle-outbox. This task does not alter or claim that lifecycle outbox contract.",
+      "counted_as_task_proof": false
+    }
+  },
+  "safety": {
+    "paper_only": {
+      "status": "pass",
+      "proof": "The producer health document must identify execution_mode=paper and both live-effect markers false."
+    },
+    "live_broker": {
+      "status": "pass",
+      "proof": "Compose supplies PANTHEON_LIVE_BROKER_ENABLED=false and the worker refuses a true value."
+    },
+    "canary_execution": {
+      "status": "pass",
+      "proof": "Compose supplies PANTHEON_CANARY_EXECUTION_ENABLED=false and the worker refuses a true value."
+    },
+    "production_training": {
+      "status": "pass",
+      "proof": "The policy-learning health probe requires production_training=fail_closed."
+    }
+  },
+  "hosted_readback": {
+    "claimed": false,
+    "owner": "L12-MANIFEST-001 and the downstream runtime verifier",
+    "reason": "This parallel workstream supplies source, Compose, and local contract proof only."
+  },
+  "review": {
+    "status": "pending",
+    "reviewer": "Claude2",
+    "decision": null,
+    "notes": []
+  },
+  "residual_risks": [
+    {
+      "id": "RR1",
+      "severity": "medium",
+      "description": "Hosted containers have not yet been rebuilt from this task head or observed healthy.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "After this task PR merges and the accepted manifest is deployed."
+    },
+    {
+      "id": "RR2",
+      "severity": "informational",
+      "description": "The worker heartbeat is intentionally container-local and resets on replacement.",
+      "owner": "L12-MANIFEST-001",
+      "containment": "A replacement remains starting/unhealthy until its first successful real tick."
+    },
+    {
+      "id": "RR3",
+      "severity": "informational",
+      "description": "The existing devloop wire test has a lifecycle-outbox fixture gap on origin/dev.",
+      "owner": "Capital execution test owner",
+      "containment": "It is excluded from this task's proof and recorded with an origin/dev baseline reproduction."
+    }
+  ]
+}

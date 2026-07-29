@@ -18,6 +18,7 @@
 找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。
 
 如果原因是 `owned_finalize_dispatch`，或 task 已是 `review_approved`，請先依 `.orchestrator/skills/task-closeout-finalization.md` 做 closeout：整理必要 task artifact / docs、建立 task-scoped commit、再用 `scripts/ai-status.sh done` 收尾。不要把 `done` 當成單純改狀態。
+{{dispatch_guardrails}}
 
 狀態更新請優先使用 `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh`；不要用 task worktree 的相對 `scripts/ai-status.sh` 當 governed status command。
 auto worker 的狀態命令會由 supervisor 提供的 `PANTHEON_COMMAND_ROOT` / `PANTHEON_COMMAND_RUNTIME_SHA` 執行；不要自行改用其他 checkout。

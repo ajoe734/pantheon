@@ -1,0 +1,13 @@
+# Acceptance-scoped selections (SUP-PROVIDER-POOL-PROBE-GATE-001)
+
+$ pytest -q .orchestrator/test_provider_permissions.py -k ProviderProbeGate
+.....                                                                    [100%]
+5 passed, 73 deselected in 0.64s
+
+$ pytest -q .orchestrator/test_supervisor.py -k 'CachedProviderCapabilityLoop or WorkerBaseRefPrecondition or MissingHandoffBlocker or prepared_head or prepared_review_head or generic_exit_when_no_head'
+.............                                                         [100%]
+13 passed, 422 deselected, 3 subtests passed in 2.78s
+
+$ pytest -q .orchestrator/test_supervisor_watchdog.py -k SupervisorRootCoherence
+.....                                                                    [100%]
+5 passed, 54 deselected in 0.90s

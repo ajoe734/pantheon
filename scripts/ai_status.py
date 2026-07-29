@@ -2,18 +2,20 @@
 from __future__ import annotations
 
 import gzip
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import local
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -74,7 +76,6 @@ from task_archive import (
     rebuild_archive_index,
     recent_terminal_summaries,
     task_satisfies_dependency,
-    terminal_outcome_for,
 )
 from multi_repo_registry import (
     repository_local_path,
@@ -89,7 +90,13 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
-from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
+from rewrite.task_state_store import (
+    append_state_commit,
+    load_events,
+    load_snapshot,
+    project_latest_state,
+    snapshot_transaction,
+)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -122,6 +129,7 @@ STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
 _ACTIVITY_TRANSACTION_LOCAL = local()
+_TASK_STATE_TRANSACTION_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -405,6 +413,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "reconcile_merged_done": 0,
     "supersede": 0,
     "approve": 0,
+    "archive_correct_review_file": 0,
 }
 ACTIVE_WORKER_LEASE_STATUSES = {
     "running",
@@ -522,6 +531,77 @@ def _find_worker_worktree_lease(
     return None
 
 
+def _declared_lease_workspace_roots(
+    runtime_state: Mapping[str, Any],
+    *,
+    worker: Mapping[str, Any],
+    task_id: str | None,
+    status_root: Path,
+) -> tuple[Path, ...]:
+    """Return the worktree roots the supervisor recorded for this worker run.
+
+    Both sources live in central runtime state, which is written by the
+    supervisor outside every task worktree.  A candidate can rewrite its own
+    environment but not this file, so these paths stay true even when the
+    worker's workspace variables are missing.
+    """
+
+    roots: list[Path] = []
+    raw_workspace = _worker_metadata_value(worker, "workspace_path")
+    if raw_workspace not in (None, ""):
+        roots.append(_metadata_path(raw_workspace, label="worker workspace_path"))
+    lease_match = _find_worker_worktree_lease(
+        runtime_state,
+        worker=worker,
+        task_id=task_id,
+        workspace_root=None,
+        status_root=status_root,
+    )
+    if lease_match is not None:
+        raw_lease_path = lease_match[1].get("path")
+        if raw_lease_path not in (None, ""):
+            roots.append(_metadata_path(raw_lease_path, label="worktree lease path"))
+    ordered: list[Path] = []
+    for root in roots:
+        if root not in ordered:
+            ordered.append(root)
+    return tuple(ordered)
+
+
+def active_lease_workspace_roots() -> tuple[Path, ...]:
+    """Return the canonical candidate-controlled worktrees for this run.
+
+    ``PANTHEON_WORKTREE_ROOT`` / ``ORCH_WORKSPACE_PATH`` cannot be the
+    authority for "which directory is candidate-controlled": the candidate owns
+    its own environment and can simply unset both, which silently removes its
+    worktree from every workspace-scoped boundary while its run lease stays
+    valid.  Consumers that need that boundary — notably the protected closeout
+    verifier's forbidden roots — must ask the supervisor's runtime state
+    instead.  Returns an empty tuple when there is no active run lease.
+    """
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    if not run_id:
+        return ()
+    config = load_config()
+    runtime_state = load_runtime_state_snapshot(config)
+    workers = runtime_state.get("workers", {})
+    worker = workers.get(run_id) if isinstance(workers, Mapping) else None
+    if not isinstance(worker, Mapping):
+        raise RuntimeError(
+            f"active status command lease not found for ORCH_RUN_ID={run_id}"
+        )
+    task_id = str(worker.get("task_id") or "").strip() or str(
+        os.environ.get("ORCH_TASK_ID") or ""
+    ).strip()
+    return _declared_lease_workspace_roots(
+        runtime_state,
+        worker=worker,
+        task_id=task_id or None,
+        status_root=STATUS_ROOT.resolve(),
+    )
+
+
 def normalize_logical_actor(name: str | None) -> str:
     if not name:
         return ""
@@ -626,12 +706,24 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
 
     workspace_root = _worker_workspace_root()
     worker_workspace_raw = _worker_metadata_value(worker, "workspace_path")
-    if workspace_root is not None:
+    if worker_workspace_raw not in (None, ""):
         worker_workspace = _metadata_path(worker_workspace_raw, label="worker workspace_path")
+        # The supervisor recorded which worktree this run owns.  Treating the
+        # environment binding as optional let a candidate unset both workspace
+        # variables and drop out of every workspace-scoped check while its
+        # lease stayed valid, so the canonical value is the authority here and
+        # an absent binding fails closed instead of widening the lease.
+        if workspace_root is None:
+            raise RuntimeError(
+                f"status command workspace binding is required: lease for ORCH_RUN_ID={run_id} "
+                f"owns worktree {worker_workspace} but PANTHEON_WORKTREE_ROOT and "
+                "ORCH_WORKSPACE_PATH are unset"
+            )
         if worker_workspace != workspace_root:
             raise RuntimeError(
                 f"status command workspace mismatch: worker workspace {worker_workspace} != {workspace_root}"
             )
+        workspace_root = worker_workspace
 
     runtime_metadata = status_command_metadata() or {}
     issued_runtime = _worker_status_command_runtime(worker)
@@ -669,8 +761,15 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
         raise RuntimeError(
             f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
         )
-    if workspace_root is not None:
-        lease_path = _metadata_path(lease.get("path"), label="worktree lease path")
+    raw_lease_path = lease.get("path")
+    if raw_lease_path not in (None, ""):
+        lease_path = _metadata_path(raw_lease_path, label="worktree lease path")
+        if workspace_root is None:
+            raise RuntimeError(
+                f"status command workspace binding is required: worktree lease {lease_key} "
+                f"owns {lease_path} but PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH "
+                "are unset"
+            )
         if lease_path != workspace_root:
             raise RuntimeError(
                 f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
@@ -1326,16 +1425,44 @@ def default_state() -> dict[str, Any]:
     }
 
 
+def _validate_task_state_projection_binding(store_mode: str) -> None:
+    """Reject a journal transaction whose projection was rebound in-process.
+
+    Background workers inherit the live task-state journal environment so that
+    governed status commands can reach the canonical coordination root. Unit
+    tests and helper processes sometimes override ``STATUS_FILE`` directly.
+    Without this binding check, such a helper can append fixture state to the
+    inherited live journal even though its intended projection is temporary.
+    """
+
+    expected = (STATUS_ROOT / "ai-status.json").expanduser().absolute()
+    actual = STATUS_FILE.expanduser().absolute()
+    if actual != expected:
+        raise RuntimeError(
+            f"{store_mode} task-state projection binding mismatch: "
+            f"STATUS_FILE {actual} != STATUS_ROOT projection {expected}"
+        )
+
+
 def load_state() -> dict[str, Any]:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
     if store_mode == "authoritative":
+        _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
-        events = load_events(event_path)
-        if not events:
+        # One validated pass over the journal: load_events followed by
+        # project_latest_state replayed and revalidated every event twice, which
+        # is the bulk of what a plain note command used to spend.
+        transaction = getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None)
+        snapshot = (
+            transaction.load_snapshot()
+            if transaction is not None
+            else load_snapshot(event_path)
+        )
+        if not snapshot["event_count"]:
             raise SystemExit(
                 "Authoritative task-state journal is empty; refusing ai-status.json fallback."
             )
-        state = project_latest_state(events)
+        state = snapshot["state"]
         if not isinstance(state, dict) or not state:
             raise SystemExit("Authoritative task-state projection is not a non-empty object.")
         sync_canonical_document_metadata(state)
@@ -1364,6 +1491,26 @@ def canonical_task_state_lock(*, shared: bool = False, nonblocking: bool = False
         nonblocking=nonblocking,
     ):
         yield
+
+
+@contextmanager
+def authoritative_task_state_transaction():
+    """Reuse one validated journal snapshot across a governed mutation."""
+
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode != "authoritative":
+        yield
+        return
+    _validate_task_state_projection_binding(store_mode)
+    event_path = _task_state_event_path(store_mode)
+    if getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None) is not None:
+        raise RuntimeError("nested authoritative task-state transaction")
+    with snapshot_transaction(event_path) as transaction:
+        _TASK_STATE_TRANSACTION_LOCAL.transaction = transaction
+        try:
+            yield
+        finally:
+            del _TASK_STATE_TRANSACTION_LOCAL.transaction
 
 
 def load_logs() -> list[dict[str, Any]]:
@@ -1650,13 +1797,18 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
 def save_state(state: dict[str, Any]) -> None:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
     if store_mode == "authoritative":
+        _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
             or str(os.environ.get("AI_NAME") or "").strip()
             or "ai-status"
         )
-        append_state_commit(event_path, state, source=source)
+        transaction = getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None)
+        if transaction is not None:
+            transaction.append_state_commit(state, source=source)
+        else:
+            append_state_commit(event_path, state, source=source)
     serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
         handle.write(serialized)
@@ -1685,6 +1837,7 @@ def _append_task_state_shadow(state: dict[str, Any]) -> None:
     if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
         return
     try:
+        _validate_task_state_projection_binding("shadow")
         event_path = _task_state_event_path("shadow")
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
@@ -1793,11 +1946,29 @@ def assert_task_archive_root_binding() -> None:
         )
 
 
+def _status_archive_terminal_outcome(task: Any) -> str:
+    """Return the exact archive outcome, with one legacy compatibility case."""
+
+    if not isinstance(task, dict) or task.get("status") != "done":
+        return ""
+    if "terminal_outcome" not in task:
+        return "completed"
+    outcome = task.get("terminal_outcome")
+    if outcome in {"completed", "superseded"}:
+        return str(outcome)
+    return ""
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
+    terminal_outcome = _status_archive_terminal_outcome(task)
+    if not terminal_outcome:
+        raise RuntimeError(
+            f"terminal task has invalid archive outcome: {task_id}"
+        )
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
@@ -1812,7 +1983,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         )
         or iso_now(),
         "terminal_status": "done",
-        "terminal_outcome": terminal_outcome_for(task) or "completed",
+        "terminal_outcome": terminal_outcome,
         "task": deepcopy(task),
         "handoffs": related_handoffs,
         "blockers": related_blockers,
@@ -2074,6 +2245,7 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
     }:
         return False
     task = snapshot.get("task")
+    terminal_outcome = _status_archive_terminal_outcome(task)
     return bool(
         snapshot.get("version") == 1
         and snapshot.get("terminal_status") == "done"
@@ -2082,7 +2254,8 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
         and isinstance(task, dict)
         and task.get("id") == snapshot.get("task_id")
         and task.get("status") == "done"
-        and snapshot.get("terminal_outcome") == terminal_outcome_for(task)
+        and terminal_outcome
+        and snapshot.get("terminal_outcome") == terminal_outcome
         and isinstance(snapshot.get("handoffs"), list)
         and isinstance(snapshot.get("blockers"), list)
     )
@@ -2585,6 +2758,32 @@ def validate_loop_completion_claim(task: dict[str, Any]) -> None:
             f"Loop task {task_id} done claim rejected:\n" +
             "\n".join(f"  ✗ {gap}" for gap in gaps)
         )
+
+
+def validate_protected_closeout_transition(
+    task: dict[str, Any],
+    *,
+    transition: str,
+    consume: bool = False,
+    transition_actor: str = "",
+) -> dict[str, Any] | None:
+    """Delegate protected Human/Ops verdict checks to the loop guardrail."""
+
+    import loop_done_guardrail
+
+    try:
+        return loop_done_guardrail.validate_protected_closeout_transition(
+            task,
+            transition=transition,
+            consume=consume,
+            transition_actor=transition_actor,
+        )
+    except Exception as exc:
+        task_id = task.get("id", "?")
+        raise SystemExit(
+            f"Protected Human/Ops verdict rejected for {task_id} "
+            f"{transition} transition: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
@@ -3555,6 +3754,22 @@ def normalize_runtime_queue(orchestrator_state: dict[str, Any]) -> list[dict[str
 
 def mismatch_resolution_hint(item: dict[str, Any]) -> str:
     mismatch_type = str(item.get("type") or "")
+    if mismatch_type == "delivery_merged_needs_closeout":
+        return (
+            "先用 merged-dev evidence 補正式 closeout/review 檔，"
+            "再走 governed done 或 reconcile_merged_done；不要重新開工或重派已 merged 的 PR。"
+        )
+    if mismatch_type == "delivery_binding_stale":
+        return (
+            "先把 task 的 source_ref/review binding 對齊實際 reviewed/merged exact head；"
+            "舊 head_sha 留在 active board 會讓 dashboard 和 supervisor 誤判。"
+        )
+    if mismatch_type == "github_review_gate_missing":
+        return (
+            "以 assigned reviewer 對 exact PR head 重新執行 governed approve；"
+            "GitHub review 或 branch-policy-required canonical status 成功寫入前，"
+            "不得把 internal review_approved 當成 PR completion。"
+        )
     if mismatch_type == "worker_without_task":
         return "先檢查 dispatch/request snapshot 是否漏掉 task_id；如果是舊 worker，應重派成帶 task_id 的新 run。"
     if mismatch_type == "worker_task_missing":
@@ -3572,6 +3787,113 @@ def mismatch_resolution_hint(item: dict[str, Any]) -> str:
     if mismatch_type == "approval_missing_task":
         return "先清掉 stale approval，或先恢復 task board 中的 task，再進行批准。"
     return "先對齊 task board、queue、runtime 三者的真相，再決定是重派、回退，還是清理殘留記錄。"
+
+
+MERGED_DELIVERY_RE = re.compile(
+    r"\b(?:PR\s*#?\d+[^.\n;]*?)?\bmerged\s+(?:to|into)\s+(?:origin/)?(?P<target>dev|main)\s+as\s+(?P<sha>[0-9a-fA-F]{40})\b",
+    re.IGNORECASE,
+)
+EXACT_HEAD_RE = re.compile(
+    r"\b(?:exact[- ]head|exact\s+head|head)\s+(?P<sha>[0-9a-fA-F]{40})\b",
+    re.IGNORECASE,
+)
+
+
+def task_status_is_nonterminal(task: Mapping[str, Any]) -> bool:
+    return str(task.get("status") or "").strip().lower() not in {"done", "superseded"}
+
+
+def _task_text_fields(task: Mapping[str, Any]) -> str:
+    values: list[str] = []
+    for key in ("next", "summary_zh", "title", "phase"):
+        value = task.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    for key in ("review_notes_zh", "acceptance"):
+        value = task.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value if str(item).strip())
+    return "\n".join(values)
+
+
+def merged_delivery_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return local evidence that a PR-backed delivery merged but is not closed.
+
+    This intentionally avoids GitHub API calls so dashboard generation remains
+    deterministic and CI-safe.  It recognizes structured status metadata first,
+    then the existing Human/Ops closeout notes used by live fleet tasks.
+    """
+
+    delivery = task.get("delivery")
+    if isinstance(delivery, Mapping):
+        if delivery.get("head_merged_to_target") is True or str(delivery.get("state") or "").upper() == "MERGED":
+            commit = str(delivery.get("merge_target_sha") or delivery.get("merge_commit") or delivery.get("commit") or "").strip()
+            return {
+                "source": "delivery",
+                "merge_commit": commit or None,
+                "merge_target": str(delivery.get("merge_target_branch") or delivery.get("merge_target_ref") or "").strip() or None,
+            }
+
+    for key in ("source_ref", "github", APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        state = str(payload.get("state") or payload.get("status") or "").strip().upper()
+        merged = payload.get("merged") is True or state == "MERGED" or bool(payload.get("merged_at"))
+        commit = str(
+            payload.get("merge_commit")
+            or payload.get("merge_commit_sha")
+            or payload.get("merged_commit")
+            or payload.get("merged_to_dev_sha")
+            or ""
+        ).strip()
+        if merged or commit:
+            return {
+                "source": key,
+                "merge_commit": commit or None,
+                "merge_target": str(payload.get("base") or payload.get("target") or payload.get("merge_target") or "").strip() or None,
+            }
+
+    text = _task_text_fields(task)
+    match = MERGED_DELIVERY_RE.search(text)
+    if match:
+        return {
+            "source": "task_text",
+            "merge_commit": match.group("sha").lower(),
+            "merge_target": match.group("target").lower(),
+        }
+    return None
+
+
+def delivery_binding_stale_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    source_ref = task.get("source_ref")
+    if not isinstance(source_ref, Mapping):
+        return None
+    recorded = str(source_ref.get("head_sha") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", recorded):
+        return None
+
+    candidates: list[tuple[str, str]] = []
+    for key in (APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY, "github"):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        head = str(payload.get("head_sha") or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{40}", head):
+            candidates.append((key, head))
+
+    text = _task_text_fields(task)
+    for match in EXACT_HEAD_RE.finditer(text):
+        candidates.append(("task_text_exact_head", match.group("sha").lower()))
+
+    for source, candidate in candidates:
+        if candidate != recorded:
+            return {
+                "source": source,
+                "recorded_head_sha": recorded,
+                "evidence_head_sha": candidate,
+            }
+    return None
 
 
 def detect_truth_mismatches(
@@ -3738,6 +4060,64 @@ def detect_truth_mismatches(
 
     for task in state.get("tasks", []):
         task_status = str(task.get("status") or "").lower()
+        if task_status_is_nonterminal(task):
+            merged_evidence = merged_delivery_evidence(task)
+            if merged_evidence is not None:
+                push(
+                    {
+                        "id": f"delivery-merged-needs-closeout:{task['id']}",
+                        "type": "delivery_merged_needs_closeout",
+                        "severity": "high",
+                        "title": "Delivery PR 已 merged，但 task 尚未 closeout",
+                        "summary": (
+                            f"{task['id']} 已有 merged-dev delivery evidence，"
+                            f"但 task status 仍是 {task_status or 'unknown'}。"
+                        ),
+                        "task_id": task["id"],
+                        "delivery_evidence": merged_evidence,
+                        "detected_at": task.get("last_update"),
+                    }
+                )
+            stale_evidence = delivery_binding_stale_evidence(task)
+            if stale_evidence is not None:
+                push(
+                    {
+                        "id": f"delivery-binding-stale:{task['id']}",
+                        "type": "delivery_binding_stale",
+                        "severity": "high",
+                        "title": "Task delivery binding 指向舊 exact head",
+                        "summary": (
+                            f"{task['id']} 的 source_ref.head_sha 與後續 "
+                            "review/merge evidence 不一致。"
+                        ),
+                        "task_id": task["id"],
+                        "delivery_evidence": stale_evidence,
+                        "detected_at": task.get("last_update"),
+                    }
+                )
+        if (
+            task_status == "review_approved"
+            and (
+                isinstance(task.get(APPROVAL_BINDING_KEY), Mapping)
+                or task_has_pr_review_target(task)
+            )
+            and not github_review_bridge_evidence_matches(task)
+        ):
+            push(
+                {
+                    "id": f"github-review-gate-missing:{task['id']}",
+                    "type": "github_review_gate_missing",
+                    "severity": "high",
+                    "title": "Internal approval 尚未綁定 GitHub review gate",
+                    "summary": (
+                        f"{task['id']} 有 exact-head review binding 且狀態為 "
+                        "review_approved，但沒有對應的 GitHub review 或 "
+                        "branch-policy-recognized canonical status evidence。"
+                    ),
+                    "task_id": task["id"],
+                    "detected_at": task.get("last_update"),
+                }
+            )
         if task_status != "in_progress":
             continue
         expected_actor = expected_task_actor(task)
@@ -4482,6 +4862,7 @@ def build_dashboard_bundle(
                 "task_status": task.get("status"),
                 "owner": task.get("owner"),
                 "reviewer": task.get("reviewer"),
+                "github_review_bridge": task.get(GITHUB_REVIEW_BRIDGE_KEY),
                 "expected_actor": expected_task_actor(task) if task else None,
                 "source_plane": task.get("source_plane"),
                 "source_ref": normalized_source_ref(task),
@@ -4738,7 +5119,11 @@ def sync_docs_site(state: dict[str, Any]) -> None:
     _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
-def sync_all(state: dict[str, Any]) -> None:
+def sync_all(
+    state: dict[str, Any],
+    *,
+    refresh_views: bool = True,
+) -> None:
     assert_task_archive_root_binding()
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
@@ -4752,7 +5137,8 @@ def sync_all(state: dict[str, Any]) -> None:
     buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
     events = list(buffered) if isinstance(buffered, list) else []
     commit_state_with_activity_outbox(state, events)
-    refresh_derived_status_views(state)
+    if refresh_views:
+        refresh_derived_status_views(state)
 
 
 def refresh_derived_status_views(state: dict[str, Any]) -> None:
@@ -4762,6 +5148,58 @@ def refresh_derived_status_views(state: dict[str, Any]) -> None:
     write_current_work(state, logs)
     write_dashboard_bundle(state)
     sync_docs_site(state)
+
+
+@contextmanager
+def derived_status_views_lock():
+    """Serialize derived projections without extending the canonical task lock."""
+
+    lock_path = STATUS_FILE.parent / ".orchestrator" / "status-derived-views.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError(
+                f"derived status views lock must be a regular file: {lock_path}"
+            )
+        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def refresh_derived_status_views_if_current(state: dict[str, Any]) -> bool:
+    """Render only if this command still owns the latest canonical projection."""
+
+    expected_sha256 = _canonical_json_sha256(state)
+    with derived_status_views_lock():
+        try:
+            current = json.loads(
+                read_regular_file_bytes(
+                    STATUS_FILE,
+                    source="canonical status projection",
+                ).decode("utf-8", errors="strict")
+            )
+        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if (
+            not isinstance(current, dict)
+            or _canonical_json_sha256(current) != expected_sha256
+        ):
+            return False
+        refresh_derived_status_views(state)
+    return True
 
 
 def mark_blockers_resolved(state: dict[str, Any], task_id: str) -> None:
@@ -4950,6 +5388,196 @@ def _bridge_assignment_from_metadata(
     return normalized_bridge
 
 
+def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, str]]:
+    raw_artifacts = task.get("artifacts")
+    if not isinstance(raw_artifacts, list):
+        return []
+    target_repo = str(task.get("target_repo") or "").strip() or "pantheon"
+    normalized: list[tuple[str, str]] = []
+    for raw in raw_artifacts:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        value = raw.strip().rstrip("/")
+        prefix, separator, suffix = value.partition(":")
+        if separator and prefix in {"execute-plans", "frontend-checkout"}:
+            normalized.append(("execute-plans", suffix.lstrip("/")))
+        elif value.startswith("execute-plans/"):
+            normalized.append(
+                ("execute-plans", value.removeprefix("execute-plans/"))
+            )
+        elif value.startswith("frontend-checkout/"):
+            normalized.append(
+                ("execute-plans", value.removeprefix("frontend-checkout/"))
+            )
+        else:
+            normalized.append((target_repo, value))
+    return normalized
+
+
+def _artifact_paths_overlap(left: str, right: str) -> bool:
+    left_parts = PurePosixPath(left.rstrip("/")).parts
+    right_parts = PurePosixPath(right.rstrip("/")).parts
+    shorter = min(len(left_parts), len(right_parts))
+    return left_parts[:shorter] == right_parts[:shorter]
+
+
+def _validated_artifact_conflict_guard(
+    task: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    guard = task.get("artifact_conflict_guard")
+    if guard is None:
+        return None
+    required = {
+        "schema_version",
+        "program_id",
+        "catalog_sha256",
+        "task_id",
+        "artifact_scope",
+        "allowed_overlap_task_ids",
+    }
+    if not isinstance(guard, dict) or set(guard) != required:
+        raise SystemExit("artifact conflict guard contract is not exact")
+    task_id = str(task.get("id") or "").strip()
+    if (
+        guard.get("schema_version") != 1
+        or guard.get("task_id") != task_id
+        or not isinstance(guard.get("program_id"), str)
+        or not guard["program_id"].strip()
+        or not isinstance(guard.get("catalog_sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", guard["catalog_sha256"])
+    ):
+        raise SystemExit(f"artifact conflict guard identity is invalid for {task_id}")
+    allowed = guard.get("allowed_overlap_task_ids")
+    if (
+        not isinstance(allowed, list)
+        or any(not isinstance(item, str) or not item.strip() for item in allowed)
+        or len(allowed) != len(set(allowed))
+    ):
+        raise SystemExit(f"artifact conflict guard allowlist is invalid for {task_id}")
+    scope = guard.get("artifact_scope")
+    if (
+        not isinstance(scope, list)
+        or any(
+            not isinstance(item, dict)
+            or set(item) != {"repo", "path"}
+            or not isinstance(item.get("repo"), str)
+            or not item["repo"].strip()
+            or not isinstance(item.get("path"), str)
+            or not item["path"].strip()
+            for item in scope
+        )
+    ):
+        raise SystemExit(f"artifact conflict guard scope is invalid for {task_id}")
+    expected_scope = [
+        {"repo": repo, "path": path}
+        for repo, path in sorted(_normalized_task_artifact_scope(task))
+    ]
+    if scope != expected_scope:
+        raise SystemExit(f"artifact conflict guard scope mismatch for {task_id}")
+    return guard
+
+
+def enforce_artifact_conflict_admission(
+    state: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    candidate_id = str(candidate.get("id") or "").strip()
+    candidate_guard = _validated_artifact_conflict_guard(candidate)
+    candidate_scope = _normalized_task_artifact_scope(candidate)
+    for other in state.get("tasks", []):
+        if not isinstance(other, dict):
+            continue
+        other_id = str(other.get("id") or "").strip()
+        if not other_id or other_id == candidate_id:
+            continue
+        if str(other.get("status") or "") in {"done", "cancelled", "superseded"}:
+            continue
+        other_guard = _validated_artifact_conflict_guard(other)
+        if candidate_guard is None and other_guard is None:
+            continue
+        overlap = any(
+            left_repo == right_repo and _artifact_paths_overlap(left_path, right_path)
+            for left_repo, left_path in candidate_scope
+            for right_repo, right_path in _normalized_task_artifact_scope(other)
+        )
+        if not overlap:
+            continue
+        if (
+            candidate_guard is not None
+            and other_id not in candidate_guard["allowed_overlap_task_ids"]
+        ):
+            raise SystemExit(
+                f"artifact conflict guard rejected overlap: {candidate_id} <-> {other_id}"
+            )
+        if (
+            other_guard is not None
+            and candidate_id not in other_guard["allowed_overlap_task_ids"]
+        ):
+            raise SystemExit(
+                f"artifact conflict guard rejected overlap: {candidate_id} <-> {other_id}"
+            )
+
+
+def _catalog_assignment_revision_allows_guard_change(
+    task: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> bool:
+    current_guard = task.get("artifact_conflict_guard")
+    incoming_guard = metadata.get("artifact_conflict_guard")
+    if current_guard == incoming_guard:
+        return True
+
+    from_sha = str(
+        os.environ.get("TASK_ASSIGN_CATALOG_REVISION_FROM_SHA") or ""
+    ).strip()
+    to_sha = str(
+        os.environ.get("TASK_ASSIGN_CATALOG_REVISION_TO_SHA") or ""
+    ).strip()
+    if not from_sha and not to_sha:
+        return False
+    if current_actor() != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can revise a catalog-bound assignment."
+        )
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", from_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", to_sha)
+        or from_sha == to_sha
+    ):
+        raise SystemExit("Catalog assignment revision SHA binding is invalid.")
+    if not isinstance(current_guard, dict) or not isinstance(incoming_guard, dict):
+        raise SystemExit("Catalog assignment revision requires both exact guards.")
+    if current_guard.get("catalog_sha256") != from_sha:
+        raise SystemExit("Catalog assignment revision source SHA is not current.")
+    if incoming_guard.get("catalog_sha256") != to_sha:
+        raise SystemExit("Catalog assignment revision target SHA is not exact.")
+
+    current_without_sha = {
+        key: value
+        for key, value in current_guard.items()
+        if key != "catalog_sha256"
+    }
+    incoming_without_sha = {
+        key: value
+        for key, value in incoming_guard.items()
+        if key != "catalog_sha256"
+    }
+    if current_without_sha != incoming_without_sha:
+        raise SystemExit(
+            "Catalog assignment revision cannot change artifact scope or overlap authority."
+        )
+    if task.get("program_id") != metadata.get("program_id"):
+        raise SystemExit("Catalog assignment revision program identity is not exact.")
+    contract_sha = str(
+        metadata.get("catalog_task_contract_sha256") or ""
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", contract_sha):
+        raise SystemExit(
+            "Catalog assignment revision task contract digest is invalid."
+        )
+    return True
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -4962,6 +5590,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
+    assignment_next = os.environ.get("TASK_NEXT", "").strip()
     metadata = task_metadata_from_env()
     ensure_agent(owner)
     ensure_agent(reviewer)
@@ -4990,6 +5619,50 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
 
     task = get_task(state, task_id)
+    if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
+        raise SystemExit(
+            f"Task {task_id} already exists; create-only assignment refused."
+        )
+    artifact_guard_changed = bool(
+        task is not None
+        and task.get("artifact_conflict_guard") is not None
+        and "artifact_conflict_guard" in metadata
+        and metadata["artifact_conflict_guard"] != task["artifact_conflict_guard"]
+    )
+    catalog_assignment_revision = False
+    if artifact_guard_changed:
+        catalog_assignment_revision = (
+            _catalog_assignment_revision_allows_guard_change(task, metadata)
+        )
+        if not catalog_assignment_revision:
+            raise SystemExit(
+                f"Task {task_id} artifact conflict guard is immutable."
+            )
+    if task is None:
+        candidate = {
+            "id": task_id,
+            "artifacts": artifacts,
+            **metadata,
+        }
+    else:
+        candidate = deepcopy(task)
+        candidate.update(metadata)
+    candidate.update(
+        {
+            "id": task_id,
+            "owner": owner,
+            "reviewer": reviewer,
+            "title": title,
+        }
+    )
+    if catalog_assignment_revision:
+        # This transition does not admit a new scope. Validate that the revised
+        # candidate still matches the pre-existing exact guard, but do not
+        # retroactively reject it because another already-active task later
+        # acquired a conflicting scope.
+        _validated_artifact_conflict_guard(candidate)
+    else:
+        enforce_artifact_conflict_admission(state, candidate)
     timestamp = iso_now()
     if task is None:
         if archived_task_snapshot(task_id):
@@ -5007,7 +5680,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "depends_on": depends_on,
             "artifacts": artifacts,
             "acceptance": acceptance,
-            "next": "Assignment created",
+            "next": assignment_next or "Assignment created",
             "last_update": timestamp,
         }
         task.update(metadata)
@@ -5042,7 +5715,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         if metadata:
             task.update(metadata)
         task["last_update"] = timestamp
-        task["next"] = "Ownership updated"
+        task["next"] = assignment_next or "Ownership updated"
 
     agent = get_agent(state, owner)
     if os.environ.get("TASK_BRANCH"):
@@ -5127,13 +5800,42 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
-    if actor not in {owner, reviewer}:
-        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can reopen {task_id}")
+    if actor not in {owner, reviewer, "Human/Ops"}:
+        raise SystemExit(
+            f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops can reopen {task_id}"
+        )
+    binding: dict[str, Any] = {}
+    github_review_bridge: dict[str, Any] = {}
+    if actor == reviewer:
+        explicit_binding = bool(
+            os.environ.get("REVIEW_PR", "").strip()
+            or os.environ.get("REVIEW_HEAD_SHA", "").strip()
+        )
+        if explicit_binding:
+            binding = resolve_approval_binding(task, warn_if_unbound=False)
+        elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
+            binding = dict(task[APPROVAL_BINDING_KEY])
+        elif task_has_pr_review_target(task):
+            raise SystemExit(
+                f"{task_id} is PR-backed but reviewer reopen has no exact-head "
+                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA so the rejection "
+                "also closes the GitHub review gate."
+            )
+        if binding:
+            github_review_bridge = bridge_github_review_decision(
+                task,
+                actor=actor,
+                decision="reopen",
+                message=message,
+                binding=binding,
+            )
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    if github_review_bridge:
+        task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -5147,7 +5849,20 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 "created_at": timestamp,
             }
         )
-    append_log({"ts": timestamp, "agent": actor, "type": "reopen", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "reopen",
+            "task_id": task_id,
+            "message": message,
+            **(
+                {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
+                if github_review_bridge
+                else {}
+            ),
+        }
+    )
 
 
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
@@ -5241,10 +5956,16 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             f"restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
             f"Use the normal review lifecycle if the task has not been reviewed yet."
         )
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="review_approved",
+    )
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     append_log(
         {
             "ts": timestamp,
@@ -5549,6 +6270,14 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     delivery = validate_merged_done_evidence(task)
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="done",
+        consume=True,
+        transition_actor=actor,
+    )
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
@@ -5591,6 +6320,14 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
     delivery["recorded_at"] = timestamp
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="done",
+        consume=True,
+        transition_actor=actor,
+    )
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
@@ -5649,6 +6386,198 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+APPROVAL_BINDING_KEY = "review_binding"
+GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
+APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+GITHUB_CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
+GITHUB_REVIEW_MODES = {
+    "pull_request_review",
+    "pull_request_review_and_required_status",
+    "required_commit_status",
+}
+
+
+def resolve_approval_binding(
+    task: dict[str, Any],
+    *,
+    warn_if_unbound: bool = True,
+) -> dict[str, Any]:
+    """Bind an approval to the exact pull-request head the reviewer inspected.
+
+    `scripts/git/task_review_merge_gate.py` compares these identities against
+    the PR standing at merge time.  Without them an approval is only a
+    timestamp, and a timestamp cannot tell an unchanged head from a head that
+    was replaced with an *older* commit -- which is a head no reviewer saw.
+
+    A PR-backed task therefore refuses an unbound approval. Not every task
+    produces a PR, so non-PR tasks may still approve without a binding; when
+    requested, they receive a warning that a later merge gate would fail
+    closed with `approval_head_binding_missing`.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    raw_pr = os.environ.get("REVIEW_PR", "").strip().lstrip("#")
+    raw_head = os.environ.get("REVIEW_HEAD_SHA", "").strip()
+    base_branch = (
+        os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
+    )
+    head_branch = (
+        os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    )
+
+    owner = str(task.get("owner") or "").strip().casefold()
+    reviewer = str(task.get("reviewer") or "").strip().casefold()
+    independent = bool(reviewer) and reviewer != owner
+
+    if not raw_pr and not raw_head:
+        if independent and task_has_pr_review_target(task):
+            raise SystemExit(
+                f"{task_id} is PR-backed but approve has no exact reviewed-head "
+                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA; internal activity "
+                "approval alone is not a GitHub review gate."
+            )
+        if independent and warn_if_unbound:
+            print(
+                f"warning: {task_id} is approved without a reviewed-head binding. "
+                "If this task has a PR, the review-before-merge gate will refuse to "
+                "merge it (approval_head_binding_missing). Re-approve with "
+                "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<40-hex head oid> "
+                f"(optionally REVIEW_BASE, default {DEFAULT_APPROVAL_BASE_BRANCH!r}).",
+                file=sys.stderr,
+            )
+        return {}
+
+    if not raw_pr:
+        raise SystemExit(
+            "REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required."
+        )
+    if not raw_head:
+        raise SystemExit(
+            "REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required."
+        )
+    if not raw_pr.isdigit() or int(raw_pr) <= 0:
+        raise SystemExit(f"REVIEW_PR must be a positive PR number, got {raw_pr!r}")
+    if not APPROVAL_HEAD_SHA_RE.match(raw_head):
+        raise SystemExit(
+            f"REVIEW_HEAD_SHA must be a full 40-hex commit oid, got {raw_head!r}. "
+            "An abbreviated sha cannot be compared exactly."
+        )
+
+    return {
+        "pr": int(raw_pr),
+        "head_sha": raw_head.lower(),
+        "head_branch": head_branch,
+        "base": base_branch,
+    }
+
+
+def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
+    """Return whether durable task metadata identifies a delivery PR."""
+
+    if isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
+        return True
+    for key in ("source_ref", "github"):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        raw_pr = payload.get("pr") or payload.get("pull_request")
+        if isinstance(raw_pr, int) and raw_pr > 0:
+            return True
+        text = str(raw_pr or "").strip().lstrip("#")
+        if text.isdigit() and int(text) > 0:
+            return True
+    return False
+
+
+def bridge_github_review_decision(
+    task: dict[str, Any],
+    *,
+    actor: str,
+    decision: str,
+    message: str,
+    binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Represent an exact-head governed verdict on the delivery PR.
+
+    The bridge runs before canonical state changes.  A failed GitHub write
+    therefore leaves the task in its prior lifecycle state instead of
+    manufacturing an internal-only approval.
+    """
+
+    scripts_git = ROOT / "scripts" / "git"
+    if str(scripts_git) not in sys.path:
+        sys.path.insert(0, str(scripts_git))
+    try:
+        import github_review_bridge
+    except ImportError as exc:  # pragma: no cover - deployment packaging guard
+        raise SystemExit(
+            "GitHub review bridge is unavailable; refusing an internal-only "
+            f"{decision} decision for {task.get('id') or '?'}."
+        ) from exc
+
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    repository_slug_value = repository_slug(config, repository_id)
+    if repository_id is None or not repository_slug_value:
+        raise SystemExit(
+            "GitHub review bridge requires one delivery repository with a "
+            f"configured GitHub slug for {task.get('id') or '?'}."
+        )
+    try:
+        result = github_review_bridge.bridge_review_decision(
+            repository=repository_slug_value,
+            task_id=str(task.get("id") or ""),
+            actor=actor,
+            decision=decision,
+            message=message,
+            binding=binding,
+        )
+    except github_review_bridge.GitHubReviewBridgeError as exc:
+        raise SystemExit(
+            f"GitHub review bridge rejected {decision} for "
+            f"{task.get('id') or '?'}: {exc}"
+        ) from exc
+    payload = result.as_dict()
+    if not isinstance(payload, dict):
+        raise SystemExit("GitHub review bridge returned invalid evidence")
+    return payload
+
+
+def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
+    """Return whether task evidence recognizes its exact approved PR head."""
+
+    binding = task.get(APPROVAL_BINDING_KEY)
+    evidence = task.get(GITHUB_REVIEW_BRIDGE_KEY)
+    if not isinstance(binding, Mapping) or not isinstance(evidence, Mapping):
+        return False
+    if str(evidence.get("decision") or "").lower() != "approve":
+        return False
+    if str(evidence.get("mode") or "") not in GITHUB_REVIEW_MODES:
+        return False
+    try:
+        if int(evidence.get("pr") or 0) != int(binding.get("pr") or 0):
+            return False
+    except (TypeError, ValueError):
+        return False
+    for key in ("head_sha", "head_branch", "base"):
+        if str(evidence.get(key) or "").strip() != str(binding.get(key) or "").strip():
+            return False
+
+    mode = str(evidence.get("mode") or "")
+    review_recorded = bool(evidence.get("github_review_id"))
+    required_status_recorded = bool(
+        evidence.get("status_id")
+        and evidence.get("status_context") == GITHUB_CANONICAL_REVIEW_CONTEXT
+        and str(evidence.get("status_state") or "").lower() == "success"
+    )
+    if mode == "pull_request_review":
+        return review_recorded
+    if mode == "required_commit_status":
+        return required_status_recorded
+    return review_recorded and required_status_recorded
+
+
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
@@ -5663,20 +6592,49 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
+    review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
+    review_file = os.environ.get("REVIEW_FILE", "").strip()
+    binding = resolve_approval_binding(task)
+    transition_candidate = dict(task)
+    if review_notes:
+        transition_candidate["review_notes_zh"] = review_notes
+    if review_file:
+        transition_candidate["review_file"] = review_file
+    verdict_ref = validate_protected_closeout_transition(
+        transition_candidate,
+        transition="review_approved",
+    )
+    github_review_bridge = (
+        bridge_github_review_decision(
+            task,
+            actor=actor,
+            decision="approve",
+            message=message,
+            binding=binding,
+        )
+        if binding
+        else {}
+    )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
-
-    review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
         task["review_notes_zh"] = review_notes
-
-    review_file = os.environ.get("REVIEW_FILE", "").strip()
     if review_file:
         task["review_file"] = review_file
-
+    if binding:
+        task[APPROVAL_BINDING_KEY] = dict(binding)
+    else:
+        task.pop(APPROVAL_BINDING_KEY, None)
+    if github_review_bridge:
+        task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
+    else:
+        task.pop(GITHUB_REVIEW_BRIDGE_KEY, None)
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done_for_actor(state, task_id, actor)
     ensure_review_finalize_handoff(
@@ -5686,7 +6644,23 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         timestamp=timestamp,
         message=message,
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "review_approved",
+            "task_id": task_id,
+            "message": message,
+            # The audit event is the immutable copy the merge gate reads; the
+            # task row copy is a convenience for `show`.
+            **({APPROVAL_BINDING_KEY: dict(binding)} if binding else {}),
+            **(
+                {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
+                if github_review_bridge
+                else {}
+            ),
+        }
+    )
 
 
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:
@@ -5704,6 +6678,358 @@ def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
             "type": "archive_migrate",
             "message": f"Archived {len(archived_ids)} terminal tasks from ai-status.json.",
             "task_ids": archived_ids,
+        }
+    )
+
+
+def validate_archive_review_file_target(task_id: str, review_file: str) -> tuple[str, str]:
+    normalized = task_archive_module.normalize_archive_review_file(review_file)
+    candidate = ROOT / normalized
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Archive review_file target cannot include a symlink component: "
+            f"{symlink_component}"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(ROOT.resolve(strict=True))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(
+            f"Archive review_file target must be a regular file inside the command root: "
+            f"{normalized}"
+        ) from exc
+    if not resolved.is_file():
+        raise SystemExit(
+            f"Archive review_file target must be a regular file: {normalized}"
+        )
+    try:
+        evidence = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Archive review_file target is not readable JSON: {normalized}: {exc}"
+        ) from exc
+    evidence_task = evidence.get("task") if isinstance(evidence, dict) else None
+    if not isinstance(evidence_task, dict):
+        raise SystemExit(
+            f"Archive review_file target is missing a task object: {normalized}"
+        )
+    if str(evidence_task.get("id") or "").strip() != task_id:
+        raise SystemExit(
+            f"Archive review_file target task.id does not match {task_id}: {normalized}"
+        )
+    if str(evidence_task.get("review_file") or "").strip() != normalized:
+        raise SystemExit(
+            f"Archive review_file target task.review_file does not match {normalized}"
+        )
+
+    snapshot = task_archive_module.load_archived_snapshot(task_id)
+    if snapshot is None:
+        raise SystemExit(f"Unknown archived task: {task_id}")
+    candidate_task = deepcopy(snapshot["task"])
+    candidate_task["review_file"] = normalized
+    try:
+        validate_loop_completion_claim(candidate_task)
+    except SystemExit as exc:
+        raise SystemExit(
+            f"Archive review_file target fails loop completion validation: {exc}"
+        ) from exc
+    return normalized, hashlib.sha256(resolved.read_bytes()).hexdigest()
+
+
+def command_archive_correct_review_file(
+    state: dict[str, Any],
+    args: list[str],
+) -> None:
+    if len(args) < 3:
+        raise SystemExit(
+            "Usage: archive_correct_review_file "
+            "<task-id> <repo-relative-review-file> <reason>"
+        )
+    task_id, review_file, reason = args[0], args[1], args[2]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can correct an archived task review_file"
+        )
+    if get_task(state, task_id) is not None:
+        raise SystemExit(
+            f"Cannot correct archive review_file while {task_id} is active"
+        )
+    normalized, digest = validate_archive_review_file_target(task_id, review_file)
+    corrected = task_archive_module.correct_archived_task_review_file(
+        task_id,
+        normalized,
+        actor=actor,
+        reason=reason,
+        evidence_sha256=digest,
+        canonical_lock_held=True,
+    )
+    context = corrected["correction_context"]
+    append_log(
+        {
+            "ts": context["corrected_at"],
+            "agent": actor,
+            "type": "archive_review_file_corrected",
+            "task_id": task_id,
+            "message": reason,
+            "review_file": normalized,
+            "evidence_sha256": digest,
+        }
+    )
+
+
+def _normalized_repo_relative_json_path(raw: str, *, label: str) -> str:
+    value = str(raw or "").strip().replace("\\", "/")
+    path = PurePosixPath(value)
+    if (
+        not value
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or path.suffix != ".json"
+    ):
+        raise SystemExit(f"{label} must be a normalized repository-relative JSON path")
+    return path.as_posix()
+
+
+def _active_task_ancestors(
+    state: Mapping[str, Any],
+    task_id: str,
+    *,
+    visiting: set[str] | None = None,
+) -> set[str]:
+    tasks = {
+        str(task.get("id") or ""): task
+        for task in state.get("tasks", [])
+        if isinstance(task, Mapping) and str(task.get("id") or "")
+    }
+    if task_id not in tasks:
+        raise SystemExit(f"Proof ownership references inactive task: {task_id}")
+    visiting = set(visiting or ())
+    if task_id in visiting:
+        raise SystemExit(f"Proof ownership dependency cycle includes {task_id}")
+    visiting.add(task_id)
+    ancestors: set[str] = set()
+    for dependency_id in tasks[task_id].get("depends_on", []) or []:
+        dependency_id = str(dependency_id or "").strip()
+        if not dependency_id:
+            continue
+        ancestors.add(dependency_id)
+        if dependency_id in tasks:
+            ancestors.update(
+                _active_task_ancestors(
+                    state,
+                    dependency_id,
+                    visiting=visiting,
+                )
+            )
+    return ancestors
+
+
+def validate_active_proof_ownership(
+    state: dict[str, Any],
+    task_id: str,
+    proof_ownership_file: str,
+) -> dict[str, Any]:
+    normalized = _normalized_repo_relative_json_path(
+        proof_ownership_file,
+        label="proof ownership file",
+    )
+    candidate = ROOT / normalized
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Proof ownership file cannot include a symlink component: "
+            f"{symlink_component}"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(ROOT.resolve(strict=True))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(
+            f"Proof ownership file must be inside the command root: {normalized}"
+        ) from exc
+    if not resolved.is_file():
+        raise SystemExit(f"Proof ownership file must be a regular file: {normalized}")
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Proof ownership file is not readable JSON: {normalized}: {exc}"
+        ) from exc
+    required = {
+        "schema_version",
+        "program_id",
+        "base_catalog_sha256",
+        "generated_at",
+        "delegations",
+    }
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise SystemExit("Proof ownership root contract is not exact")
+    if payload.get("schema_version") != 1:
+        raise SystemExit("Proof ownership schema_version must be 1")
+    program_id = str(payload.get("program_id") or "").strip()
+    base_catalog_sha256 = str(payload.get("base_catalog_sha256") or "").strip()
+    if not program_id or not re.fullmatch(r"[0-9a-f]{64}", base_catalog_sha256):
+        raise SystemExit("Proof ownership identity is invalid")
+
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown active task: {task_id}")
+    guard = _validated_artifact_conflict_guard(task)
+    if (
+        str(task.get("program_id") or "").strip() != program_id
+        or guard is None
+        or guard["program_id"] != program_id
+        or guard["catalog_sha256"] != base_catalog_sha256
+    ):
+        raise SystemExit(
+            f"Proof ownership base catalog does not match active task {task_id}"
+        )
+
+    raw_delegations = payload.get("delegations")
+    if not isinstance(raw_delegations, list) or not raw_delegations:
+        raise SystemExit("Proof ownership delegations must be a non-empty list")
+    delegation_fields = {
+        "source_task_id",
+        "proof",
+        "owner_task_id",
+        "final_witness_task_id",
+        "reason",
+    }
+    task_delegations: list[dict[str, str]] = []
+    identities: set[tuple[str, str]] = set()
+    for index, raw in enumerate(raw_delegations):
+        if not isinstance(raw, dict) or set(raw) != delegation_fields:
+            raise SystemExit(
+                f"Proof ownership delegation {index} contract is not exact"
+            )
+        delegation = {
+            key: str(raw.get(key) or "").strip()
+            for key in sorted(delegation_fields)
+        }
+        if any(not value for value in delegation.values()):
+            raise SystemExit(
+                f"Proof ownership delegation {index} contains an empty field"
+            )
+        identity = (
+            delegation["source_task_id"],
+            delegation["proof"],
+        )
+        if identity in identities:
+            raise SystemExit("Proof ownership contains a duplicate delegation")
+        identities.add(identity)
+        if delegation["source_task_id"] != task_id:
+            continue
+        if delegation["proof"] not in (task.get("proof_required") or []):
+            raise SystemExit(
+                f"Delegated proof is not required by active task {task_id}"
+            )
+        owner_id = delegation["owner_task_id"]
+        witness_id = delegation["final_witness_task_id"]
+        if task_id not in _active_task_ancestors(state, owner_id):
+            raise SystemExit(
+                f"Proof owner {owner_id} is not a descendant of {task_id}"
+            )
+        if (
+            owner_id != witness_id
+            and owner_id not in _active_task_ancestors(state, witness_id)
+        ):
+            raise SystemExit(
+                f"Proof witness {witness_id} is not a descendant of {owner_id}"
+            )
+        task_delegations.append(delegation)
+    if not task_delegations:
+        raise SystemExit(
+            f"Proof ownership file has no delegation for active task {task_id}"
+        )
+
+    return {
+        "schema_version": 1,
+        "program_id": program_id,
+        "base_catalog_sha256": base_catalog_sha256,
+        "proof_ownership_file": normalized,
+        "proof_ownership_sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        "delegations": task_delegations,
+    }
+
+
+def command_attach_proof_ownership(
+    state: dict[str, Any],
+    args: list[str],
+) -> None:
+    if len(args) < 3:
+        raise SystemExit(
+            "Usage: attach_proof_ownership "
+            "<task-id> <repo-relative-proof-ownership-file> <reason>"
+        )
+    task_id, proof_ownership_file, reason = args[0], args[1], args[2]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can attach program proof ownership"
+        )
+    context = validate_active_proof_ownership(
+        state,
+        task_id,
+        proof_ownership_file,
+    )
+    task = get_task(state, task_id)
+    assert task is not None
+    immutable = {
+        key: context[key]
+        for key in (
+            "schema_version",
+            "program_id",
+            "base_catalog_sha256",
+            "proof_ownership_file",
+            "proof_ownership_sha256",
+            "delegations",
+        )
+    }
+    existing = task.get("proof_ownership")
+    if existing is not None:
+        existing_immutable = {
+            key: existing.get(key)
+            for key in immutable
+        } if isinstance(existing, dict) else {}
+        if existing_immutable != immutable:
+            raise SystemExit(
+                f"Active task {task_id} already has different proof ownership"
+            )
+    timestamp = iso_now()
+    task["proof_ownership"] = {
+        **immutable,
+        "attached_by": actor,
+        "attached_at": (
+            existing.get("attached_at")
+            if isinstance(existing, dict) and existing.get("attached_at")
+            else timestamp
+        ),
+        "reason": reason,
+    }
+    task["last_update"] = timestamp
+    task["next"] = (
+        f"{reason} Delegated proof remains required from "
+        + ", ".join(
+            delegation["owner_task_id"]
+            for delegation in context["delegations"]
+        )
+        + "; current task review must not claim that delegated proof as locally or "
+        "hosted-complete."
+    )
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "program_proof_ownership_attached",
+            "task_id": task_id,
+            "message": reason,
+            "proof_ownership_file": context["proof_ownership_file"],
+            "proof_ownership_sha256": context["proof_ownership_sha256"],
+            "delegations": context["delegations"],
         }
     )
 
@@ -5854,6 +7180,8 @@ def main(argv: list[str]) -> int:
         "supersede": command_supersede,
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
+        "archive_correct_review_file": command_archive_correct_review_file,
+        "attach_proof_ownership": command_attach_proof_ownership,
         "sync": command_sync,
         "wave": command_wave,
     }
@@ -5863,32 +7191,33 @@ def main(argv: list[str]) -> int:
             raise SystemExit("Usage: recover")
         try:
             with canonical_task_state_lock(shared=False, nonblocking=True):
-                state = load_state()
-                pending_planes = [
-                    key
-                    for key in (
-                        STATUS_ARCHIVE_OUTBOX_KEY,
-                        STATUS_ACTIVITY_OUTBOX_KEY,
-                    )
-                    if state.get(key) not in (None, {}, [])
-                ]
-                try:
-                    archive_recovered = recover_status_archive_outbox(state)
-                    activity_recovered = recover_status_activity_outbox(state)
-                    if archive_recovered or activity_recovered:
-                        refresh_derived_status_views(state)
-                except ActivityAuditInvariantError:
-                    raise
-                except RuntimeError as exc:
-                    raise ActivityAuditInvariantError(
-                        "canonical status recovery failed integrity checks",
-                        invariant="status_recovery_integrity",
-                        evidence={
-                            "command": command,
-                            "pending_planes": pending_planes,
-                            "error": str(exc),
-                        },
-                    ) from exc
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    pending_planes = [
+                        key
+                        for key in (
+                            STATUS_ARCHIVE_OUTBOX_KEY,
+                            STATUS_ACTIVITY_OUTBOX_KEY,
+                        )
+                        if state.get(key) not in (None, {}, [])
+                    ]
+                    try:
+                        archive_recovered = recover_status_archive_outbox(state)
+                        activity_recovered = recover_status_activity_outbox(state)
+                        if archive_recovered or activity_recovered:
+                            refresh_derived_status_views(state)
+                    except ActivityAuditInvariantError:
+                        raise
+                    except RuntimeError as exc:
+                        raise ActivityAuditInvariantError(
+                            "canonical status recovery failed integrity checks",
+                            invariant="status_recovery_integrity",
+                            evidence={
+                                "command": command,
+                                "pending_planes": pending_planes,
+                                "error": str(exc),
+                            },
+                        ) from exc
         except BlockingIOError:
             _emit_fail_closed(
                 ActivityAuditInvariantError(
@@ -5964,27 +7293,32 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    def run_mutation() -> None:
+    def run_mutation() -> dict[str, Any] | None:
         state = load_state()
         recover_status_archive_outbox(state)
         recover_status_activity_outbox(state)
         with buffer_activity_events():
             command_result = commands[command](state, args)
             if command_result is False:
-                return
-            sync_all(state)
+                return None
+            sync_all(state, refresh_views=False)
+        return deepcopy(state)
 
+    committed_state: dict[str, Any] | None
     if str(os.environ.get("ORCH_RUN_ID") or "").strip():
         config = load_config()
         with runtime_state_lock(config, shared=True):
             validate_active_status_command_lease(command, args)
             with canonical_task_state_lock(shared=False):
-                run_mutation()
-        return 0
-
-    with canonical_task_state_lock(shared=False):
-        validate_active_status_command_lease(command, args)
-        run_mutation()
+                with authoritative_task_state_transaction():
+                    committed_state = run_mutation()
+    else:
+        with canonical_task_state_lock(shared=False):
+            validate_active_status_command_lease(command, args)
+            with authoritative_task_state_transaction():
+                committed_state = run_mutation()
+    if committed_state is not None:
+        refresh_derived_status_views_if_current(committed_state)
     return 0
 
 

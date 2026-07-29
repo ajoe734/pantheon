@@ -1,0 +1,47 @@
+# scripts/sync-dev-root.sh split-root smoke (SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 5)
+#
+# Harness: a bare origin, a `devroot` checkout (the default path the script used
+# to be the only thing it knew about), and an `activeroot` checkout standing in
+# for the live supervisor's real cwd. Both roots are put one commit behind
+# origin/dev. A detached `sleep` process with cwd=activeroot stands in for the
+# live supervisor and its pid is written to the pid file.
+#
+# The FATAL at the end of case 2 is the harness, not the change: the throwaway
+# devroot has no .orchestrator/supervisor_watchdog.py to record the restart
+# intent against. Root syncing has already completed at that point.
+
+## Case 1 - no resolvable live supervisor: behave exactly as before
+
+$ PANTHEON_SUPERVISOR_PID=/tmp/syncsmoke/nonexistent.pid \
+    bash scripts/sync-dev-root.sh /tmp/syncsmoke/devroot /tmp/syncsmoke/live-config.json
+[sync-dev-root 2026-07-27T18:40:37Z] active supervisor root unresolved (pid=none); syncing /tmp/syncsmoke/devroot only
+[sync-dev-root 2026-07-27T18:40:37Z] dev-root (/tmp/syncsmoke/devroot) at 2af13a2, behind origin/dev by 1
+[sync-dev-root 2026-07-27T18:40:37Z] updated dev-root -> a20eac4
+[sync-dev-root 2026-07-27T18:40:37Z] done (updated=1 config_updated=0)
+
+## Case 1b - live pid whose cwd is not a git checkout: fail safe, do not guess
+
+fake supervisor pid=2239293 cwd=/tmp/syncsmoke
+[sync-dev-root 2026-07-27T18:40:48Z] active supervisor root unresolved (pid=2239293); syncing /tmp/syncsmoke/devroot only
+
+## Case 2 - live supervisor running from a different checkout: detect and repair
+
+fake supervisor pid=2239310 cwd=/tmp/syncsmoke/activeroot
+before: devroot behind 1, activeroot behind 1
+
+$ PANTHEON_SUPERVISOR_PID=/tmp/syncsmoke/sup.pid \
+    bash scripts/sync-dev-root.sh /tmp/syncsmoke/devroot /tmp/syncsmoke/live-config.json
+[sync-dev-root 2026-07-27T18:41:05Z] ACTIVE_ROOT_SPLIT: live supervisor pid=2239310 runs from /tmp/syncsmoke/activeroot, not /tmp/syncsmoke/devroot
+[sync-dev-root 2026-07-27T18:41:05Z] dev-root (/tmp/syncsmoke/devroot) at 2af13a2, behind origin/dev by 1
+[sync-dev-root 2026-07-27T18:41:05Z] updated dev-root -> a20eac4
+[sync-dev-root 2026-07-27T18:41:05Z] active-supervisor-root (/tmp/syncsmoke/activeroot) at 2af13a2, behind origin/dev by 1
+[sync-dev-root 2026-07-27T18:41:05Z] updated active-supervisor-root -> a20eac4
+[sync-dev-root 2026-07-27T18:41:05Z] evidence: dev-root HEAD=a20eac44b0bd0670d19e0847e6113bae4efd25af active HEAD=a20eac44b0bd0670d19e0847e6113bae4efd25af target=a20eac44b0bd0670d19e0847e6113bae4efd25af
+python3: can't open file '/tmp/syncsmoke/devroot/.orchestrator/supervisor_watchdog.py': [Errno 2] No such file or directory
+[sync-dev-root 2026-07-27T18:41:05Z] FATAL: failed to record intentional supervisor restart; leaving pid=2239310 running
+
+=== after: devroot behind 0, activeroot behind 0
+
+Before this change the second case logged only the dev-root line and reported
+success while the checkout actually executing the control loop stayed behind --
+the shape that left the live supervisor 63 commits behind origin/dev.

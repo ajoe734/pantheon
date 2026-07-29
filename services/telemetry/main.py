@@ -20,7 +20,28 @@ POST  /api/telemetry/ingest
 POST  /api/telemetry/ingest/batch
     Ingest a batch of telemetry events.
     Body: { "events": [ ... ] }
-    Returns 202 with { ingested, rejected } counts.
+    Returns 202 only when at least one event has a durable receipt.
+
+POST  /api/v1/telemetry/infrastructure-health
+    Admit one non-trading infrastructure health observation.
+    Body: InfrastructureHealthEvent (see the InfrastructureHealthEvent
+    definition in telemetry_event.schema.json).
+    Requires a verified service JWT whose claims bind the request tenant and an
+    allowlisted producer scope; the deployment-wide permissive auth mode and the
+    shared static service token are both refused on this route.
+    Returns 202 on admission and on an idempotent replay of an event_id that
+    already holds a durable receipt, 409 INFRA_EVENT_ID_CONFLICT when an
+    event_id is reused for different content, 400 on contract violation, and
+    503 when the schema or ledger is unavailable (INFRA_SCHEMA_UNAVAILABLE,
+    INFRA_LEDGER_UNCONFIGURED), the deployment has no durable broker behind the
+    route (INFRA_BUFFER_NOT_DURABLE), the buffer is full
+    (INFRA_BUFFER_OVERFLOW), or no durable receipt exists yet because another
+    attempt holds the reservation (INFRA_ADMISSION_IN_FLIGHT,
+    INFRA_ADMISSION_FENCED).
+
+    Producers must treat every 503 as "retry with the same event_id": it means
+    the observation is not durable yet, so retrying is what makes delivery
+    at-least-once while the admission ledger keeps it exactly-once.
 
 POST  /api/v1/telemetry/heartbeats
     Ingest one RuntimeHeartbeat payload and adapt it into a canonical
@@ -33,6 +54,9 @@ GET   /api/v1/telemetry/runtime/<runtime_id>/heartbeat
 
 GET   /api/telemetry/stats
     Service statistics (buffer, writer, DLQ, backpressure).
+
+GET   /api/telemetry/events/<event_id>
+    Return the immutable event accepted by this telemetry owner process.
 
 GET   /api/telemetry/dlq
     Dead-letter queue entries.
@@ -89,10 +113,51 @@ TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS
     degraded. Defaults to 90.
 
 TELEMETRY_BUFFER_BACKEND
-    "memory" (default) or "redis".
+    "jetstream" (default), "redis", or explicit test-only "memory".
 
 TELEMETRY_BUFFER_REDIS_URL
     Redis URL when TELEMETRY_BUFFER_BACKEND=redis.
+
+PANTHEON_NATS_URL
+    NATS URL when TELEMETRY_BUFFER_BACKEND=jetstream. The HTTP response waits
+    for a JetStream persistence acknowledgement before returning success.
+
+PANTHEON_TELEMETRY_AUTH_MODE
+    ``strict`` (default) requires a verified JWT. ``permissive`` additionally
+    accepts the shared structured-token form for isolated development.
+
+PANTHEON_TELEMETRY_JWT_SECRET / _JWKS_URI / _OIDC_DISCOVERY_URL
+    Telemetry-specific JWT verification settings. Issuer, audience, role-claim,
+    and role-map settings use the same ``PANTHEON_TELEMETRY_*`` prefix.
+
+PANTHEON_TELEMETRY_SERVICE_TOKEN
+    Exact bearer credential for internal telemetry producers. Its tenant
+    authority is restricted by ``PANTHEON_TELEMETRY_SERVICE_TENANTS``.
+
+PANTHEON_TELEMETRY_ALLOWED_TENANTS
+    Fallback tenant allowlist when a verified identity token has no tenant
+    claim. Every protected request must also send ``X-Tenant-Id``. This fallback
+    deliberately does NOT apply to the infrastructure health route, whose tenant
+    authority must come from the presented service JWT itself.
+
+PANTHEON_TELEMETRY_INFRA_PRODUCERS
+    Explicit allowlist of infrastructure health producer identities admitted by
+    this deployment (e.g. ``control-plane-bff``). Wildcards are refused. The
+    effective scope is this allowlist intersected with the producer scope in the
+    caller's service JWT.
+
+TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER
+    Path to the durable infrastructure health admission ledger. Defaults to
+    TELEMETRY_STORAGE_DIR/infrastructure_health_admissions.jsonl. Point every
+    replica at the same shared path so a stable event_id is admitted once
+    across restarts and replicas.
+
+TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS
+    Lease held by one infrastructure health admission reservation before another
+    replica may recover it (default 30). Set it above the worst-case durable
+    enqueue latency: a crashed owner's reservation only becomes recoverable once
+    the lease expires, and until then retries are answered as retryable rather
+    than as delivered.
 
 TELEMETRY_BATCH_SIZE
     Max events per write batch (default 500).
@@ -154,6 +219,15 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 
+from .auth import (
+    TelemetryAuthorityError,
+    bind_event_producer,
+    bind_event_tenant,
+    request_authority,
+    request_tenant_id,
+    require_infrastructure_health_authority,
+    require_telemetry_authority,
+)
 from .heartbeat_service import (
     RuntimeHeartbeatValidationError,
     build_telemetry_event_from_runtime_heartbeat,
@@ -457,8 +531,9 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
 
     schema_path = os.getenv("TELEMETRY_SCHEMA_PATH", _DEFAULT_SCHEMA_PATH)
     storage_dir = os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR)
-    buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "memory")
+    buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "jetstream")
     redis_url = os.getenv("TELEMETRY_BUFFER_REDIS_URL", "redis://localhost:6379/0")
+    nats_url = os.getenv("PANTHEON_NATS_URL", "nats://localhost:4222")
 
     try:
         batch_size = int(os.getenv("TELEMETRY_BATCH_SIZE", "500"))
@@ -476,6 +551,12 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         heartbeat_stale_after = int(os.getenv("TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS", "90"))
     except ValueError:
         heartbeat_stale_after = 90
+    try:
+        infrastructure_health_lease = float(
+            os.getenv("TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS", "30")
+        )
+    except ValueError:
+        infrastructure_health_lease = 30.0
     replay_dlq_on_start = _env_bool("TELEMETRY_REPLAY_DLQ_ON_START", default=False)
     dlq_replay_tag_filter = os.getenv("TELEMETRY_REPLAY_DLQ_TAG") or None
 
@@ -507,6 +588,19 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         storage_dir=storage_dir,
         buffer_backend=buffer_backend,
         buffer_redis_url=redis_url,
+        buffer_nats_url=nats_url,
+        buffer_stream_name=os.getenv(
+            "TELEMETRY_BUFFER_STREAM_NAME",
+            "PANTHEON_TELEMETRY_INGEST",
+        ),
+        buffer_subject=os.getenv(
+            "TELEMETRY_BUFFER_SUBJECT",
+            "pantheon.telemetry.ingest",
+        ),
+        buffer_durable_name=os.getenv(
+            "TELEMETRY_BUFFER_DURABLE_NAME",
+            "telemetry-postgres-writer",
+        ),
         batch_size=batch_size,
         batch_interval=batch_interval,
         max_retries=max_retries,
@@ -517,6 +611,11 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         lineage_write_store=lineage_write_store,
         replay_dlq_on_start=replay_dlq_on_start,
         dlq_replay_tag_filter=dlq_replay_tag_filter,
+        infrastructure_health_ledger_path=os.getenv(
+            "TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER"
+        )
+        or None,
+        infrastructure_health_lease_seconds=infrastructure_health_lease,
     )
 
 
@@ -577,6 +676,14 @@ def _telemetry_metrics() -> dict[str, Any]:
     dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
     buffer_stats = stats.get("buffer", {}) if isinstance(stats, dict) else {}
     startup_stats = stats.get("startup", {}) if isinstance(stats, dict) else {}
+    infrastructure_stats = (
+        stats.get("infrastructure_health", {}) if isinstance(stats, dict) else {}
+    )
+    infrastructure_ledger = (
+        infrastructure_stats.get("ledger", {})
+        if isinstance(infrastructure_stats, dict)
+        else {}
+    )
     tag_counts = dlq_stats.get("tag_counts", {}) if isinstance(dlq_stats, dict) else {}
     write_failure_dlq_entries = (
         int(tag_counts.get("writer_error", 0) or 0)
@@ -605,6 +712,24 @@ def _telemetry_metrics() -> dict[str, Any]:
         "dlq_incident_fired": 1 if dlq_stats.get("incident_fired") else 0,
         "startup_dlq_loaded": startup_stats.get("dlq_loaded_from_spill", 0),
         "startup_dlq_replayed": startup_stats.get("dlq_replayed_on_start", 0),
+        "infrastructure_health_admitted": infrastructure_stats.get("admitted", 0),
+        "infrastructure_health_duplicates": infrastructure_stats.get("duplicates", 0),
+        "infrastructure_health_conflicts": infrastructure_stats.get("conflicts", 0),
+        "infrastructure_health_in_flight_rejections": infrastructure_stats.get("in_flight_rejections", 0),
+        "infrastructure_health_fenced_rejections": infrastructure_stats.get("fenced_rejections", 0),
+        "infrastructure_health_non_durable_rejections": infrastructure_stats.get(
+            "non_durable_rejections", 0
+        ),
+        "infrastructure_health_rejected": infrastructure_stats.get("rejected", 0),
+        "infrastructure_health_schema_loaded": 1 if infrastructure_stats.get("schema_loaded") else 0,
+        # 0 means this deployment cannot admit infrastructure health at all: the
+        # route fails closed until a durable broker is configured behind it.
+        "infrastructure_health_buffer_durable": 1 if infrastructure_stats.get("buffer_durable") else 0,
+        "infrastructure_health_ledger_committed_ids": infrastructure_ledger.get("committed_event_ids", 0),
+        "infrastructure_health_ledger_open_reservations": infrastructure_ledger.get("open_reservations", 0),
+        "infrastructure_health_ledger_recoverable_reservations": infrastructure_ledger.get(
+            "recoverable_expired_reservations", 0
+        ),
     }
 
 
@@ -683,10 +808,14 @@ register_flask_health_routes(
 )
 
 
-def _lineage_query_response(query_family: str, **params):
+def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
     """Execute a lineage query family and map service-level errors to HTTP."""
     try:
-        result = _get_lineage_service().query(query_family, **params)
+        result = _get_lineage_service().query(
+            query_family,
+            tenant_id=tenant_id,
+            **params,
+        )
     except RuntimeError as exc:
         return jsonify({"error": {"code": "LINEAGE_UNAVAILABLE", "message": str(exc)}}), 503
     except ValueError as exc:
@@ -761,6 +890,7 @@ def health():
 
 
 @app.route("/api/telemetry/ingest", methods=["POST"])
+@require_telemetry_authority(("service", "operator", "admin"))
 def ingest_event():
     """Ingest a single telemetry event.
 
@@ -769,6 +899,12 @@ def ingest_event():
     body = request.get_json(force=True)
     if not isinstance(body, dict):
         return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
+
+    try:
+        body = bind_event_tenant(body, request_tenant_id())
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
 
     svc = _get_service()
     try:
@@ -783,16 +919,47 @@ def ingest_event():
 
 
 @app.route("/api/telemetry/ingest/batch", methods=["POST"])
+@require_telemetry_authority(("service", "operator", "admin"))
 def ingest_batch():
     """Ingest a batch of telemetry events.
 
     Body: { "events": [ <event>, ... ] }
-    Returns 202 with { ingested, rejected } counts.
+    Returns 202 when at least one event has a durable receipt. A mixed batch is
+    ``partially_accepted`` and reports both counts. Empty or wholly rejected
+    batches return 400 so HTTP success never represents zero durable receipts.
     """
-    body = request.get_json(force=True) or {}
+    body = request.get_json(force=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
     events = body.get("events")
     if not isinstance(events, list):
         return jsonify({"error": {"code": "INVALID_BODY", "message": "Body must have an 'events' list"}}), 400
+    if not events:
+        return jsonify({
+            "status": "rejected",
+            "ingested": 0,
+            "rejected": 0,
+            "error": {
+                "code": "EMPTY_BATCH",
+                "message": "Batch must contain at least one telemetry event",
+            },
+        }), 400
+
+    if any(not isinstance(event, Mapping) for event in events):
+        return jsonify({
+            "error": {
+                "code": "INVALID_BODY",
+                "message": "Every batch event must be a JSON object",
+            }
+        }), 400
+    try:
+        events = [
+            bind_event_tenant(event, request_tenant_id())
+            for event in events
+        ]
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
 
     svc = _get_service()
     try:
@@ -801,10 +968,94 @@ def ingest_batch():
         log.exception("Unexpected error during batch ingest")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
-    return jsonify(result), 202
+    ingested = int(result.get("ingested") or 0)
+    rejected = int(result.get("rejected") or 0)
+    if ingested == 0:
+        return jsonify({
+            **result,
+            "status": "rejected",
+            "error": {
+                "code": "BATCH_NOT_ACCEPTED",
+                "message": "No telemetry event received a durable acknowledgement",
+            },
+        }), 400
+    return jsonify({
+        **result,
+        "status": "partially_accepted" if rejected else "accepted",
+    }), 202
+
+
+# Rejection codes returned by TelemetryIngestService.ingest_infrastructure_health()
+# mapped onto their HTTP meaning. Anything unmapped is a producer contract
+# violation and answers 400.
+_INFRASTRUCTURE_HEALTH_ERROR_STATUS = {
+    "INFRA_EVENT_ID_CONFLICT": 409,
+    "INFRA_SCHEMA_UNAVAILABLE": 503,
+    "INFRA_LEDGER_UNCONFIGURED": 503,
+    # The deployment has no durable broker behind this route, so nothing may be
+    # admitted: a volatile enqueue would be erased by the next crash while the
+    # admission ledger kept answering retries as an already-delivered duplicate.
+    "INFRA_BUFFER_NOT_DURABLE": 503,
+    "INFRA_BUFFER_OVERFLOW": 503,
+    # Retryable: no durable receipt exists yet, so the producer must try again
+    # rather than treat the observation as delivered.
+    "INFRA_ADMISSION_IN_FLIGHT": 503,
+    "INFRA_ADMISSION_FENCED": 503,
+}
+
+
+@app.route("/api/v1/telemetry/infrastructure-health", methods=["POST"])
+@require_infrastructure_health_authority()
+def ingest_infrastructure_health():
+    """Admit one non-trading infrastructure health observation.
+
+    This route is the only admission path for infrastructure_health telemetry.
+    It carries no RuntimeBinding, so its authority is entirely the caller's
+    verified service identity: a strict service JWT that binds the request
+    tenant and an allowlisted producer scope. Trading telemetry keeps its own
+    binding and lineage validation on the routes above, and an event shaped like
+    an infrastructure probe cannot use this route to skip it.
+    """
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
+
+    try:
+        authority = request_authority()
+        event = bind_event_tenant(body, authority.tenant_id)
+        event = bind_event_producer(event, authority)
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
+
+    svc = _get_service()
+    try:
+        result = _run_async(svc.ingest_infrastructure_health(event))
+    except Exception as exc:
+        log.exception("Unexpected error during infrastructure health ingest")
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+    status = result.get("status")
+    if status in ("accepted", "duplicate"):
+        return jsonify({
+            "status": "accepted",
+            "duplicate": status == "duplicate",
+            "event_id": result.get("event_id"),
+            "fingerprint": result.get("fingerprint"),
+            "tenant_id": event.get("tenant_id"),
+            "producer": event.get("producer"),
+        }), 202
+
+    code = str(result.get("code") or "INFRA_REJECTED")
+    return jsonify({
+        "status": "rejected",
+        "error": {"code": code, "message": result.get("message")},
+        "event_id": result.get("event_id"),
+    }), _INFRASTRUCTURE_HEALTH_ERROR_STATUS.get(code, 400)
 
 
 @app.route("/api/v1/telemetry/heartbeats", methods=["POST"])
+@require_telemetry_authority(("service", "operator", "admin"))
 def ingest_runtime_heartbeat():
     """Ingest a RuntimeHeartbeat through the canonical TelemetryEvent path."""
     body = request.get_json(force=True)
@@ -839,7 +1090,11 @@ def ingest_runtime_heartbeat():
         return jsonify({"error": {"code": exc.code, "message": exc.message}}), 400
 
     try:
+        event = bind_event_tenant(event, request_tenant_id())
         ok = _run_async(svc.ingest(event))
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
     except Exception as exc:
         log.exception("Unexpected error during RuntimeHeartbeat ingest")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
@@ -850,7 +1105,10 @@ def ingest_runtime_heartbeat():
             "detail": "RuntimeHeartbeat failed canonical TelemetryEvent validation; see DLQ for details",
         }), 400
 
-    summary = svc.get_runtime_summary(event["runtime_id"])
+    summary = svc.get_runtime_summary(
+        event["runtime_id"],
+        tenant_id=request_tenant_id(),
+    )
     response: dict[str, Any] = {
         "status": "accepted",
         "event_id": event["event_id"],
@@ -863,10 +1121,11 @@ def ingest_runtime_heartbeat():
 
 
 @app.route("/api/v1/telemetry/runtime/<runtime_id>/heartbeat", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_heartbeat_status(runtime_id: str):
     """Return the latest RuntimeHeartbeatStatus for one runtime."""
     svc = _get_service()
-    summary = svc.get_runtime_summary(runtime_id)
+    summary = svc.get_runtime_summary(runtime_id, tenant_id=request_tenant_id())
     if summary is None or not summary.get("last_heartbeat_at"):
         return jsonify({
             "error": {
@@ -878,6 +1137,7 @@ def runtime_heartbeat_status(runtime_id: str):
 
 
 @app.route("/api/telemetry/stats", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def stats():
     """Return TelemetryIngestService statistics."""
     svc = _get_service()
@@ -885,18 +1145,20 @@ def stats():
 
 
 @app.route("/api/telemetry/runtime-summaries", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_summaries():
     """Return telemetry-owned runtime status summaries for BFF read paths."""
     svc = _get_service()
-    summaries = svc.list_runtime_summaries()
+    summaries = svc.list_runtime_summaries(tenant_id=request_tenant_id())
     return jsonify({"summaries": summaries, "count": len(summaries)}), 200
 
 
 @app.route("/api/telemetry/runtime-summaries/<runtime_id>", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_summary(runtime_id: str):
     """Return one telemetry-owned runtime status summary."""
     svc = _get_service()
-    summary = svc.get_runtime_summary(runtime_id)
+    summary = svc.get_runtime_summary(runtime_id, tenant_id=request_tenant_id())
     if summary is None:
         return jsonify({
             "error": {
@@ -907,7 +1169,25 @@ def runtime_summary(runtime_id: str):
     return jsonify(summary), 200
 
 
+@app.route("/api/telemetry/events/<event_id>", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
+def accepted_event(event_id: str):
+    """Return one exact owner-accepted event without summary races."""
+
+    svc = _get_service()
+    event = svc.get_accepted_event(event_id, tenant_id=request_tenant_id())
+    if event is None:
+        return jsonify({
+            "error": {
+                "code": "TELEMETRY_EVENT_NOT_FOUND",
+                "message": f"No accepted telemetry event for {event_id}",
+            }
+        }), 404
+    return jsonify(event), 200
+
+
 @app.route("/api/telemetry/trade-episodes", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def trade_episodes():
     """Return trade episode projections with filters, sorting, and pagination."""
     persona_id = request.args.get("persona_id")
@@ -942,11 +1222,13 @@ def trade_episodes():
         coverage_state=coverage_state,
         start_time=start_time,
         end_time=end_time,
+        tenant_id=request_tenant_id(),
     )
     return jsonify(result), 200
 
 
 @app.route("/api/telemetry/trade-episodes/<trade_episode_id>", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def trade_episode(trade_episode_id: str):
     """Return a single trade episode projection, supporting as-of query parameters."""
     as_of = request.args.get("as_of")
@@ -963,6 +1245,7 @@ def trade_episode(trade_episode_id: str):
         trade_episode_id,
         as_of=as_of,
         as_of_sequence=as_of_sequence,
+        tenant_id=request_tenant_id(),
     )
     if projection is None:
         return jsonify({
@@ -975,6 +1258,7 @@ def trade_episode(trade_episode_id: str):
 
 
 @app.route("/api/telemetry/dlq", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def dlq_entries():
     """Return dead-letter queue entries.
 
@@ -989,11 +1273,16 @@ def dlq_entries():
         limit = 100
 
     svc = _get_service()
-    entries = svc.get_dlq_entries(tag_filter=tag, limit=limit)
+    entries = svc.get_dlq_entries(
+        tag_filter=tag,
+        limit=limit,
+        tenant_id=request_tenant_id(),
+    )
     return jsonify({"entries": entries, "count": len(entries)}), 200
 
 
 @app.route("/api/telemetry/replay", methods=["POST"])
+@require_telemetry_authority(("operator", "admin"))
 def replay_dlq():
     """Replay DLQ entries through the full ingest path.
 
@@ -1006,7 +1295,12 @@ def replay_dlq():
     tag = request.args.get("tag") or None
     svc = _get_service()
     try:
-        count = _run_async(svc.replay_dlq(tag_filter=tag))
+        count = _run_async(
+            svc.replay_dlq(
+                tag_filter=tag,
+                tenant_id=request_tenant_id(),
+            )
+        )
     except Exception as exc:
         log.exception("Error during DLQ replay")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
@@ -1015,46 +1309,56 @@ def replay_dlq():
 
 
 @app.route("/api/telemetry/lineage/runtime-bindings/<binding_id>/projection", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_binding_projection(binding_id: str):
     """Return the derived-only runtime binding lineage projection."""
     return _lineage_query_response(
         "runtime_binding_projection",
+        tenant_id=request_tenant_id(),
         binding_id=binding_id,
     )
 
 
 @app.route("/api/telemetry/lineage/capital-pools/<pool_id>/projection", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def capital_pool_projection(pool_id: str):
     """Return the derived-only capital pool lineage projection."""
     return _lineage_query_response(
         "capital_pool_projection",
+        tenant_id=request_tenant_id(),
         pool_id=pool_id,
     )
 
 
 @app.route("/api/telemetry/lineage/events/<event_id>/trace", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def telemetry_event_trace(event_id: str):
     """Return the derived-only telemetry event lineage trace."""
     return _lineage_query_response(
         "telemetry_event_trace",
+        tenant_id=request_tenant_id(),
         event_id=event_id,
     )
 
 
 @app.route("/api/telemetry/lineage/traces/<trace_id>/source-runtime-telemetry", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def source_runtime_telemetry_trace(trace_id: str):
     """Return the operator-facing source-to-runtime-to-telemetry trace."""
     return _lineage_query_response(
         "source_runtime_telemetry_trace",
+        tenant_id=request_tenant_id(),
         trace_id=trace_id,
     )
 
 
 @app.route("/api/telemetry/lineage/plans/<plan_id>/forensic-trace", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def forensic_plan_trace(plan_id: str):
     """Return the rollback-aware forensic lineage trace for one plan."""
     return _lineage_query_response(
         "forensic_plan_trace",
+        tenant_id=request_tenant_id(),
         plan_id=plan_id,
     )
 

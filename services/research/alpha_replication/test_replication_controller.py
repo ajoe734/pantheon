@@ -1,233 +1,335 @@
-"""Unit tests for Alpha Replication Controller."""
+"""Controller tests for approved registry discovery and tenant binding."""
 
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from unittest import mock
 
 import pytest
+from fastapi.testclient import TestClient
 
-from services.research.alpha_replication.controller_state import ControllerState, ControllerStateStore
+from services.research.alpha_replication.controller_state import (
+    ControllerState,
+    ControllerStateStore,
+)
 from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.replication_controller import (
     ReplicationControllerConfig,
+    _queue_payload_from_registry_entry,
     run_controller_tick,
+)
+from services.research.experiment_orchestrator.authority import (
+    ResearchAuthorityHttpClient,
+)
+from services.research.experiment_orchestrator.test_authority import (
+    FastApiTransport,
+    _load_research_service_module,
+)
+from services.research.alpha_replication.test_revalidation_worker import (
+    FakeAuthority,
+    FakeGateResponse,
+    _queue_payload,
+    _registry_entry,
 )
 
 
-@pytest.fixture
-def temp_dir():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+class CaptureLoopWriter:
+    def __init__(self) -> None:
+        self.successes: list[dict] = []
+        self.failures: list[dict] = []
+
+    async def record_success(self, **payload) -> None:
+        self.successes.append(payload)
+
+    async def record_failure(self, **payload) -> None:
+        self.failures.append(payload)
 
 
-def test_run_controller_tick_success(temp_dir):
-    # 1. Create a dummy seeds file
-    seed_store_path = temp_dir / "distill_seeds.jsonl"
-    seed_store_path.write_text(
-        json.dumps({"source_id": "strat-001"}) + "\n" +
-        json.dumps({"source_id": "strat-002"}) + "\n"
-    )
-
-    # 2. Setup controller state
-    state_path = temp_dir / "state.json"
+def _state(path: Path, *, tenant_id: str = "tenant-a"):
     state = ControllerState(
         controller_id="test-controller",
-        controller_name="test-replication-controller",
+        controller_name="alpha-replication-controller",
         environment="test",
-        tenant_id="default",
+        tenant_id=tenant_id,
         deployment={"git_sha": "test-sha"},
     )
-    store = ControllerStateStore(state_path)
+    store = ControllerStateStore(path)
     store.save(state)
+    return state, store
 
-    # 3. Setup configuration
-    config = ReplicationControllerConfig(
-        database_url=None,
-        registry_url="http://mock-registry:8087",
+
+def _config(
+    tmp_path: Path,
+    *,
+    seed_store_path: Path,
+    authority: FakeAuthority,
+) -> ReplicationControllerConfig:
+    return ReplicationControllerConfig(
+        database_url="postgresql://test",
+        registry_url="http://registry.test",
         interval_seconds=10,
         max_ticks=1,
-        state_path=state_path,
-        data_dir=temp_dir,
+        state_path=tmp_path / "state.json",
+        data_dir=tmp_path,
         seed_store_path=seed_store_path,
+        authority=authority,
     )
 
-    # 4. Mock registry responses
-    mock_entry_view1 = {
-        "entry": {
-            "registry_id": "reg-strategy-spec-strat-001",
-            "strategy_id": "strat-001",
-            "version": "1.0",
-            "artifact_state": "approved",
-            "metadata": {
-                "strategy_spec": {
-                    "spec_version": "1.0",
-                    "strategy_id": "strat-001",
-                    "title": "Strategy 001",
-                    "hypothesis": "Hypothesis 001",
-                    "objective": "Objective 001",
-                    "lifecycle_state": "approved",
-                    "market_scope": {
-                        "symbols": ["SPY"],
-                        "asset_classes": ["equity"],
-                        "frequency": "1d",
-                        "venues": ["NYSE"]
-                    },
-                    "data_dependencies": [{"ref": "ds1", "kind": "dataset"}],
-                    "execution_profile": {
-                        "signal_schema_version": "1.0",
-                        "quantity_type": "PERCENT_PORTFOLIO",
-                        "rebalance_cadence": "1d",
-                        "execution_mode_hint": "research"
-                    },
-                    "evaluation_plan": {
-                        "metrics": ["sharpe_ratio"],
-                        "candidate_gate": "Gate pass.",
-                        "paper_gate": "Paper gate.",
-                        "live_gate": "Live gate."
-                    },
-                    "governance": {
-                        "approval_required": True,
-                        "policy_id": "policy-1",
-                        "risk_profile": "research_only"
-                    },
-                    "provenance": {
-                        "source_kind": "workflow",
-                        "created_at": "2026-05-17T11:10:00Z",
-                        "source_refs": ["source:1"],
-                        "created_by": "Codex"
-                    }
-                }
-            }
-        }
-    }
 
-    # Mock _get_approved_specs_for_strategy helper
-    with mock.patch(
-        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy"
-    ) as mock_get:
-        def side_effect(registry_url, strategy_id):
-            if strategy_id == "strat-001":
-                return [mock_entry_view1["entry"]]
-            return []  # strat-002 not approved or missing
-        
-        mock_get.side_effect = side_effect
+def test_registry_entry_normalization_requires_review_and_matching_tenant(
+    tmp_path,
+) -> None:
+    payload = _queue_payload()
+    entry = _registry_entry(payload)
+    normalized = _queue_payload_from_registry_entry(entry, tenant_id="tenant-a")
+    assert normalized == payload
 
-        # Mock LoopControllerWriter to check interactions
-        mock_writer = mock.MagicMock()
+    unapproved = dict(entry)
+    unapproved["artifact_state"] = "candidate"
+    with pytest.raises(ValueError, match="only approved"):
+        _queue_payload_from_registry_entry(unapproved, tenant_id="tenant-a")
 
-        # Run tick in stub mode (default worker mode in test setup)
-        with mock.patch.dict(
-            "os.environ", {"PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE": "stub"}
-        ):
-            res = run_controller_tick(
-                config=config,
-                state=state,
-                store=store,
-                writer=mock_writer,
+    missing_decision = dict(entry)
+    missing_decision["approval_decision_id"] = None
+    # Normalization preserves the missing value; queue admission is the final
+    # shared guard and rejects it.
+    queue = AlphaReplicationQueue(tmp_path)
+    with pytest.raises(ValueError, match="approval_decision_id"):
+        queue.enqueue(
+            _queue_payload_from_registry_entry(
+                missing_decision,
+                tenant_id="tenant-a",
             )
+        )
 
-        # Assertions
-        assert res["total_successes"] == 1
-        assert res["desired_state"]["approved_spec_count"] == 1
-        assert res["reconcile"]["enqueued_new"] == 1
-        assert res["reconcile"]["processed"] == 1
-        assert len(res["reconcile"]["created_run_ids"]) == 1
-        assert res["actual_readback"]["queue_revalidated"] == 1
-
-        # Check queue
-        queue = AlphaReplicationQueue(temp_dir)
-        entries = queue.list_all()
-        assert len(entries) == 1
-        assert entries[0]["strategy_id"] == "strat-001"
+    with pytest.raises(ValueError, match="does not match controller"):
+        _queue_payload_from_registry_entry(entry, tenant_id="tenant-b")
 
 
-def test_run_controller_tick_registry_failure(temp_dir):
-    state_path = temp_dir / "state.json"
-    state = ControllerState(
-        controller_id="test-controller",
-        controller_name="test-replication-controller",
-        environment="test",
-        tenant_id="default",
-        deployment={"git_sha": "test-sha"},
+def test_controller_discovers_canonical_id_and_reads_authority_before_success(
+    tmp_path,
+) -> None:
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    seed_path.write_text(
+        json.dumps({"source_id": "strat-alpha"}) + "\n",
+        encoding="utf-8",
     )
-    store = ControllerStateStore(state_path)
-    store.save(state)
+    authority = FakeAuthority()
+    state, state_store = _state(tmp_path / "state.json")
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
+    payload = _queue_payload()
+    entry = _registry_entry(payload)
+    writer = CaptureLoopWriter()
+    stale_local_run_path = tmp_path / "alpha_revalidation_runs.jsonl"
+    stale_local_run_path.write_text('{"legacy": true}\n', encoding="utf-8")
 
-    config = ReplicationControllerConfig(
-        database_url=None,
-        registry_url="http://mock-registry:8087",
-        interval_seconds=10,
-        max_ticks=1,
-        state_path=state_path,
-        data_dir=temp_dir,
-        seed_store_path=temp_dir / "non-existent-seeds.jsonl",
-    )
-
-    # Mock _get_approved_specs_for_strategy to raise exception
     with mock.patch(
         "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
-        side_effect=RuntimeError("Registry internal error")
+        return_value=[entry],
+    ), mock.patch(
+        "services.research.alpha_replication.revalidation_worker.AlphaRevalidationWorker._fetch_strategy_spec_entry",
+        return_value=entry,
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        return_value=FakeGateResponse(True, "replication passed"),
     ):
-        mock_writer = mock.MagicMock()
-        
-        # In this test, we scan no seeds, so it succeeds with 0 processed
-        res = run_controller_tick(
+        result = run_controller_tick(
             config=config,
             state=state,
-            store=store,
-            writer=mock_writer,
+            store=state_store,
+            writer=writer,
         )
-        assert res["total_successes"] == 1
-        assert res["desired_state"]["approved_spec_count"] == 0
+
+    assert result["total_successes"] == 1
+    assert result["desired_state"] == {
+        "approved_spec_count": 1,
+        "strategy_spec_ids": [payload["strategy_spec_id"]],
+        "tenant_id": "tenant-a",
+    }
+    assert result["reconcile"]["enqueued_new"] == 1
+    assert len(result["reconcile"]["created_run_ids"]) == 1
+    assert result["actual_readback"]["queue_revalidated"] == 1
+    assert len(authority.tasks) == 1
+    assert len(authority.runs) == 1
+    task = next(iter(authority.tasks.values()))
+    run = next(iter(authority.runs.values()))
+    authority_task_id = f"rtask:{task.task_id}"
+    authority_run_id = f"rrun:{run.run_id}"
+    assert result["reconcile"]["created_authority_task_ids"] == [
+        authority_task_id
+    ]
+    assert result["reconcile"]["created_authority_run_ids"] == [
+        authority_run_id
+    ]
+    assert result["reconcile"]["created_run_ids"] == [authority_run_id]
+    assert writer.failures == []
+    assert len(writer.successes) == 1
+    assert writer.successes[0]["evidence_refs"] == [
+        f"research-authority://experiment-tasks/{authority_task_id}",
+        f"research-authority://experiment-runs/{authority_run_id}",
+    ]
+    assert str(stale_local_run_path) not in writer.successes[0]["evidence_refs"]
+
+    queued = AlphaReplicationQueue(tmp_path).list_all()[0]
+    assert queued["tenant_id"] == "tenant-a"
+    assert queued["strategy_spec_id"] == payload["strategy_spec_id"]
+    assert queued["status"] == "completed"
+    assert queued["authority_task_id"] == authority_task_id
+    assert queued["authority_run_ids"] == [authority_run_id]
+    assert queued["experiment_task_id"] == task.task_id
+    assert queued["experiment_run_ids"] == [run.run_id]
 
 
-def test_run_controller_tick_registry_failure_fails_closed(temp_dir):
-    # 1. Create a seeds file
-    seed_store_path = temp_dir / "distill_seeds.jsonl"
-    seed_store_path.write_text(json.dumps({"source_id": "strat-001"}) + "\n")
-
-    state_path = temp_dir / "state.json"
-    state = ControllerState(
-        controller_id="test-controller",
-        controller_name="test-replication-controller",
-        environment="test",
-        tenant_id="default",
-        deployment={"git_sha": "test-sha"},
+def test_controller_evidence_refs_dereference_real_fastapi_authority(
+    tmp_path,
+) -> None:
+    service_module = _load_research_service_module()
+    service_client = TestClient(service_module.app)
+    authority = ResearchAuthorityHttpClient(
+        "http://research-orchestrator.test",
+        transport=FastApiTransport(service_client),
     )
-    store = ControllerStateStore(state_path)
-    store.save(state)
-
-    config = ReplicationControllerConfig(
-        database_url=None,
-        registry_url="http://mock-registry:8087",
-        interval_seconds=10,
-        max_ticks=1,
-        state_path=state_path,
-        data_dir=temp_dir,
-        seed_store_path=seed_store_path,
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    seed_path.write_text(
+        json.dumps({"source_id": "strat-alpha"}) + "\n",
+        encoding="utf-8",
     )
+    state, state_store = _state(tmp_path / "state.json")
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
+    payload = _queue_payload()
+    entry = _registry_entry(payload)
+    writer = CaptureLoopWriter()
 
-    # Mock _get_approved_specs_for_strategy to raise exception
     with mock.patch(
         "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
-        side_effect=RuntimeError("Registry internal error")
+        return_value=[entry],
+    ), mock.patch(
+        "services.research.alpha_replication.revalidation_worker.AlphaRevalidationWorker._fetch_strategy_spec_entry",
+        return_value=entry,
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        return_value=FakeGateResponse(True, "replication passed"),
     ):
-        mock_writer = mock.MagicMock()
-        
-        # In this test, with seeds present, registry error must propagate and fail the tick
+        result = run_controller_tick(
+            config=config,
+            state=state,
+            store=state_store,
+            writer=writer,
+        )
+
+    [receipt] = result["reconcile"]["authority_receipts"]
+    evidence_refs = writer.successes[0]["evidence_refs"]
+    assert evidence_refs == [
+        (
+            "research-authority://experiment-tasks/"
+            f"{receipt['authority_task_id']}"
+        ),
+        (
+            "research-authority://experiment-runs/"
+            f"{receipt['authority_run_id']}"
+        ),
+    ]
+    assert receipt["authority_task_id"] != receipt["experiment_task_id"]
+    assert receipt["authority_run_id"] != receipt["experiment_run_id"]
+
+    ref_routes = {
+        "research-authority://experiment-tasks/": (
+            "/api/research-orchestrator/tasks/",
+            "task_id",
+        ),
+        "research-authority://experiment-runs/": (
+            "/api/research-orchestrator/runs/",
+            "run_id",
+        ),
+    }
+    for evidence_ref in evidence_refs:
+        prefix = next(
+            candidate
+            for candidate in ref_routes
+            if evidence_ref.startswith(candidate)
+        )
+        route_prefix, identity_field = ref_routes[prefix]
+        authority_id = evidence_ref.removeprefix(prefix)
+        response = service_client.get(f"{route_prefix}{authority_id}")
+        assert response.status_code == 200
+        assert response.json()[identity_field] == authority_id
+
+    queued = AlphaReplicationQueue(tmp_path).list_all()[0]
+    assert queued["authority_task_id"] == receipt["authority_task_id"]
+    assert queued["authority_run_ids"] == [receipt["authority_run_id"]]
+
+
+def test_controller_duplicate_discovery_and_restart_converge_once(tmp_path) -> None:
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    seed_path.write_text(
+        json.dumps({"source_id": "strat-alpha"}) + "\n",
+        encoding="utf-8",
+    )
+    authority = FakeAuthority()
+    state, state_store = _state(tmp_path / "state.json")
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
+    entry = _registry_entry()
+
+    with mock.patch(
+        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
+        return_value=[entry],
+    ), mock.patch(
+        "services.research.alpha_replication.revalidation_worker.AlphaRevalidationWorker._fetch_strategy_spec_entry",
+        return_value=entry,
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        return_value=FakeGateResponse(True, "replication passed"),
+    ):
+        first = run_controller_tick(
+            config=config,
+            state=state,
+            store=state_store,
+            writer=None,
+        )
+        restarted_state = state_store.load()
+        assert restarted_state is not None
+        second = run_controller_tick(
+            config=config,
+            state=restarted_state,
+            store=state_store,
+            writer=None,
+        )
+
+    assert first["reconcile"]["enqueued_new"] == 1
+    assert second["reconcile"]["enqueued_new"] == 0
+    assert second["reconcile"]["processed"] == 0
+    assert len(authority.tasks) == 1
+    assert len(authority.runs) == 1
+    assert len(AlphaReplicationQueue(tmp_path).list_all()) == 1
+
+
+def test_controller_registry_failure_is_durable_and_fail_closed(tmp_path) -> None:
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    seed_path.write_text(
+        json.dumps({"source_id": "strat-alpha"}) + "\n",
+        encoding="utf-8",
+    )
+    authority = FakeAuthority()
+    state, state_store = _state(tmp_path / "state.json")
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
+
+    with mock.patch(
+        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
+        side_effect=RuntimeError("registry unavailable"),
+    ):
         with pytest.raises(RuntimeError, match="Registry lookup failed"):
             run_controller_tick(
                 config=config,
                 state=state,
-                store=store,
-                writer=mock_writer,
+                store=state_store,
+                writer=None,
             )
-        
-        # Reload state to check that it recorded a failure
-        updated_state = store.load()
-        assert updated_state.total_failures == 1
-        assert updated_state.consecutive_failures == 1
-        assert "Registry lookup failed" in updated_state.last_failure_reason
+
+    persisted = state_store.load()
+    assert persisted is not None
+    assert persisted.total_failures == 1
+    assert persisted.consecutive_failures == 1
+    assert "registry unavailable" in str(persisted.last_failure_reason)
+    assert authority.tasks == {}
+    assert authority.runs == {}

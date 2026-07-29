@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon/agora/v11/performance_truth.schema.json",
+  "title": "Agora Strategy Performance Truth",
+  "$ref": "#/definitions/PerformanceProjectionEnvelope",
+  "definitions": {
+    "SourceAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "as_of", "source_ids", "reason"],
+      "properties": {
+        "status": {"enum": ["available", "partial", "unavailable"]},
+        "as_of": {"type": ["string", "null"], "format": "date-time"},
+        "source_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "reason": {"type": ["string", "null"]}
+      }
+    },
+    "ComplianceMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "label", "value", "unit", "calculation_id", "source_id", "as_of", "evidence_refs"],
+      "properties": {
+        "metric_id": {"type": "string", "minLength": 1},
+        "label": {"type": ["string", "null"]},
+        "value": {"type": ["number", "null"]},
+        "unit": {"type": ["string", "null"]},
+        "calculation_id": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "minLength": 1},
+        "as_of": {"type": "string", "format": "date-time"},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "InterventionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intervention_id", "kind", "status", "occurred_at", "source_id", "evidence_refs"],
+      "properties": {
+        "intervention_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "minLength": 1},
+        "occurred_at": {"type": "string", "format": "date-time"},
+        "source_id": {"type": "string", "minLength": 1},
+        "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "ExecutionHistoryRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["journey_id", "status", "occurred_at", "updated_at", "decision_ids", "order_ids", "fill_ids", "reconciliation_ids", "evidence_refs", "source_id"],
+      "properties": {
+        "journey_id": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "minLength": 1},
+        "occurred_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "decision_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "order_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "fill_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "reconciliation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "source_id": {"const": "canonical_trade_journey_projector"}
+      },
+      "anyOf": [
+        {"properties": {"decision_ids": {"minItems": 1}}},
+        {"properties": {"order_ids": {"minItems": 1}}},
+        {"properties": {"fill_ids": {"minItems": 1}}},
+        {"properties": {"reconciliation_ids": {"minItems": 1}}}
+      ]
+    },
+    "PerformanceWarning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["warning_id", "code", "severity", "occurred_at", "source_id", "evidence_refs", "message", "details"],
+      "properties": {
+        "warning_id": {"type": "string", "minLength": 1},
+        "code": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["info", "warning", "high", "critical"]},
+        "occurred_at": {"type": "string", "format": "date-time"},
+        "source_id": {"type": "string", "minLength": 1},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "message": {"type": ["string", "null"]},
+        "details": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "SuggestionProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_type", "produced_at", "source_version", "evidence_refs"],
+      "properties": {
+        "source_id": {"type": "string", "minLength": 1},
+        "source_type": {"type": "string", "minLength": 1},
+        "produced_at": {"type": "string", "format": "date-time"},
+        "source_version": {"type": ["string", "null"]},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "AdjustmentSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestion_id", "strategy_id", "period", "status", "version", "title", "rationale", "expected_effect", "expected_risk", "provenance", "as_of", "updated_at", "no_order_route_proof"],
+      "properties": {
+        "suggestion_id": {"type": "string", "minLength": 1},
+        "strategy_id": {"type": "string", "minLength": 1},
+        "period": {"enum": ["latest", "7d", "30d", "all"]},
+        "status": {"enum": ["proposed", "applied", "rejected", "returned_to_workshop"]},
+        "version": {"type": "integer", "minimum": 1},
+        "title": {"type": ["string", "null"]},
+        "rationale": {"type": ["string", "null"]},
+        "expected_effect": {"type": ["object", "null"], "additionalProperties": true},
+        "expected_risk": {"type": ["object", "null"], "additionalProperties": true},
+        "provenance": {"$ref": "#/definitions/SuggestionProvenance"},
+        "as_of": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": ["string", "null"], "format": "date-time"},
+        "no_order_route_proof": {"const": "agora_suggestion_state_only"}
+      }
+    },
+    "StrategyPerformanceProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy_id", "period", "environment", "availability", "freshness", "compliance", "interventions", "execution_history", "warnings", "adjustment_suggestions", "no_order_route_proof"],
+      "properties": {
+        "strategy_id": {"type": "string", "minLength": 1},
+        "period": {"enum": ["latest", "7d", "30d", "all"]},
+        "environment": {"enum": ["paper", "broker_sandbox", "canary", "live"]},
+        "availability": {"enum": ["available", "partial", "unavailable"]},
+        "freshness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "snapshot_at", "as_of", "source_watermarks", "projection_revision", "projection_generation", "unavailable_sources"],
+          "properties": {
+            "status": {"enum": ["available", "partial", "unavailable"]},
+            "snapshot_at": {"type": "string", "format": "date-time"},
+            "as_of": {"type": ["string", "null"], "format": "date-time"},
+            "source_watermarks": {"type": "object", "additionalProperties": {"type": "string", "format": "date-time"}},
+            "projection_revision": {"type": ["integer", "null"]},
+            "projection_generation": {"type": ["integer", "null"]},
+            "unavailable_sources": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "compliance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["availability", "metrics"],
+          "properties": {
+            "availability": {"$ref": "#/definitions/SourceAvailability"},
+            "metrics": {"type": "array", "items": {"$ref": "#/definitions/ComplianceMetric"}}
+          }
+        },
+        "interventions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["availability", "aggregate", "items"],
+          "properties": {
+            "availability": {"$ref": "#/definitions/SourceAvailability"},
+            "aggregate": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["total", "by_status"],
+              "properties": {
+                "total": {"type": "integer", "minimum": 0},
+                "by_status": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+              }
+            },
+            "items": {"type": "array", "items": {"$ref": "#/definitions/InterventionRecord"}}
+          }
+        },
+        "execution_history": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["availability", "items"],
+          "properties": {
+            "availability": {"$ref": "#/definitions/SourceAvailability"},
+            "items": {"type": "array", "items": {"$ref": "#/definitions/ExecutionHistoryRow"}}
+          }
+        },
+        "warnings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["availability", "items"],
+          "properties": {
+            "availability": {"$ref": "#/definitions/SourceAvailability"},
+            "items": {"type": "array", "items": {"$ref": "#/definitions/PerformanceWarning"}}
+          }
+        },
+        "adjustment_suggestions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["availability", "items"],
+          "properties": {
+            "availability": {"$ref": "#/definitions/SourceAvailability"},
+            "items": {"type": "array", "items": {"$ref": "#/definitions/AdjustmentSuggestion"}}
+          }
+        },
+        "no_order_route_proof": {"const": "agora_performance_read_only"}
+      }
+    },
+    "PerformanceProjectionEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {"$ref": "#/definitions/StrategyPerformanceProjection"},
+        "meta": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "SuggestionActionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "expected_version"],
+      "properties": {
+        "action": {"enum": ["apply", "reject", "return_to_workshop"]},
+        "expected_version": {"type": "integer", "minimum": 1},
+        "reason": {"type": ["string", "null"], "maxLength": 2000}
+      }
+    },
+    "SuggestionActionReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "audit_event_id", "suggestion_id", "strategy_id", "action", "previous_status", "status", "previous_version", "version", "actor_id", "reason", "recorded_at", "authoritative_readback", "idempotent_replay", "execution_authority", "no_order_route_proof"],
+      "properties": {
+        "receipt_id": {"type": "string", "minLength": 1},
+        "audit_event_id": {"type": "string", "minLength": 1},
+        "suggestion_id": {"type": "string", "minLength": 1},
+        "strategy_id": {"type": "string", "minLength": 1},
+        "action": {"enum": ["apply", "reject", "return_to_workshop"]},
+        "previous_status": {"enum": ["proposed", "applied", "rejected", "returned_to_workshop"]},
+        "status": {"enum": ["proposed", "applied", "rejected", "returned_to_workshop"]},
+        "previous_version": {"type": "integer", "minimum": 1},
+        "version": {"type": "integer", "minimum": 2},
+        "actor_id": {"type": "string", "minLength": 1},
+        "reason": {"type": ["string", "null"]},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "authoritative_readback": {"$ref": "#/definitions/AdjustmentSuggestion"},
+        "idempotent_replay": {"type": "boolean"},
+        "execution_authority": {"const": "none"},
+        "no_order_route_proof": {"const": "agora_suggestion_state_only"}
+      }
+    },
+    "SuggestionActionEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {"$ref": "#/definitions/SuggestionActionReceipt"},
+        "meta": {"type": "object", "additionalProperties": true}
+      }
+    }
+  }
+}

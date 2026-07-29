@@ -393,6 +393,100 @@ def worker_runner_process_identity(proc_dir: Path) -> tuple[int, int]:
     return pid, int(suffix[19])
 
 
+def process_working_directory(
+    pid: int | None,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> tuple[str | None, str | None]:
+    """Resolve the checkout a live process is actually executing from.
+
+    ``ROOT`` only says where this watchdog module lives. The live supervisor can
+    be running from a different checkout entirely -- the split-root incident had
+    the supervisor in ``dev-root-6692d51c9bc5`` while worker runners launched
+    from ``dev-root-29054ab270d5``. Only ``/proc/<pid>/cwd`` knows which one is
+    live, so root coherence has to be read from the process, not assumed.
+    """
+    if pid is None or pid <= 0:
+        return None, "no_pid"
+    try:
+        return str(Path(os.readlink(proc_root / str(pid) / "cwd")).resolve()), None
+    except OSError as exc:
+        return None, f"cwd_unreadable:{type(exc).__name__}"
+
+
+def scan_worker_runner_roots(proc_root: Path = Path("/proc")) -> tuple[set[str], str | None]:
+    """Return the distinct checkouts live worker runners execute from."""
+    roots: set[str] = set()
+    errors: list[str] = []
+    try:
+        proc_dirs = list(proc_root.iterdir())
+    except OSError as exc:
+        return roots, f"proc_scan_failed:{type(exc).__name__}"
+
+    for proc_dir in proc_dirs:
+        if not proc_dir.name.isdigit():
+            continue
+        try:
+            raw_cmdline = (proc_dir / "cmdline").read_bytes()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            if exc.errno in {errno.ENOENT, errno.ESRCH}:
+                continue
+            errors.append(f"pid={proc_dir.name}:cmdline:{type(exc).__name__}")
+            continue
+        if not raw_cmdline:
+            continue
+        parts = [part.decode("utf-8", errors="ignore") for part in raw_cmdline.split(b"\x00") if part]
+        if not cmdline_is_worker_runner(parts):
+            continue
+        # Prefer the runner script's own checkout: a worker runs inside a task
+        # worktree lease, so its cwd is not the control-plane root.
+        runner_root: str | None = None
+        for part in parts[:4]:
+            path = Path(part)
+            if path.name == "worker_runner.py" and ".orchestrator" in path.parts:
+                runner_root = str(path.resolve().parent.parent)
+                break
+        if runner_root is None:
+            runner_root, _error = process_working_directory(int(proc_dir.name), proc_root=proc_root)
+        if runner_root:
+            roots.add(runner_root)
+
+    return roots, (";".join(errors[:8]) if errors else None)
+
+
+def supervisor_root_report(
+    config: dict[str, Any],
+    pid: int | None,
+    *,
+    proc_root: Path = Path("/proc"),
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report the checkout the live supervisor and worker runners actually use.
+
+    ``sync-dev-root.sh`` used to repair a *default* ``dev-root`` path, so a
+    supervisor started from any other checkout silently stayed 63 commits behind
+    ``origin/dev`` while the sync log reported success. Publishing the observed
+    roots makes that split visible as evidence rather than as a mystery.
+    """
+    settings = settings or watchdog_settings(config)
+    expected_root = str(resolve_repo_path(settings.get("supervisor_root"), str(ROOT)).resolve())
+    active_root, active_root_error = process_working_directory(pid, proc_root=proc_root)
+    worker_roots, worker_root_error = scan_worker_runner_roots(proc_root)
+    return {
+        "expected_root": expected_root,
+        "active_root": active_root,
+        "active_root_error": active_root_error,
+        "split_from_expected": bool(active_root and active_root != expected_root),
+        "worker_runner_roots": sorted(worker_roots),
+        "worker_runner_root_error": worker_root_error,
+        "split_from_worker_runners": bool(
+            active_root and worker_roots and {active_root} != worker_roots
+        ),
+    }
+
+
 def scan_live_worker_runner_identities(
     proc_root: Path = Path("/proc"),
 ) -> tuple[set[tuple[int, int]], str | None]:
@@ -1074,6 +1168,12 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
     )
     result["lock_held"] = lock_held
     result["intentional_restart"] = bool(intentional_restart is not None and new_pid is not None)
+    # Report the checkout that is actually live, not the default dev-root path.
+    result["supervisor_root"] = supervisor_root_report(
+        config,
+        new_pid or pid,
+        settings=settings,
+    )
     watchdog_state["last_decision"] = result
     save_watchdog_state(config, watchdog_state, settings)
     append_watchdog_metric(
@@ -1132,8 +1232,6 @@ def main() -> int:
         return 0
     result = run_watchdog(config, restart=args.restart, dry_run=args.dry_run)
     if args.json:
-        import json
-
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(f"watchdog decision={result['decision']} reason={result['reason']} pid={result.get('pid')} new_pid={result.get('new_pid')}")
