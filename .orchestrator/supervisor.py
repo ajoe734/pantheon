@@ -12610,6 +12610,7 @@ def choose_helper_claim_agent(
     agent_loads: dict[str, list[int]],
     helper_settings: dict[str, Any],
     owner_paused: bool = False,
+    state: dict[str, Any] | None = None,
 ) -> bool:
     if not helper_settings.get("enabled", True):
         return False
@@ -12630,9 +12631,13 @@ def choose_helper_claim_agent(
         owner_name=owner_name,
         idle_agent_name=idle_agent_name,
         owner_paused=owner_paused,
+        state=state,
     ):
         return False
     fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
+    for preferred_fallback in task_preferred_helper_fallbacks(config, task=task, owner_name=owner_name):
+        if preferred_fallback not in fallbacks:
+            fallbacks.append(preferred_fallback)
     if not fallbacks:
         return False
     if owner_paused:
@@ -12658,6 +12663,7 @@ def task_preferred_lane_blocks_helper_claim(
     owner_name: str,
     idle_agent_name: str,
     owner_paused: bool = False,
+    state: dict[str, Any] | None = None,
 ) -> bool:
     preferred_lanes = task_preferred_lane_order(config, task)
     if not preferred_lanes:
@@ -12667,10 +12673,52 @@ def task_preferred_lane_blocks_helper_claim(
     if idle_agent_name not in preferred_lanes:
         return True
     if owner_paused:
-        return False
+        next_lane = task_next_preferred_helper_lane(
+            config,
+            task=task,
+            owner_name=owner_name,
+            state=state,
+        )
+        return idle_agent_name != next_lane
     if owner_name not in preferred_lanes:
         return False
     return preferred_lanes.index(idle_agent_name) > preferred_lanes.index(owner_name)
+
+
+def task_next_preferred_helper_lane(
+    config: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    owner_name: str,
+    state: dict[str, Any] | None = None,
+) -> str | None:
+    preferred_lanes = task_preferred_lane_order(config, task)
+    if not preferred_lanes:
+        return None
+    owner_name = canonical_agent_name(config, owner_name)
+    try:
+        start_index = preferred_lanes.index(owner_name) + 1
+    except ValueError:
+        start_index = 0
+    for lane in preferred_lanes[start_index:]:
+        if lane == owner_name:
+            continue
+        if agent_can_take_task(config, lane, task, state=state):
+            return lane
+    return None
+
+
+def task_preferred_helper_fallbacks(
+    config: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    owner_name: str,
+) -> list[str]:
+    preferred_lanes = task_preferred_lane_order(config, task)
+    if not preferred_lanes:
+        return []
+    owner_name = canonical_agent_name(config, owner_name)
+    return [lane for lane in preferred_lanes if lane != owner_name]
 
 
 def task_preferred_lane_order(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
@@ -13229,6 +13277,7 @@ def dispatch_ready_tasks(
                     agent_loads=agent_loads,
                     helper_settings=helper_settings,
                     owner_paused=owner_paused,
+                    state=state,
                 )
             )
 
