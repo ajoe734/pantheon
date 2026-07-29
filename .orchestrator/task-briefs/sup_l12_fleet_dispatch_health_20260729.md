@@ -5,19 +5,20 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Verify live supervisor and provider-first dispatch health
 - Status: review (owner base refresh complete; pending exact-head re-approval)
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Antigravity
 - Task branch: `task/SUP-L12-FLEET-DISPATCH-HEALTH-20260729`
 - Pull request: `#4328`
 - Approved head: Antigravity independently approved
-  `17cf35d0aef7bcfe830dd812d06fda4975da8f0a`.
+  `5ebecbd4fbb762566c4ca51b7f999d75e02454b4`.
 - Base refresh: `dev` advanced to
-  `5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a` before the approved head
+  `f9063be7da0106c43039042ea6edfdbd33a0bb51` before the approved head
   could merge. The owner merged that base as
-  `f6c49d8f2a09cb4256e59c10a2f00f28f86d2989` after the safe integrator
+  `4ca2ab122871aeb12c9cd9f467a5055c6b748f2f` after the safe integrator
   rejected the stale head.
 - Next: Antigravity independently reviews the refreshed exact head and
-  re-approves PR #4328. The owner then reruns the exact-head integrator and
+  re-approves PR #4328. Human/Ops then supplies the required root-freeze
+  context on that same head. The owner reruns the exact-head integrator and
   governed `done`; ownership and reviewer assignment remain unchanged.
 
 ## Summary
@@ -38,7 +39,7 @@ Fleet health task to ensure this packet is actually handled by supervisor/auto w
 - Fleet verdict: acceptance satisfied; live health observed as
   `degraded_but_failover_working`.
 - The Antigravity approval bound PR #4328 and exact head
-  `17cf35d0aef7bcfe830dd812d06fda4975da8f0a`; it is not reused for a
+  `5ebecbd4fbb762566c4ca51b7f999d75e02454b4`; it is not reused for a
   refreshed head.
 
 ## Owner Closeout Verification
@@ -47,11 +48,13 @@ Fleet health task to ensure this packet is actually handled by supervisor/auto w
 - `.orchestrator/config.json` remains absent from the task diff.
 - Live supervisor command root and packet receipt/archive remained proven at
   Antigravity's exact-head review.
-- The canonical review gate succeeded for `17cf35d0aef7bcfe830dd812d06fda4975da8f0a`.
+- The canonical review gate succeeded for `5ebecbd4fbb762566c4ca51b7f999d75e02454b4`.
 - The safe auto-integrator dry-run correctly returned `waiting` after `dev`
   advanced, preserving exact-head review semantics.
-- The owner merged `origin/dev` without changing the reviewed fleet evidence
-  or `.orchestrator/config.json`, then reran the focused checks before handoff.
+- The owner merged `origin/dev` at
+  `f9063be7da0106c43039042ea6edfdbd33a0bb51` without changing the reviewed
+  fleet evidence or `.orchestrator/config.json`, then reran the focused checks
+  before handoff.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
