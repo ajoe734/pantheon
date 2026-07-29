@@ -4845,6 +4845,181 @@ def failure_loop_agents_for_task_map(
     return agents
 
 
+def task_has_outstanding_delivery_for_provider(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    provider_id: str,
+    active_statuses: set[str],
+) -> bool:
+    normalized_provider = normalize_agent_id(provider_id)
+    if not task_id or not normalized_provider:
+        return False
+
+    for worker in state.get("workers", {}).values():
+        if worker.get("status") not in active_statuses:
+            continue
+        if str(worker.get("task_id") or "") != task_id:
+            continue
+        if worker_failure_streak_provider_id(worker) == normalized_provider:
+            return True
+
+    queue_records = state.get("queue", {}).get("events", {})
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    for event in queued_events:
+        if str(event.get("task_id") or "") != task_id:
+            continue
+        event_id = str(event.get("event_id") or "")
+        record = queue_records.get(event_id, {})
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        related_workers = [
+            worker
+            for worker in state.get("workers", {}).values()
+            if worker.get("queue_event_id") == event_id
+        ]
+        if queue_event_is_orphaned(config, event, record, related_workers):
+            continue
+        target_ids = {
+            normalize_agent_id(str(event.get("target_agent") or "")),
+            normalize_agent_id(str(event.get("target_display_name") or "")),
+        }
+        if normalized_provider in target_ids:
+            return True
+    return False
+
+
+def task_dispatch_reason_for_agent(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    agent_name: str,
+    task_resolver: TaskResolver | dict[str, dict[str, Any]],
+) -> str | None:
+    settings = ready_dispatch_settings(config)
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    task_status = str(task.get("status") or "").lower()
+    if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+        return REASON_REVIEW_READY
+    if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+        return REASON_OWNED_FINALIZE
+    if (
+        task_status == "in_progress"
+        and task.get(owner_field) == agent_name
+        and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
+    ):
+        return REASON_OWNED_IN_PROGRESS
+    if (
+        task_status == "todo"
+        and task.get(owner_field) == agent_name
+        and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
+    ):
+        return REASON_OWNED_READY
+    return None
+
+
+def stale_missing_process_failure_streak_is_dispatchable(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    task_id: str,
+    provider_id: str,
+    task_resolver: TaskResolver | dict[str, dict[str, Any]],
+    provider_report: dict[str, Any] | None,
+    active_statuses: set[str],
+) -> bool:
+    agent_name = display_name_for(config, provider_id)
+    if not agent_name:
+        return False
+    if task_has_outstanding_delivery_for_provider(
+        config,
+        state,
+        task_id=task_id,
+        provider_id=provider_id,
+        active_statuses=active_statuses,
+    ):
+        return False
+    if task_dispatch_reason_for_agent(config, task, agent_name, task_resolver) is None:
+        return False
+    if not agent_can_take_task(config, agent_name, task, state=state):
+        return False
+    if agent_auto_dispatch_block_reason(config, state, provider_id, provider_report):
+        return False
+    return True
+
+
+def clear_stale_missing_process_failure_streaks_for_dispatch(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    task_resolver: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    provider_report: dict[str, Any] | None,
+    active_statuses: set[str],
+) -> bool:
+    """Clear boot-reconciliation missing-process streaks once dispatch is safe.
+
+    A missing process detected while the supervisor is booting can be a real
+    transient lifecycle fact rather than an agent/task failure. If no matching
+    active or pending delivery remains, the task is still assigned to that same
+    provider, and the provider is currently eligible, keeping the streak as a
+    chair/failure-loop blocker prevents the exact redispatch that would recover
+    the fleet. Auth, quota, terminal, and generic-exit streaks remain untouched.
+    """
+    bucket = _task_failure_streak_bucket(state)
+    cleared: list[str] = []
+    for key, record in list(bucket.items()):
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("last_failure_kind") or "") != "missing_process":
+            continue
+        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        provider_id = normalize_agent_id(
+            str(record.get("provider") or str(key).rsplit(":", 1)[-1] or "")
+        )
+        task = task_map.get(task_id)
+        if not task or not provider_id:
+            continue
+        if not stale_missing_process_failure_streak_is_dispatchable(
+            config,
+            state,
+            task,
+            task_id=task_id,
+            provider_id=provider_id,
+            task_resolver=task_resolver,
+            provider_report=provider_report,
+            active_statuses=active_statuses,
+        ):
+            continue
+        bucket.pop(key, None)
+        cleared.append(key)
+
+    if not cleared:
+        return False
+    write_activity_log(
+        config,
+        {
+            "type": "task_failure_streaks_cleared",
+            "kind": "stale_missing_process_dispatch_recovery",
+            "cleared_task_failure_streaks": cleared,
+            "message": (
+                "Cleared stale missing-process task failure streaks before ready dispatch; "
+                "no matching active or pending worker remained and provider eligibility is healthy."
+            ),
+        },
+    )
+    return True
+
+
 def build_chair_review_message(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -13123,11 +13298,20 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
+    changed = False
+    if clear_stale_missing_process_failure_streaks_for_dispatch(
+        config,
+        state,
+        task_map,
+        task_resolver,
+        provider_report=provider_report,
+        active_statuses=active_statuses,
+    ):
+        changed = True
     failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
     failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = False
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
@@ -13141,6 +13325,15 @@ def dispatch_ready_tasks(
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
         task_resolver = task_resolver_for_config(config, task_map)
+        if clear_stale_missing_process_failure_streaks_for_dispatch(
+            config,
+            state,
+            task_map,
+            task_resolver,
+            provider_report=provider_report,
+            active_statuses=active_statuses,
+        ):
+            changed = True
         failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
         failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 

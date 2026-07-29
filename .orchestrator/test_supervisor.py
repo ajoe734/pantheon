@@ -2746,6 +2746,173 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Claude2")
         self.assertEqual(queued_event["reason"], "review_ready_dispatch")
 
+    def test_dispatcher_clears_stale_missing_process_streak_for_ready_l12_review(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T13:48:42Z",
+                }
+            ]
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "SUP-L12-POST-4380-GAP-REVIEW-20260729:claude2": {
+                        "task_id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+                        "provider": "claude2",
+                        "count": 2,
+                        "last_failure_kind": "missing_process",
+                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
+                    }
+                }
+            },
+        }
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["claude2"] = {
+            "id": "claude2",
+            "name": "Claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude_cli",
+        }
+        config["agents"]["antigravity"] = {
+            "id": "antigravity",
+            "name": "Antigravity",
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        config["providers"]["claude2"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude_account_bjoe",
+        }
+        config["providers"]["antigravity"] = {
+            "delivery_mode": "antigravity",
+            "account": "antigravity_primary",
+        }
+        config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "claude_account_bjoe": 1,
+            "antigravity_primary": 1,
+        }
+        provider_report = {
+            "providers": {
+                "claude2": {
+                    "auth_ready": True,
+                    "local_cli_worker_supported": True,
+                    "supports_auto_approve": True,
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                provider_report=provider_report,
+                agent_ids_override=["claude2"],
+                max_dispatches_override=1,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "SUP-L12-POST-4380-GAP-REVIEW-20260729")
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+        self.assertEqual(write_activity_log.call_args_list[0].args[1]["type"], "task_failure_streaks_cleared")
+
+    def test_dispatcher_keeps_terminal_quota_streak_blocking_review(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T13:48:42Z",
+                }
+            ]
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "SUP-L12-POST-4380-GAP-REVIEW-20260729:claude2": {
+                        "task_id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+                        "provider": "claude2",
+                        "count": 2,
+                        "last_failure_kind": "quota_terminal",
+                        "last_reason": "You've hit your usage limit.",
+                    }
+                }
+            },
+        }
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["claude2"] = {
+            "id": "claude2",
+            "name": "Claude2",
+            "display_name": "Claude2",
+            "provider": "claude2",
+            "adapter": "claude_cli",
+        }
+        config["agents"]["antigravity"] = {
+            "id": "antigravity",
+            "name": "Antigravity",
+            "display_name": "Antigravity",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        config["providers"]["claude2"] = {
+            "delivery_mode": "claude_cli",
+            "account": "claude_account_bjoe",
+        }
+        config["ready_dispatcher"]["max_concurrent_per_account"] = {"claude_account_bjoe": 1}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                provider_report={
+                    "providers": {
+                        "claude2": {
+                            "auth_ready": True,
+                            "local_cli_worker_supported": True,
+                            "supports_auto_approve": True,
+                        }
+                    }
+                },
+                agent_ids_override=["claude2"],
+                max_dispatches_override=1,
+            )
+
+        self.assertFalse(changed)
+        self.assertIn(
+            "SUP-L12-POST-4380-GAP-REVIEW-20260729:claude2",
+            state["provider_guardrails"]["task_failure_streaks"],
+        )
+        queue_delivery_event.assert_not_called()
+        write_activity_log.assert_not_called()
+
     def test_l12_priority_gate_is_limited_to_review_dispatch(self) -> None:
         review_priority = supervisor.dispatch_reason_priority("review_ready_dispatch")
         owned_priority = supervisor.dispatch_reason_priority("owned_in_progress_dispatch")
