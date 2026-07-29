@@ -6,6 +6,7 @@ import json
 import os
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 
@@ -78,6 +79,14 @@ def main() -> int:
     while True:
         tick += 1
         result = run_tick(api_url=api_url, force_full=force_full, materialize=materialize)
+        alive_path = os.getenv("SEARCH_INDEX_SCHEDULER_ALIVE_PATH")
+        if alive_path:
+            try:
+                alive_p = Path(alive_path)
+                alive_p.parent.mkdir(parents=True, exist_ok=True)
+                alive_p.touch()
+            except Exception:
+                pass
         print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
         if max_ticks and tick >= max_ticks:
             return 0
