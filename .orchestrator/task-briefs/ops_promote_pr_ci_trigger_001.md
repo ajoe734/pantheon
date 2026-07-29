@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair promote PR CI trigger and auto-merge path
-- Status: review_approved
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Supervisor resumed OPS-PROMOTE-PR-CI-TRIGGER-001 for finalize after successful dispatch.
+- Next: Codex resumes the reviewed REST repair on current dev; obtain fresh-head CI and independent review, merge PR #4262, then record a fresh promote/auto-merge proof before evidence-based stale PR retirement.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
