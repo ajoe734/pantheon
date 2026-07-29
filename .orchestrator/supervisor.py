@@ -11651,6 +11651,53 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+PROVIDER_FIRST_HELPER_OWNER_NAMES = frozenset({"claude", "claude2", "antigravity", "antigravity2"})
+PROVIDER_FIRST_HELPER_CODEX_NAMES = frozenset({"codex", "codex2"})
+PROVIDER_FIRST_HELPER_TASK_ID_PREFIXES = ("l12-", "sup-l12-")
+PROVIDER_FIRST_HELPER_PROGRAM_IDS = frozenset({"pantheon-twelve-loop-gap-2026-07-26"})
+
+
+def task_has_provider_first_helper_guard(task: dict[str, Any], *, owner_name: str) -> bool:
+    """Return true when helper-claim must not move provider-first work to Codex.
+
+    The supervisor's helper-claim path is intentionally broader than direct
+    owner dispatch: it can reassign a ready task from a busy owner to a helper.
+    For the L12 recovery lanes, that broad fallback broke the operator's
+    Claude/Antigravity-first dispatch requirement by moving tasks to Codex
+    helpers.  Keep Codex eligible for its own work, but prevent helper-claim
+    from rewriting provider-first L12/SUP-L12 ownership unless a task explicitly
+    opts out.
+    """
+
+    if bool(task.get("allow_codex_helper_claim") or task.get("allow_cross_provider_helper_claim")):
+        return False
+    owner = str(owner_name or "").strip().casefold()
+    if owner not in PROVIDER_FIRST_HELPER_OWNER_NAMES:
+        return False
+    if bool(task.get("provider_first") or task.get("dispatch_provider_first")):
+        return True
+    task_id = str(task.get("id") or task.get("task_id") or "").strip().casefold()
+    if task_id.startswith(PROVIDER_FIRST_HELPER_TASK_ID_PREFIXES):
+        return True
+    program_id = str(task.get("program_id") or "").strip().casefold()
+    if program_id in PROVIDER_FIRST_HELPER_PROGRAM_IDS:
+        return True
+    return False
+
+
+def helper_claim_blocked_by_provider_first_guard(
+    task: dict[str, Any],
+    *,
+    owner_name: str,
+    idle_agent_name: str,
+) -> bool:
+    idle_agent = str(idle_agent_name or "").strip().casefold()
+    return idle_agent in PROVIDER_FIRST_HELPER_CODEX_NAMES and task_has_provider_first_helper_guard(
+        task,
+        owner_name=owner_name,
+    )
+
+
 def worker_self_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("worker_self_claim", {}) or {})
     settings.setdefault("enabled", False)
@@ -12553,6 +12600,12 @@ def choose_helper_claim_agent(
     if not helper_settings.get("enabled", True):
         return False
     if not agent_can_take_task(config, idle_agent_name, task):
+        return False
+    if helper_claim_blocked_by_provider_first_guard(
+        task,
+        owner_name=owner_name,
+        idle_agent_name=idle_agent_name,
+    ):
         return False
     task_status = str(task.get("status") or "").lower()
     allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}

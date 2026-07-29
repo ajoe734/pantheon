@@ -3233,6 +3233,84 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
+    def test_dispatcher_does_not_helper_claim_provider_first_l12_work_to_codex(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                }
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-finalize": {
+                    "run_id": "run-finalize",
+                    "task_id": "L12-VERIFY-OBS-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-VERIFY-OBS-001",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+                },
+                {
+                    "id": "SUP-L12-LIVE-WORKER-RECON-20260729",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
     def test_dispatcher_does_not_helper_claim_when_target_workload_would_exceed_cap(self) -> None:
         config = {
             "schema": {
