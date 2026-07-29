@@ -1,5 +1,5 @@
 OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 validation
-Captured: 2026-07-28
+Captured: 2026-07-29
 
 Completed:
 
@@ -7,7 +7,8 @@ Completed:
    PASS — checkout-scoped .venv-pantheon provisioned and foreign-cwd imports verified.
 
 2. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_canonical_review_check.py
-   PASS — 31 passed.
+   PASS — 33 passed, including loss of a pre-existing context/app_id pair and
+   baseline strict drift.
 
 3. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py
    PASS — 92 passed.
@@ -34,11 +35,18 @@ Completed:
 9. actionlint v1.7.12 .github/workflows/canonical-review-gate.yml
    PASS — release asset checksum verified before running the temporary binary.
 
-10. canonical_review_check.py verify-protection against the captured current
-    dev/repository readback.
-    EXPECTED FAIL-CLOSED — required app-pinned context count is 0 and repository
-    auto-merge remains enabled; all_entrypoints_blocked_without_exact_approval
-    is false. This proves repository delivery did not silently claim live
-    activation.
+10. canonical_review_check.py protection-plan against a fresh two-check fixture,
+    followed by verify-protection against the exact activated fixture with
+    --plan-json.
+    PASS — generated activation order is repository auto-merge disable, admin
+    enforcement, then required-check update; readback preserved strict plus
+    both pre-existing context/app_id pairs and returned ok=true.
 
-Aggregate focused Python result: 129 passed.
+11. canonical_review_check.py verify-protection against the same machine plan
+    after removing the pre-existing Smoke acceptance/App 15368 pair.
+    EXPECTED FAIL-CLOSED (exit 1) — canonical check, admin enforcement, and
+    auto-merge disable were all still present, but readback returned ok=false
+    with "required status checks do not match the activation plan's full
+    context/app_id set".
+
+Aggregate focused Python result: 131 passed.

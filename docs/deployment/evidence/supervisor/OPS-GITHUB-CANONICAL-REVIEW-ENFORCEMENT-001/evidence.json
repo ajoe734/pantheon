@@ -4,7 +4,7 @@
   "task": {
     "id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
     "owner": "Codex",
-    "reviewer": "Claude",
+    "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
@@ -49,13 +49,13 @@
       "id": "AC4",
       "claim": "Web UI, gh, REST, GraphQL, auto-merge creation/finalization, and admin bypass remain blocked before exact approval.",
       "status": "pass_configuration_contract_live_probe_withheld",
-      "evidence": "merge-entrypoint-matrix.json plus verify-protection require the app-pinned check, enforce_admins=true, and allow_auto_merge=false simultaneously. Live mutations/probes were not authorized."
+      "evidence": "merge-entrypoint-matrix.json plus plan-bound verify-protection require the app-pinned check, enforce_admins=true, allow_auto_merge=false, baseline strict, and the full pre-existing context/app_id multiset simultaneously. Live mutations/probes were not authorized."
     },
     {
       "id": "AC5",
       "claim": "Rollback-safe branch-protection activation and readback verification.",
       "status": "pass_repository",
-      "evidence": "protection-plan preserves exact pre-existing checks, changes scoped protection endpoints, emits rollback operations, and refuses active readback unless the app id/admin/auto-merge invariants all hold. activation-plan.json requires a fresh baseline because dev drifted during capture."
+      "evidence": "protection-plan preserves baseline strict plus the complete pre-existing context/app_id multiset, orders activation as auto-merge disable -> admin enforcement -> required-check update, and emits exact rollback operations. verify-protection requires that retained machine plan and refuses readback on strict drift or any lost/changed pre-existing check, in addition to app id/admin/auto-merge failures. activation-plan.json requires a fresh baseline because dev drifted during capture."
     },
     {
       "id": "AC6",
@@ -66,8 +66,8 @@
     {
       "id": "AC7",
       "claim": "Branch, commit, push, PR checks, exact-head independent review, merge, and archive evidence.",
-      "status": "pending_delivery_flow",
-      "evidence": "Anchor commit exists; final validation, PR, Claude exact-head review, merge, and governed done closeout remain."
+      "status": "review_resubmission_ready",
+      "evidence": "PR #4303 initial head 6e427581ebd328e1c39e10342c999fec769d318d was rejected by Codex2. Corrective anchor 7206435a8fd6aa31b2e55cf5e6b6616d1ec0bf19 implements baseline/plan-aware readback, lost-check/strict regressions, and safe operation ordering; 131 focused tests plus CLI positive/negative readback and static checks pass. The manifest-bearing PR head is the re-review candidate; Codex2 exact-head approval, merge, and governed archived closeout remain."
     }
   ],
   "non_interference": {
@@ -81,9 +81,9 @@
   "validation": {
     "status": "pass",
     "record": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt",
-    "aggregate_python_tests": 129,
+    "aggregate_python_tests": 131,
     "suites": {
-      "canonical_review_check": 31,
+      "canonical_review_check": 33,
       "task_review_merge_gate": 92,
       "github_review_bridge": 6
     },
@@ -93,7 +93,9 @@
       "workflow YAML parse",
       "workflow static contract",
       "actionlint v1.7.12",
-      "git diff --check"
+      "git diff --check",
+      "machine-plan CLI positive readback",
+      "machine-plan CLI lost-existing-check negative readback"
     ],
     "not_run": [
       "live protection activation/probes require Human/Ops authorization"
