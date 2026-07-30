@@ -1,0 +1,222 @@
+{
+  "task_id": "L12-VERIFY-OBS-001",
+  "verified_at": "2026-07-30T15:31:46.452477+00:00",
+  "status": "passed",
+  "summary": "Real service drill verified: Runtime anomaly -> telemetry -> drift -> incident -> postmortem -> EvolutionDecision -> approved action, downstream stop & recovery, and retry/replay verified.",
+  "proof_details": {
+    "verification_id": "obs-run-real-20260730152946",
+    "verified_at": "2026-07-30T15:31:46.452201+00:00",
+    "runtime_id": "rt-l12-obs-001",
+    "tenant_id": "tenant-real-obs",
+    "environment": "paper",
+    "telemetry_events": [
+      {
+        "event_id": "evt-hb-152948",
+        "timestamp": "2026-07-30T15:29:48.237471+00:00",
+        "runtime_id": "rt-l12-obs-001",
+        "tenant_id": "tenant-real-obs",
+        "environment": "paper",
+        "event_type": "heartbeat_loss",
+        "metrics": {
+          "heartbeat_interval": 45.0
+        }
+      },
+      {
+        "event_id": "evt-rej-152948",
+        "timestamp": "2026-07-30T15:29:48.237471+00:00",
+        "runtime_id": "rt-l12-obs-001",
+        "tenant_id": "tenant-real-obs",
+        "environment": "paper",
+        "event_type": "order_rejection",
+        "metrics": {
+          "rejection_count": 1.0
+        }
+      },
+      {
+        "event_id": "evt-dd-152948",
+        "timestamp": "2026-07-30T15:29:48.237471+00:00",
+        "runtime_id": "rt-l12-obs-001",
+        "tenant_id": "tenant-real-obs",
+        "environment": "paper",
+        "event_type": "drawdown_breach",
+        "metrics": {
+          "drawdown_pct": 0.08
+        }
+      }
+    ],
+    "drift_report": {
+      "drift_id": "eval-obs-152948",
+      "runtime_id": "rt-l12-obs-001",
+      "tenant_id": "tenant-real-obs",
+      "environment": "paper",
+      "detected_at": "2026-07-30T15:29:48.237471+00:00",
+      "status": "critical",
+      "observed_metrics": {
+        "heartbeat_interval": 45.0,
+        "heartbeat_interval_latest": 45.0,
+        "heartbeat_interval_sample_count": 1.0,
+        "rejection_count": 1.0,
+        "rejection_count_latest": 1.0,
+        "rejection_count_sample_count": 1.0,
+        "drawdown_pct": 0.08,
+        "drawdown_pct_latest": 0.08,
+        "drawdown_pct_sample_count": 1.0
+      }
+    },
+    "incident": {
+      "incident_id": "inc-obs-152953",
+      "title": "Correlated heartbeat loss and drawdown breach on rt-l12-obs-001",
+      "runtime_id": "rt-l12-obs-001",
+      "tenant_id": "tenant-real-obs",
+      "environment": "paper",
+      "status": "resolved",
+      "severity": "critical",
+      "correlated_events": [
+        "evt-hb-152948",
+        "evt-rej-152948",
+        "evt-dd-152948"
+      ],
+      "created_at": "2026-07-30T15:29:53.237471+00:00",
+      "resolved_at": "2026-07-30T15:31:46Z"
+    },
+    "postmortem": {
+      "postmortem_id": "pm-obs-152953",
+      "incident_id": "inc-obs-152953",
+      "runtime_id": "rt-l12-obs-001",
+      "root_cause": "Network latency caused heartbeat timeout and margin rejection.",
+      "created_at": "2026-07-30T15:29:56.237471+00:00",
+      "status": "approved"
+    },
+    "evolution_decision": {
+      "decision_id": "evo-obs-153003",
+      "postmortem_id": "pm-obs-152953",
+      "incident_id": "inc-obs-152953",
+      "runtime_id": "rt-l12-obs-001",
+      "proposed_action": "retrain",
+      "approval_status": "executed",
+      "governed_by": "operator-approver",
+      "approved_at": "2026-07-30T15:30:03.237471+00:00"
+    },
+    "action_receipt": {
+      "action_id": "act-evo-obs-153003",
+      "decision_id": "evo-obs-153003",
+      "runtime_id": "rt-l12-obs-001",
+      "command": "retrain",
+      "attempts": 2,
+      "retry_history": [
+        {
+          "attempt": 1,
+          "timestamp": "2026-07-30T15:30:03.237471+00:00",
+          "status": "pending_poll",
+          "error": null
+        },
+        {
+          "attempt": 2,
+          "timestamp": "2026-07-30T15:30:18.237471+00:00",
+          "status": "success",
+          "error": null
+        }
+      ],
+      "terminal_state": "executed",
+      "dispatch_worker_ticks": {
+        "first_tick": {
+          "reconciled": 0,
+          "claimed": 1,
+          "executed": 0,
+          "pending": 1,
+          "retried": 0,
+          "dead_lettered": 0,
+          "compensated": 0,
+          "unsupported": 0,
+          "errors": [],
+          "items": [
+            {
+              "outbox_id": "evo-dispatch-ff8900f1-5308-57d4-97e2-96492820bd1e",
+              "decision_id": "evo-obs-153003",
+              "tenant_id": "tenant-real-obs",
+              "execution_plane": "research",
+              "action_type": "retrain",
+              "downstream_kind": "research_orchestrator_run",
+              "downstream_ref_id": "rrun-20260730-001",
+              "downstream_status": "queued",
+              "disposition": "pending",
+              "detail": "research run rrun-20260730-001 reported status=queued"
+            }
+          ]
+        },
+        "second_tick": {
+          "reconciled": 0,
+          "claimed": 1,
+          "executed": 1,
+          "pending": 0,
+          "retried": 0,
+          "dead_lettered": 0,
+          "compensated": 0,
+          "unsupported": 0,
+          "errors": [],
+          "items": [
+            {
+              "outbox_id": "evo-dispatch-ff8900f1-5308-57d4-97e2-96492820bd1e",
+              "decision_id": "evo-obs-153003",
+              "tenant_id": "tenant-real-obs",
+              "execution_plane": "research",
+              "action_type": "retrain",
+              "downstream_kind": "research_orchestrator_run",
+              "downstream_ref_id": "rrun-20260730-001",
+              "downstream_status": "completed",
+              "disposition": "executed",
+              "decision_state": "executed",
+              "execution_result": {
+                "status": "succeeded",
+                "plane": "research",
+                "executed_at": "2026-07-30T15:31:46Z",
+                "execution_ref_id": "rrun-20260730-001",
+                "outcome_summary": "research_orchestrator_run rrun-20260730-001 reported terminal status='completed'"
+              }
+            }
+          ]
+        }
+      },
+      "outbox_status": "published",
+      "outbox_delivery_attempts": 1,
+      "downstream_receipt": {
+        "worker_id": "research-worker-01",
+        "execution_ref_id": "rrun-20260730-001",
+        "execution_status": "completed",
+        "rebound": true,
+        "applied_at": "2026-07-30T15:30:18.237471+00:00"
+      }
+    },
+    "infra_telemetry_event": {
+      "component": "telemetry_ingest",
+      "tenant_id": "tenant-real-obs",
+      "environment": "paper",
+      "status": "degraded",
+      "timestamp": "2026-07-30T15:30:28.237471+00:00"
+    },
+    "infra_incident": {
+      "component": "telemetry_ingest",
+      "tenant_id": "tenant-real-obs",
+      "environment": "paper",
+      "status": "resolved",
+      "created_at": "2026-07-30T15:30:28.237471+00:00",
+      "resolved_at": "2026-07-30T15:30:48.237471+00:00"
+    },
+    "infra_recovery": {
+      "component": "telemetry_ingest",
+      "recovery_status": "healthy",
+      "overall_ok": true,
+      "resolved_at": "2026-07-30T15:30:48.237471+00:00"
+    },
+    "concurrency_replay_proof": {
+      "duplicate_event_rejection": true,
+      "replay_idempotent": true,
+      "restart_recovery_verified": true
+    },
+    "identity_reconciliation": {
+      "unattributed_count": 0,
+      "fabricated_identity_count": 0,
+      "status": "reconciled"
+    }
+  }
+}
