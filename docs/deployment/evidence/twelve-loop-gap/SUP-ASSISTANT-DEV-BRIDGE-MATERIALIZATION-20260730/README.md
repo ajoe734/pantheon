@@ -1,8 +1,9 @@
 # SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730
 
-Owner: `Codex2`  
+Delivery worker: `Codex2`
+Finalization owner: `Codex`
 Reviewer: `Antigravity`  
-Status: independent review approved; owner closeout in progress
+Status: independent review approved; reassigned owner closeout in progress
 
 ## Outcome
 
@@ -103,3 +104,8 @@ materialization succeeds.
 The governed approval bound this manifest as `review_file`. This closeout
 record only persists that already-issued decision; it does not change the
 reviewed implementation or broaden the approved scope.
+
+After approval, finalization ownership was reassigned from `Codex2` to `Codex`
+because the original owner repeatedly lacked GitHub CLI authorization. The
+reviewed implementation head, reviewer identity, and reviewer-bound evidence
+manifest remain unchanged.
