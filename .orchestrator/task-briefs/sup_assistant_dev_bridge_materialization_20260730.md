@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Antigravity
-- Next: Finalization ownership auto-reassigned from Codex2 to Codex after repeated Codex2 GitHub CLI auth failures; Antigravity's approval of reviewed head d8e51bbb744cb69c35e0b98bb2be3c78719880b8 remains bound to the task evidence manifest.
+- Next: PR #4390 head 9261ac916d69ebf5f32a870e3551feeef64063c4 independently verified. 29 test_dev_bridge_reliability tests pass cleanly on provisioned interpreter. Implementation d8e51bbb7 materializes DevTaskPacket into canonical task-state and rejects false-positive activity-log-only dispatch; closeout-only head 9261ac916 records finalization ownership update in task brief and evidence README without touching implementation.
 
 ## Summary
 Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.
