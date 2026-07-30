@@ -2,7 +2,7 @@
 
 Owner: `Codex2`  
 Reviewer: `Antigravity`  
-Status: implementation complete; independent review pending
+Status: independent review approved; owner closeout in progress
 
 ## Outcome
 
@@ -90,10 +90,16 @@ python3 -m py_compile \
 # 159 passed in 24.69s
 ```
 
-## Review boundary
+## Independent review
 
-Independent review is still required. The reviewer should verify the
-activity-only negative control, confirm the supervisor uses the provisioned
-runtime binding without a config edit, and record the decision in
-`evidence.json` before binding this file through the governed `approve`
-transition.
+Antigravity approved exact PR head
+`d8e51bbb744cb69c35e0b98bb2be3c78719880b8` at
+`2026-07-30T17:18:44Z` after independently running the 159-test assistant
+suite and the 143-test bridge/task-state suite. The review confirmed that the
+activity-only negative control rejects a dispatch without a journal commit and
+that the canonical readback gate prevents admission until strict
+materialization succeeds.
+
+The governed approval bound this manifest as `review_file`. This closeout
+record only persists that already-issued decision; it does not change the
+reviewed implementation or broaden the approved scope.

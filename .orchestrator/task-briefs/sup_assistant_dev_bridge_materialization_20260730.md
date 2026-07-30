@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair supervisor DevTaskPacket materialization readback
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Ownership updated
+- Next: PR #4390 head d8e51bbb744cb69c35e0b98bb2be3c78719880b8 independently verified. 159 assistant tests + 143 bridge/task-state tests pass. Confirmed activity-only negative control rejects non-journaled dispatch and canonical readback gate enforces strict materialization before admission.
 
 ## Summary
 Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.
