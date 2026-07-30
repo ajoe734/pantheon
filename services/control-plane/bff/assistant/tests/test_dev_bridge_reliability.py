@@ -463,6 +463,12 @@ def test_supervisor_required_readback_rejects_missing_journal_binding(
         runtime_env={
             "PANTHEON_STATUS_ROOT": str(repo_root),
             "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+            "PANTHEON_COMMAND_ROOT": "",
+            "PANTHEON_COMMAND_RUNTIME_SHA": "",
+            "PANTHEON_COMMAND_REMOTE": "",
+            "PANTHEON_COMMAND_BASE_REF": "",
+            "PANTHEON_TASK_STATE_STORE_MODE": "",
+            "PANTHEON_TASK_STATE_EVENT_LOG": "",
         },
     )
 

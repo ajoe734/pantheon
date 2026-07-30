@@ -25,7 +25,7 @@ def test_supervisor_drains_assistant_dev_inbox_before_watch_scan() -> None:
         "drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed"
     )
     scan_pos = source.index(
-        'changed = _safe_phase("run_scan", run_scan, config, state, '
+        'changed = _safe_phase("run_scan", _run_scan_locked, config, state, '
         "replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed"
     )
     assert drain_pos < scan_pos

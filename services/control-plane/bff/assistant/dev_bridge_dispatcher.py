@@ -13,10 +13,10 @@ Flow:
 4. Mark packet as seen so replays are rejected in subsequent calls.
 5. Return BridgeDispatchResult with per-task records and audit refs.
 
-The dispatcher never shells the VM for anything other than the ai_status.py
-assign command.  Web API code must not call dispatcher functions directly —
-they are invoked from a trusted internal service path or a repo-local script,
-never from a raw HTTP request handler.
+The dispatcher never shells the VM outside the governed ai_status.py assignment
+and read-only task-state verification commands. Web API code must not call
+dispatcher functions directly — they are invoked from a trusted internal
+service path or a repo-local script, never from a raw HTTP request handler.
 """
 from __future__ import annotations
 
