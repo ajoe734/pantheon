@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Durable stale L12 failure-streak reaper
-- Status: todo
+- Status: ready_for_independent_review
 - Owner: Codex
 - Reviewer: Antigravity
-- Next: Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Codex.
+- Next: Antigravity reviews PR #4385 at the exact rebased head before merge.
 
 ## Summary
 把 11:33Z 清 stale missing_process streak 的 live repair 正式做成 supervisor policy 與 regression，避免 Claude2/Antigravity L12 dispatch 再被舊 failure loop 卡死。

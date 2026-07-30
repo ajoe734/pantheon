@@ -11,7 +11,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
-    "evidence_cut_at": "2026-07-29T15:15:47Z"
+    "evidence_cut_at": "2026-07-30T16:10:48Z"
   },
   "scope": {
     "owned_layer": "Supervisor policy that reaps stale blocking L12 missing_process failure streaks before reassignment/chair triage and on direct or self-claim dispatch paths.",
@@ -31,7 +31,7 @@
     ]
   },
   "implementation": {
-    "anchor_commit": "b41a69c11003c3dc441d12d704fc65372a31b5db",
+    "anchor_commit": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
     "policy_function": "reap_stale_l12_missing_process_failure_streaks",
     "per_cycle_limit": 4,
     "eligibility": [
@@ -62,7 +62,7 @@
       "id": "AC1",
       "criterion": "Reproduce the stale L12 missing_process streak blocker.",
       "status": "pass",
-      "proof": "Dispatcher regressions seed above-threshold stale streaks that previously entered failure_loop_task_ids and suppressed direct or helper dispatch."
+      "proof": "Dispatcher regressions seed above-threshold stale streaks that previously entered failure_loop_task_ids and suppressed owner, helper, or reviewer dispatch."
     },
     {
       "id": "AC2",
@@ -74,7 +74,7 @@
       "id": "AC3",
       "criterion": "Prove Claude2/Antigravity dispatch before Codex-family fallback.",
       "status": "pass",
-      "proof": "One regression offers Codex2 before Claude2 and observes only Claude2 direct dispatch; another offers Codex2 before Antigravity with Claude2 paused and observes only the next preferred Antigravity helper claim."
+      "proof": "One regression offers Codex2 before Claude2 and observes only Claude2 owner dispatch; one seeds a review-stage Claude2 reviewer blocker and observes review_ready_dispatch; another offers Codex2 before Antigravity with Claude2 paused and observes only the next preferred Antigravity helper claim."
     },
     {
       "id": "AC4",
@@ -86,21 +86,21 @@
       "id": "AC5",
       "criterion": "Full supervisor regression passes.",
       "status": "pass",
-      "proof": "461 passed and 4 subtests passed in 59.02 seconds."
+      "proof": "462 supervisor tests passed in 12.639 seconds after rebase onto origin/dev 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e."
     }
   ],
   "verification": {
-    "checkout_python": ".venv-pantheon/bin/python3",
+    "checkout_python": "python3",
     "commands": [
       {
-        "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.py::WorkerReassignmentTests::test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.py::WorkerReassignmentTests::test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
         "result": "pass",
-        "conclusion": "4 focused regressions passed in 0.85 seconds."
+        "conclusion": "5 focused regressions passed in 0.007 seconds."
       },
       {
-        "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
+        "command": "PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "461 passed and 4 subtests passed in 59.02 seconds."
+        "conclusion": "462 supervisor tests passed in 12.639 seconds."
       },
       {
         "command": "git diff --check",
@@ -113,12 +113,13 @@
         "conclusion": "No supervisor configuration change."
       }
     ],
-    "validated_at": "2026-07-29T15:15:47Z",
-    "command_runtime_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e"
+    "validated_at": "2026-07-30T16:10:48Z",
+    "command_runtime_sha": "not_applicable_local_task_worktree",
+    "base_sha": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e"
   },
   "delivery": {
-    "anchor_commit": "b41a69c11003c3dc441d12d704fc65372a31b5db",
-    "pull_request": null,
+    "anchor_commit": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+    "pull_request": 4385,
     "merge_commit": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },

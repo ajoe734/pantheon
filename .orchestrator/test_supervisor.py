@@ -3872,6 +3872,79 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Claude2")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
+    def test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                    "disable_when_failure_loops": True,
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        task = {
+            "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+            "status": "review",
+            "owner": "Antigravity",
+            "reviewer": "Claude2",
+            "depends_on": [],
+            "last_update": "2026-07-29T15:34:00Z",
+            "preferred_lane_order": ["Claude2", "Antigravity", "Codex"],
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    f"{task['id']}:claude2": {
+                        "task_id": task["id"],
+                        "provider": "claude2",
+                        "count": 2,
+                        "last_failure_kind": "missing_process",
+                        "last_failure_at": "2026-07-29T15:30:00Z",
+                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude2"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        persist.assert_not_called()
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
     def test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper(self) -> None:
         config = {
             "schema": {

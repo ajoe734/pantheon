@@ -16,8 +16,10 @@ when all of these facts hold:
 Fresh failures, quota/auth failures, non-L12 tasks, unassigned-lane records, and
 records with runtime evidence remain fail-closed.
 
-Implementation is in anchor commit
-`b41a69c11003c3dc441d12d704fc65372a31b5db`. The machine-readable manifest is
-[`evidence.json`](evidence.json). Independent review by Antigravity is pending;
-the reviewer must record the exact reviewed head and decision in the manifest
-before approval is used for owner closeout.
+Implementation is in rebased anchor commit
+`9d53a94a265c55af4c8d15c50ab3751f1440ac0f`. The branch also includes a
+review-stage redispatch regression for the observed Claude2 reviewer lane
+failure shape. The machine-readable manifest is [`evidence.json`](evidence.json).
+Independent review by Antigravity is pending; the reviewer must record the exact
+reviewed head and decision in the manifest before approval is used for owner
+closeout.
