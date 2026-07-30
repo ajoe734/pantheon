@@ -33,6 +33,44 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 TEST_KEY = b"test-key-for-dev-bridge-reliability"
 KEY_STORE = {"assistant-bridge-dev": TEST_KEY}
 
+ACTIVITY_ONLY_AI_STATUS_SCRIPT = """import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(os.environ["PANTHEON_STATUS_ROOT"])
+command = sys.argv[1]
+if command == "assign":
+    status_path = root / "ai-status.json"
+    state = json.loads(status_path.read_text(encoding="utf-8"))
+    metadata = json.loads(os.environ["TASK_METADATA_JSON"])
+    spec = metadata["dev_bridge"]["task_spec"]
+    task = {
+        "id": spec["id"],
+        "title": spec["title"],
+        "owner": spec["owner"],
+        "reviewer": spec["reviewer"],
+        "phase": spec["phase"],
+        "depends_on": spec["depends_on"],
+        "artifacts": spec["artifacts"],
+        "acceptance": spec["acceptance"],
+        "summary_zh": spec["summary"],
+        "dev_bridge": metadata["dev_bridge"],
+    }
+    state["tasks"] = [
+        item for item in state.get("tasks", []) if item.get("id") != task["id"]
+    ]
+    state["tasks"].append(task)
+    status_path.write_text(json.dumps(state), encoding="utf-8")
+    with (root / "ai-activity-log.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "assign", "task_id": task["id"]}) + "\\n")
+    raise SystemExit(0)
+if command == "show":
+    print(f"Unknown task: {sys.argv[2]}", file=sys.stderr)
+    raise SystemExit(1)
+raise SystemExit(f"unsupported command: {command}")
+"""
+
 
 @pytest.fixture(autouse=True)
 def _bridge_signing_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -317,6 +355,23 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     receipt = drained["packets"][0]
     assert receipt["status"] == "processed"
     assert receipt["result"]["admissionStatus"] == "admitted"
+    readback = receipt["result"]["auditRefs"]["materializationReadback"]
+    assert readback["status"] == "verified"
+    assert readback["storeMode"] == "authoritative"
+    assert readback["taskIds"] == [packet.tasks[0].id]
+    assert readback["tasks"] == [
+        {
+            "taskId": packet.tasks[0].id,
+            "source": "active",
+            "taskSpecHash": dev_bridge_dispatcher._task_spec_hash(packet.tasks[0]),
+        }
+    ]
+    assert readback["checkpoint"]["eventCount"] > initial_event_count
+    assert readback["checkpoint"]["lastEventId"].startswith("task-state-")
+    assert (
+        readback["checkpoint"]["expectedStateSha256"]
+        == readback["checkpoint"]["projectedStateSha256"]
+    )
     admission_path = status_root / receipt["result"]["admissionRecord"][
         "admission_record_path"
     ]
@@ -345,6 +400,80 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
         task.get("id") == packet.tasks[0].id
         for task in projected.get("tasks", [])
     )
+
+
+def test_activity_log_and_projection_only_dispatch_cannot_create_admission(
+    tmp_path: Path,
+) -> None:
+    status_root, event_log, _initial_state = _authoritative_status_root(tmp_path)
+    command_root = tmp_path / "activity-only-command"
+    scripts_dir = command_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "ai_status.py").write_text(
+        ACTIVITY_ONLY_AI_STATUS_SCRIPT,
+        encoding="utf-8",
+    )
+    packet = _signed("pkt_activity_only_false_positive")
+    runtime_env = {
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "PANTHEON_COMMAND_ROOT": str(command_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": "activity-only-fixture",
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+    }
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+        runtime_env=runtime_env,
+    )
+
+    task_id = packet.tasks[0].id
+    projected = json.loads(
+        (status_root / "ai-status.json").read_text(encoding="utf-8")
+    )
+    assert any(task.get("id") == task_id for task in projected["tasks"])
+    assert json.loads(
+        (status_root / "ai-activity-log.jsonl").read_text(encoding="utf-8")
+    ) == {"type": "assign", "task_id": task_id}
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    assert not any(
+        task.get("id") == task_id for task in snapshot["state"].get("tasks", [])
+    )
+    assert result.admission_record is None
+    assert result.admission_status == "invalid_materialization"
+    assert result.retryable is False
+    assert "canonical task-state readback" in result.errors[0]
+    assert "Unknown task" in result.errors[0]
+    assert not has_seen_packet(packet.packet_id, repo_root=str(status_root))
+
+
+def test_supervisor_required_readback_rejects_missing_journal_binding(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_required_readback_without_binding")
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root)),
+        key_store=KEY_STORE,
+        runtime_env={
+            "PANTHEON_STATUS_ROOT": str(repo_root),
+            "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+        },
+    )
+
+    assert result.admission_record is None
+    assert result.admission_status == "invalid_materialization"
+    assert result.retryable is False
+    assert result.errors == [
+        "bridge materialization: canonical task-state runtime binding is missing; "
+        "file/activity-only bridge dispatch is not admissible"
+    ]
+    assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
 def test_partial_dispatch_failure_is_retryable_and_only_full_success_marks_seen(

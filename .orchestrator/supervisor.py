@@ -636,10 +636,16 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
         limit = max(0, int(limit_value))
     except (TypeError, ValueError):
         limit = 4
+    bridge_runtime_env = {
+        "PANTHEON_STATUS_ROOT": str(repo_root.resolve()),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+        **status_command_runtime_env(config),
+    }
     result = drain_task_packet_inbox(
         repo_root=str(repo_root),
         inbox_dir=settings.get("inbox_path") or settings.get("inbox_dir"),
         limit=limit,
+        dispatch_env=bridge_runtime_env,
     )
     processed_count = int(result.get("processedCount") or 0)
     error_count = int(result.get("errorCount") or 0)
@@ -649,6 +655,17 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
     bridge_state = state.setdefault("assistant_dev_bridge", {})
     bridge_state["last_drain_at"] = utc_now()
     bridge_state["last_result"] = result
+    canonical_readbacks = [
+        readback
+        for item in result.get("packets", [])
+        if isinstance(item, dict)
+        for dispatch_result in [item.get("result")]
+        if isinstance(dispatch_result, dict)
+        for audit_refs in [dispatch_result.get("auditRefs")]
+        if isinstance(audit_refs, dict)
+        for readback in [audit_refs.get("materializationReadback")]
+        if isinstance(readback, dict) and readback.get("status") == "verified"
+    ]
     write_activity_log(
         config,
         {
@@ -664,6 +681,15 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
                 for item in result.get("packets", [])
                 if isinstance(item, dict) and item.get("packetId")
             ],
+            "canonical_task_ids": sorted(
+                {
+                    str(task_id)
+                    for readback in canonical_readbacks
+                    for task_id in readback.get("taskIds", [])
+                    if str(task_id or "").strip()
+                }
+            ),
+            "canonical_readbacks": canonical_readbacks,
         },
     )
     return True

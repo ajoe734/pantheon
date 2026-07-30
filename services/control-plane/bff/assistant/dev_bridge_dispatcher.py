@@ -27,7 +27,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 from urllib.parse import quote
 
 from .dev_bridge_admission import load_admission_record, persist_admission_record
@@ -55,6 +55,9 @@ COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+REQUIRE_TASK_STATE_READBACK_ENV = (
+    "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK"
+)
 LEGACY_COMMAND_ENV_NAMES = (
     "PANTHEON_STATUS_COMMAND_ROOT",
     "PANTHEON_STATUS_COMMAND_SHA",
@@ -107,8 +110,28 @@ def _same_path(left: str | Path, right: str | Path) -> bool:
         return False
 
 
-def _environment_targets_status_root(repo_root: str) -> bool:
-    raw_status_root = str(os.environ.get(STATUS_ROOT_ENV) or "").strip()
+def _merged_environment(
+    overrides: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
+    environment = {**os.environ}
+    if overrides:
+        environment.update(
+            {
+                str(name): str(value)
+                for name, value in overrides.items()
+                if value is not None
+            }
+        )
+    return environment
+
+
+def _environment_targets_status_root(
+    repo_root: str,
+    *,
+    environment: Optional[Mapping[str, str]] = None,
+) -> bool:
+    source = environment if environment is not None else os.environ
+    raw_status_root = str(source.get(STATUS_ROOT_ENV) or "").strip()
     return bool(raw_status_root) and _same_path(raw_status_root, repo_root)
 
 
@@ -157,12 +180,17 @@ def _git_stdout(repo_root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _runtime_task_state_env(repo_root: str) -> Dict[str, str]:
+def _runtime_task_state_env(
+    repo_root: str,
+    *,
+    environment: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
     """Resolve the live journal binding without trusting a repo template path."""
 
-    if _environment_targets_status_root(repo_root):
-        mode = str(os.environ.get(TASK_STATE_MODE_ENV) or "").strip().lower()
-        event_log = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
+    source = environment if environment is not None else os.environ
+    if _environment_targets_status_root(repo_root, environment=source):
+        mode = str(source.get(TASK_STATE_MODE_ENV) or "").strip().lower()
+        event_log = str(source.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
         if mode or event_log:
             if mode not in {"shadow", "authoritative"}:
                 raise RuntimeError(
@@ -220,9 +248,11 @@ def _governed_command_root(
     repo_root: str,
     *,
     task_state_env: Dict[str, str],
+    environment: Optional[Mapping[str, str]] = None,
 ) -> Optional[Path]:
-    if _environment_targets_status_root(repo_root):
-        configured = str(os.environ.get(COMMAND_ROOT_ENV) or "").strip()
+    source = environment if environment is not None else os.environ
+    if _environment_targets_status_root(repo_root, environment=source):
+        configured = str(source.get(COMMAND_ROOT_ENV) or "").strip()
         if configured:
             path = Path(configured).expanduser()
             if not path.is_absolute():
@@ -242,13 +272,20 @@ def _governed_command_root(
 
 def _status_command_context(
     repo_root: str,
+    *,
+    environment: Optional[Mapping[str, str]] = None,
 ) -> Tuple[str, Dict[str, str], bool]:
     """Return executable/env for either a governed runtime or legacy fixture."""
 
-    task_state_env = _runtime_task_state_env(repo_root)
+    source = environment if environment is not None else os.environ
+    task_state_env = _runtime_task_state_env(
+        repo_root,
+        environment=source,
+    )
     command_root = _governed_command_root(
         repo_root,
         task_state_env=task_state_env,
+        environment=source,
     )
     if command_root is None:
         return (
@@ -263,19 +300,19 @@ def _status_command_context(
             f"installed command runtime is missing scripts/ai_status.py: {command_root}"
         )
 
-    if _environment_targets_status_root(repo_root) and str(
-        os.environ.get(COMMAND_ROOT_ENV) or ""
+    if _environment_targets_status_root(repo_root, environment=source) and str(
+        source.get(COMMAND_ROOT_ENV) or ""
     ).strip():
-        command_sha = str(os.environ.get(COMMAND_SHA_ENV) or "").strip()
+        command_sha = str(source.get(COMMAND_SHA_ENV) or "").strip()
         if not command_sha:
             raise RuntimeError(
                 f"{COMMAND_SHA_ENV} is required with {COMMAND_ROOT_ENV}"
             )
         command_remote = str(
-            os.environ.get(COMMAND_REMOTE_ENV) or "ajoe734/pantheon"
+            source.get(COMMAND_REMOTE_ENV) or "ajoe734/pantheon"
         ).strip()
         command_base_ref = str(
-            os.environ.get(COMMAND_BASE_REF_ENV) or "origin/dev"
+            source.get(COMMAND_BASE_REF_ENV) or "origin/dev"
         ).strip()
     else:
         command_sha = _git_stdout(command_root, "rev-parse", "HEAD")
@@ -461,8 +498,190 @@ def _materialized_task_candidates(*, repo_root: str, task_id: str) -> List[Dict[
     return candidates
 
 
-def _validate_materialized_tasks(packet: DevTaskPacket, *, repo_root: str) -> None:
-    """Bind a successful dispatch/admission to authoritative task state."""
+def _validate_materialized_task_candidate(
+    packet: DevTaskPacket,
+    task: BridgeTask,
+    candidate: Mapping[str, object],
+) -> None:
+    for field in ("depends_on", "artifacts", "acceptance"):
+        value = candidate.get(field)
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) for item in value
+        ):
+            raise ValueError(
+                f"materialized task {task.id!r} has invalid {field} provenance"
+            )
+    observed_spec = {
+        "id": candidate.get("id"),
+        "title": candidate.get("title"),
+        "owner": candidate.get("owner"),
+        "reviewer": candidate.get("reviewer"),
+        "phase": candidate.get("phase"),
+        "depends_on": list(candidate["depends_on"]),
+        "artifacts": list(candidate["artifacts"]),
+        "acceptance": list(candidate["acceptance"]),
+        "summary": candidate.get("summary_zh"),
+    }
+    if observed_spec != _task_spec(task):
+        raise ValueError(
+            f"materialized task {task.id!r} does not match the signed task spec"
+        )
+    if candidate.get("dev_bridge") != _task_metadata(packet, task)["dev_bridge"]:
+        raise ValueError(
+            f"materialized task {task.id!r} does not match signed bridge provenance"
+        )
+
+
+def _run_readback_command(
+    command: List[str],
+    *,
+    environment: Mapping[str, str],
+    repo_root: str,
+    label: str,
+) -> Dict[str, object]:
+    try:
+        result = subprocess.run(
+            command,
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=repo_root,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OSError(f"{label} timed out after 30s") from exc
+    except OSError as exc:
+        raise OSError(f"{label} could not execute: {exc}") from exc
+
+    output = (result.stdout or "").strip()
+    error = (result.stderr or "").strip()
+    if result.returncode != 0:
+        detail = error or output or f"exit {result.returncode}"
+        if result.returncode in {3, 75}:
+            raise OSError(f"{label} unavailable: {detail[:500]}")
+        raise ValueError(f"{label} failed: {detail[:500]}")
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must return a JSON object")
+    return payload
+
+
+def _canonical_task_state_readback(
+    packet: DevTaskPacket,
+    *,
+    repo_root: str,
+    environment: Mapping[str, str],
+) -> Dict[str, object]:
+    task_state_env = _runtime_task_state_env(
+        repo_root,
+        environment=environment,
+    )
+    required = str(
+        environment.get(REQUIRE_TASK_STATE_READBACK_ENV) or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not task_state_env:
+        if required:
+            raise ValueError(
+                "canonical task-state runtime binding is missing; "
+                "file/activity-only bridge dispatch is not admissible"
+            )
+        return {
+            "status": "legacy_projection_only",
+            "taskIds": [task.id for task in packet.tasks],
+        }
+
+    ai_status, status_env, governed = _status_command_context(
+        repo_root,
+        environment=environment,
+    )
+    if not governed:
+        raise ValueError(
+            "canonical task-state readback requires the governed command runtime"
+        )
+    command_environment = {**environment, **status_env}
+    for name in AUTO_WORKER_ENV_NAMES:
+        command_environment.pop(name, None)
+    command_environment["AI_NAME"] = BRIDGE_STATUS_ACTOR
+
+    task_readbacks: List[Dict[str, object]] = []
+    for task in packet.tasks:
+        payload = _run_readback_command(
+            [sys.executable, ai_status, "show", task.id],
+            environment=command_environment,
+            repo_root=repo_root,
+            label=f"canonical task-state readback for {task.id}",
+        )
+        source = str(payload.get("source") or "").strip()
+        if source == "active":
+            candidate = payload.get("task")
+        elif source == "archive":
+            snapshot = payload.get("snapshot")
+            candidate = snapshot.get("task") if isinstance(snapshot, dict) else None
+        else:
+            candidate = None
+        if not isinstance(candidate, dict):
+            raise ValueError(
+                f"canonical task-state readback for {task.id} has no task row"
+            )
+        _validate_materialized_task_candidate(packet, task, candidate)
+        task_readbacks.append(
+            {
+                "taskId": task.id,
+                "source": source,
+                "taskSpecHash": _task_spec_hash(task),
+            }
+        )
+
+    verify_script = Path(ai_status).with_name("verify_task_state_store.py")
+    if not verify_script.is_file():
+        raise ValueError(
+            "governed command runtime is missing scripts/verify_task_state_store.py"
+        )
+    projection = _run_readback_command(
+        [
+            sys.executable,
+            str(verify_script),
+            "--event-log",
+            task_state_env[TASK_STATE_EVENT_LOG_ENV],
+            "--status-file",
+            str(Path(repo_root) / "ai-status.json"),
+            "--json",
+        ],
+        environment=command_environment,
+        repo_root=repo_root,
+        label="canonical task-state journal/projection readback",
+    )
+    if projection.get("ok") is not True:
+        raise ValueError(
+            "canonical task-state journal/projection readback is not at parity"
+        )
+    return {
+        "status": "verified",
+        "storeMode": task_state_env[TASK_STATE_MODE_ENV],
+        "eventLog": task_state_env[TASK_STATE_EVENT_LOG_ENV],
+        "taskIds": [task.id for task in packet.tasks],
+        "tasks": task_readbacks,
+        "checkpoint": {
+            "eventCount": projection.get("event_count"),
+            "lastEventId": projection.get("last_event_id"),
+            "expectedStateSha256": projection.get("expected_state_sha256"),
+            "projectedStateSha256": projection.get("projected_state_sha256"),
+        },
+    }
+
+
+def _validate_materialized_tasks(
+    packet: DevTaskPacket,
+    *,
+    repo_root: str,
+    environment: Optional[Mapping[str, str]] = None,
+) -> Dict[str, object]:
+    """Bind a successful dispatch/admission to canonical task-state readback."""
+
+    command_environment = _merged_environment(environment)
 
     for task in packet.tasks:
         candidates = _materialized_task_candidates(
@@ -471,36 +690,13 @@ def _validate_materialized_tasks(packet: DevTaskPacket, *, repo_root: str) -> No
         )
         if not candidates:
             raise ValueError(f"materialized task {task.id!r} is missing")
-        expected_spec = _task_spec(task)
-        expected_bridge = _task_metadata(packet, task)["dev_bridge"]
         for candidate in candidates:
-            for field in ("depends_on", "artifacts", "acceptance"):
-                value = candidate.get(field)
-                if not isinstance(value, list) or any(
-                    not isinstance(item, str) for item in value
-                ):
-                    raise ValueError(
-                        f"materialized task {task.id!r} has invalid {field} provenance"
-                    )
-            observed_spec = {
-                "id": candidate.get("id"),
-                "title": candidate.get("title"),
-                "owner": candidate.get("owner"),
-                "reviewer": candidate.get("reviewer"),
-                "phase": candidate.get("phase"),
-                "depends_on": list(candidate["depends_on"]),
-                "artifacts": list(candidate["artifacts"]),
-                "acceptance": list(candidate["acceptance"]),
-                "summary": candidate.get("summary_zh"),
-            }
-            if observed_spec != expected_spec:
-                raise ValueError(
-                    f"materialized task {task.id!r} does not match the signed task spec"
-                )
-            if candidate.get("dev_bridge") != expected_bridge:
-                raise ValueError(
-                    f"materialized task {task.id!r} does not match signed bridge provenance"
-                )
+            _validate_materialized_task_candidate(packet, task, candidate)
+    return _canonical_task_state_readback(
+        packet,
+        repo_root=repo_root,
+        environment=command_environment,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +709,7 @@ def _dispatch_task(
     packet: DevTaskPacket,
     repo_root: str,
     dry_run: bool,
+    environment: Optional[Mapping[str, str]] = None,
 ) -> TaskDispatchRecord:
     """Call the governed status runtime for a single verified bridge task.
 
@@ -530,7 +727,10 @@ def _dispatch_task(
         return record
 
     try:
-        ai_status, status_env, governed = _status_command_context(repo_root)
+        ai_status, status_env, governed = _status_command_context(
+            repo_root,
+            environment=environment,
+        )
     except RuntimeError as exc:
         record.status = "error"
         record.error = str(exc)
@@ -540,7 +740,7 @@ def _dispatch_task(
         record.error = f"scripts/ai_status.py not found at {ai_status!r}"
         return record
 
-    env = {**os.environ}
+    env = _merged_environment(environment)
     if not governed:
         for name in (
             COMMAND_ROOT_ENV,
@@ -609,6 +809,7 @@ def dispatch_task_packet(
     request: BridgeDispatchRequest,
     *,
     key_store: Optional[Dict[str, bytes]] = None,
+    runtime_env: Optional[Mapping[str, str]] = None,
 ) -> BridgeDispatchResult:
     """Verify, replay-check, and materialise all tasks in a signed DevTaskPacket.
 
@@ -624,6 +825,7 @@ def dispatch_task_packet(
     repo_root = request.repo_root or _find_repo_root()
     dry_run = request.dry_run
     dispatched_at = _now()
+    environment = _merged_environment(runtime_env)
 
     # 1. Signature verification (raises on failure)
     verify_packet(packet, key_store=key_store)
@@ -669,7 +871,11 @@ def dispatch_task_packet(
                         admission_status = "missing_replay_admission"
                     else:
                         try:
-                            _validate_materialized_tasks(packet, repo_root=repo_root)
+                            readback = _validate_materialized_tasks(
+                                packet,
+                                repo_root=repo_root,
+                                environment=environment,
+                            )
                         except OSError as exc:
                             replay_errors.append(
                                 f"bridge materialization replay validation: {exc}"
@@ -683,6 +889,7 @@ def dispatch_task_packet(
                             admission_status = "invalid_replay_materialization"
                         else:
                             admission_status = "admitted_replay"
+                            audit_refs["materializationReadback"] = readback
             else:
                 replay_errors.append(
                     "bridge admission replay validation: legacy replay row has no digest "
@@ -718,6 +925,7 @@ def dispatch_task_packet(
                 packet=packet,
                 repo_root=repo_root,
                 dry_run=dry_run,
+                environment=environment,
             )
             task_records.append(rec)
             if rec.status == "error" and rec.error:
@@ -728,7 +936,11 @@ def dispatch_task_packet(
         retryable = False
         if not dry_run and not errors:
             try:
-                _validate_materialized_tasks(packet, repo_root=repo_root)
+                readback = _validate_materialized_tasks(
+                    packet,
+                    repo_root=repo_root,
+                    environment=environment,
+                )
             except OSError as exc:
                 errors.append(f"bridge materialization: {exc}")
                 admission_status = "materialization_read_retryable"
@@ -736,6 +948,8 @@ def dispatch_task_packet(
             except ValueError as exc:
                 errors.append(f"bridge materialization: {exc}")
                 admission_status = "invalid_materialization"
+            else:
+                audit_refs["materializationReadback"] = readback
         if not dry_run and not errors:
             try:
                 provenance = _admission_provenance(packet)

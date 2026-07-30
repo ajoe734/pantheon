@@ -15,6 +15,10 @@ def test_supervisor_drains_assistant_dev_inbox_before_watch_scan() -> None:
     assert "def assistant_dev_bridge_bff_dirs" in source
     assert "from assistant.dev_bridge_inbox import drain_task_packet_inbox" in source
     assert "assistant_dev_packet_inbox_drained" in source
+    assert '"PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1"' in source
+    assert "**status_command_runtime_env(config)" in source
+    assert "dispatch_env=bridge_runtime_env" in source
+    assert '"canonical_readbacks": canonical_readbacks' in source
 
     drain_pos = source.index(
         'changed = _safe_phase("drain_assistant_dev_packet_inbox", '
