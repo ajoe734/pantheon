@@ -52,7 +52,10 @@ Can run in parallel now:
 
 ### Wave D — Product proof
 
-Run only when truth/verifier prerequisites are valid:
+Backend truth is already archived through `L12-TRUTH-001`; start the knowledge
+and runtime verifier drills now. Keep learning blocked on its own
+self-attesting-verifier rebuild, and keep hosted/closeout gated behind accepted
+verifier evidence:
 
 1. `L12-VERIFY-KNOW-001`
 2. `L12-VERIFY-LEARN-001`

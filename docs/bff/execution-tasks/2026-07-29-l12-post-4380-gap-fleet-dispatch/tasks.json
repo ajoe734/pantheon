@@ -193,18 +193,18 @@
     {
       "wave": "D",
       "parallel": true,
-      "purpose": "Run product verifier and hosted proof only when prerequisite truth/evidence is valid.",
+      "purpose": "Run product verifier work with backend truth already archived; keep only proof-specific blockers and downstream hosted/final gates.",
       "tasks": [
         {
           "id": "L12-VERIFY-KNOW-001",
-          "depends_on": ["L12-TRUTH-001"],
+          "depends_on": [],
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
           "acceptance": ["Real Source/Distillation/Alpha drill evidence is archived"]
         },
         {
           "id": "L12-VERIFY-LEARN-001",
-          "depends_on": ["L12-TRUTH-001"],
+          "depends_on": ["SUP-L12-FAKE-VERIFIER-GATE-20260729"],
           "owner_preference": ["Antigravity", "Claude2"],
           "reviewer_preference": ["Claude2", "Antigravity"],
           "acceptance": [
@@ -215,7 +215,7 @@
         },
         {
           "id": "L12-VERIFY-RUNTIME-001",
-          "depends_on": ["L12-TRUTH-001"],
+          "depends_on": [],
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
           "acceptance": ["Deployment/capital/runtime drill evidence is archived without live-capital activation"]

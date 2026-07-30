@@ -30,6 +30,8 @@ auto-worker work, not Codex chat subagents. Routing must not be faked by editing
 - GitHub PR readback for #4379, #4380, #4364, #4372, #4376, #4373, #4363, and
   #4378.
 - Live `ai-status.json` rows under `/home/lupin/pantheon`.
+- Archived governed task rows under `ai-task-archive/tasks/`, specifically to
+  avoid treating an absent active row as an unfinished task.
 - Live worker-runtime status files under `.orchestrator/worker-runtime/status`.
 - Prior dispatch/audit packets:
   - `L12-THREE-PASS-GAP-AUDIT-20260728`
@@ -60,7 +62,7 @@ Current verdict by layer:
 | Layer | State after #4380 | Gap |
 | --- | --- | --- |
 | Runtime manifest | Previously accepted; manifest review-gap row now reconciled | Not sufficient by itself to prove product loops. |
-| Truth backend | `L12-TRUTH-001` is not archived in the current active slice | Operators still lack accepted desired/actual/degraded/failure/provenance/deployment truth. |
+| Truth backend | `L12-TRUTH-001` is archived done at `2026-07-29T06:17:18Z`; review file `docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json` is bound | Backend truth acceptance is not the remaining blocker; frontend truth remains blocked below. |
 | Truth frontend | `L12-FE-TRUTH-001` is blocked | `execute-plans` truth UI cannot be counted accepted until Claude2 review and evidence manifest are done. |
 | Knowledge verifier | `L12-VERIFY-KNOW-001` is todo | Source/Distillation/Alpha chain is not product-proven. |
 | Learning verifier | `L12-VERIFY-LEARN-001` is blocked | Prior verifier was rejected as self-attesting; must be rebuilt as real cross-service proof. |
@@ -131,11 +133,21 @@ Real worker facts observed around this cut:
 - `L12-CLOSE-001` must wait for hosted and verifier archive states.
 - `SUP-L12-STALE-PR-RETIRE-20260729` must wait for #4364 freshness.
 
-### Work that should be restarted only after dependencies are genuinely ready
+### Work that is runnable now because backend truth is already archived
 
 - `L12-VERIFY-KNOW-001`
 - `L12-VERIFY-RUNTIME-001`
+
+### Work that remains blocked on its own proof-quality defect
+
 - `L12-VERIFY-LEARN-001`
+
+Its remaining dependency is not `L12-TRUTH-001`; the blocker is the rejected
+self-attesting verifier design. It must be rebuilt as a real cross-service
+proof with RBAC negative, restart/DLQ, and no-runtime-mutation checks.
+
+### Work that should be restarted only after dependencies are genuinely ready
+
 - `L12-FE-TRUTH-001`
 
 Pass 3 conclusion: the current fleet system is alive enough to work, but the
@@ -152,15 +164,18 @@ Codex subagents.
 5. Rebase/refresh #4363 runtime reliability evidence after #4380.
 6. Finalize/closeout #4380's active row through governed task flow.
 7. Closeout or reconcile `SUP-L12-MERGED-ROW-RECONCILE-20260729`.
-8. Finish backend truth acceptance (`L12-TRUTH-001`) if not already archived in
-   the live board.
+8. Treat backend truth acceptance (`L12-TRUTH-001`) as archived done through
+   governed `reconcile_merged_done`; do not dispatch it again as missing.
 9. Finish frontend truth acceptance (`L12-FE-TRUTH-001`) in `execute-plans`.
-10. Rebuild `L12-VERIFY-LEARN-001` as real cross-service proof.
-11. Run and archive knowledge/runtime/observability verifier drills.
-12. Run hosted FE/BFF exact identity, restart/no-duplicate/auth/tenant/safety
+10. Start `L12-VERIFY-KNOW-001` and `L12-VERIFY-RUNTIME-001` now that backend
+    truth is archived.
+11. Rebuild `L12-VERIFY-LEARN-001` as real cross-service proof.
+12. Run and archive observability verifier drill after #4364 is current,
+    reviewed, merged, and archived.
+13. Run hosted FE/BFF exact identity, restart/no-duplicate/auth/tenant/safety
     proof.
-13. Run protected final closeout with no stale PR/task proof counted.
-14. Keep Antigravity/Claude2 fleet dispatch facts visible without config edits.
+14. Run protected final closeout with no stale PR/task proof counted.
+15. Keep Antigravity/Claude2 fleet dispatch facts visible without config edits.
 
 ## Dispatch Artifact
 
