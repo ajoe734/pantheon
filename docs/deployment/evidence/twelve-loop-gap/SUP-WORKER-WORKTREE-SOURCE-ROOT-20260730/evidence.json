@@ -1,0 +1,47 @@
+{
+  "task_id": "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+  "phase": "Supervisor / Fleet dispatch unblock",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "finding": {
+    "summary": "Auto-worker dispatch was blocked because worker worktree creation used the shared status root as the git source root in a split-root live supervisor.",
+    "live_error": "Failed to create worker worktree /tmp/pantheon-worker-worktrees/pantheon/l12-verify-obs-001 for task/L12-VERIFY-OBS-001: fatal: could not create directory of '.git/worktrees/l12-verify-obs-001': Read-only file system",
+    "status_root": "/home/lupin/pantheon",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "live_config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
+  },
+  "change": {
+    "new_setting": "worker_worktrees.source_root",
+    "default_behavior": "Empty source_root falls back to the existing single-root behavior.",
+    "split_root_behavior": "Git worktree operations use source_root while status/activity/context materialization remains anchored to paths.status_file.",
+    "covered_git_lifecycle": [
+      "pre-lock worker base-ref fetch",
+      "existing worker worktree lookup",
+      "branch-in-root guard",
+      "reused worker worktree refresh",
+      "new worker worktree creation",
+      "merged/orphan worker worktree cleanup",
+      "chair-review worker worktree pruning"
+    ]
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_allocates_task_worktree_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_uses_configured_source_root_for_git_worktree test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_allocates_isolated_worktree_outside_allowlist test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_refuses_shared_checkout_when_worktrees_disabled test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_rejects_shared_checkout_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_rejects_source_root_checkout_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_allocates_chair_review_worktree_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_blocks_dirty_reused_worktree test_supervisor.DispatchStatusSyncTests.test_run_once_fetches_worker_base_before_taking_runtime_lock test_supervisor.PruneOrphanWorktreesTests.test_prune_orphan_worktrees_uses_configured_source_root_for_git_metadata test_supervisor.PruneChairReviewWorktreesTests.test_prune_chair_review_worktrees_uses_configured_source_root_for_git_metadata",
+      "result": "Ran 12 tests, OK"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py",
+      "result": "Ran 461 tests in 15.047s, OK"
+    }
+  ],
+  "live_follow_up": [
+    "Promote the supervisor command root to a dev commit containing this change.",
+    "Set worker_worktrees.source_root to /home/lupin/pantheon-ci-deploy/dev-root in live-supervisor-mainroot-config.json.",
+    "Restart supervisor/watchdog and verify the next dispatch records workspace_source_root and does not emit the .git/worktrees read-only failure."
+  ],
+  "non_goals": [
+    "Does not complete Pantheon or Agora product work.",
+    "Does not loosen worker isolation.",
+    "Does not send workers into the shared status checkout."
+  ]
+}

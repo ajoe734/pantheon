@@ -1854,6 +1854,7 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(settings.get("enabled", False)),
         "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        "source_root": str(settings.get("source_root") or settings.get("repo_root") or "").strip(),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
@@ -1901,6 +1902,27 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     if not configured.is_absolute():
         configured = repo_root / configured
     return configured.resolve()
+
+
+def worker_worktree_source_root(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
+    """Return the writable git checkout used to create worker worktrees.
+
+    The supervisor can run split-root: canonical status, activity, and queue
+    files live in the shared status root, while the command checkout that owns
+    ``.git/worktrees`` can be somewhere else.  Worktree creation must use the
+    writable git source root; context materialization and status writes must
+    continue to use the status root.
+    """
+
+    active_settings = settings or worker_worktree_settings(config)
+    status_root = config_path(config, "status_file").parents[0]
+    configured = str(active_settings.get("source_root") or "").strip()
+    if not configured:
+        return status_root.resolve()
+    source_root = Path(os.path.expanduser(configured))
+    if not source_root.is_absolute():
+        source_root = status_root / source_root
+    return source_root.resolve()
 
 
 def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
@@ -2601,14 +2623,16 @@ def prepare_worker_workspace(
         return True, None
     if request.metadata.get("workspace_path"):
         if requires_isolated:
-            repo_root = config_path(config, "status_file").parents[0].resolve()
+            status_root = config_path(config, "status_file").parents[0].resolve()
+            source_root = worker_worktree_source_root(config, settings)
             workspace_path = Path(
                 os.path.expanduser(str(request.metadata["workspace_path"]))
             ).resolve()
-            if workspace_path == repo_root:
+            if workspace_path in {status_root, source_root}:
                 message = (
                     f"Cannot dispatch explicit retry for {workspace_task_id}: "
-                    "workspace_path resolves to the shared supervisor checkout. "
+                    "workspace_path resolves to the shared supervisor checkout "
+                    "or configured worker source checkout. "
                     "Refusing shared-checkout fallback."
                 )
                 write_activity_log(
@@ -2627,10 +2651,34 @@ def prepare_worker_workspace(
                 return False, message
         return True, None
 
-    repo_root = config_path(config, "status_file").parents[0].resolve()
+    status_root = config_path(config, "status_file").parents[0].resolve()
+    repo_root = worker_worktree_source_root(config, settings)
     branch = worker_task_branch(config, workspace_task_id)
     worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
     reused = False
+
+    if not repo_root.exists():
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"configured worker source root does not exist: {repo_root}."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "workspace_branch": branch,
+                "workspace_path": str(worktree_path),
+                "status_root": str(status_root),
+                "workspace_source_root": str(repo_root),
+                "refresh_status": "source_root_missing",
+            },
+        )
+        return False, message
 
     if settings.get("reuse_existing", True):
         existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
@@ -2653,6 +2701,8 @@ def prepare_worker_workspace(
                     "queue_event_id": queue_event_id,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                     "refresh_ok": refresh_ok,
                     "refresh_status": refresh_status,
                 },
@@ -2674,6 +2724,8 @@ def prepare_worker_workspace(
                         "message": message,
                         "workspace_branch": branch,
                         "workspace_path": str(worktree_path),
+                        "status_root": str(status_root),
+                        "workspace_source_root": str(repo_root),
                         "refresh_status": refresh_status,
                     },
                 )
@@ -2697,6 +2749,8 @@ def prepare_worker_workspace(
                     "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                 },
             )
             return False, message
@@ -2714,6 +2768,8 @@ def prepare_worker_workspace(
                     "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                 },
             )
             return False, message
@@ -2723,7 +2779,8 @@ def prepare_worker_workspace(
             "workspace_mode": "isolated_worktree",
             "workspace_path": str(worktree_path),
             "workspace_branch": branch,
-            "status_root": str(repo_root),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
         }
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
@@ -2733,7 +2790,8 @@ def prepare_worker_workspace(
         "workspace_task_id": workspace_task_id,
         "branch": branch,
         "path": str(worktree_path),
-        "status_root": str(repo_root),
+        "status_root": str(status_root),
+        "source_root": str(repo_root),
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
@@ -2749,7 +2807,8 @@ def prepare_worker_workspace(
             "queue_event_id": queue_event_id,
             "workspace_branch": branch,
             "workspace_path": str(worktree_path),
-            "status_root": str(repo_root),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
         },
     )
     return True, None
@@ -15267,13 +15326,14 @@ def _cleanup_registered_worker_worktrees(
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
+    status_root = config_path(config, "status_file").parents[0]
+    repo_root = worker_worktree_source_root(config, worktree_settings)
     active_roots = active_worker_workspace_roots(config, state)
     live_paths = _scan_process_paths_in_root(base_root)
     max_removals = max(0, int(settings["max_removals_per_tick"]))
     archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
     if not archive_root.is_absolute():
-        archive_root = repo_root / archive_root
+        archive_root = status_root / archive_root
     merged_branches = _merged_task_branches(repo_root, list(settings["base_branches"])) if require_merged else set()
     if require_merged and not merged_branches:
         return False
@@ -15326,6 +15386,8 @@ def _cleanup_registered_worker_worktrees(
     summary: dict[str, Any] = {
         "at": utc_now(),
         "source": source,
+        "status_root": str(status_root.resolve()),
+        "workspace_source_root": str(repo_root),
         "checked": 0,
         "removed": 0,
         "skipped": 0,
@@ -15519,7 +15581,7 @@ def prune_chair_review_worktrees(config: dict[str, Any], state: dict[str, Any]) 
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
+    repo_root = worker_worktree_source_root(config, worktree_settings)
 
     max_age = settings["chair_review_max_age_seconds"]
     max_removals = max(0, settings["chair_review_max_removals_per_tick"])
@@ -19286,8 +19348,24 @@ def run_once(
         github_runtime_snapshot,
     )
     if required_worker_base_refs:
-        repo_root = config_path(config, "status_file").parent
+        worktree_settings = worker_worktree_settings(config)
+        repo_root = worker_worktree_source_root(config, worktree_settings)
         for base_ref in required_worker_base_refs:
+            if not repo_root.exists():
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_worktree_base_refresh_failed",
+                        "message": (
+                            f"Worker base {base_ref} could not be refreshed before "
+                            f"runtime admission: configured worker source root does not exist: {repo_root}"
+                        ),
+                        "base_ref": base_ref,
+                        "workspace_source_root": str(repo_root),
+                        "refresh_status": "source_root_missing",
+                    },
+                )
+                continue
             fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
             if fetched:
                 prefetched_worker_base_refs.add(base_ref)
@@ -19301,6 +19379,7 @@ def run_once(
                         f"runtime admission: {fetch_error}"
                     ),
                     "base_ref": base_ref,
+                    "workspace_source_root": str(repo_root),
                 },
             )
     github_bus_changed = bool(
