@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-post-4380-gap-fleet-dispatch",
-  "generated_at": "2026-07-29T13:14:40Z",
+  "generated_at": "2026-07-30T16:40:37Z",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/POST_4380_THREE_PASS_GAP_AUDIT_2026-07-29T1314Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
-  "base_commit": "2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+  "base_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
   "do_not_use": [
     "Codex collaboration subagents",
     "manual .orchestrator/config.json edits",
@@ -13,6 +13,14 @@
     "legacy front-ai-trading-system"
   ],
   "authoritative_current_state": {
+    "dispatch_bridge_defects_found_after_refresh": [
+      {
+        "observed_at": "2026-07-30T16:35:14Z",
+        "defect": "Manual DevTaskPacket drain produced eight assign activity-log rows but no matching canonical ai-status.json/runtime task-state commit.",
+        "impact": "Receipt taskRecords status=dispatched is not sufficient evidence that supervisor can see or dispatch the tasks.",
+        "required_action": "Fix or prove supervisor-owned assistant-dev-bridge drain with canonical task-state materialization/readback before treating any queued packet as accepted by auto workers."
+      }
+    ],
     "merged_since_prior_final_packet": [
       {
         "pr": 4379,
@@ -25,15 +33,22 @@
         "task": "OPS-PROMOTE-PR-CI-TRIGGER-001",
         "merge_commit": "2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
         "effect": "repaired promote PR Branch CI trigger and auto-merge path"
+      },
+      {
+        "pr": 4373,
+        "task": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+        "merge_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+        "archived_at": "2026-07-29T15:40:45Z",
+        "effect": "fleet dispatch/readback row is merged and governed-archived done; do not redispatch it"
       }
     ],
     "open_prs_requiring_action": [
       {
         "pr": 4364,
         "task": "L12-VERIFY-OBS-001",
-        "head": "ecf17e9d088e37102b4128ebc2a7d77e4328be8a",
-        "merge_state": "BEHIND",
-        "required_action": "true rebase/squash onto current origin/dev, rerun CI, handoff Claude2"
+        "head": "f3756cec99a8c44d47c075a475c25cf86a4d3171",
+        "merge_state": "BLOCKED",
+        "required_action": "Claude2 exact-head review and governed task closeout; Branch CI is green at this head"
       },
       {
         "pr": 4372,
@@ -45,16 +60,9 @@
       {
         "pr": 4376,
         "task": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
-        "head": "c0e113f624f2b851b79edd12a64c6083f2246905",
-        "merge_state": "BEHIND",
-        "required_action": "amend subject <=72 chars, keep trailers, rebase, rerun CI, review"
-      },
-      {
-        "pr": 4373,
-        "task": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
-        "head": "cf4f6617883871c71f8d3bf20782ed605b1a604b",
-        "merge_state": "BEHIND",
-        "required_action": "rebase and refresh dispatch/readback evidence after #4380"
+        "head": "6f63b5f54c28514a68c6a7b3599889adf98553f9",
+        "merge_state": "BLOCKED",
+        "required_action": "exact-head review and governed task closeout; Branch CI is green at this head"
       },
       {
         "pr": 4363,
@@ -67,9 +75,30 @@
   },
   "waves": [
     {
+      "wave": "0",
+      "parallel": false,
+      "purpose": "Repair the supervisor DevTaskPacket acceptance/readback path before product execution tasks are considered dispatched.",
+      "tasks": [
+        {
+          "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity", "Claude2"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": [],
+          "acceptance": [
+            "A queued DevTaskPacket is drained by the supervisor tick path, not by a manual Codex subagent workflow",
+            "Every dispatched task appears in canonical ai-status.json and task-state event/checkpoint readback",
+            "A receipt/admission record cannot report success when canonical task materialization is missing",
+            "Regression covers activity-log-only false positive dispatch",
+            "No .orchestrator/config.json edit is required"
+          ]
+        }
+      ]
+    },
+    {
       "wave": "A",
       "parallel": true,
-      "purpose": "Refresh stale open PRs against current dev and obtain exact-head review.",
+      "purpose": "Refresh remaining open PRs against current dev and obtain exact-head review after Wave 0 proves supervisor-visible dispatch; #4373 is already merged and archived, so it is not redispatched.",
       "tasks": [
         {
           "id": "L12-VERIFY-OBS-001",
@@ -77,25 +106,12 @@
           "target_pr": 4364,
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2"],
-          "depends_on": [],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
           "acceptance": [
-            "PR branch contains base 2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+            "PR branch contains base 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
             "Observability verifier evidence is preserved and rerun if needed",
             "CI is green",
             "Claude2 exact-head review is recorded"
-          ]
-        },
-        {
-          "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
-          "target_repo": "pantheon",
-          "target_pr": 4373,
-          "owner_preference": ["Antigravity"],
-          "reviewer_preference": ["Claude2"],
-          "depends_on": [],
-          "acceptance": [
-            "Dispatch/readback evidence is refreshed after #4380",
-            "PR branch is not BEHIND current dev",
-            "CI and exact-head review pass"
           ]
         },
         {
@@ -104,9 +120,8 @@
           "target_pr": 4376,
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2"],
-          "depends_on": [],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
           "acceptance": [
-            "Commit subject is <=72 characters",
             "Required trailers are present",
             "PR branch is not BEHIND current dev",
             "CI and exact-head review pass"
@@ -118,7 +133,7 @@
           "target_pr": 4363,
           "owner_preference": ["Codex", "Claude2", "Antigravity"],
           "reviewer_preference": ["Codex2", "Claude2", "Antigravity"],
-          "depends_on": [],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
           "acceptance": [
             "Evidence is refreshed against current dev",
             "PR branch is not BEHIND current dev",
@@ -196,15 +211,40 @@
       "purpose": "Run product verifier work with backend truth already archived; keep only proof-specific blockers and downstream hosted/final gates.",
       "tasks": [
         {
+          "id": "L12-FE-TRUTH-001",
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-TRUTH-001", "PPL-ALLOC-009"],
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "target_repo": "execute-plans",
+          "acceptance": [
+            "Frontend truth UI/state evidence is committed in ajoe734/execute-plans on dev",
+            "Evidence manifest binds the exact frontend commit and Pantheon BFF truth contract",
+            "Reviewer approval is recorded before hosted proof can start"
+          ]
+        },
+        {
           "id": "L12-VERIFY-KNOW-001",
-          "depends_on": [],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
           "acceptance": ["Real Source/Distillation/Alpha drill evidence is archived"]
         },
         {
+          "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "owner_preference": ["Antigravity", "Claude2"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "target_repo": "pantheon",
+          "acceptance": [
+            "Replaces the rejected self-attesting learning verifier design",
+            "Implements real cross-service calls for Teaching/Agora/Imitation/Consultation learning proof",
+            "Includes before/after readbacks, tenant/RBAC negative checks, restart/DLQ proof, and no-runtime-mutation assertion",
+            "Does not depend on superseded SUP-L12-FAKE-VERIFIER-GATE-20260729"
+          ]
+        },
+        {
           "id": "L12-VERIFY-LEARN-001",
-          "depends_on": ["SUP-L12-FAKE-VERIFIER-GATE-20260729"],
+          "depends_on": ["L12-VERIFY-LEARN-REAL-VERIFIER-001"],
           "owner_preference": ["Antigravity", "Claude2"],
           "reviewer_preference": ["Claude2", "Antigravity"],
           "acceptance": [
@@ -215,7 +255,7 @@
         },
         {
           "id": "L12-VERIFY-RUNTIME-001",
-          "depends_on": [],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
           "acceptance": ["Deployment/capital/runtime drill evidence is archived without live-capital activation"]
@@ -223,6 +263,7 @@
         {
           "id": "L12-HOSTED-001",
           "depends_on": [
+            "L12-FE-TRUTH-001",
             "L12-VERIFY-KNOW-001",
             "L12-VERIFY-LEARN-001",
             "L12-VERIFY-RUNTIME-001",
@@ -234,7 +275,7 @@
         },
         {
           "id": "L12-CLOSE-001",
-          "depends_on": ["L12-HOSTED-001"],
+          "depends_on": ["L12-HOSTED-001", "L12-TRUTH-001", "L12-SIGNOFF-001"],
           "owner_preference": ["Claude2"],
           "reviewer_preference": ["Antigravity"],
           "acceptance": ["Final protected closeout proves every requirement and excludes stale PR/task proof"]

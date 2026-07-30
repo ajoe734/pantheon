@@ -6,6 +6,10 @@ Observed: `2026-07-29T13:14:40Z`
 
 Repository base inspected: `origin/dev = 2edc1f5a430473d862c5bd47f3524f4fbcc276c8`
 
+Actionable dispatch refresh: `2026-07-30T16:40:37Z`
+
+Actionable dispatch base: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
+
 Status root inspected: `/home/lupin/pantheon`
 
 Command root for real supervisor work: `/home/lupin/pantheon-ci-deploy/dev-root`
@@ -30,6 +34,9 @@ auto-worker work, not Codex chat subagents. Routing must not be faked by editing
 - GitHub PR readback for #4379, #4380, #4364, #4372, #4376, #4373, #4363, and
   #4378.
 - Live `ai-status.json` rows under `/home/lupin/pantheon`.
+- Live assistant DevTaskPacket readback at `2026-07-30T16:35:14Z`, where a
+  manual drain emitted assign activity rows without canonical task-state
+  materialization.
 - Archived governed task rows under `ai-task-archive/tasks/`, specifically to
   avoid treating an absent active row as an unfinished task.
 - Live worker-runtime status files under `.orchestrator/worker-runtime/status`.
@@ -45,6 +52,8 @@ auto-worker work, not Codex chat subagents. Routing must not be faked by editing
 | `L12-MANIFEST-REVIEW-GAP-TASKS-20260729` | #4379 merged; production `validate_merged_done_evidence` passed; governed `reconcile_merged_done` archived the row at `2026-07-29T12:59:53Z` | One stranded manifest-review row is no longer a blocker. |
 | `OPS-PROMOTE-PR-CI-TRIGGER-001` | #4380 merged at `2026-07-29T13:11:21Z`; Branch CI and Orchestrator Sync succeeded; Antigravity exact-head review approved `28855de6afe9a5523a2fc04abe5cc22aa27a6435`; root freeze status was posted | Promote PR CI/auto-merge governance is repaired, but its task row still needed owner finalize at observation time. |
 | Promote proof PR | #4378 merged to master as `2c9388e07b9a99ac2938d58a0edf6e4d34002dd5` | Fresh promote candidate proof exists for #4380. |
+| `SUP-L12-FLEET-DISPATCH-READBACK-20260729` | #4373 merged as `6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`; governed archive shows terminal_status `done`, terminal_outcome `completed`, archived at `2026-07-29T15:40:45Z` | This row is no longer actionable dispatch and must not be redispatched by the machine-readable packet. |
+| Assistant DevTaskPacket materialization | A manual drain at `2026-07-30T16:35:14Z` produced eight assign activity rows, but `ai-status.json` and the runtime task-state checkpoint still lacked those eight tasks | Receipt/admission `dispatched` rows are not enough; Wave 0 must prove supervisor-owned drain plus canonical materialization/readback before downstream execution is considered accepted. |
 
 ## Pass 1 — Specification / Loop Completion Audit
 
@@ -61,6 +70,7 @@ Current verdict by layer:
 
 | Layer | State after #4380 | Gap |
 | --- | --- | --- |
+| Supervisor dispatch bridge | Activity-log-only dispatch was observed after the refresh | Auto-worker dispatch is not accepted until `SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730` proves supervisor-visible task-state readback. |
 | Runtime manifest | Previously accepted; manifest review-gap row now reconciled | Not sufficient by itself to prove product loops. |
 | Truth backend | `L12-TRUTH-001` is archived done at `2026-07-29T06:17:18Z`; review file `docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json` is bound | Backend truth acceptance is not the remaining blocker; frontend truth remains blocked below. |
 | Truth frontend | `L12-FE-TRUTH-001` is blocked | `execute-plans` truth UI cannot be counted accepted until Claude2 review and evidence manifest are done. |
@@ -84,13 +94,15 @@ Open or nonterminal blockers observed at `13:14:40Z`:
 | #4364 `L12-VERIFY-OBS-001` | open, head `ecf17e9d088e37102b4128ebc2a7d77e4328be8a`, `BEHIND` | CI is green, but the head does not contain current `dev`; must true rebase/squash and obtain exact-head review. |
 | #4372 `SUP-L12-STALE-PR-RETIRE-20260729` | open, head `07f163cb21e047a491b1b90c5422dbba69ea0563`, `BEHIND`; row blocked | Evidence binds stale #4364 head; must wait for a valid #4364 head, then refresh evidence and review. |
 | #4376 `SUP-L12-LONG-FINALIZE-LEASE-20260729` | open, head `c0e113f624f2b851b79edd12a64c6083f2246905`, `BEHIND`; Commit trailers fail | Needs subject <=72 chars, correct trailers, true rebase, CI, and Claude2 review. |
-| #4373 `SUP-L12-FLEET-DISPATCH-READBACK-20260729` | open, head `cf4f6617883871c71f8d3bf20782ed605b1a604b`, `BEHIND`; Antigravity worker running | Needs current-dev rebase and refreshed dispatch/readback evidence. |
+| #4373 `SUP-L12-FLEET-DISPATCH-READBACK-20260729` | merged as `6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`; governed-archived done at `2026-07-29T15:40:45Z` | Do not redispatch; retain only as already-completed evidence. |
 | #4363 `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` | open, head `94695276e2d174505a107ccaa4346efb1692575e`, `BEHIND` | Needs evidence refresh/rebase and review. |
 | `OPS-PROMOTE-PR-CI-TRIGGER-001` row | `review_approved` at observation; PR #4380 already merged | Owner finalize/archive was still pending and must not be inferred from merge alone. |
 | `SUP-L12-MERGED-ROW-RECONCILE-20260729` row | `review_approved`; PR #4379 merged | The targeted stranded row is fixed, but this support row still needs normal owner closeout or reconcile. |
 
 Missing validation classes:
 
+- DevTaskPacket drain must fail closed unless canonical `ai-status.json` /
+  task-state readback contains every materialized task.
 - Exact current-dev merge-base checks for every open PR before review.
 - Canonical review gate + root freeze for any PR that reaches merge candidate.
 - Governed `done` or `reconcile_merged_done`; do not treat a merged PR alone as
@@ -122,7 +134,8 @@ Real worker facts observed around this cut:
 
 | Parallel group | Tasks | Preferred lane | Acceptance |
 | --- | --- | --- | --- |
-| Rebase / evidence refresh | `L12-VERIFY-OBS-001`, `SUP-L12-FLEET-DISPATCH-READBACK-20260729`, `SUP-L12-LONG-FINALIZE-LEASE-20260729`, `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` | Antigravity owner where already assigned; Claude2 reviewer where assigned | New heads must contain `origin/dev=2edc1f5a...`, CI green, exact-head review bound. |
+| Supervisor bridge repair | `SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730` | Antigravity owner / Claude2 reviewer preferred | Supervisor tick drains the packet and canonical task-state readback contains every task; activity-log-only success is rejected. |
+| Rebase / evidence refresh | `L12-VERIFY-OBS-001`, `SUP-L12-LONG-FINALIZE-LEASE-20260729`, `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` | Antigravity owner where already assigned; Claude2 reviewer where assigned | New heads must contain `origin/dev=6f87a207...`, CI green, exact-head review bound. |
 | Dependency-gated stale PR retire | `SUP-L12-STALE-PR-RETIRE-20260729` | Antigravity owner / Claude2 reviewer | Remain blocked until #4364 produces a valid non-BEHIND head; then refresh #4372 evidence. |
 | Owner finalization | `OPS-PROMOTE-PR-CI-TRIGGER-001`, `SUP-L12-MERGED-ROW-RECONCILE-20260729`, `L12-FLEET-STATUS-SYNC-001` | Current canonical owners | Use governed closeout; merged PR alone is insufficient. |
 | Fleet guard reliability | `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`, `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`, `SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729` | Claude2/Antigravity preferred | Prevent SIGTERM/preempt loops and stale terminal states from starving verifier work. |
@@ -140,11 +153,15 @@ Real worker facts observed around this cut:
 
 ### Work that remains blocked on its own proof-quality defect
 
+- `L12-VERIFY-LEARN-REAL-VERIFIER-001`
 - `L12-VERIFY-LEARN-001`
 
 Its remaining dependency is not `L12-TRUTH-001`; the blocker is the rejected
-self-attesting verifier design. It must be rebuilt as a real cross-service
-proof with RBAC negative, restart/DLQ, and no-runtime-mutation checks.
+self-attesting verifier design. It must be rebuilt through the new
+`L12-VERIFY-LEARN-REAL-VERIFIER-001` task as a real cross-service proof with
+RBAC negative, restart/DLQ, and no-runtime-mutation checks. It must not depend
+on the superseded `SUP-L12-FAKE-VERIFIER-GATE-20260729` archive, because that
+row is terminal_outcome `superseded` and is intentionally not satisfiable.
 
 ### Work that should be restarted only after dependencies are genuinely ready
 
@@ -157,25 +174,29 @@ Codex subagents.
 
 ## Consolidated Current Gap List
 
-1. Rebase and re-review #4364 for `L12-VERIFY-OBS-001`.
-2. Refresh #4372 only after #4364 produces an acceptable current head.
-3. Repair #4376 commit trailer subject length, rebase it, rerun CI, and review.
-4. Rebase/refresh #4373 dispatch/readback evidence after #4380.
-5. Rebase/refresh #4363 runtime reliability evidence after #4380.
-6. Finalize/closeout #4380's active row through governed task flow.
-7. Closeout or reconcile `SUP-L12-MERGED-ROW-RECONCILE-20260729`.
-8. Treat backend truth acceptance (`L12-TRUTH-001`) as archived done through
+1. Repair assistant DevTaskPacket materialization/readback so supervisor-owned
+   drain cannot report success unless canonical task-state contains the tasks.
+2. Rebase and re-review #4364 for `L12-VERIFY-OBS-001`.
+3. Refresh #4372 only after #4364 produces an acceptable current head.
+4. Repair #4376 commit trailer subject length, rebase it, rerun CI, and review.
+5. Keep #4373 dispatch/readback as already merged/archived evidence and do not
+   redispatch `SUP-L12-FLEET-DISPATCH-READBACK-20260729`.
+6. Rebase/refresh #4363 runtime reliability evidence after #4380/#4373.
+7. Finalize/closeout #4380's active row through governed task flow.
+8. Closeout or reconcile `SUP-L12-MERGED-ROW-RECONCILE-20260729`.
+9. Treat backend truth acceptance (`L12-TRUTH-001`) as archived done through
    governed `reconcile_merged_done`; do not dispatch it again as missing.
-9. Finish frontend truth acceptance (`L12-FE-TRUTH-001`) in `execute-plans`.
-10. Start `L12-VERIFY-KNOW-001` and `L12-VERIFY-RUNTIME-001` now that backend
+10. Finish frontend truth acceptance (`L12-FE-TRUTH-001`) in `execute-plans`.
+11. Start `L12-VERIFY-KNOW-001` and `L12-VERIFY-RUNTIME-001` now that backend
     truth is archived.
-11. Rebuild `L12-VERIFY-LEARN-001` as real cross-service proof.
-12. Run and archive observability verifier drill after #4364 is current,
+12. Build `L12-VERIFY-LEARN-REAL-VERIFIER-001`, then run
+    `L12-VERIFY-LEARN-001` as real cross-service proof.
+13. Run and archive observability verifier drill after #4364 is current,
     reviewed, merged, and archived.
-13. Run hosted FE/BFF exact identity, restart/no-duplicate/auth/tenant/safety
+14. Run hosted FE/BFF exact identity, restart/no-duplicate/auth/tenant/safety
     proof.
-14. Run protected final closeout with no stale PR/task proof counted.
-15. Keep Antigravity/Claude2 fleet dispatch facts visible without config edits.
+15. Run protected final closeout with no stale PR/task proof counted.
+16. Keep Antigravity/Claude2 fleet dispatch facts visible without config edits.
 
 ## Dispatch Artifact
 
