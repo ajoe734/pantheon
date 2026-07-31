@@ -1,0 +1,168 @@
+{
+  "schema_version": "pantheon.supervisor_preemption_exact_head_review_evidence.v1",
+  "task": {
+    "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+    "title": "Independently review scheduler eligibility and grace exact head for live rescue",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Wave 0 Emergency Exact-Head Review",
+    "review_only": true,
+    "status_at_closeout_cut": "review_approved",
+    "overall_admission": "review_approved_owner_closeout_ready",
+    "proposed_review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+    "evidence_cut_at": "2026-07-31T14:55:36Z",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731"
+  },
+  "scope": {
+    "owned_layer": "Independent exact-head review receipt and owner closeout evidence for the scheduler preemption repair.",
+    "not_changing": "PR #4399 implementation, .orchestrator/config.json, supervisor runtime configuration, task owner/reviewer assignments, branch protection, or live worker state.",
+    "composes_with": "PR #4399 implementation task SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731 and its separately governed merge and live-rescue sequence.",
+    "changed_files": [
+      ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json"
+    ]
+  },
+  "review_subject": {
+    "source_task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+    "pull_request": 4399,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4399",
+    "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+    "base": "dev",
+    "reviewed_exact_head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+    "reviewed_files": [
+      ".orchestrator/dispatch_policy.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_dispatch_policy.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "independent_review": {
+    "reviewer": "Antigravity",
+    "decision": "approve",
+    "status": "review_approved",
+    "recorded_at": "2026-07-31T14:48:04Z",
+    "mode": "required_commit_status",
+    "status_context": "Pantheon canonical review gate",
+    "status_id": 51438945031,
+    "status_state": "success",
+    "reviewed_head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+    "github_review_api_error": "gh: Unprocessable Entity (HTTP 422)",
+    "verdict": "Dispatch and priority preemption consume the same lifecycle candidate decision; preemption also honors provider readiness, dependency eligibility, worker-capacity eligibility, unchanged-event cooldown, failure-loop and chair-reassignment triage, and a five-minute new-worker stability grace without intercepting terminal cleanup."
+  },
+  "root_freeze": {
+    "actor": "Human/Ops",
+    "status_context": "Pantheon root merge freeze 2026-07-27",
+    "status_id": 51438976285,
+    "status_state": "success",
+    "recorded_at": "2026-07-31T14:48:34Z",
+    "head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e"
+  },
+  "review_findings": [
+    {
+      "area": "canonical lifecycle eligibility",
+      "result": "accepted",
+      "evidence": "task_execution_dispatch_candidate is called by both dispatch_ready_tasks and higher_priority_ready_task_exists for review, owner-finalize, owned in-progress, owned todo, and dependency eligibility."
+    },
+    {
+      "area": "preemption-only admission filters",
+      "result": "accepted",
+      "evidence": "higher_priority_ready_task_exists applies agent_can_take_task, failure_loop_task_agents_for_task_map, chair_reassignment_triage_needed_for_task, and dispatch_event_is_in_unchanged_cooldown before deciding that a higher-priority candidate can terminate a worker."
+    },
+    {
+      "area": "new-worker grace",
+      "result": "accepted",
+      "evidence": "DEFAULT_PRIORITY_PREEMPTION_GRACE_SECONDS is 300; worker_priority_preemption_grace_active gates ordinary priority escalation inside higher_priority_ready_task_exists and is not inserted into terminal worker cleanup."
+    },
+    {
+      "area": "configuration boundary",
+      "result": "accepted",
+      "evidence": "The default is added in code through ready_dispatch_settings; .orchestrator/config.json is unchanged."
+    }
+  ],
+  "owner_closeout_verification": {
+    "owner": "Codex",
+    "approved_scope_still_true_at_reviewed_head": true,
+    "commands": [
+      {
+        "command": "git archive a924a6f3c0c54982d7efe145750cc99c57bc7f2e | tar -x -C <isolated-snapshot>; cd <isolated-snapshot>; PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py",
+        "result": "passed: 486 passed, 4 subtests passed in 59.87s"
+      },
+      {
+        "command": "cd <isolated-snapshot>; /home/lupin/pantheon/.venv/bin/python -m py_compile .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
+        "result": "passed"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python scripts/git/check_commit_trailers.py --range a924a6f3c0c54982d7efe145750cc99c57bc7f2e^..a924a6f3c0c54982d7efe145750cc99c57bc7f2e --skip-merge",
+        "result": "passed"
+      },
+      {
+        "command": "git diff --check a924a6f3c0c54982d7efe145750cc99c57bc7f2e^..a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+        "result": "passed"
+      },
+      {
+        "command": "git diff a924a6f3c0c54982d7efe145750cc99c57bc7f2e..6f391cfd4cde8fcee0a7f913bfe2937aba955d15 -- .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
+        "result": "passed: empty diff across the four reviewed files"
+      }
+    ],
+    "exact_head_ci": {
+      "head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+      "workflow_runs": [
+        30634161384,
+        30634186652
+      ],
+      "required_checks": {
+        "Commit trailers": "success on push and pull_request runs",
+        "Runtime mirror guard": "success on push and pull_request runs",
+        "Smoke acceptance": "success on push and pull_request runs"
+      }
+    }
+  },
+  "pre_fix_live_evidence": {
+    "source_runtime_sha": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
+    "watchdog_log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260731T141335Z.log",
+    "runs": [
+      {
+        "run_id": "codex-20260731T141614Z-62ed770a",
+        "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+        "started_at": "2026-07-31T14:16:14Z",
+        "finished_at": "2026-07-31T14:16:17Z",
+        "exit_code": 143,
+        "signal": 15,
+        "watchdog_observation": "worker superseded for priority escalation at 2026-07-31T14:17:11Z"
+      },
+      {
+        "run_id": "codex-20260731T141730Z-d2604461",
+        "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+        "started_at": "2026-07-31T14:17:30Z",
+        "finished_at": "2026-07-31T14:17:34Z",
+        "exit_code": 143,
+        "signal": 15
+      }
+    ],
+    "conclusion": "The pre-fix supervisor terminated newly dispatched workers within three to four seconds with SIGTERM. This is failure evidence for the old runtime, not post-fix canary proof."
+  },
+  "post_approval_pr_boundary": {
+    "observed_at": "2026-07-31T14:55:36Z",
+    "pull_request_state": "OPEN",
+    "merge_state_status": "BLOCKED",
+    "current_head": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+    "current_head_parents": [
+      "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+      "cf6a8fed7baeb102330bf32af3f59cc347d1e92a"
+    ],
+    "reviewed_file_diff_from_approved_head": "empty",
+    "current_head_canonical_review_status": "missing",
+    "current_head_root_freeze_status": "missing",
+    "approval_reused_for_current_head": false,
+    "note": "The base merge did not alter the reviewed implementation/test files, but exact-head policy does not transfer the a924 approval statuses to 6f391c. PR #4399 remains a separately governed implementation delivery."
+  },
+  "known_limitations": [
+    "This evidence closes only the independently approved review task; it does not approve PR #4399 current head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15.",
+    "It does not merge PR #4399 or claim the implementation is present on dev.",
+    "It does not claim a post-fix live auto worker survived the five-minute grace window or legitimately reached terminal cleanup.",
+    "It does not change .orchestrator/config.json, supervisor implementation, runtime credentials, provider routing, task ownership, reviewer assignment, or branch protection."
+  ]
+}
