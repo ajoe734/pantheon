@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Extend the program-specific guarded dispatcher for current-proof remediation
-- Status: todo
-- Owner: Codex2
-- Reviewer: Antigravity
-- Next: Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.
+- Status: in_progress
+- Owner: Codex
+- Reviewer: Codex2
+- Next: Helper-claimed by Codex while Codex2 is dispatch-paused.
 
 ## Summary
 Bootstrap the existing L12 program-specific dispatcher so the true supervisor can safely fan out the newly audited 28-task remediation DAG to auto workers. This bootstrap is dependency-gated on the scheduler runtime repair and is the only task sent through the generic bridge.
