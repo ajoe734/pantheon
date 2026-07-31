@@ -16,6 +16,8 @@ Worker preemption churn addendum observed: `2026-07-31T13:00:37Z`
 
 Scheduler root-cause addendum observed: `2026-07-31T13:25:39Z`
 
+Independent omission re-audit observed: `2026-07-31T13:39:17Z`
+
 Repository base inspected: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
 
 Status roots inspected:
@@ -203,6 +205,51 @@ Scheduler root-cause readback at `2026-07-31T13:25:39Z`:
   IDs for the V2 rows because their current task/agent pairs carry failure-loop
   streaks.
 
+Independent three-direction omission re-audit at `2026-07-31T13:39:17Z`:
+
+1. **Specification/catalog to runtime.** The canonical loop catalog contains
+   twelve loop IDs but declares only Source Ingestion, Strategy Distillation,
+   and Alpha Replication controller contracts `implemented`. The remaining
+   nine are `not_implemented`, their desired/actual queries and live evidence
+   remain `planned`, and `RUNTIME_CONTROLLER_BINDINGS` contains exactly the
+   same three implemented loops. The BFF deliberately rejects a runtime record
+   for each of the other nine with `catalog controller contract is not
+   implemented`. This contradicts any reading that the seven FE/verifier/
+   hosted/closeout rows are the complete remaining development set.
+2. **Archived implementation/evidence replay.** The original 25-task product
+   DAG has eighteen rows archived `done` and seven still nonterminal. Replaying
+   each archived row's bound `review_file` against the current ten-rule
+   fail-closed validator and companion checksum leaves only `L12-DIST-001` and
+   `L12-MANIFEST-001` passing both. Sixteen rows need current evidence
+   revalidation: FLEET, CTRL, TEL, REC, SRC, ALPHA, AGORA, CONS, DEP, TEACH,
+   IMIT, CAP, EVO, BFF, SIGNOFF, and TRUTH. `done` is historical lifecycle
+   truth, not current closeout proof.
+3. **Acceptance/hosted proof back to dependencies.** `L12-HOSTED-001` requires
+   twelve accepted current controller records, while current catalog/BFF truth
+   can accept only three controller contracts. `L12-CLOSE-001` cannot repair
+   that gap after hosted proof because HOSTED is already a dependency of CLOSE.
+   Nine loop-specific controller implementations plus one shared catalog/
+   Compose/BFF integration gate must therefore precede the four verifier lanes
+   and hosted drill.
+
+This addendum supersedes the earlier narrower statement that only FE, four
+verifiers, HOSTED, and CLOSE remained. The guarded remediation graph is
+`docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json`:
+
+- Wave G0: extend and live-promote the program-specific guarded dispatcher;
+- Wave G1: 9 loop-controller tasks plus 16 disjoint evidence-revalidation
+  tasks, maximum safe frontier 25;
+- Wave G2: one shared catalog/Compose/BFF integration task, followed by one
+  current-proof release gate;
+- Wave G3: resume FE plus four real verifier tasks;
+- Wave G4: hosted 12/12 drill;
+- Wave G5: protected final closeout.
+
+The 28 new product tasks must not be bulk-materialized through the generic
+DevTaskPacket bridge. Only the G0 dispatcher-bootstrap task may use that bridge;
+the extended program-specific dispatcher must preserve loop, maturity,
+authority, evidence, artifact-conflict, and product-level fields atomically.
+
 Current PR readback:
 
 | PR | Task / purpose | Head | State | Current gap |
@@ -246,6 +293,8 @@ Current product verdict:
 | Observability verifier | `L12-VERIFY-OBS-001` is `review`, owner `Antigravity`, reviewer `Claude2`; #4364 head is `f3756cec...`. | Needs exact-head review, approval, merge, and governed task closeout. |
 | Hosted proof | `L12-HOSTED-001` is `todo`, owner `Antigravity`, reviewer `Claude2`. | Must wait for frontend truth and verifier lanes, then prove hosted FE/BFF exact identities and safety/restart behavior. |
 | Final closeout | `L12-CLOSE-001` is `todo`, owner `Claude2`, reviewer `Antigravity`. | Must wait for hosted, truth, signoff, and all verifier archive evidence. |
+| Canonical controller coverage | Catalog and BFF runtime binding cover `3/12`: Source, Distillation, Alpha. | Nine loop-specific controllers plus one shared integration task are missing before HOSTED can prove twelve accepted current records. |
+| Archived evidence currency | Eighteen original rows are archived done, but only DIST and MANIFEST currently pass both the ten-rule validator and companion checksum. | Sixteen disjoint evidence revalidation/recut tasks are missing. |
 
 Pass 1 conclusion: the product is incomplete. The remaining work is not one
 bug; it is a dependency-gated product proof graph.
@@ -253,6 +302,27 @@ bug; it is a dependency-gated product proof graph.
 ## Pass 2 — Development And Test/Validation Gap Audit
 
 Missing development:
+
+0. `SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731`: extend the
+   program-specific twelve-loop dispatcher to validate and atomically
+   materialize the new guarded remediation catalog. Generic DevTaskPacket bulk
+   dispatch remains prohibited for product tasks.
+0. Nine parallel canonical-controller tasks: Persona Teaching, Agora
+   Interaction Evidence, Human Imitation/Shadow Evaluation, Consultation,
+   Promotion/Deployment, Capital Pool Execution, Telemetry/Reconciliation,
+   Evolution, and BFF Health Monitoring. Each owns only its domain module and
+   evidence directory.
+0. `L12-CONTROLLER-CATALOG-INTEGRATION-20260731`: after the nine disjoint
+   implementations merge, one owner must update shared catalog, Compose,
+   loop-control, BFF bindings, and exactness tests to reach 12/12 implemented
+   controller contracts without premature live maturity promotion.
+0. Sixteen parallel `L12-EVIDENCE-REVALIDATE-*-20260731` tasks must refresh or
+   truthfully reject archived evidence that no longer passes the current
+   validator/checksum. A behavior failure must create implementation repair;
+   it may not be hidden by recutting prose.
+0. `L12-CURRENT-PROOF-RELEASE-GATE-20260731`: existing FE/verifier lanes must
+   remain held until controller integration and all current-evidence replays
+   are accepted.
 
 1. `SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730`: merge the real
    supervisor/dev-bridge repair from #4390 so receipt-only dispatch cannot be
@@ -344,6 +414,14 @@ Missing validation:
   truth UI proof.
 - Governed `done` or reconcile archive for each task row; merged PR alone is
   insufficient.
+- 12/12 `RUNTIME_CONTROLLER_BINDINGS`, catalog controller-contract exactness,
+  deployed Compose ownership, and BFF current-record acceptance. Current 3/12
+  coverage is a development failure, not a hosted-proof detail.
+- Current ten-rule validator plus companion checksum for all eighteen archived
+  original product rows. Historical `done` alone is insufficient; the current
+  baseline is 2/18 passing both.
+- Guarded-dispatcher validate-only, dry-run, replay, artifact-conflict, and
+  atomic materialization tests for the 28-task current remediation graph.
 
 Pass 2 conclusion: previous rounds repaired important infrastructure, but they
 did not complete the product proof or its canonical dispatch/readback path. The

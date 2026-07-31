@@ -14,11 +14,16 @@ Worker preemption churn updated: `2026-07-31T13:00:37Z`
 
 Scheduler root cause updated: `2026-07-31T13:25:39Z`
 
+Independent omission re-audit updated: `2026-07-31T13:39:17Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md`
 
 Machine-readable task graph:
 `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json`
+
+Program-specific guarded remediation graph:
+`docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json`
 
 ## Goal
 
@@ -139,6 +144,38 @@ Both repairs are Wave 0 prerequisites. Do not release Wave D/E or supersede V2
 with V3 until both are merged/live-promoted and a real canary worker survives
 beyond the five-minute grace window. V3 must use new IDs because the V2
 task/agent pairs already carry failure-loop streaks.
+
+## Guarded Current-Proof Remediation
+
+The independent three-direction re-audit found that the earlier 25-task graph
+was incomplete:
+
+- canonical controller coverage is `3/12`; nine catalog contracts remain
+  `not_implemented` and BFF rejects those records;
+- only `L12-DIST-001` and `L12-MANIFEST-001` of eighteen archived original
+  rows pass both the current ten-rule evidence validator and companion
+  checksum; sixteen require revalidation;
+- `L12-HOSTED-001` requires 12 accepted current records, so controller
+  integration cannot be deferred to `L12-CLOSE-001`.
+
+`guarded-remediation-tasks.json` therefore defines:
+
+| Wave | Safe parallel frontier | Purpose |
+| --- | ---: | --- |
+| G0 | 1 | Extend/test/live-promote the program-specific guarded dispatcher. This bootstrap alone may use DevTaskPacket. |
+| G1 | 25 | Nine disjoint controller implementations plus sixteen disjoint evidence revalidations. |
+| G2 | 1 + 1 serial | Shared catalog/Compose/BFF integration, then current-proof release gate. |
+| G3 | 5 | Resume existing FE truth and four real verifier lanes only after G2. |
+| G4 | 1 | Hosted 12/12 exact-identity, restart, auth/tenant, no-duplicate drill. |
+| G5 | 1 | Protected Human/Ops final closeout. |
+
+The generic bridge must not materialize the 28 product tasks. The G0 bootstrap
+task extends `scripts/dispatch_twelve_loop_gap_2026_07_26.py` so the new graph
+retains full loop/maturity/authority/evidence/artifact-conflict contracts and
+is validated as one immutable graph before any mutation. The additional G3
+task is `L12-VERIFY-LEARN-REAL-VERIFIER-001`, because it is missing from
+canonical task-state and must be materialized by the guarded dispatcher rather
+than retried through the generic bridge.
 
 ## Completion Boundary
 
