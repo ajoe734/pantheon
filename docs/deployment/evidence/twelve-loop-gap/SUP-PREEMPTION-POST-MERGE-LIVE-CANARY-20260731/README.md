@@ -28,4 +28,3 @@ Antigravity independently reviewed these facts and used the governed approval
 command. The task then entered `review_approved`; the exact reviewer output,
 source hashes, samples, gate classifications, and acceptance mapping are in
 [evidence.json](./evidence.json).
-
