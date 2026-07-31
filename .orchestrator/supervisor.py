@@ -12437,6 +12437,58 @@ def task_dispatch_order_key(
     )
 
 
+def task_execution_dispatch_candidate(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    agent_name: str,
+    task_resolver: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    settings: dict[str, Any] | None = None,
+) -> tuple[str, int] | None:
+    """Return the canonical execution reason and priority for one assignment.
+
+    Dispatch and priority preemption must use the same lifecycle ladder. A
+    second, status-only copy previously let preemption kill a live worker for a
+    task that the dispatcher could not actually queue.
+    """
+
+    dispatch_settings = settings or ready_dispatch_settings(config)
+    review_statuses = normalized_status_set(
+        dispatch_settings.get("review_statuses"),
+        ["review"],
+    )
+    finalize_statuses = normalized_status_set(
+        dispatch_settings.get("finalize_statuses"),
+        ["review_approved"],
+    )
+    dependency_done_statuses = normalized_status_set(
+        dispatch_settings.get("dependency_done_statuses"),
+        ["done"],
+    )
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_status = str(task.get("status") or "").lower()
+
+    if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+        return REASON_REVIEW_READY, 0
+    if task_status in finalize_statuses and task.get(owner_field) == agent_name:
+        return REASON_OWNED_FINALIZE, 1
+    if (
+        task_status == "in_progress"
+        and task.get(owner_field) == agent_name
+        and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
+    ):
+        return REASON_OWNED_IN_PROGRESS, 2
+    if (
+        task_status == "todo"
+        and task.get(owner_field) == agent_name
+        and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
+    ):
+        return REASON_OWNED_READY, 3
+    return None
+
+
 def dispatch_event_is_in_unchanged_cooldown(
     seen_event_keys: dict[str, Any],
     event_key: str,
@@ -12768,6 +12820,32 @@ def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, A
     return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))
 
 
+def worker_priority_preemption_grace_active(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    now: str | None = None,
+) -> bool:
+    """Protect a newly started worker from immediate priority churn."""
+
+    settings = ready_dispatch_settings(config)
+    try:
+        grace_seconds = max(
+            0.0,
+            float(settings.get("priority_preemption_grace_seconds", 300)),
+        )
+    except (TypeError, ValueError):
+        grace_seconds = 300.0
+    if grace_seconds <= 0:
+        return False
+    started_at = worker_dispatch_started_at(worker)
+    checked_at = _parse_iso_utc(now or utc_now())
+    if started_at is None or checked_at is None:
+        return False
+    elapsed_seconds = (checked_at - started_at).total_seconds()
+    return 0 <= elapsed_seconds < grace_seconds
+
+
 def higher_priority_ready_task_exists(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -12787,33 +12865,64 @@ def higher_priority_ready_task_exists(
     current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
     if current_priority is None:
         return False
+    preemption_checked_at = utc_now()
+    if worker_priority_preemption_grace_active(
+        config,
+        worker,
+        now=preemption_checked_at,
+    ):
+        return False
 
     logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
     agent_name = display_name_for(config, logical_agent_id)
     current_task_id = str(worker.get("task_id") or "")
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
-    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
-    dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
     current_order_key = task_dispatch_order_key(current_task, current_priority)
     task_resolver = task_resolver_for_config(config, task_map)
+    effective_state = state or {
+        "workers": {str(worker.get("run_id") or "__current__"): worker},
+        "queue": {"events": {}},
+    }
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(
+        config,
+        effective_state,
+        task_map,
+    )
+    seen_event_keys = effective_state.get("seen_event_keys", {})
+    if not isinstance(seen_event_keys, dict):
+        seen_event_keys = {}
+    try:
+        unchanged_cooldown_seconds = max(
+            0.0,
+            float(settings.get("unchanged_task_cooldown_seconds", 900)),
+        )
+    except (TypeError, ValueError):
+        unchanged_cooldown_seconds = 900.0
     higher_priority_task_ids: set[str] = set()
-    slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
     urgent_priority_cutoff = dispatch_reason_priority(REASON_OWNED_FINALIZE)
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
 
     for task_id, task in task_map.items():
         if task_id == current_task_id:
             continue
         if task_is_sidecar(task) and not task_is_sidecar(current_task or {}):
             continue
-        task_status = str(task.get("status") or "").lower()
-        candidate_priority = None
-        if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+        candidate = task_execution_dispatch_candidate(
+            config,
+            task,
+            agent_name,
+            task_resolver,
+            settings=settings,
+        )
+        if candidate is None:
+            continue
+        candidate_reason, candidate_priority = candidate
+        if candidate_reason == REASON_REVIEW_READY:
             if is_sidecar_review_of_current_parent(
                 task,
                 current_task,
@@ -12823,41 +12932,38 @@ def higher_priority_ready_task_exists(
                 reviewer_field=reviewer_field,
             ):
                 continue
-            candidate_priority = 0
-        elif task_status in finalize_statuses and task.get(owner_field) == agent_name:
-            candidate_priority = 1
-        elif (
-            task_status == "in_progress"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
-        ):
-            candidate_priority = 2
-        elif (
-            task_status == "todo"
-            and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
-        ):
-            candidate_priority = 3
-
-        if (
-            candidate_priority is not None
-            and urgent_priority_cutoff is not None
-            and candidate_priority > urgent_priority_cutoff
+        if not agent_can_take_task(config, agent_name, task, state=effective_state):
+            continue
+        if (str(task_id), agent_name) in failure_loop_task_agents:
+            continue
+        if chair_reassignment_triage_needed_for_task(
+            config,
+            effective_state,
+            str(task_id),
+            agent_name,
         ):
             continue
-        if (
-            candidate_priority is not None
-            and task_dispatch_order_key(task, candidate_priority) < current_order_key
+        candidate_event = build_dispatch_event(
+            task,
+            agent_name,
+            candidate_reason,
+            task_resolver,
+        )
+        if dispatch_event_is_in_unchanged_cooldown(
+            seen_event_keys,
+            candidate_event["key"],
+            cooldown_seconds=unchanged_cooldown_seconds,
+            now=preemption_checked_at,
         ):
+            continue
+        if urgent_priority_cutoff is not None and candidate_priority > urgent_priority_cutoff:
+            continue
+        if task_dispatch_order_key(task, candidate_priority) < current_order_key:
             higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
         return False
 
-    effective_state = state or {
-        "workers": {str(worker.get("run_id") or "__current__"): worker},
-        "queue": {"events": {}},
-    }
     occupied_count = 0
     served_higher_priority_task_ids: set[str] = set()
     active_event_ids: set[str] = set()
@@ -13244,20 +13350,14 @@ def dispatch_ready_tasks(
             if (task_id, agent_id) in active_task_agents or (task_id, agent_id) in pending_task_agents:
                 continue
 
-            reason = None
-            priority = None
-            if task_status in review_statuses and task_reviewer == target_agent:
-                reason = "review_ready_dispatch"
-                priority = 0
-            elif task_status in finalize_statuses and task_owner == target_agent:
-                reason = "owned_finalize_dispatch"
-                priority = 1
-            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_resolver, dependency_done_statuses):
-                reason = "owned_in_progress_dispatch"
-                priority = 2
-            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_resolver, dependency_done_statuses):
-                reason = "owned_ready_dispatch"
-                priority = 3
+            candidate = task_execution_dispatch_candidate(
+                config,
+                task,
+                target_agent,
+                task_resolver,
+                settings=settings,
+            )
+            reason, priority = candidate if candidate is not None else (None, None)
 
             if reason is not None and not agent_can_take_task(config, target_agent, task, state=state):
                 continue
