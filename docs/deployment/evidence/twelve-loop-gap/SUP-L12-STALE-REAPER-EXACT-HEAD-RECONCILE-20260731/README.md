@@ -19,13 +19,16 @@ manifest both bind the implementation anchor to
 actual rebased anchor is
 `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`.
 
-The assigned reviewer should independently confirm this packet and reopen
-`SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729` with the concrete correction.
-After the correction changes PR #4385's head, the resulting new exact head must
-be reviewed again. If the PR is abandoned instead, it may be superseded with an
-explicit replacement. The current head must not be counted as a Wave 0
-dependency, merged, root-frozen, or governed-closeout finalized on the strength
-of the old approval.
+Antigravity independently confirmed this packet against task PR #4395 head
+`607a474688566b1a62c4ec24998c4d6864d62a88` at
+`2026-07-31T12:25:16Z`. The review approved this reconciliation decision while
+rejecting PR #4385 head `f5e70e86...` for exact-head approval. The subject task
+`SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729` must be reopened with the
+concrete correction. After the correction changes PR #4385's head, the
+resulting new exact head must be reviewed again. If the PR is abandoned
+instead, it may be superseded with an explicit replacement. The current head
+must not be counted as a Wave 0 dependency, merged, root-frozen, or
+governed-closeout finalized on the strength of the old approval.
 
 ## Head topology and path classification
 
