@@ -68,5 +68,20 @@ Subject
 10. Review state
     canonical subject row: review_approved at stale head 0528e5cab1df5386adfdb3113b8653411635fe86
     GitHub exact-head review request: COMMENTED at current head 2d5f692e960a22eef7c4b6d63002996a68468079
-    independent Antigravity exact-head decision: PENDING
-    downstream support count: FAIL-CLOSED until exact-head approval, protected merge, and governed owner closeout
+    independent Antigravity exact-head decision: APPROVED at 2026-07-31T12:22:57Z
+    approval event: ai-status-event-adea16af07412d976fa016dfee90f4a29307576968269061350573bfc55ec3b8
+    reviewed task commit: c4346b8d53941d665acd931d32a98b3802b1e7b2
+    downstream support count: FAIL-CLOSED until protected merge and governed original-owner closeout
+
+11. Owner closeout validation
+    observed: 2026-07-31T12:27:54Z
+    command: jq empty evidence.json plus exact review/head/scope assertions
+    result: PASS
+    command: gh pr view 4386 --json headRefOid
+    result: PASS; exact head remains 2d5f692e960a22eef7c4b6d63002996a68468079
+    command: python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+    result: PASS
+    command: git diff --check
+    result: PASS
+    command: git diff --exit-code origin/dev HEAD -- .orchestrator/config.json
+    result: PASS (no config diff)

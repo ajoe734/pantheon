@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reconcile running-owner PR exact head before support closeout is counted
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.
+- Next: Independently verified PR #4386 head 2d5f692e960a22eef7c4b6d63002996a68468079 and exact-head reconciliation evidence manifest. Local supervisor unit tests (299 passed) and commit trailer checks passed cleanly.
 
 ## Summary
 PR #4386 current head differs from the reviewed task row head; reconcile exact-head proof before treating running-owner reconcile as support evidence.
@@ -17,7 +17,6 @@ PR #4386 current head differs from the reviewed task row head; reconcile exact-h
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
 
 ## Owner Exact-Head Checkpoint
-- Observed canonical status: `in_progress`; owner `Codex2`; reviewer `Antigravity`.
 - Stale reviewed PR head: `0528e5cab1df5386adfdb3113b8653411635fe86`.
 - Current PR #4386 head: `2d5f692e960a22eef7c4b6d63002996a68468079`.
 - Tree comparison found two files inherited from the rebased `dev` base and one
@@ -25,7 +24,14 @@ PR #4386 current head differs from the reviewed task row head; reconcile exact-h
   evidence manifest, and validation log have identical blobs at both heads.
 - Focused validation at the current head passed: commit trailers, diff hygiene,
   config boundary, and 7 running-owner reconciliation tests.
-- Owner recommendation: exact-head approval is appropriate, but downstream
-  support must remain uncounted until Antigravity independently binds approval
-  to the current head and PR #4386 merges through the protected path.
 - Evidence: `docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json`.
+
+## Independent Review
+- Antigravity approved the exact-head reconciliation at
+  `2026-07-31T12:22:57Z`, explicitly binding the decision to PR #4386 head
+  `2d5f692e960a22eef7c4b6d63002996a68468079` and the task evidence manifest.
+- ReviewBus bound this task to PR #4396 at task commit
+  `c4346b8d53941d665acd931d32a98b3802b1e7b2`.
+- This approval does not complete the original running-owner task: downstream
+  support remains uncounted until PR #4386 merges through the protected path
+  and its original owner performs governed closeout.
