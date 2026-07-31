@@ -29,17 +29,20 @@ The exact tree comparison classifies every difference between the two heads:
   running-owner task brief, `evidence.json`, and `validation.txt` have identical
   blob IDs at both heads.
 
-Codex2 therefore recommends exact-head approval of `2d5f692e...`, subject to
-Antigravity's independent review. This owner classification is not the approval
-itself. If the PR head moves again, the review fails closed and this comparison
-must be repeated.
+Codex2 recommended exact-head approval of `2d5f692e...`. Antigravity then
+independently approved that exact head and this evidence manifest at
+`2026-07-31T12:22:57Z`. If the PR head moves again, the review fails closed and
+this comparison must be repeated.
+
+The task-scoped delivery is ReviewBus PR #4396. Its reviewed anchor is
+`c4346b8d53941d665acd931d32a98b3802b1e7b2`; the owner closeout commit records
+the independent decision without changing the comparison or runtime scope.
 
 ## Remaining gates
 
-1. Antigravity records an independent approval bound to the full current head.
-2. PR #4386 merges into `dev` through the protected merge path.
-3. The original task owner completes governed closeout after merge.
-4. Only then may downstream L12 closeout count the running-owner guard as
+1. PR #4386 merges into `dev` through the protected merge path.
+2. The original task owner completes governed closeout after merge.
+3. Only then may downstream L12 closeout count the running-owner guard as
    completed support evidence.
 
 Exact commands and results are archived in `validation.txt`.
