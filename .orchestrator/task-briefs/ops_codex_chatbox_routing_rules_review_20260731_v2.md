@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Validate and hand off chatbox routing rules for independent review
 - Status: review_approved
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Antigravity
-- Next: Independently reviewed PR #4401 exact head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79 against base 894eb813c7cb5609ae517103a727d93ba8cbd1ed. Scope is bounded to AGENTS.md (74 additions, 0 deletions), git diff --check passed, 22 policy-text assertions verified, all 9 GitHub Branch CI check runs are green. Approved and returned to owner for closeout.
+- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.
 
 ## Summary
 Governed review handoff for the already published routing-policy PR. Codex validates and hands off; Antigravity independently reviews the exact head. No parallel implementation is authorized.
