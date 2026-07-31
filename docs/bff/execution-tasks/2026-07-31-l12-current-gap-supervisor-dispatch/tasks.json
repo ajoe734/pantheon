@@ -2,6 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-31-l12-current-gap-supervisor-dispatch",
   "generated_at": "2026-07-31T06:40:20Z",
+  "updated_at": "2026-07-31T11:59:43Z",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
   "base_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
@@ -24,7 +25,32 @@
       "task_state_shadow_ok": true,
       "task_state_shadow_caught_up": true,
       "mode_status": "idle",
-      "active_auto_workers": 0
+      "active_auto_workers": 0,
+      "authoritative_status_root": "/home/lupin/pantheon",
+      "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "live_pid": 1633710,
+      "last_heartbeat_at": "2026-07-31T11:57:28Z",
+      "last_loop_error": null,
+      "command_root_shadow_stale_pid": 3775971,
+      "command_root_shadow_stale_heartbeat_at": "2026-07-29T10:32:51Z",
+      "status_root_split_brain_note": "Use authoritative status-root readback; command-root runtime-health alone reads a stale shadow and must not be used to claim the live supervisor is down."
+    },
+    "wave0_required_before_l12_fleet_resume": [
+      "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+      "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+    ],
+    "existing_resume_controller": {
+      "id": "SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "depends_on": [
+        "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+        "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+      ],
+      "purpose": "Resume the existing L12 Pantheon/Agora task graph through real supervisor/auto-workers after Wave 0 control-plane blockers are merged, live-promoted, and governed-closeout is complete."
     },
     "known_false_positive_dispatch": {
       "packet_id": "pkt-l12-actionable-gap-execution-20260730T163500Z",
@@ -42,6 +68,22 @@
         "gap": "protected merge/root-freeze and GitHub approving review are absent"
       },
       {
+        "pr": 4392,
+        "task": "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+        "head": "4e2ebeeb0635bed484bc2cdf7e8e5ff1bcb0ea9f",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "needs Antigravity canonical review, Human/Ops root-freeze exact-head release, live command-root promotion, worker_worktrees.source_root verification, supervisor/watchdog verification, and first isolated worker dispatch proof"
+      },
+      {
+        "pr": 4385,
+        "task": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+        "head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "task row is review_approved but PR remains open/blocked; needs protected merge and governed closeout before fleet-resume dependency is satisfied"
+      },
+      {
         "pr": 4382,
         "task": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
         "head": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
@@ -56,6 +98,14 @@
         "merge_state": "BLOCKED",
         "checks": "Branch CI success",
         "gap": "needs exact-head review/approval and governed closeout"
+      },
+      {
+        "pr": 4386,
+        "task": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+        "head": "2d5f692e960a22eef7c4b6d63002996a68468079",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "task row is review_approved but PR remains open/blocked and current PR head differs from the row's noted reviewed head; reconcile exact-head proof before counting it"
       },
       {
         "pr": 4376,
@@ -86,8 +136,8 @@
   "waves": [
     {
       "wave": "0",
-      "parallel": false,
-      "purpose": "Repair/prove supervisor DevTaskPacket materialization before downstream dispatch can be counted.",
+      "parallel": true,
+      "purpose": "Repair/prove supervisor DevTaskPacket materialization, worker source-root dispatch, and stale failure-streak cleanup before downstream L12 fleet resume can be counted.",
       "tasks": [
         {
           "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
@@ -108,6 +158,64 @@
           "dispatch_after_materialization": [
             "Do not send Wave D/E product tasks until this row is done or equivalent exact-head repair is active in the command root and proven by canonical readback"
           ]
+        },
+        {
+          "id": "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+          "title": "Merge/live-promote worker worktree source-root repair",
+          "target_repo": "pantheon",
+          "target_pr": 4392,
+          "owner_preference": ["Antigravity", "Claude2", "Codex"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": [],
+          "acceptance": [
+            "PR #4392 exact head 4e2ebeeb0635bed484bc2cdf7e8e5ff1bcb0ea9f receives canonical review and protected root-freeze exact-head release",
+            "Merged repair is promoted to the live command root",
+            "Live worker_worktrees.source_root points at /home/lupin/pantheon-ci-deploy/dev-root",
+            "Supervisor/watchdog restart or reload is verified from authoritative status-root heartbeat",
+            "A first isolated worker dispatch records workspace_source_root and does not fail on a read-only .git/worktrees path",
+            "No manual .orchestrator/config.json edit is made outside governed repair/release"
+          ]
+        },
+        {
+          "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+          "title": "Finish protected merge and governed closeout for stale failure-streak reaper",
+          "target_repo": "pantheon",
+          "target_pr": 4385,
+          "owner_preference": ["Codex", "Antigravity", "Claude2"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": [],
+          "acceptance": [
+            "Do not count review_approved row state alone as completion",
+            "PR #4385 exact current head f5e70e86e01bde005dae5fed94b151c9bc07f389 is protected-merged or exact-head status is reconciled if superseded",
+            "Governed closeout archives SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 as done",
+            "Fleet-resume dependency reads this row as done from canonical task-state, not from a stale PR note"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "0R",
+      "parallel": false,
+      "purpose": "Resume L12 Pantheon/Agora fleets through the existing supervisor-owned controller after Wave 0 is proven.",
+      "tasks": [
+        {
+          "id": "SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731",
+          "title": "Resume L12 fleet execution after Wave 0 control-plane unblock",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Codex", "Claude2", "Antigravity"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
+          "acceptance": [
+            "Use supervisor and auto-workers only; do not use Codex conversation subagents as fleets",
+            "Redispatch or resume the existing L12 Pantheon/Agora verifier, hosted, and closeout rows in one governed wave",
+            "For every downstream task, verify canonical ai-status.json and authoritative task-state checkpoint materialization",
+            "Record active auto-worker run IDs/PIDs or exact blocker when no worker starts",
+            "Prefer Antigravity and Claude/Claude2 lanes when live readiness allows; fallback must be explicit and evidence-backed"
+          ]
         }
       ]
     },
@@ -123,7 +231,11 @@
           "target_pr": 4382,
           "owner_preference": ["Codex2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "Stale rejection text from head 7766d704 is cleared only by exact-head review of ca00f813 or a superseding current packet",
             "The reviewed packet includes L12-FE-TRUTH-001 and L12-VERIFY-LEARN-REAL-VERIFIER-001",
@@ -138,7 +250,11 @@
           "target_pr": 4364,
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2", "Antigravity"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "Review exact PR #4364 head f3756cec99a8c44d47c075a475c25cf86a4d3171",
             "Confirm telemetry/reconciliation/evolution/BFF evidence uses real service boundaries",
@@ -152,7 +268,11 @@
           "target_pr": 4376,
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2", "Codex2", "Antigravity"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "Review exact PR #4376 head 6f63b5f54c28514a68c6a7b3599889adf98553f9",
             "Confirm 460 supervisor tests and relevant guard evidence",
@@ -166,7 +286,11 @@
           "target_pr": 4363,
           "owner_preference": ["Claude2", "Antigravity", "Codex"],
           "reviewer_preference": ["Antigravity", "Claude2", "Codex2"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "PR #4363 is no longer BEHIND current dev",
             "Closeout evidence is refreshed against 6f87a207 or newer dev",
@@ -209,7 +333,11 @@
           "target_repo": "pantheon",
           "owner_preference": ["Codex", "Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "Review-approved evidence remains valid",
             "The support row is archived without reopening already archived target rows"
@@ -221,10 +349,33 @@
           "target_repo": "pantheon",
           "owner_preference": ["Codex", "Codex2", "Antigravity", "Claude2"],
           "reviewer_preference": ["Antigravity", "Claude2"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "Review-approved evidence still matches current dev",
             "Governed closeout archives the row"
+          ]
+        },
+        {
+          "id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+          "title": "Finalize running-owner reconcile support row",
+          "target_repo": "pantheon",
+          "target_pr": 4386,
+          "owner_preference": ["Codex", "Antigravity", "Claude2"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
+          "acceptance": [
+            "Do not count review_approved row state alone as completion",
+            "PR #4386 exact current head 2d5f692e960a22eef7c4b6d63002996a68468079 is protected-merged or exact-head status is reconciled if superseded",
+            "Governed closeout archives SUP-L12-RUNNING-OWNER-RECONCILE-20260729 as done",
+            "Worker owner/reviewer status drift evidence remains current at closeout"
           ]
         }
       ]
@@ -240,7 +391,13 @@
           "target_repo": "execute-plans",
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2", "Antigravity"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-TRUTH-001", "PPL-ALLOC-009"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+            "L12-TRUTH-001",
+            "PPL-ALLOC-009"
+          ],
           "acceptance": [
             "Use ajoe734/execute-plans dev, not legacy front-ai-trading-system",
             "Evidence binds exact execute-plans commit and Pantheon BFF truth contract",
@@ -254,7 +411,14 @@
           "target_repo": "pantheon",
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-DIST-001", "L12-ALPHA-001", "L12-TRUTH-001"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+            "L12-DIST-001",
+            "L12-ALPHA-001",
+            "L12-TRUTH-001"
+          ],
           "acceptance": [
             "Real Source/Distillation/Alpha drill evidence is collected",
             "Before/after readbacks and exact commands/results are archived",
@@ -267,7 +431,14 @@
           "target_repo": "pantheon",
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-CAP-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+            "L12-CAP-001",
+            "L12-MANIFEST-001",
+            "L12-TRUTH-001"
+          ],
           "acceptance": [
             "Real deployment/capital/runtime safety drill evidence is collected",
             "No live-capital activation is performed",
@@ -281,7 +452,11 @@
           "target_repo": "pantheon",
           "owner_preference": ["Antigravity", "Claude2"],
           "reviewer_preference": ["Claude2", "Antigravity"],
-          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "depends_on": [
+            "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+            "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+            "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+          ],
           "acceptance": [
             "Canonical task-state materializes this task; it is currently missing",
             "scripts/verify_twelve_loop_learning.py no longer self-attests or print-passes",

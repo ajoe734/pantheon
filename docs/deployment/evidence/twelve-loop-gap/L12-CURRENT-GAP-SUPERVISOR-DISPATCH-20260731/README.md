@@ -4,6 +4,8 @@ Evidence ID: `L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731`
 
 Observed: `2026-07-31T06:40:20Z`
 
+Updated: `2026-07-31T11:59:43Z`
+
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
 work.
@@ -28,6 +30,16 @@ work.
 - `L12-VERIFY-LEARN-REAL-VERIFIER-001` is missing from canonical task-state
 - prior `pkt-l12-actionable-gap-execution-20260730T163500Z` receipt is not
   accepted as proof because canonical task materialization is absent
+- authoritative status-root readback shows live supervisor PID `1633710` with
+  fresh heartbeat `2026-07-31T11:57:28Z`; command-root local health reads a
+  stale shadow PID `3775971` and must not be used alone as live status truth
+- `SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731` exists and depends on
+  `SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730`,
+  `SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730`, and
+  `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`
+- PR #4392 and PR #4385 are now explicit Wave 0 blockers before L12 fleet
+  resume; PR #4386 is explicit support closeout and cannot be counted done from
+  review-approved row state alone
 
 ## Acceptance Boundary
 
