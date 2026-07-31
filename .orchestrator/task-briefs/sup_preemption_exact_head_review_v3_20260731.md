@@ -24,7 +24,8 @@ GitHub required #4399 to update from dev after #4397 merged. This fresh independ
 ## Current-Dev Rebase Refresh
 - Human/Ops reopened the task at `2026-07-31T17:30:54Z`; the earlier approval does not authorize merging a refreshed head.
 - The three task commits rebased without conflicts onto `origin/dev` `dc5136394eb1041ceea1dcc066e55ac2179ca0e5` in a clean isolated worktree.
-- The rebased delta remains limited to this task brief and the three-line `test_supervisor.py` mock-isolation fix; `.orchestrator/config.json` and the scheduler implementation are unchanged.
+- Current `dev` already contains the same `drain_assistant_dev_packet_inbox` isolation through PR #4414. The duplicate three-line replay was removed, so the final rebased delta is limited to this task brief while the required test isolation remains present in the base.
+- `.orchestrator/config.json`, the scheduler implementation, reviewed evidence, and live-canary claims are unchanged.
 - `PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py` passed (`490 passed, 4 subtests passed`).
 - `python -m py_compile` passed for the four scheduler implementation/test files; commit trailers, evidence JSON, and `git diff --check` also passed.
 - After push, Antigravity must independently review and bind the new PR #4413 exact head. Human/Ops root-freeze authorization remains separate and head-specific.
