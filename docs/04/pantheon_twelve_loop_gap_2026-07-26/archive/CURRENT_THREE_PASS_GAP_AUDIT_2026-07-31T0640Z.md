@@ -8,6 +8,8 @@ Addendum observed: `2026-07-31T11:59:43Z`
 
 Fleet reconcile addendum observed: `2026-07-31T12:25:00Z`
 
+Pipeline architecture addendum observed: `2026-07-31T12:46:41Z`
+
 Repository base inspected: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
 
 Status roots inspected:
@@ -77,11 +79,46 @@ Fleet reconcile readback at `2026-07-31T12:25:00Z`:
 - `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` is now
   `review_approved`, owner `Codex2`, reviewer `Antigravity`, with evidence
   commit `c4346b8d53941d665acd931d32a98b3802b1e7b2` and ReviewBus PR #4396.
-  PR #4396 is still draft, so auto-integration reports `pr_is_draft`; this
-  exact-head support evidence still needs governed ready/merge/closeout handling
-  before it can strengthen downstream support rows.
+  At the 12:25Z observation PR #4396 was still draft; the 12:46Z addendum
+  supersedes that draft status and records that the PR is now ready but still
+  blocked by protected merge/root-freeze closeout.
 - Auto-integrator dry-runs still block #4385 and #4386 subject PRs on
   `mergeStateStatus=BLOCKED`; row-level `review_approved` remains insufficient.
+
+Pipeline architecture readback at `2026-07-31T12:46:41Z`:
+
+- The dispatch/closeout pipeline is not fully repaired end-to-end. The current
+  evidence proves partial progress only: the real supervisor is alive, and
+  supervisor/auto-worker lanes have processed reconcile rows, but the
+  architecture still fails closed at materialization, worker source-root,
+  protected merge/root-freeze, and governed closeout gates.
+- #4390 remains open and `BLOCKED`, so the DevTaskPacket materialization repair
+  has not completed the repo flow or governed closeout. Until #4390 is merged
+  and proven from canonical task-state, a DevTaskPacket receipt is still weaker
+  than canonical materialization/readback.
+- #4392 remains open and `BLOCKED`, so worker source-root repair has not been
+  merged/live-promoted. Until that happens, fleet dispatch is still vulnerable
+  to status-root/source-root split-brain and stale or read-only worktree
+  assumptions.
+- #4395 moved to exact head `f68827c8e17d6a1f081afe24f62ba85c116166e8`.
+  Branch CI and Pantheon canonical review gate are green, and Antigravity
+  reviewed that exact head at `2026-07-31T12:42:18Z`, but auto-integrator still
+  blocks it on `mergeStateStatus=BLOCKED`. It remains support evidence, not an
+  integrated closeout.
+- #4396 moved to exact head `19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f` and is
+  no longer draft. Branch CI and Pantheon canonical review gate are green, but
+  auto-integrator still blocks it on `mergeStateStatus=BLOCKED`; the current
+  task row records the missing Human/Ops `Pantheon root merge freeze
+  2026-07-27` exact-head context.
+- The real supervisor materialized Wave 0X tasks
+  `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731` and
+  `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731`, but both are
+  currently `todo` after supervisor preemption. Worker runtime evidence shows
+  earlier Codex2 runs for both were SIGTERM/preempted. This is a fleet
+  scheduling/readiness gap and must not be counted as development completed.
+- The current state is therefore not "dispatch/closeout pipeline repaired";
+  it is "architectural repair in progress, with exact remaining gates known and
+  supervisor-visible."
 
 Current PR readback:
 
@@ -94,8 +131,8 @@ Current PR readback:
 | #4364 | `L12-VERIFY-OBS-001` | `f3756cec99a8c44d47c075a475c25cf86a4d3171` | open, `BLOCKED` | Branch CI is green; still needs exact-head review/approval and governed closeout. |
 | #4376 | `SUP-L12-LONG-FINALIZE-LEASE-20260729` | `6f63b5f54c28514a68c6a7b3599889adf98553f9` | open, `BLOCKED` | Branch CI is green; still needs exact-head review/approval and governed closeout. |
 | #4386 | `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` | `2d5f692e960a22eef7c4b6d63002996a68468079` | open, `BLOCKED` | Canonical task row is `review_approved`, but PR is still open/blocked; current PR head differs from the row's noted reviewed head, so exact-head/closeout must be reconciled before counted. |
-| #4395 | `SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731` | `607a474688566b1a62c4ec24998c4d6864d62a88` | open, `BLOCKED` | Branch CI is green; owner finding identifies a nonexistent evidence anchor in #4385 and recommends reopening/repair rather than exact-head approval. |
-| #4396 | `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` | `c4346b8d53941d665acd931d32a98b3802b1e7b2` | open draft, `BLOCKED` | Evidence row is `review_approved`, but the ReviewBus PR is draft and cannot be auto-integrated until governed ready/merge/closeout rules are satisfied. |
+| #4395 | `SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731` | `f68827c8e17d6a1f081afe24f62ba85c116166e8` | open, `BLOCKED` | Branch CI and Pantheon canonical review gate are green; Antigravity reviewed this exact head, but auto-integrator still blocks on merge state. Owner finding identifies a nonexistent evidence anchor in #4385 and recommends reopening/repair rather than counting #4385 done. |
+| #4396 | `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` | `19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f` | open, `BLOCKED` | No longer draft; Branch CI and Pantheon canonical review gate are green, but auto-integrator still blocks on merge state and missing Human/Ops root-freeze exact-head context. |
 | #4363 | `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` | `94695276e2d174505a107ccaa4346efb1692575e` | open, `BEHIND` | Must be rebased/refreshed before review or merge can be counted. |
 | #4372 | `SUP-L12-STALE-PR-RETIRE-20260729` | `07f163cb21e047a491b1b90c5422dbba69ea0563` | open, `BEHIND` | Must wait for fresh accepted #4364 evidence, then rebase/refresh. |
 
@@ -168,7 +205,8 @@ Missing development:
 13. Support PR cleanup: #4363 and #4372 remain stale/behind; #4376 and #4364
     still need exact-head review/approval; #4386 remains open/blocked even
     though its task row says review-approved; #4396 records current-head support
-    evidence but is draft and not auto-integratable yet.
+    evidence and is no longer draft, but remains blocked from protected
+    merge/governed closeout.
 
 Missing validation:
 
@@ -197,7 +235,9 @@ Missing validation:
   insufficient.
 
 Pass 2 conclusion: previous rounds repaired important infrastructure, but they
-did not complete the product proof or its canonical dispatch/readback path.
+did not complete the product proof or its canonical dispatch/readback path. The
+dispatch/closeout pipeline remains an unfinished architecture repair, not a
+validated end-to-end platform capability.
 
 ## Pass 3 — Fleet Dispatch And Parallelization Audit
 
@@ -223,7 +263,7 @@ Safe parallelization after Wave 0 is accepted:
 | Wave | Parallelism | Tasks | Preferred lanes | Gate |
 | --- | --- | --- | --- | --- |
 | 0 | parallel where independent | `SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730`, `SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730`, `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729` | Antigravity/Claude2 first where available, cross-lane reviewer | Must merge/prove canonical materialization, worker source-root dispatch, and stale-streak cleanup before fleet resume. |
-| 0X | parallel | `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731`, `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731` | Antigravity/Claude2 first where available | Repair #4385 nonexistent anchor and move #4396 through governed PR/closeout handling without counting draft or row-only approval. |
+| 0X | parallel | `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731`, `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731` | Antigravity/Claude2 first where available | Repair #4385 nonexistent anchor and move #4396 through governed PR/closeout handling without counting no-longer-draft or row-only approval as integration. |
 | 0R | serial | `SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731` | owner: Antigravity, reviewer: Codex per current row | Lets the real supervisor redispatch L12 Pantheon/Agora tasks and records worker run IDs/PIDs or exact blockers. |
 | A | parallel | `L12-VERIFY-OBS-001`, `SUP-L12-LONG-FINALIZE-LEASE-20260729`, `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`, `SUP-L12-POST-4380-GAP-REVIEW-20260729`, `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` | Antigravity/Claude2 first where available | Exact current-head review and governed closeout. |
 | B | dependency-gated | `SUP-L12-STALE-PR-RETIRE-20260729` | Antigravity + cross reviewer | Waits for fresh #4364 evidence. |
@@ -234,7 +274,9 @@ Safe parallelization after Wave 0 is accepted:
 Pass 3 conclusion: the correct next action is not direct Codex repair or
 one-off deployment. It is a supervisor/dev-bridge task packet whose success is
 verified by canonical materialization, then auto-worker pickup, then governed
-review/archive.
+review/archive. The Wave 0X preemption evidence also means "task created" is
+not enough; the fleet must be observed restarting, completing, and archiving
+the concrete fallout tasks.
 
 ## Dispatch Artifact
 

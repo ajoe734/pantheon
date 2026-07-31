@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-31-l12-current-gap-supervisor-dispatch",
   "generated_at": "2026-07-31T06:40:20Z",
-  "updated_at": "2026-07-31T12:25:00Z",
+  "updated_at": "2026-07-31T12:46:41Z",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
   "base_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
@@ -17,19 +17,26 @@
     "Lovable publish status as Pantheon dev delivery truth"
   ],
   "authoritative_current_state": {
-    "observed_at": "2026-07-31T06:40:20Z",
+    "observed_at": "2026-07-31T12:46:41Z",
     "origin_dev": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
     "task_state_updated_at": "2026-07-31T06:40:20Z",
     "supervisor": {
       "lifecycle": "running",
       "task_state_shadow_ok": true,
       "task_state_shadow_caught_up": true,
-      "mode_status": "idle",
+      "mode_status": "active",
       "active_auto_workers": 0,
+      "mode_occupancy": {
+        "execution": {
+          "running": 1,
+          "pending": 0,
+          "queued": 0
+        }
+      },
       "authoritative_status_root": "/home/lupin/pantheon",
       "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
       "live_pid": 1633710,
-      "last_heartbeat_at": "2026-07-31T11:57:28Z",
+      "last_heartbeat_at": "2026-07-31T12:44:30Z",
       "last_loop_error": null,
       "command_root_shadow_stale_pid": 3775971,
       "command_root_shadow_stale_heartbeat_at": "2026-07-29T10:32:51Z",
@@ -58,6 +65,50 @@
       "contradiction": "task IDs including L12-VERIFY-LEARN-REAL-VERIFIER-001 are absent from canonical ai-status/task-state",
       "required_rule": "downstream dispatch is not accepted until Wave 0 proves canonical materialization/readback"
     },
+    "pipeline_architecture_status": [
+      {
+        "scope": "dispatch_closeout_pipeline",
+        "status": "not_end_to_end_repaired",
+        "observed_at": "2026-07-31T12:46:41Z",
+        "facts": [
+          "#4390 DevTaskPacket materialization repair remains open/BLOCKED",
+          "#4392 worker source-root repair remains open/BLOCKED",
+          "#4395 and #4396 have current-head CI/canonical-review success but remain mergeStateStatus=BLOCKED",
+          "Wave 0X fallout tasks materialized but returned to todo after supervisor preemption",
+          "The current state is architecture repair in progress, not a validated dispatch/closeout pipeline"
+        ]
+      }
+    ],
+    "fleet_runtime_readback": [
+      {
+        "task": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+        "status": "todo_after_preemption",
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "evidence": "worker runtime records prior Codex2 SIGTERM/preempted runs; canonical task row returned to todo"
+      },
+      {
+        "task": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+        "status": "todo_after_preemption",
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "evidence": "worker runtime records prior Codex2 SIGTERM/preempted runs; canonical task row returned to todo"
+      },
+      {
+        "task": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+        "status": "review_approved",
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "evidence": "Antigravity reviewed exact PR #4395 head f68827c8e17d6a1f081afe24f62ba85c116166e8 at 2026-07-31T12:42:18Z"
+      },
+      {
+        "task": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+        "status": "review_approved",
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "evidence": "owner closeout verified PR #4396 exact head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f; auto-integrator remains fail-closed on missing Human/Ops root-freeze context"
+      }
+    ],
     "open_prs": [
       {
         "pr": 4390,
@@ -105,23 +156,23 @@
         "head": "2d5f692e960a22eef7c4b6d63002996a68468079",
         "merge_state": "BLOCKED",
         "checks": "Branch CI success",
-        "gap": "task row is review_approved but PR remains open/blocked and current PR head differs from the row's noted reviewed head; #4396 records review-approved support evidence but is draft and not integrated"
+        "gap": "task row is review_approved but PR remains open/blocked and current PR head differs from the row's noted reviewed head; #4396 records current-head support evidence and is no longer draft, but remains blocked from protected merge/governed closeout"
       },
       {
         "pr": 4395,
         "task": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
-        "head": "607a474688566b1a62c4ec24998c4d6864d62a88",
+        "head": "f68827c8e17d6a1f081afe24f62ba85c116166e8",
         "merge_state": "BLOCKED",
-        "checks": "Branch CI success",
-        "gap": "owner finding recommends reopening/repairing #4385 because current evidence names a nonexistent anchor"
+        "checks": "Branch CI success; Pantheon canonical review gate success",
+        "gap": "Antigravity reviewed exact head; auto-integrator still blocks on mergeStateStatus=BLOCKED; owner finding recommends reopening/repairing #4385 because current evidence names a nonexistent anchor"
       },
       {
         "pr": 4396,
         "task": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
-        "head": "c4346b8d53941d665acd931d32a98b3802b1e7b2",
+        "head": "19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f",
         "merge_state": "BLOCKED",
-        "checks": "Branch CI success; task row review_approved",
-        "gap": "ReviewBus PR is draft, so auto-integrator reports pr_is_draft; governed ready/merge/closeout handling is still required"
+        "checks": "Branch CI success; Pantheon canonical review gate success; task row review_approved",
+        "gap": "ReviewBus PR is no longer draft, but auto-integrator still blocks on mergeStateStatus=BLOCKED and missing Human/Ops root-freeze exact-head context; governed merge/closeout handling is still required"
       },
       {
         "pr": 4376,
@@ -238,9 +289,9 @@
           "reviewer_preference": ["Claude2", "Antigravity", "Codex2"],
           "depends_on": [],
           "acceptance": [
-            "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
-            "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
-            "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+            "Verify #4396 head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f and task row review_approved evidence before changing PR state",
+            "Confirm Branch CI and Pantheon canonical review gate remain green, then run auto-integrator eligibility dry-run",
+            "Resolve the remaining mergeStateStatus=BLOCKED/root-freeze exact-head gate through governed closeout; do not treat no-longer-draft as sufficient",
             "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
           ]
         }
