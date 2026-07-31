@@ -1,0 +1,371 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731 implementation acceptance",
+    "note": "The manifest separates the reviewed implementation cut from the later immutable command-root promotion and G1 admission cut.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "not_applicable; exact source and implementation SHA-256 values are embedded in integrity",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Review, merge, promotion, dry-run, apply, canonical readback, and admission-archive facts must be appended through a task-scoped reviewed commit.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-31T16:11:46Z",
+    "evidence_cut_semantics": "Implementation and local regression cut only. Independent review, protected merge, immutable live promotion, and 25-task G1 admission remain pending and cannot be inferred from this record.",
+    "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "overall_admission": "implementation_ready_for_independent_review_live_admission_pending",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime Repair / Wave 0 Program Dispatcher Gate",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "Pantheon development supervisor runtime",
+    "target_maturity": "merged_live_promoted_atomic_G1_admission",
+    "task_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "title": "Extend the program-specific guarded dispatcher for current-proof remediation"
+  },
+  "authorities": {
+    "actual_state": [
+      "PR #4394 exact head and Branch CI Gate run 30635898120",
+      "task branch anchor 5646d3499853b5af59b8c9e75086da402d40f6eb",
+      "focused local pytest, compile, validate-only, and live fail-closed dry-run outputs"
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731.md",
+      "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "schemas/product-evidence.schema.json"
+    ],
+    "task_packet": ".orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 owns dispatcher implementation and closeout evidence; Antigravity owns independent exact-head review; protected Human/Ops closeout authority is not exercised by this task.",
+    "composes_with": [
+      "PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+      "PR #4406 scheduler runtime gate merge 2ddce6c25",
+      "the immutable post-merge command-root promotion and program-dispatch admission archive"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json"
+    ],
+    "implementation_changed_files": [
+      ".orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731.md",
+      "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py"
+    ],
+    "not_changing": ".orchestrator/config.json, supervisor scheduling, product services, frontend, live capital, the 28 catalog task contracts, or protected Human/Ops final-closeout authority.",
+    "owned_layer": "Program-specific immutable graph validation, live readiness assignment resolution, dependency/artifact admission, atomic canonical materialization, replay/readback, and task-scoped evidence."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "5646d3499853b5af59b8c9e75086da402d40f6eb",
+        "subject": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731: anchor core",
+        "delivery_state": "task_branch_anchor_pending_PR",
+        "hosted_cut_inclusion": false
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 30635898120,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30635898120",
+        "head_sha": "fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+        "jobs": {
+          "Branch CI Gate": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+        "result": "11 passed in 3.73s",
+        "conclusion": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -k 'not human_task_cards_mirror_assignment_header'",
+        "result": "31 passed, 1 deselected in 7.83s; the deselected legacy card/catalog owner mismatch exists on origin/dev and is outside this task scope",
+        "conclusion": "pass_with_documented_baseline_exclusion"
+      },
+      {
+        "command": "python3 -m py_compile scripts/dispatch_twelve_loop_gap_2026_07_26.py and compileall over both dispatcher test modules",
+        "result": "passed",
+        "conclusion": "pass"
+      },
+      {
+        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
+        "result": "valid; 28 tasks; exact catalog bytes 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca; PR #4394 exact head and Branch CI success bound",
+        "conclusion": "pass"
+      },
+      {
+        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --catalog docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json",
+        "result": "valid; legacy 25-task catalog compatibility retained",
+        "conclusion": "pass"
+      },
+      {
+        "command": "live status-root --dry-run with exact current catalog and live readiness inputs before merge",
+        "result": "failed closed before mutation on L12-CONTROLLER-BFF-20260731 overlap with nonterminal SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "conclusion": "expected_fail_closed_live_gate"
+      }
+    ],
+    "validated_at": "2026-07-31T16:11:46Z",
+    "validated_base_sha": "2ddce6c25",
+    "validated_head_sha": "5646d3499853b5af59b8c9e75086da402d40f6eb"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "Pantheon development supervisor runtime",
+    "public_bff_base_url": "not_applicable; the dispatcher has no HTTP surface",
+    "publish_cut": {
+      "status": "pending_independent_review_and_protected_merge"
+    },
+    "canonical_root_deploy": {
+      "status": "pending_immutable_command_root_promotion"
+    },
+    "identity_admission": {
+      "status": "pending_exact_merged_SHA_and_tree_readback"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "fail_closed",
+      "proof": "The pre-merge live dry-run observed a nonterminal overlapping BFF task and admitted zero remediation tasks."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass_local",
+      "proof": [
+        "A complete exact G1 replay creates zero tasks.",
+        "A partial G1 materialization is rejected instead of resumed."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass_local_and_live_fail_closed",
+      "proof": [
+        "Duplicate IDs, dangling dependencies, G1 artifact-prefix overlap, live concurrent overlap, unavailable providers, stale command root, and canonical readback mismatch fail closed.",
+        "The live pre-merge overlap produced no canonical mutation."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pending_live_apply",
+      "proof": [
+        "The atomic writer emits one program_catalog_materialized activity event and an external deterministic admission archive; live IDs remain pending."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass_contract_pending_live",
+      "proof": [
+        "Apply requires an exact clean merged command runtime and replays canonical journal truth under the writer lock.",
+        "A deterministic replay can reconstruct a missing admission archive from exact G1 rows."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass_local",
+      "proof": [
+        "All task rows are prepared on a deep copy and committed in one authoritative task-state transaction only after every assignment validates.",
+        "An injected second-assignment failure leaves the source state byte-equivalent and admits no partial rows."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Pantheon development supervisor coordination state only."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend source or hosting changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No interactive identity surface changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Catalog validation and supervisor task admission do not activate trading or capital."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "The real caller identity is preserved; owner/reviewer remain distinct; no Human/Ops identity is synthesized."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant data path changed."
+    },
+    "two_person_approval": {
+      "status": "pending",
+      "proof": "Antigravity exact-head independent review remains required before protected merge and owner closeout."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Bind PR #4394 exact head and successful Branch CI as the immutable current-gap specification.",
+      "status": "pass",
+      "evidence_refs": [
+        "implementation_delivery.required_checks[0]",
+        "validation.commands[3]",
+        "integrity.source_artifact_sha256_by_epoch"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Consume all 28 task contracts without narrowing or rewriting their loop, maturity, authority, evidence, artifact, product, non-goal, and provider-preference fields.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands[0]",
+        "integrity.source_artifact_sha256_by_epoch"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Resolve owner/reviewer from live readiness, preserve preference order, record fallbacks, and never select an unavailable provider.",
+      "status": "pass_local_pending_live_readback",
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior",
+        "validation.commands[0]"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Validate the complete graph before mutation and reject duplicate, dangling, overlap, stale-runtime, replay conflict, partial, concurrent, and readback mismatch states.",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.duplicate_safety",
+        "behavioral_proof.failure_and_degraded_behavior"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Materialize a frontier atomically through one governed canonical transaction.",
+      "status": "pass_local_pending_live_apply",
+      "evidence_refs": [
+        "behavioral_proof.rollback_or_compensation",
+        "validation.commands[0]"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "Retain legacy validate-only/materialization compatibility.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands[1]",
+        "validation.commands[4]"
+      ]
+    },
+    {
+      "id": "AC7",
+      "statement": "Deliver through exact-head independent review, protected merge, and immutable live command-root promotion.",
+      "status": "pending",
+      "blocking_until": "Antigravity exact-head review, task PR merge, and immutable command-root promotion",
+      "evidence_refs": [
+        "deployment",
+        "security_and_safety.two_person_approval"
+      ]
+    },
+    {
+      "id": "AC8",
+      "statement": "After promotion, validate-only and dry-run must pass before the safe 25-task G1 frontier is atomically admitted and exactly read back with an admission archive.",
+      "status": "blocked_by_live_artifact_overlap",
+      "blocking_until": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 no longer holds a nonterminal overlapping BFF scope",
+      "evidence_refs": [
+        "validation.commands[5]",
+        "hosted_readback.pre_deploy",
+        "residual_risks.live_nonterminal_overlap"
+      ]
+    },
+    {
+      "id": "AC9",
+      "statement": "Do not use generic DevTaskPacket for the 28 product tasks, edit config, impersonate Human/Ops, or claim twelve-loop operational closure.",
+      "status": "pass",
+      "evidence_refs": [
+        "scope.not_changing",
+        "security_and_safety",
+        "task.evidence_cut_semantics"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "live_nonterminal_overlap": {
+      "blocking_for_this_task": true,
+      "containment": "Keep apply fail-closed. Re-read canonical active/archive truth after immutable promotion and require a clean dry-run before materialization.",
+      "description": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 is nonterminal and overlaps the controller-BFF artifact prefix.",
+      "expiry": "When the overlapping task becomes governed terminal or its exact canonical scope no longer conflicts through an independently reviewed change.",
+      "owner": "Supervisor task owner and guarded-dispatch owner",
+      "recheck_trigger": "Post-merge immutable command-root dry-run",
+      "severity": "blocking"
+    },
+    "source_specification_PR_open": {
+      "blocking_for_this_task": false,
+      "containment": "Bind the exact source head, successful Branch CI run, catalog byte digest, and canonical digest; never read a moving PR branch at runtime.",
+      "description": "PR #4394 remains open and currently non-mergeable, while its exact head is the accepted immutable specification source.",
+      "expiry": "When #4394 is merged or superseded by an explicitly reviewed immutable specification.",
+      "owner": "Current-gap specification owner",
+      "recheck_trigger": "Any proposal to change the catalog bytes or source head",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "task brief, dispatcher, legacy regression adjustment, current remediation regression suite, and exact guarded-remediation catalog at anchor 5646d3499853b5af59b8c9e75086da402d40f6eb"
+    ],
+    "companion_checksum_path": "not_applicable; immutable values are embedded below",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "A manifest cannot contain a stable digest of its own complete bytes; the later reviewed closeout commit binds this file.",
+    "source_artifact_sha256_by_epoch": {
+      "5646d3499853b5af59b8c9e75086da402d40f6eb": {
+        ".orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731.md": "c604524efc7e93db83f12238b1d8e027472710b687325e57c7f887d0ea957f4a",
+        "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "09b0894d5ae2f25051b535073f74cd5fb8fb3f96e8614e0429fa11da1bf30aec",
+        "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py": "31a2fb92735d269c0fd2962a801b8083795e8d763a397f3bbe183c3cea4977af",
+        "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "1e53d8675bdfa228250bbd340ef33d463c986b4669357d2ca9a349047e0378d2",
+        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-31T13:39:17Z",
+      "kind": "source_specification_cut",
+      "status": "pass",
+      "actor": "Codex",
+      "reference": "PR #4394 exact head and guarded-remediation catalog",
+      "sha": "fb9adfb84944e276b254ccfdfff784fb6728a7f4"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-31T16:10:24Z",
+      "kind": "implementation_anchor_committed",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "task branch anchor",
+      "sha": "5646d3499853b5af59b8c9e75086da402d40f6eb"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-31T16:11:46Z",
+      "kind": "local_acceptance_and_live_preflight",
+      "status": "implementation_pass_live_apply_fail_closed",
+      "actor": "Codex2",
+      "reference": "validation.commands"
+    }
+  ]
+}
