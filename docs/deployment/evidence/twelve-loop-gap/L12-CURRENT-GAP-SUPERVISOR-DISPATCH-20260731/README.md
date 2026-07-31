@@ -6,6 +6,8 @@ Observed: `2026-07-31T06:40:20Z`
 
 Updated: `2026-07-31T12:25:00Z`
 
+Pipeline status updated: `2026-07-31T12:46:41Z`
+
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
 work.
@@ -44,9 +46,20 @@ work.
   #4395 records that #4385 evidence names nonexistent anchor
   `9d53a94a265c55af4c8d15c50ab3751f1440ac0f`; #4385 therefore needs an
   evidence-anchor repair before Wave 0 can pass.
-- #4396 records #4386 current-head support proof, but it is still draft and
-  blocked from auto-integration; it cannot be counted until governed
-  ready/merge/closeout handling is complete.
+- #4396 records #4386 current-head support proof. It is no longer draft as of
+  the 12:46Z readback, but remains blocked from auto-integration by protected
+  merge/root-freeze closeout; it cannot be counted until governed
+  merge/closeout handling is complete.
+- As of `2026-07-31T12:46:41Z`, the dispatch/closeout architecture is still
+  not end-to-end repaired. #4390 and #4392 remain open/blocked, #4395 and #4396
+  have current-head CI/canonical-review success but are still blocked by merge
+  state, and Wave 0X fallout tasks are materialized but currently `todo` after
+  supervisor preemption.
+- #4395 current head is `f68827c8e17d6a1f081afe24f62ba85c116166e8`; #4396
+  current head is `19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f`.
+- Auto-integrator dry-runs at this observation block #4395, #4396, #4385, and
+  #4386 on `mergeStateStatus=BLOCKED`. This is a closeout/protected-gate
+  blocker, not a twelve-loop product completion signal.
 
 ## Acceptance Boundary
 
