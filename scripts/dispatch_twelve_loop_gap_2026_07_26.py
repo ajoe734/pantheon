@@ -166,6 +166,27 @@ CURRENT_REVIEWER_PREFERENCE = [
     "Codex2",
     "Codex",
 ]
+CURRENT_ASSIGNMENT_RESOLUTION_FIELDS = {
+    "schema_version",
+    "source",
+    "readiness_sha256",
+    "observed_at",
+    "catalog_owner",
+    "catalog_reviewer",
+    "owner",
+    "reviewer",
+    "owner_evaluations",
+    "reviewer_evaluations",
+    "owner_fallbacks",
+    "reviewer_fallbacks",
+}
+CURRENT_ASSIGNMENT_EVALUATION_FIELDS = {
+    "agent",
+    "ready",
+    "reasons",
+    "selected",
+    "considered",
+}
 CURRENT_TASK_IDS = [
     "L12-CONTROLLER-TEACH-20260731",
     "L12-CONTROLLER-AGORA-20260731",
@@ -1283,6 +1304,146 @@ def _plan_legacy_materialization(
     }
 
 
+def _validate_current_assignment_evaluations(
+    evaluations: Any,
+    *,
+    preference: list[str],
+    selected_agent: str,
+    excluded_agents: set[str],
+    label: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(evaluations, list) or len(evaluations) != len(preference):
+        raise DispatchError(f"{label} evaluations are not complete")
+    for index, (evaluation, candidate) in enumerate(zip(evaluations, preference)):
+        if (
+            not isinstance(evaluation, dict)
+            or set(evaluation) != CURRENT_ASSIGNMENT_EVALUATION_FIELDS
+        ):
+            raise DispatchError(f"{label} evaluation schema is not exact at {index}")
+        if evaluation.get("agent") != candidate:
+            raise DispatchError(f"{label} evaluation order conflicts at {index}")
+        for field in ("ready", "selected", "considered"):
+            if not isinstance(evaluation.get(field), bool):
+                raise DispatchError(
+                    f"{label} evaluation {field} is not boolean at {index}"
+                )
+        reasons = evaluation.get("reasons")
+        if (
+            not isinstance(reasons, list)
+            or any(not isinstance(reason, str) or not reason.strip() for reason in reasons)
+            or len(reasons) != len(set(reasons))
+        ):
+            raise DispatchError(f"{label} evaluation reasons are invalid at {index}")
+        excluded = candidate in excluded_agents
+        if excluded:
+            if "same_as_owner" not in reasons or evaluation["ready"]:
+                raise DispatchError(
+                    f"{label} evaluation does not enforce owner exclusion at {index}"
+                )
+        elif "same_as_owner" in reasons:
+            raise DispatchError(
+                f"{label} evaluation claims an invalid owner exclusion at {index}"
+            )
+        if evaluation["ready"] != (not reasons):
+            raise DispatchError(
+                f"{label} evaluation readiness contradicts reasons at {index}"
+            )
+
+    ready_indexes = [
+        index
+        for index, evaluation in enumerate(evaluations)
+        if evaluation["ready"]
+    ]
+    if not ready_indexes:
+        raise DispatchError(f"{label} evaluations contain no selectable provider")
+    selected_index = ready_indexes[0]
+    for index, evaluation in enumerate(evaluations):
+        if evaluation["considered"] != (index <= selected_index):
+            raise DispatchError(
+                f"{label} considered sequence conflicts with first-ready selection"
+            )
+        if evaluation["selected"] != (index == selected_index):
+            raise DispatchError(
+                f"{label} selected sequence conflicts with first-ready selection"
+            )
+    if preference[selected_index] != selected_agent:
+        raise DispatchError(f"{label} selected provider conflicts with row assignment")
+    return evaluations
+
+
+def _validate_current_assignment_resolution(
+    resolution: Any,
+    *,
+    owner: Any,
+    reviewer: Any,
+    catalog_owner: Any,
+    catalog_reviewer: Any,
+    owner_preference: list[str],
+    reviewer_preference: list[str],
+    label: str,
+) -> None:
+    if (
+        not isinstance(resolution, dict)
+        or set(resolution) != CURRENT_ASSIGNMENT_RESOLUTION_FIELDS
+    ):
+        raise DispatchError(f"{label} provider assignment resolution schema is not exact")
+    if resolution.get("schema_version") != 1:
+        raise DispatchError(f"{label} provider assignment schema version conflicts")
+    if resolution.get("source") != "live-supervisor-readiness":
+        raise DispatchError(f"{label} provider readiness source identity conflicts")
+    _nonempty_string(resolution.get("observed_at"), label=f"{label} observed_at")
+    readiness_sha256 = resolution.get("readiness_sha256")
+    if (
+        not isinstance(readiness_sha256, str)
+        or len(readiness_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in readiness_sha256)
+    ):
+        raise DispatchError(f"{label} provider readiness digest is invalid")
+    expected_identity = {
+        "catalog_owner": catalog_owner,
+        "catalog_reviewer": catalog_reviewer,
+        "owner": owner,
+        "reviewer": reviewer,
+    }
+    if any(resolution.get(key) != value for key, value in expected_identity.items()):
+        raise DispatchError(f"{label} provider assignment identity conflicts")
+    if owner == reviewer:
+        raise DispatchError(f"{label} provider assignment collides")
+
+    owner_evaluations = _validate_current_assignment_evaluations(
+        resolution["owner_evaluations"],
+        preference=owner_preference,
+        selected_agent=str(owner),
+        excluded_agents=set(),
+        label=f"{label} owner",
+    )
+    reviewer_evaluations = _validate_current_assignment_evaluations(
+        resolution["reviewer_evaluations"],
+        preference=reviewer_preference,
+        selected_agent=str(reviewer),
+        excluded_agents={str(owner)},
+        label=f"{label} reviewer",
+    )
+    expected_owner_fallbacks = [
+        evaluation
+        for evaluation in owner_evaluations
+        if evaluation["considered"]
+        and not evaluation["selected"]
+        and evaluation["reasons"]
+    ]
+    expected_reviewer_fallbacks = [
+        evaluation
+        for evaluation in reviewer_evaluations
+        if evaluation["considered"]
+        and not evaluation["selected"]
+        and evaluation["reasons"]
+    ]
+    if resolution.get("owner_fallbacks") != expected_owner_fallbacks:
+        raise DispatchError(f"{label} owner fallback evidence conflicts")
+    if resolution.get("reviewer_fallbacks") != expected_reviewer_fallbacks:
+        raise DispatchError(f"{label} reviewer fallback evidence conflicts")
+
+
 def _current_materialized_row_is_exact(
     row: dict[str, Any],
     *,
@@ -1310,21 +1471,22 @@ def _current_materialized_row_is_exact(
         "source_branch_ci_run": CURRENT_SOURCE_BRANCH_CI_RUN,
     }:
         raise DispatchError(f"current task source binding conflicts: {task_id}")
-    resolution = row.get("provider_assignment_resolution")
-    if not isinstance(resolution, dict):
-        raise DispatchError(f"current task lacks provider assignment resolution: {task_id}")
-    if resolution.get("owner") != row.get("owner"):
-        raise DispatchError(f"current task owner resolution conflicts: {task_id}")
-    if resolution.get("reviewer") != row.get("reviewer"):
-        raise DispatchError(f"current task reviewer resolution conflicts: {task_id}")
-    if row.get("owner") == row.get("reviewer"):
-        raise DispatchError(f"current task owner/reviewer collision: {task_id}")
-    if row.get("owner") not in task["owner_preference"]:
-        raise DispatchError(f"current task owner is outside preference contract: {task_id}")
-    if row.get("reviewer") not in task["reviewer_preference"]:
-        raise DispatchError(
-            f"current task reviewer is outside preference contract: {task_id}"
-        )
+    catalog_defaults = row.get("catalog_assignment_defaults")
+    if not isinstance(catalog_defaults, dict) or catalog_defaults != {
+        "owner": task["owner"],
+        "reviewer": task["reviewer"],
+    }:
+        raise DispatchError(f"current task catalog assignment defaults conflict: {task_id}")
+    _validate_current_assignment_resolution(
+        row.get("provider_assignment_resolution"),
+        owner=row.get("owner"),
+        reviewer=row.get("reviewer"),
+        catalog_owner=task["owner"],
+        catalog_reviewer=task["reviewer"],
+        owner_preference=task["owner_preference"],
+        reviewer_preference=task["reviewer_preference"],
+        label=f"current task {task_id}",
+    )
 
 
 def _terminal_dependency_truth(
@@ -2069,6 +2231,30 @@ def _validate_current_admission_archive(
     }
     if set(payload) != required:
         raise DispatchError(f"admission archive schema is not exact: {path}")
+    assignment_decisions = payload.get("assignment_decisions")
+    if not isinstance(assignment_decisions, dict) or set(assignment_decisions) != set(
+        admitted_task_ids
+    ):
+        raise DispatchError(f"admission archive assignment decisions are not exact: {path}")
+    plan_decisions = plan.get("assignment_decisions")
+    if not isinstance(plan_decisions, dict):
+        raise DispatchError(f"admission plan assignment decisions are malformed: {path}")
+    for task_id in admitted_task_ids:
+        expected_decision = plan_decisions.get(task_id)
+        if not isinstance(expected_decision, dict):
+            raise DispatchError(
+                f"admission plan lacks assignment decision for {task_id}: {path}"
+            )
+        _validate_current_assignment_resolution(
+            assignment_decisions[task_id],
+            owner=expected_decision.get("owner"),
+            reviewer=expected_decision.get("reviewer"),
+            catalog_owner=expected_decision.get("catalog_owner"),
+            catalog_reviewer=expected_decision.get("catalog_reviewer"),
+            owner_preference=CURRENT_OWNER_PREFERENCE,
+            reviewer_preference=CURRENT_REVIEWER_PREFERENCE,
+            label=f"admission archive task {task_id}",
+        )
     expected = {
         "schema_version": 1,
         "admission_id": path.stem,

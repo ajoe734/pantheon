@@ -49,7 +49,7 @@ def readiness(
     }
     payload = {
         "schema_version": 1,
-        "source": "test-live-readiness",
+        "source": "live-supervisor-readiness",
         "observed_at": "2026-07-31T16:00:00Z",
         "provider_capabilities_generated_at": "2026-07-31T15:59:00Z",
         "candidates": {
@@ -499,6 +499,76 @@ def test_current_replay_is_exact_and_partial_materialization_fails(
         )
 
 
+@pytest.mark.parametrize("truth_source", ["active", "archive"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["truncated_resolution", "contradictory_resolution", "missing_catalog_defaults"],
+)
+def test_current_full_g1_replay_rejects_inexact_assignment_evidence(
+    truth_source: str,
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    live_readiness = readiness()
+    g1_rows = [
+        materialized_row(
+            task,
+            payload=payload,
+            tasks=tasks,
+            live_readiness=live_readiness,
+            status="done" if truth_source == "archive" else "todo",
+        )
+        for task in tasks
+        if task["wave"] == "G1"
+    ]
+    for row in g1_rows:
+        if mutation == "truncated_resolution":
+            row["provider_assignment_resolution"] = {
+                "owner": row["owner"],
+                "reviewer": row["reviewer"],
+            }
+        elif mutation == "contradictory_resolution":
+            evaluation = row["provider_assignment_resolution"]["owner_evaluations"][0]
+            evaluation.update(
+                {
+                    "ready": False,
+                    "reasons": ["auth_not_ready"],
+                    "selected": True,
+                }
+            )
+        else:
+            row.pop("catalog_assignment_defaults")
+
+    if truth_source == "active":
+        state = active_state(g1_rows)
+    else:
+        state = active_state()
+        archive_root = tmp_path / "ai-task-archive" / "tasks"
+        archive_root.mkdir(parents=True)
+        for row in g1_rows:
+            (archive_root / f"{row['id']}.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": row["id"],
+                        "terminal_status": "done",
+                        "task": row,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    with pytest.raises(module.DispatchError, match="current task"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=state,
+            readiness=live_readiness,
+        )
+
+
 def test_current_concurrent_live_artifact_conflict_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -769,6 +839,91 @@ def test_current_exact_canonical_readback_and_mismatch(tmp_path: Path) -> None:
             authority=authority,
             admitted_task_ids=task_ids,
             readiness=live_readiness,
+        )
+
+
+def test_current_full_g1_canonical_readback_rejects_truncated_resolution(
+    tmp_path: Path,
+) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    live_readiness = readiness()
+    g1_rows = [
+        materialized_row(
+            task,
+            payload=payload,
+            tasks=tasks,
+            live_readiness=live_readiness,
+        )
+        for task in tasks
+        if task["wave"] == "G1"
+    ]
+    for row in g1_rows:
+        row["provider_assignment_resolution"] = {
+            "owner": row["owner"],
+            "reviewer": row["reviewer"],
+        }
+    authority = write_authority(tmp_path, active_state(g1_rows))
+
+    with pytest.raises(module.DispatchError, match="resolution schema is not exact"):
+        module.verify_current_canonical_readback(
+            catalog=payload,
+            tasks=tasks,
+            status_root=tmp_path,
+            authority=authority,
+            admitted_task_ids=[row["id"] for row in g1_rows],
+            readiness=live_readiness,
+        )
+
+
+@pytest.mark.parametrize("mutation", ["truncated", "contradictory"])
+def test_current_admission_archive_rejects_inexact_assignment_evidence(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    live_readiness = readiness()
+    plan = module.plan_materialization(
+        payload,
+        tasks,
+        status_root=tmp_path,
+        state=active_state(),
+        readiness=live_readiness,
+    )
+    admitted_task_ids = list(plan["create"])
+    command_runtime = {
+        "source_sha": "a" * 40,
+        "remote": "ajoe734/pantheon",
+        "base_ref": "origin/dev",
+    }
+    archive_path = module.prepare_current_admission_archive(
+        status_root=tmp_path,
+        plan=plan,
+        admitted_task_ids=admitted_task_ids,
+        command_runtime=command_runtime,
+        actor="Codex",
+        allow_committed=False,
+    )
+    archive = json.loads(archive_path.read_text(encoding="utf-8"))
+    for decision in archive["assignment_decisions"].values():
+        if mutation == "truncated":
+            owner = decision["owner"]
+            reviewer = decision["reviewer"]
+            decision.clear()
+            decision.update({"owner": owner, "reviewer": reviewer})
+        else:
+            decision["reviewer_evaluations"][0]["selected"] = True
+    archive_path.write_text(json.dumps(archive), encoding="utf-8")
+
+    with pytest.raises(module.DispatchError, match="admission archive task"):
+        module.prepare_current_admission_archive(
+            status_root=tmp_path,
+            plan=plan,
+            admitted_task_ids=admitted_task_ids,
+            command_runtime=command_runtime,
+            actor="Codex",
+            allow_committed=False,
         )
 
 
