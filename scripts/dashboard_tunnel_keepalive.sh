@@ -29,7 +29,7 @@ url_path = Path(sys.argv[1])
 public_path = "/" + sys.argv[2].strip("/") + "/"
 
 for line in sys.stdin:
-    match = re.search(r"https://[-a-z0-9]+\\.trycloudflare\\.com", line)
+    match = re.search(r"https://[-a-z0-9]+\.trycloudflare\.com", line)
     if match:
         url_path.write_text(match.group(0).rstrip("/") + public_path, encoding="utf-8")
 ' "${URL_FILE}" "${PUBLIC_PATH}"
