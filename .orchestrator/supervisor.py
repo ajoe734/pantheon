@@ -7503,6 +7503,76 @@ def worker_prepared_review_head(worker: dict[str, Any]) -> bool:
     }
 
 
+def owner_worker_canonical_handoff_status(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> str | None:
+    """Return the canonical outcome reached by this exact owner worker.
+
+    Once an owned implementation run advances its task to review, reviewer
+    approval, or done, that task transition is the worker's durable outcome.
+    Failure-log scanning and assignment mismatch handling must not reinterpret
+    the old owner process as a missing result after responsibility has moved to
+    the reviewer.
+    """
+
+    if not isinstance(task, dict):
+        return None
+    dispatch_reason = str(
+        (worker.get("request_snapshot") or {}).get("reason") or ""
+    ).strip()
+    if dispatch_reason not in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
+        return None
+    worker_actor = display_name_for(
+        config,
+        str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+    ).strip()
+    owner = str(task.get("owner") or "").strip()
+    if not worker_actor or worker_actor != owner:
+        return None
+
+    settings = ready_dispatch_settings(config)
+    outcome_statuses = (
+        normalized_status_set(settings.get("review_statuses"), ["review"])
+        | normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+        | normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    )
+    task_status = str(task.get("status") or "").strip().lower()
+    return task_status if task_status in outcome_statuses else None
+
+
+def task_has_bound_finalize_delivery_identity(task: dict[str, Any]) -> bool:
+    """True when review/finalize is bound to an immutable delivery head."""
+
+    for field in ("review_binding", "github_review_bridge"):
+        binding = task.get(field)
+        if not isinstance(binding, dict):
+            continue
+        head_sha = str(binding.get("head_sha") or "").strip()
+        pr = binding.get("pr")
+        head_branch = str(binding.get("head_branch") or "").strip()
+        base = str(binding.get("base") or "").strip()
+        if (
+            re.fullmatch(r"[0-9a-fA-F]{40}", head_sha)
+            and str(pr or "").isdigit()
+            and int(pr) > 0
+            and head_branch
+            and base
+        ):
+            return True
+
+    delivery = task.get("delivery")
+    if isinstance(delivery, dict):
+        commit = str(delivery.get("commit") or "").strip()
+        repository = str(
+            delivery.get("repository_slug") or delivery.get("repository_id") or ""
+        ).strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", commit) and repository:
+            return True
+    return False
+
+
 def _prepare_missing_handoff_blocker_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -8738,6 +8808,16 @@ def maybe_reassign_task_after_worker_failure(
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
+
+    if (
+        task_status in finalize_statuses
+        and owner == failing_agent
+        and task_has_bound_finalize_delivery_identity(task)
+    ):
+        # Exact-head review/delivery identity is immutable. A missing finalize
+        # worker may retry and ultimately block fail-closed, but provider
+        # failure must not rewrite the owner named by the reviewed commit.
+        return None
 
     if task_status in review_statuses and reviewer == failing_agent:
         candidates = l12_provider_first_candidates(
@@ -10120,6 +10200,33 @@ def poll_worker_assignment_stage(
         )
         return {"changed": bool(changed), "stop": True}
 
+    task = task_map.get(str(worker.get("task_id") or ""))
+    handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+    if handoff_status is not None:
+        if alive and not terminate_worker_pid(worker.get("pid")):
+            return {"changed": False, "stop": True}
+        worker["status"] = "completed"
+        worker["last_event_at"] = utc_now()
+        worker.pop("last_error", None)
+        clear_task_failure_streak(state, worker=worker)
+        finalize_queue_event_record(config, state, worker, "completed")
+        write_activity_log(
+            config,
+            {
+                "type": "worker_completed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": (
+                    "Owner worker reached canonical task outcome "
+                    f"{handoff_status}; review/finalize responsibility advanced."
+                ),
+                "worker_run_id": worker.get("run_id"),
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+            },
+        )
+        return {"changed": True, "stop": True}
+
     if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
@@ -11337,6 +11444,32 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
+        task = task_map.get(str(worker.get("task_id") or ""))
+        handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+        if handoff_status is not None:
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            worker.pop("last_error", None)
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": (
+                        "Owner worker reached canonical task outcome "
+                        f"{handoff_status} during supervisor boot reconciliation."
+                    ),
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
         runner_succeeded = worker_runner_succeeded(worker)
         if runner_succeeded and (
             worker_is_chair_review(worker) or worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)
@@ -11360,7 +11493,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             changed = True
             continue
 
-        task_status = str(task_map.get(str(worker.get("task_id") or ""), {}).get("status") or "").lower()
+        task_status = str((task or {}).get("status") or "").lower()
         terminal_statuses = {
             str(value).lower()
             for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
