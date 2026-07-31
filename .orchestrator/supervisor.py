@@ -6514,11 +6514,16 @@ def normalized_mapping_values(mapping: dict[str, Any], key: str) -> list[str]:
 
 
 def known_agent_display_names(config: dict[str, Any]) -> set[str]:
-    return {
-        str(agent.get("display_name") or agent.get("name") or agent_id).strip()
-        for agent_id, agent in (config.get("agents", {}) or {}).items()
-        if str(agent.get("display_name") or agent.get("name") or agent_id).strip()
-    }
+    names: set[str] = set()
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        if agent_is_dispatch_slot(agent):
+            continue
+        display_name = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
+        if not display_name or "legacy alias" in display_name.lower():
+            continue
+        names.add(display_name)
+    return names
+
 
 
 def sidecar_only_agent_names(config: dict[str, Any]) -> set[str]:
