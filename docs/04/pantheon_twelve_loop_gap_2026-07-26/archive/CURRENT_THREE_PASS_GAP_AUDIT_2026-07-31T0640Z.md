@@ -6,6 +6,8 @@ Observed: `2026-07-31T06:40:20Z`
 
 Addendum observed: `2026-07-31T11:59:43Z`
 
+Fleet reconcile addendum observed: `2026-07-31T12:25:00Z`
+
 Repository base inspected: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
 
 Status roots inspected:
@@ -59,6 +61,28 @@ Addendum readback at `2026-07-31T11:59:43Z`:
   `SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730`, and
   `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`.
 
+Fleet reconcile readback at `2026-07-31T12:25:00Z`:
+
+- The Wave 0 exact-head reconcile packet was drained by the real supervisor,
+  and real auto-workers, not Codex conversation subagents, processed both
+  reconcile rows.
+- `SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731` is now `review`,
+  owner `Codex2`, reviewer `Antigravity`, with PR #4395 head
+  `607a474688566b1a62c4ec24998c4d6864d62a88`. Its owner finding is that
+  PR #4385 remains at `f5e70e86e01bde005dae5fed94b151c9bc07f389`, but the
+  subject README and evidence manifest name nonexistent anchor
+  `9d53a94a265c55af4c8d15c50ab3751f1440ac0f` instead of actual anchor
+  `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`. Therefore #4385 must be
+  repaired/reopened; it is not a Wave 0 satisfied dependency.
+- `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` is now
+  `review_approved`, owner `Codex2`, reviewer `Antigravity`, with evidence
+  commit `c4346b8d53941d665acd931d32a98b3802b1e7b2` and ReviewBus PR #4396.
+  PR #4396 is still draft, so auto-integration reports `pr_is_draft`; this
+  exact-head support evidence still needs governed ready/merge/closeout handling
+  before it can strengthen downstream support rows.
+- Auto-integrator dry-runs still block #4385 and #4386 subject PRs on
+  `mergeStateStatus=BLOCKED`; row-level `review_approved` remains insufficient.
+
 Current PR readback:
 
 | PR | Task / purpose | Head | State | Current gap |
@@ -70,6 +94,8 @@ Current PR readback:
 | #4364 | `L12-VERIFY-OBS-001` | `f3756cec99a8c44d47c075a475c25cf86a4d3171` | open, `BLOCKED` | Branch CI is green; still needs exact-head review/approval and governed closeout. |
 | #4376 | `SUP-L12-LONG-FINALIZE-LEASE-20260729` | `6f63b5f54c28514a68c6a7b3599889adf98553f9` | open, `BLOCKED` | Branch CI is green; still needs exact-head review/approval and governed closeout. |
 | #4386 | `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` | `2d5f692e960a22eef7c4b6d63002996a68468079` | open, `BLOCKED` | Canonical task row is `review_approved`, but PR is still open/blocked; current PR head differs from the row's noted reviewed head, so exact-head/closeout must be reconciled before counted. |
+| #4395 | `SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731` | `607a474688566b1a62c4ec24998c4d6864d62a88` | open, `BLOCKED` | Branch CI is green; owner finding identifies a nonexistent evidence anchor in #4385 and recommends reopening/repair rather than exact-head approval. |
+| #4396 | `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` | `c4346b8d53941d665acd931d32a98b3802b1e7b2` | open draft, `BLOCKED` | Evidence row is `review_approved`, but the ReviewBus PR is draft and cannot be auto-integrated until governed ready/merge/closeout rules are satisfied. |
 | #4363 | `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` | `94695276e2d174505a107ccaa4346efb1692575e` | open, `BEHIND` | Must be rebased/refreshed before review or merge can be counted. |
 | #4372 | `SUP-L12-STALE-PR-RETIRE-20260729` | `07f163cb21e047a491b1b90c5422dbba69ea0563` | open, `BEHIND` | Must wait for fresh accepted #4364 evidence, then rebase/refresh. |
 
@@ -114,9 +140,12 @@ Missing development:
    prove an isolated worker dispatch no longer fails on `.git/worktrees`
    read-only state.
 3. `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`: finish protected merge and
-   governed closeout for the already review-approved stale failure-streak
-   reaper; fleet-resume depends on it and cannot treat review approval alone as
-   done.
+   governed closeout for the stale failure-streak reaper; fleet-resume depends
+   on it and cannot treat review approval alone as done. The 2026-07-31
+   exact-head reconcile found the current #4385 evidence names nonexistent
+   anchor `9d53a94a265c55af4c8d15c50ab3751f1440ac0f` instead of actual anchor
+   `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`, so a concrete evidence-anchor
+   repair is required before #4385 can be counted.
 4. `SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731`: after the three Wave 0
    blockers are merged/live-promoted/closed out, let the real supervisor
    redispatch the L12 Pantheon/Agora task graph and record active worker
@@ -138,7 +167,8 @@ Missing development:
     proof.
 13. Support PR cleanup: #4363 and #4372 remain stale/behind; #4376 and #4364
     still need exact-head review/approval; #4386 remains open/blocked even
-    though its task row says review-approved.
+    though its task row says review-approved; #4396 records current-head support
+    evidence but is draft and not auto-integratable yet.
 
 Missing validation:
 
@@ -152,6 +182,10 @@ Missing validation:
   state from stale command-root shadow state.
 - Exact-head PR review for #4382/#4390/#4364/#4376.
 - Exact-head/closeout reconciliation for #4385/#4386/#4392.
+- Evidence-anchor repair for #4385, because the current #4385 evidence points
+  at a nonexistent SHA.
+- Governed ready/merge/closeout handling for #4396 before its exact-head support
+  evidence can be integrated.
 - Rebase/current-dev evidence refresh for #4363/#4372.
 - Real service-bound verifiers with before/after readbacks.
 - Tenant/RBAC/MFA/auth negative checks where applicable.
@@ -189,6 +223,7 @@ Safe parallelization after Wave 0 is accepted:
 | Wave | Parallelism | Tasks | Preferred lanes | Gate |
 | --- | --- | --- | --- | --- |
 | 0 | parallel where independent | `SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730`, `SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730`, `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729` | Antigravity/Claude2 first where available, cross-lane reviewer | Must merge/prove canonical materialization, worker source-root dispatch, and stale-streak cleanup before fleet resume. |
+| 0X | parallel | `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731`, `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731` | Antigravity/Claude2 first where available | Repair #4385 nonexistent anchor and move #4396 through governed PR/closeout handling without counting draft or row-only approval. |
 | 0R | serial | `SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731` | owner: Antigravity, reviewer: Codex per current row | Lets the real supervisor redispatch L12 Pantheon/Agora tasks and records worker run IDs/PIDs or exact blockers. |
 | A | parallel | `L12-VERIFY-OBS-001`, `SUP-L12-LONG-FINALIZE-LEASE-20260729`, `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729`, `SUP-L12-POST-4380-GAP-REVIEW-20260729`, `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` | Antigravity/Claude2 first where available | Exact current-head review and governed closeout. |
 | B | dependency-gated | `SUP-L12-STALE-PR-RETIRE-20260729` | Antigravity + cross reviewer | Waits for fresh #4364 evidence. |

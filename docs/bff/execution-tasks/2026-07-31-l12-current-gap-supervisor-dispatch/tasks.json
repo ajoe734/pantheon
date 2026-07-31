@@ -2,7 +2,7 @@
   "schema_version": 1,
   "packet_id": "2026-07-31-l12-current-gap-supervisor-dispatch",
   "generated_at": "2026-07-31T06:40:20Z",
-  "updated_at": "2026-07-31T11:59:43Z",
+  "updated_at": "2026-07-31T12:25:00Z",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
   "base_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
@@ -81,7 +81,7 @@
         "head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
         "merge_state": "BLOCKED",
         "checks": "Branch CI success",
-        "gap": "task row is review_approved but PR remains open/blocked; needs protected merge and governed closeout before fleet-resume dependency is satisfied"
+        "gap": "task row is review_approved but PR remains open/blocked; #4395 exact-head reconcile found README/evidence.json name nonexistent anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f instead of actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093; needs evidence-anchor repair, protected merge, and governed closeout before fleet-resume dependency is satisfied"
       },
       {
         "pr": 4382,
@@ -105,7 +105,23 @@
         "head": "2d5f692e960a22eef7c4b6d63002996a68468079",
         "merge_state": "BLOCKED",
         "checks": "Branch CI success",
-        "gap": "task row is review_approved but PR remains open/blocked and current PR head differs from the row's noted reviewed head; reconcile exact-head proof before counting it"
+        "gap": "task row is review_approved but PR remains open/blocked and current PR head differs from the row's noted reviewed head; #4396 records review-approved support evidence but is draft and not integrated"
+      },
+      {
+        "pr": 4395,
+        "task": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+        "head": "607a474688566b1a62c4ec24998c4d6864d62a88",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "owner finding recommends reopening/repairing #4385 because current evidence names a nonexistent anchor"
+      },
+      {
+        "pr": 4396,
+        "task": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+        "head": "c4346b8d53941d665acd931d32a98b3802b1e7b2",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success; task row review_approved",
+        "gap": "ReviewBus PR is draft, so auto-integrator reports pr_is_draft; governed ready/merge/closeout handling is still required"
       },
       {
         "pr": 4376,
@@ -189,6 +205,43 @@
             "PR #4385 exact current head f5e70e86e01bde005dae5fed94b151c9bc07f389 is protected-merged or exact-head status is reconciled if superseded",
             "Governed closeout archives SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 as done",
             "Fleet-resume dependency reads this row as done from canonical task-state, not from a stale PR note"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "0X",
+      "parallel": true,
+      "purpose": "Repair concrete exact-head reconcile fallout before Wave 0 can be treated as satisfied.",
+      "tasks": [
+        {
+          "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+          "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head",
+          "target_repo": "pantheon",
+          "target_pr": 4385,
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex2"],
+          "depends_on": [],
+          "acceptance": [
+            "Verify PR #4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 and #4395 evidence before editing",
+            "Repair subject README/evidence.json references from nonexistent 9d53a94a265c55af4c8d15c50ab3751f1440ac0f to actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093, or reopen/supersede #4385 with an equivalent concrete fix if the head moved",
+            "Re-run focused stale failure-streak reaper tests, evidence JSON validation, diff check, trailer check, and config-boundary check",
+            "Deliver through task branch/PR/checks/reviewer approval; do not edit .orchestrator/config.json and do not count review_approved row state alone"
+          ]
+        },
+        {
+          "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+          "title": "Move #4396 running-owner exact-head proof through governed PR/closeout",
+          "target_repo": "pantheon",
+          "target_pr": 4396,
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex2"],
+          "depends_on": [],
+          "acceptance": [
+            "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
+            "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
+            "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+            "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
           ]
         }
       ]
