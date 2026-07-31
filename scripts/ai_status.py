@@ -2895,6 +2895,24 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                     continue
                 expected_value = expected_fields.get(field_name)
                 if expected_value and actual_value != expected_value:
+                    if field_name == "LLM-Agent":
+                        commit_timestamp = run_git_command(
+                            ["show", "-s", "--format=%cI", "HEAD"],
+                            cwd=repository_root,
+                            failure_message=(
+                                "Cannot finalize task: delivered commit timestamp is "
+                                "unavailable for owner reassignment verification."
+                            ),
+                        )
+                        delivery["commit_owner_reassignment"] = (
+                            _verified_done_owner_reassignment(
+                                task,
+                                commit_owner=actual_value,
+                                current_owner=actor,
+                                commit_timestamp=commit_timestamp,
+                            )
+                        )
+                        continue
                     mismatched_fields.append((field_name, expected_value))
         else:
             delivery["commit_trailer_check_skipped"] = True
@@ -6074,6 +6092,102 @@ def _verified_reviewer_reassignment(
         "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
         "and no exact task_reassigned audit event explains the drift."
     )
+
+
+def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
+    payload = (
+        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
+        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
+        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
+        f"{event.get('message') or ''}"
+    )
+    return "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _verified_done_owner_reassignment(
+    task: dict[str, Any],
+    *,
+    commit_owner: str,
+    current_owner: str,
+    commit_timestamp: str,
+) -> dict[str, Any]:
+    """Prove that the latest audited supervisor reassignment explains owner drift."""
+
+    try:
+        payload = read_regular_file_bytes(
+            LOG_FILE,
+            source="canonical done owner reassignment evidence",
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
+            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+        ) from exc
+
+    task_id = str(task.get("id") or "").strip()
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    audited: list[tuple[datetime, dict[str, Any]]] = []
+    for raw_line in payload.splitlines():
+        if not raw_line.strip():
+            continue
+        event = strict_activity_json_loads(raw_line)
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("type") != "task_reassigned"
+            or str(event.get("task_id") or "").strip() != task_id
+            or event.get("agent") != "Orchestrator"
+            or not event.get("old_owner")
+            or not event.get("new_owner")
+            or canonical_agent_name(event.get("old_owner"))
+            == canonical_agent_name(event.get("new_owner"))
+            or str(event.get("event_id") or "")
+            != _supervisor_reassignment_event_id(event)
+        ):
+            continue
+        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        if event_timestamp is None:
+            continue
+        audited.append((event_timestamp, event))
+
+    if not audited:
+        raise SystemExit(
+            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
+            "audited supervisor task_reassigned event."
+        )
+
+    event_timestamp, event = max(audited, key=lambda item: item[0])
+    if not (
+        canonical_agent_name(event.get("old_owner")) == canonical_agent_name(commit_owner)
+        and canonical_agent_name(event.get("new_owner")) == canonical_agent_name(current_owner)
+        and canonical_agent_name(event.get("old_reviewer")) == reviewer
+        and canonical_agent_name(event.get("new_reviewer")) == reviewer
+    ):
+        raise SystemExit(
+            "Cannot finalize task: the latest audited owner reassignment does not "
+            "bind the commit owner to the current owner with reviewer continuity."
+        )
+
+    delivered_at = _parse_utc_timestamp(commit_timestamp)
+    if delivered_at is None:
+        raise SystemExit(
+            "Cannot finalize task: delivered commit timestamp is unavailable for "
+            "owner reassignment ordering."
+        )
+    if event_timestamp < delivered_at:
+        raise SystemExit(
+            "Cannot finalize task: audited owner reassignment must follow the delivered commit."
+        )
+
+    return {
+        "event_id": str(event.get("event_id")),
+        "ts": str(event.get("ts")),
+        "old_owner": canonical_agent_name(event.get("old_owner")),
+        "new_owner": canonical_agent_name(event.get("new_owner")),
+        "reviewer": reviewer,
+        "message": str(event.get("message") or ""),
+        "commit_timestamp": commit_timestamp,
+    }
 
 
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:

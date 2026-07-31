@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
 import multiprocessing
@@ -2547,6 +2548,154 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
+    @staticmethod
+    def _owner_reassignment_event(
+        *,
+        task_id: str = "REG-002",
+        old_owner: str = "Codex2",
+        new_owner: str = "Codex",
+        reviewer: str = "Antigravity",
+        timestamp: str = "2026-07-31T16:22:48Z",
+        message: str = "Supervisor reassigned finalization owner.",
+    ) -> dict[str, str]:
+        digest = hashlib.sha256(
+            (
+                f"{task_id}\0{timestamp}\0{old_owner}\0{new_owner}\0"
+                f"{reviewer}\0{reviewer}\0{message}"
+            ).encode("utf-8")
+        ).hexdigest()
+        return {
+            "event_id": f"supervisor-reassign-{digest}",
+            "ts": timestamp,
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": task_id,
+            "old_owner": old_owner,
+            "new_owner": new_owner,
+            "old_reviewer": reviewer,
+            "new_reviewer": reviewer,
+            "message": message,
+        }
+
+    def test_collect_done_accepts_prior_owner_from_latest_audited_reassignment(self) -> None:
+        event = self._owner_reassignment_event()
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Antigravity",
+            "status": "review_approved",
+        }
+
+        def fake_run_git_command(args: list[str], **_kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "a" * 40,
+                ("show", "-s", "--format=%s", "HEAD"): "REG-002: finish delivery",
+                ("show", "-s", "--format=%b", "HEAD"): (
+                    "LLM-Agent: Codex2\nTask-ID: REG-002\nReviewer: Antigravity\n"
+                ),
+                ("show", "-s", "--format=%an", "HEAD"): "Codex2",
+                ("show", "-s", "--format=%ae", "HEAD"): "codex2@example.com",
+                ("show", "-s", "--format=%cI", "HEAD"): "2026-07-31T16:20:00+00:00",
+                ("status", "--porcelain"): "",
+                ("remote",): "",
+            }
+            return responses[tuple(args)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"TASK_REQUIRE_MERGED_PR": "false"},
+                    clear=False,
+                ),
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(
+                    ai_status,
+                    "run_git_command",
+                    side_effect=fake_run_git_command,
+                ),
+            ):
+                delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["commit_metadata"]["LLM-Agent"], "Codex2")
+        self.assertEqual(
+            delivery["commit_owner_reassignment"]["event_id"],
+            event["event_id"],
+        )
+        self.assertEqual(delivery["commit_owner_reassignment"]["old_owner"], "Codex2")
+        self.assertEqual(delivery["commit_owner_reassignment"]["new_owner"], "Codex")
+
+    def test_prior_owner_reassignment_rejects_forged_audit_identity(self) -> None:
+        event = self._owner_reassignment_event()
+        event["event_id"] = "supervisor-reassign-forged"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(SystemExit, "exact audited supervisor task_reassigned"),
+            ):
+                ai_status._verified_done_owner_reassignment(
+                    {
+                        "id": "REG-002",
+                        "owner": "Codex",
+                        "reviewer": "Antigravity",
+                    },
+                    commit_owner="Codex2",
+                    current_owner="Codex",
+                    commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+
+    def test_prior_owner_reassignment_rejects_event_before_commit(self) -> None:
+        event = self._owner_reassignment_event(timestamp="2026-07-31T16:19:59Z")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(SystemExit, "must follow the delivered commit"),
+            ):
+                ai_status._verified_done_owner_reassignment(
+                    {
+                        "id": "REG-002",
+                        "owner": "Codex",
+                        "reviewer": "Antigravity",
+                    },
+                    commit_owner="Codex2",
+                    current_owner="Codex",
+                    commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+
+    def test_prior_owner_reassignment_rejects_stale_matching_event(self) -> None:
+        stale = self._owner_reassignment_event()
+        latest = self._owner_reassignment_event(
+            old_owner="Claude",
+            timestamp="2026-07-31T16:23:00Z",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(
+                json.dumps(stale) + "\n" + json.dumps(latest) + "\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(SystemExit, "latest audited owner reassignment"),
+            ):
+                ai_status._verified_done_owner_reassignment(
+                    {
+                        "id": "REG-002",
+                        "owner": "Codex",
+                        "reviewer": "Antigravity",
+                    },
+                    commit_owner="Codex2",
+                    current_owner="Codex",
+                    commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
         responses = iter(
             [

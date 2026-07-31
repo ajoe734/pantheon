@@ -9363,6 +9363,64 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
+    def test_assignment_stage_completes_owner_after_canonical_review_handoff(self) -> None:
+        worker = {
+            "run_id": "run-owner-handoff",
+            "task_id": "TASK-HANDOFF",
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-owner-handoff",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state = {
+            "queue": {
+                "events": {
+                    "evt-owner-handoff": {
+                        "status": "started",
+                        "run_id": worker["run_id"],
+                    }
+                }
+            }
+        }
+        task = {
+            "id": "TASK-HANDOFF",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Antigravity",
+        }
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+            },
+            "ready_dispatcher": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                state,
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=False,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        self.assertNotIn("last_error", worker)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+        finalize_queue_event_record.assert_called_once_with(
+            config, state, worker, "completed"
+        )
+        reassign.assert_not_called()
+
     def test_approval_stage_auto_denies_pending_request_after_worker_exit(self) -> None:
         worker = {
             "run_id": "run-dead-approval",
@@ -13206,6 +13264,58 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Codex")
         self.assertIsNone(kwargs["new_status"])
 
+    def test_bound_finalize_failure_never_reassigns_delivery_owner(self) -> None:
+        config = {
+            **self.config,
+            "worker_reassignment": {
+                **self.config["worker_reassignment"],
+                "owner_fallbacks": {
+                    **self.config["worker_reassignment"]["owner_fallbacks"],
+                    "Claude": ["Grok", "Gemini"],
+                },
+            },
+        }
+        worker = {
+            "task_id": "RUN-BOUND",
+            "agent_id": "claude",
+            "retry_count": 5,
+            "run_id": "claude-run-bound",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "RUN-BOUND",
+                    "status": "review_approved",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "review_binding": {
+                        "pr": 4407,
+                        "head_sha": "a" * 40,
+                        "head_branch": "task/RUN-BOUND",
+                        "base": "dev",
+                    },
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+                force=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
 
 class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def _make_fake_proc(self, entries: dict[int, str | None]) -> Path:
@@ -13764,6 +13874,53 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 metrics["last_measurements"]["boot_reconciliation"]["counts"]["started_queue_records_requeued"],
                 1,
             )
+
+    def test_reconcile_runtime_completes_owner_whose_task_reached_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, state, worker, write_activity_log = self._missing_worker_case(
+                root,
+                task_id="OPS-OWNER-HANDOFF",
+                task_status="review",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=2,
+            )
+
+            self.assertEqual(worker["status"], "completed")
+            self.assertNotIn("next_retry_at", worker)
+            self.assertNotIn("last_error", worker)
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-owner-handoff"]["status"],
+                "completed",
+            )
+            event_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+            self.assertEqual(event_types, ["worker_completed"])
+
+    def test_reconcile_runtime_owner_handoff_stays_complete_after_reviewer_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-OWNER-APPROVED",
+                task_status="review_approved",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=2,
+            )
+
+            self.assertEqual(worker["status"], "completed")
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertFalse(changed)
+            self.assertEqual(worker["status"], "completed")
+            write_activity_log.assert_not_called()
 
     def test_reconcile_queue_records_fails_started_event_when_worker_already_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
