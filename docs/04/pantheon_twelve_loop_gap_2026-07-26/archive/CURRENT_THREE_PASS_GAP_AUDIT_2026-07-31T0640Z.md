@@ -14,6 +14,8 @@ Supervisor re-dispatch addendum observed: `2026-07-31T12:58:21Z`
 
 Worker preemption churn addendum observed: `2026-07-31T13:00:37Z`
 
+Scheduler root-cause addendum observed: `2026-07-31T13:25:39Z`
+
 Repository base inspected: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
 
 Status roots inspected:
@@ -172,6 +174,35 @@ Worker preemption churn readback at `2026-07-31T13:00:37Z`:
   repaired or governed-blocked before more downstream twelve-loop product work
   is dispatched.
 
+Scheduler root-cause readback at `2026-07-31T13:25:39Z`:
+
+- The repeated `SIGTERM 15` exits were caused by an architecture mismatch, not
+  by the Wave 0X task content. `higher_priority_ready_task_exists()` considered
+  raw task status while the dispatcher separately applied provider eligibility,
+  unchanged-event cooldown, and failure-loop/chair-triage gates. A task that
+  could not actually dispatch could therefore preempt a healthy new worker and
+  leave the fleet idle.
+- PR #4399, task `SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731`, makes
+  preemption and dispatch share one lifecycle-candidate decision and adds a
+  five-minute new-worker stability grace. Exact head
+  `a924a6f3c0c54982d7efe145750cc99c57bc7f2e` passed 486 focused supervisor
+  and dispatch-policy tests plus replay of the actual 13:01Z worker/task state.
+  Branch CI is green and the PR is ready, but it remains open/`BLOCKED`; the
+  fix is not yet live.
+- A second independent runtime defect remains: the live command root repeatedly
+  logs `run_scan` and `trim_seen_events` TypeError failures when legacy
+  `seen_event_keys` values are compared. PR #4397,
+  `SUP-SEEN-EVENT-KEYS-NONNULL-20260731`, is green but still open/`BLOCKED` and
+  not live-promoted.
+- The live supervisor PID `1633710` remains alive and caught up, but is idle
+  with zero active workers. Heartbeat alone is therefore insufficient proof of
+  a usable fleet while scan phases fail and the preemption fix is absent.
+- Do not create V3 execution pressure or release Wave D/E until #4397 and #4399
+  are merged/live-promoted and a canary worker survives beyond the grace window
+  without erroneous priority preemption. After that proof, use new superseding
+  IDs for the V2 rows because their current task/agent pairs carry failure-loop
+  streaks.
+
 Current PR readback:
 
 | PR | Task / purpose | Head | State | Current gap |
@@ -185,6 +216,8 @@ Current PR readback:
 | #4386 | `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` | `2d5f692e960a22eef7c4b6d63002996a68468079` | open, `BLOCKED` | Canonical task row is `review_approved`, but PR is still open/blocked; current PR head differs from the row's noted reviewed head, so exact-head/closeout must be reconciled before counted. |
 | #4395 | `SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731` | `f68827c8e17d6a1f081afe24f62ba85c116166e8` | open, `BLOCKED` | Branch CI and Pantheon canonical review gate are green; Antigravity reviewed this exact head, but auto-integrator still blocks on merge state. Owner finding identifies a nonexistent evidence anchor in #4385 and recommends reopening/repair rather than counting #4385 done. |
 | #4396 | `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` | `19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f` | open, `BLOCKED` | No longer draft; Branch CI and Pantheon canonical review gate are green, but auto-integrator still blocks on merge state and missing Human/Ops root-freeze exact-head context. |
+| #4397 | `SUP-SEEN-EVENT-KEYS-NONNULL-20260731` | `fd67904e2c1adb7256d4d9d9dc618105346be424` | open, `BLOCKED` | CI and canonical review are green, but the legacy seen-event normalization fix is not merged or live-promoted; live scan phases still throw TypeError. |
+| #4399 | `SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731` | `a924a6f3c0c54982d7efe145750cc99c57bc7f2e` | open, `BLOCKED` | Branch CI is green and PR is ready; still needs governed review/merge, live promotion, restart/readback, and a worker-survival canary. |
 | #4363 | `SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729` | `94695276e2d174505a107ccaa4346efb1692575e` | open, `BEHIND` | Must be rebased/refreshed before review or merge can be counted. |
 | #4372 | `SUP-L12-STALE-PR-RETIRE-20260729` | `07f163cb21e047a491b1b90c5422dbba69ea0563` | open, `BEHIND` | Must wait for fresh accepted #4364 evidence, then rebase/refresh. |
 
@@ -239,31 +272,37 @@ Missing development:
    blockers are merged/live-promoted/closed out, let the real supervisor
    redispatch the L12 Pantheon/Agora task graph and record active worker
    run IDs/PIDs or exact blockers.
-5. `L12-FE-TRUTH-001`: finish execute-plans truth UI/state acceptance against
+5. `SUP-SEEN-EVENT-KEYS-NONNULL-20260731`: merge/live-promote #4397 and prove
+   `run_scan` plus `trim_seen_events` complete without legacy-null TypeError
+   across repeated supervisor cycles.
+6. `SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731`: merge/live-promote #4399,
+   then prove preemption uses the same dispatch eligibility gates and preserves
+   a new worker for the configured five-minute stability window.
+7. `L12-FE-TRUTH-001`: finish execute-plans truth UI/state acceptance against
    the Pantheon BFF truth contract.
-6. `L12-VERIFY-LEARN-REAL-VERIFIER-001`: implement real cross-service learning
+8. `L12-VERIFY-LEARN-REAL-VERIFIER-001`: implement real cross-service learning
    verifier behavior replacing the rejected self-attesting script.
-7. `L12-VERIFY-KNOW-001`: run and archive the real knowledge verifier drill.
-8. `L12-VERIFY-RUNTIME-001`: run and archive the real runtime/capital/deployment
+9. `L12-VERIFY-KNOW-001`: run and archive the real knowledge verifier drill.
+10. `L12-VERIFY-RUNTIME-001`: run and archive the real runtime/capital/deployment
    verifier drill.
-9. `L12-VERIFY-LEARN-001`: run and archive learning proof only after the real
+11. `L12-VERIFY-LEARN-001`: run and archive learning proof only after the real
    verifier rebuild is accepted.
-10. `L12-VERIFY-OBS-001`: finish exact-head review/merge/archive of the real
+12. `L12-VERIFY-OBS-001`: finish exact-head review/merge/archive of the real
    observability verifier proof.
-11. `L12-HOSTED-001`: prove hosted FE/BFF exact commit identities, restart,
+13. `L12-HOSTED-001`: prove hosted FE/BFF exact commit identities, restart,
    no-duplicate dispatch, auth/tenant negatives, and safe-write posture.
-12. `L12-CLOSE-001`: final closeout proving every loop and excluding stale
+14. `L12-CLOSE-001`: final closeout proving every loop and excluding stale
     proof.
-13. Support PR cleanup: #4363 and #4372 remain stale/behind; #4376 and #4364
+15. Support PR cleanup: #4363 and #4372 remain stale/behind; #4376 and #4364
     still need exact-head review/approval; #4386 remains open/blocked even
     though its task row says review-approved; #4396 records current-head support
     evidence and is no longer draft, but remains blocked from protected
     merge/governed closeout.
-14. Dev-bridge task-spec update gap: an updated packet cannot revise already
+16. Dev-bridge task-spec update gap: an updated packet cannot revise already
     materialized task IDs; it fails with `Bridge assignment conflict`. Current
     workaround is superseding V2 task IDs, but the architecture still needs an
     explicit update/supersede policy and validation.
-15. Worker preemption/retry gap: V2 workers launched repeatedly and then exited
+17. Worker preemption/retry gap: V2 workers launched repeatedly and then exited
     with `SIGTERM 15`; the supervisor returned rows to `todo` instead of
     completing development. Fleet completion remains unproven until
     retry/restart produces terminal reviewed/archived evidence.
@@ -290,6 +329,12 @@ Missing validation:
 - Worker runtime preemption/retry validation proving `SIGTERM 15` worker exits
   are reconciled to a fresh run, terminal blocker, or governed retry, not left
   as recurring todo churn.
+- Shared eligibility regression proving a task blocked by provider readiness,
+  unchanged-event cooldown, or failure-loop policy cannot preempt a worker.
+- New-worker grace regression and live canary proving a newly started worker is
+  not priority-preempted during its first five minutes.
+- Repeated-cycle `run_scan`/`trim_seen_events` proof after #4397 live promotion,
+  with no seen-event TypeError in supervisor logs.
 - Rebase/current-dev evidence refresh for #4363/#4372.
 - Real service-bound verifiers with before/after readbacks.
 - Tenant/RBAC/MFA/auth negative checks where applicable.

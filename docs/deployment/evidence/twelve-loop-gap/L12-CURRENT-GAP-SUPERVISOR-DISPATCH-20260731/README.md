@@ -12,6 +12,8 @@ Supervisor redispatch updated: `2026-07-31T12:58:21Z`
 
 Worker preemption churn updated: `2026-07-31T13:00:37Z`
 
+Scheduler root cause updated: `2026-07-31T13:25:39Z`
+
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
 work.
@@ -80,6 +82,19 @@ work.
   `codex-20260731T125821Z-f615aa77` and
   `codex-20260731T125858Z-acfa9855` also ending in `exit_code=143`,
   `signal=15`.
+- Root-cause replay showed preemption used raw task readiness while dispatch
+  separately enforced provider, cooldown, and failure-loop eligibility. This
+  mismatch allowed a task that could not dispatch to kill a running worker.
+- PR #4399 exact head `a924a6f3c0c54982d7efe145750cc99c57bc7f2e`
+  centralizes the eligibility decision and adds a five-minute new-worker grace.
+  486 focused tests and the actual 13:01Z replay pass; Branch CI is green, but
+  the PR is open/`BLOCKED` and not live-promoted.
+- PR #4397 fixes the independent legacy `seen_event_keys` TypeError. It is
+  green but open/`BLOCKED`; live `run_scan` and `trim_seen_events` errors mean
+  heartbeat freshness alone is not fleet readiness proof.
+- No V3 superseding tasks are released until #4397 and #4399 are merged/live,
+  repeated scan cycles are clean, and a real canary worker survives beyond the
+  stability grace. This prevents another knowingly broken dispatch cycle.
 
 ## Acceptance Boundary
 

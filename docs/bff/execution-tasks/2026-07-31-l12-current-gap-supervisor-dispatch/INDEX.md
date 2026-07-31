@@ -12,6 +12,8 @@ Supervisor redispatch updated: `2026-07-31T12:58:21Z`
 
 Worker preemption churn updated: `2026-07-31T13:00:37Z`
 
+Scheduler root cause updated: `2026-07-31T13:25:39Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md`
 
@@ -39,7 +41,8 @@ fleets, with maximum safe parallelism and no Codex conversation subagents.
 ## Wave Summary
 
 1. Wave 0 repairs/proves the supervisor DevTaskPacket materialization path,
-   worker worktree source-root path, and stale failure-streak cleanup.
+   worker worktree source-root path, stale failure-streak cleanup, legacy
+   seen-event normalization, and dispatch-eligible priority preemption.
 2. Wave 0X repairs the newly discovered #4385 nonexistent evidence anchor and
    moves #4396 current-head support proof through governed PR/closeout handling.
 3. Wave 0R resumes L12 fleets through the existing real supervisor controller
@@ -117,6 +120,25 @@ materialization, but not auto-worker completion.
 At `2026-07-31T13:00:37Z`, both V2 tasks had repeated SIGTERM/preemption
 cycles and were still `todo`. The immediate fleet blocker is now worker
 preemption/lifecycle churn, not packet creation.
+
+## 2026-07-31T13:25Z Scheduler Root-Cause Addendum
+
+The churn has two separate code/runtime causes:
+
+- #4399 (`SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731`) fixes the scheduler
+  architecture so higher-priority preemption and normal dispatch share the same
+  provider/cooldown/failure-loop eligibility ladder, with a five-minute
+  new-worker grace. Exact head `a924a6f3c0c54982d7efe145750cc99c57bc7f2e`
+  passed 486 focused tests and the actual 13:01Z state replay; Branch CI is
+  green, but the PR remains open/`BLOCKED` and is not live.
+- #4397 (`SUP-SEEN-EVENT-KEYS-NONNULL-20260731`) fixes legacy
+  `seen_event_keys` normalization. It is green but open/`BLOCKED`; the live
+  command root still logs `run_scan` and `trim_seen_events` TypeErrors.
+
+Both repairs are Wave 0 prerequisites. Do not release Wave D/E or supersede V2
+with V3 until both are merged/live-promoted and a real canary worker survives
+beyond the five-minute grace window. V3 must use new IDs because the V2
+task/agent pairs already carry failure-loop streaks.
 
 ## Completion Boundary
 
