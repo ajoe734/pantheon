@@ -1,0 +1,39 @@
+{
+  "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "owner": "Antigravity",
+  "reviewer": "Human/Ops",
+  "status": "review_approved",
+  "promoted_target_commit": "012dab969455e7146f2437159d7d38fc5904a195",
+  "pr_number": 4430,
+  "incumbent_supervisor": {
+    "pid": 3319508,
+    "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
+  },
+  "promoted_supervisor": {
+    "pid": 3497098,
+    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/sup-agent-alias-guard-live-promotion-20260731",
+    "commit": "012dab969455e7146f2437159d7d38fc5904a195",
+    "log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-alias-guard-live-promotion-20260731T232416Z.log"
+  },
+  "live_config_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+  "live_config_sha256_unmodified": true,
+  "intentional_restart_recorded": true,
+  "runtime_admission_lock_held_during_term": true,
+  "active_worker_leases_preserved": 0,
+  "duplicate_tasks_found": 0,
+  "provider_health": {
+    "antigravity": {
+      "supported": true,
+      "can_auto_deliver": true,
+      "verified": "verified",
+      "selected_primary_model": "gemini-3.6-flash-low"
+    }
+  },
+  "verification": {
+    "discover_only_preflight": "passed",
+    "supervisor_swap_execution": "passed",
+    "live_pid_post_check": "passed",
+    "live_config_hash_check": "passed"
+  }
+}
