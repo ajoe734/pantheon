@@ -7626,6 +7626,177 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             )
         )
 
+    def test_priority_preemption_respects_dispatch_cooldown(self) -> None:
+        worker = {
+            "run_id": "codex-wave0-v2",
+            "task_id": "SUP-L12-WAVE0-V2",
+            "agent_id": "codex",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        task_map = {
+            "SUP-L12-WAVE0-V2": {
+                "id": "SUP-L12-WAVE0-V2",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+            "BLOCKED-FINALIZE": {
+                "id": "BLOCKED-FINALIZE",
+                "status": "review_approved",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+        }
+        resolver = supervisor.task_resolver_for_config(self.config, task_map)
+        finalize_event = supervisor.build_dispatch_event(
+            task_map["BLOCKED-FINALIZE"],
+            "Codex",
+            supervisor.REASON_OWNED_FINALIZE,
+            resolver,
+        )
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {
+                finalize_event["key"]: "2026-07-31T13:00:00Z",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:01:00Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:16:00Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_priority_preemption_respects_failure_loop_triage(self) -> None:
+        worker = {
+            "run_id": "codex-wave0-v2",
+            "task_id": "SUP-L12-WAVE0-V2",
+            "agent_id": "codex",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        task_map = {
+            "SUP-L12-WAVE0-V2": {
+                "id": "SUP-L12-WAVE0-V2",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+            "FAILING-REVIEW": {
+                "id": "FAILING-REVIEW",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "FAILING-REVIEW:codex": {
+                        "task_id": "FAILING-REVIEW",
+                        "provider": "codex",
+                        "count": 2,
+                    }
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_priority_preemption_gives_new_worker_a_stability_grace(self) -> None:
+        worker = {
+            "run_id": "codex-wave0-v2",
+            "task_id": "SUP-L12-WAVE0-V2",
+            "agent_id": "codex",
+            "status": "running",
+            "lease_acquired_at": "2026-07-31T13:00:00Z",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        task_map = {
+            "SUP-L12-WAVE0-V2": {
+                "id": "SUP-L12-WAVE0-V2",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+            "URGENT-REVIEW": {
+                "id": "URGENT-REVIEW",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:01:00Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:05:01Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
     def test_l12_review_preempts_unrelated_same_tier_claude2_review(self) -> None:
         config = {
             "schema": {
