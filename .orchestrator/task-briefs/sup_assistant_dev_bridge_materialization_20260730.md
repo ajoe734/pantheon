@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair supervisor DevTaskPacket materialization readback
-- Status: review_approved
-- Owner: Codex2
+- Status: in_progress
+- Owner: Codex
 - Reviewer: Antigravity
-- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex tool auth: GitHub CLI auth unavailable
+- Next: Owner composed current `origin/dev` into recovery PR #4411 without changing the reviewed DevTaskPacket implementation, orchestrator configuration, or evidence claims. After focused closeout validation and push, hand off the new exact head to Antigravity for a fresh bound review.
 
 ## Summary
 Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.
