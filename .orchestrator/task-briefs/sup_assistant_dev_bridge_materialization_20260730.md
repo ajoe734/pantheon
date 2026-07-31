@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair supervisor DevTaskPacket materialization readback
-- Status: in_progress
-- Owner: Codex2
+- Status: review_approved
+- Owner: Codex
 - Reviewer: Antigravity
-- Next: Human/Ops root-freeze status 51444193493 is now successful on reviewed head f13748e14145, but dev strict-base protection correctly refused merge because the PR is behind. Resume owner closeout: merge current origin/dev into the existing task branch without changing scope, rerun CI/tests, hand off the new exact head to Antigravity for bound review, then Human/Ops will rebind the root gate and integrate before G1 admission.
+- Next: PR #4390 merged the reviewed exact head 93dddc1436eeb57256480523837f6e1b888ec77a into dev as squash commit 314e02f2b922f75c6aa25f200b6f326fb674a24c after Branch CI, canonical review, and root-freeze gates passed. Owner closeout re-ran py_compile and the focused Dev Bridge reliability suite (29 passed). This task-brief-only follow-up preserves the reviewed implementation and evidence while restoring merge-commit ancestry required by the installed governed done runtime.
 
 ## Summary
 Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.
