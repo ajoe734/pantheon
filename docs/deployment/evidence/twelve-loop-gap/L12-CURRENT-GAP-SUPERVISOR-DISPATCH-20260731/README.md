@@ -8,6 +8,8 @@ Updated: `2026-07-31T12:25:00Z`
 
 Pipeline status updated: `2026-07-31T12:46:41Z`
 
+Supervisor redispatch updated: `2026-07-31T12:58:21Z`
+
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
 work.
@@ -60,6 +62,17 @@ work.
 - Auto-integrator dry-runs at this observation block #4395, #4396, #4385, and
   #4386 on `mergeStateStatus=BLOCKED`. This is a closeout/protected-gate
   blocker, not a twelve-loop product completion signal.
+- Requeueing current-head acceptance against the original Wave 0X task IDs
+  failed with `Bridge assignment conflict`; the original task IDs are
+  immutable-bound to `pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z`.
+- Superseding packet
+  `pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z` was processed and
+  admitted, materializing V2 tasks
+  `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731` and
+  `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731`.
+- Both V2 tasks auto-started workers, but both worker runs exited with
+  `exit_code=143`, `signal=15`, and were returned to `todo` after supervisor
+  preemption. Auto-worker development completion remains unproven.
 
 ## Acceptance Boundary
 
