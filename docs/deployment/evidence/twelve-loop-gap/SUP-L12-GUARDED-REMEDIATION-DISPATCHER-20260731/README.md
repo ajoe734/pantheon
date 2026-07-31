@@ -10,13 +10,22 @@ from PR #4394 exact head
 The supervisor's later Codex/Codex2 ownership redispatch is anchored at
 `2a8c108ab1db9689e16f63528470756bb5379450`; the earlier implementation and
 pre-review actor records remain historical evidence rather than being rewritten.
+Codex2's exact-head review then identified truncated provider-resolution
+evidence being accepted as exact. The owner remediation is anchored at
+`64dc193cd652dc8a3d539752bb3e0c9840fb3801`; it requires exact catalog defaults,
+readiness identity, ordered first-ready evaluation, owner exclusion, and derived
+fallback evidence for active rows, archived rows, canonical readback, and
+admission receipts.
 
 The local acceptance cut proves exact catalog validation, legacy compatibility,
 G1-only dry-run planning, dependency/archive handling, provider readiness
 fallback recording, replay and partial-state rejection, concurrent artifact
 conflict rejection, real authoritative journal atomic failure behavior,
 two-process contention, prepared-receipt crash recovery, and exact canonical
-readback. The legacy no-catalog CLI remains the original 25-task profile;
+readback. Full-G1 negative regressions now corrupt all 25 rows across active,
+archive, canonical-readback, and admission-receipt paths and prove the
+dispatcher rejects truncated or contradictory assignment evidence. The legacy
+no-catalog CLI remains the original 25-task profile;
 the current-proof catalog requires explicit `--current` (or its exact catalog
 path), and current apply does not accept Human/Ops as a substitute actor.
 
