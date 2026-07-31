@@ -2696,6 +2696,40 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     commit_timestamp="2026-07-31T16:20:00+00:00",
                 )
 
+    def test_prior_owner_reassignment_requires_reviewer_continuity(self) -> None:
+        owner_change = self._owner_reassignment_event()
+        reviewer_change = self._owner_reassignment_event(
+            old_owner="Codex",
+            new_owner="Codex",
+            reviewer="Antigravity",
+            timestamp="2026-07-31T16:23:00Z",
+            message="Supervisor reassigned reviewer continuity.",
+        )
+        reviewer_change["new_reviewer"] = "Claude"
+        reviewer_change["event_id"] = ai_status._supervisor_reassignment_event_id(
+            reviewer_change
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(
+                json.dumps(owner_change) + "\n" + json.dumps(reviewer_change) + "\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(SystemExit, "reviewer continuity changed"),
+            ):
+                ai_status._verified_done_owner_reassignment(
+                    {
+                        "id": "REG-002",
+                        "owner": "Codex",
+                        "reviewer": "Antigravity",
+                    },
+                    commit_owner="Codex2",
+                    current_owner="Codex",
+                    commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
         responses = iter(
             [

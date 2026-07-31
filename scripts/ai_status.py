@@ -6139,8 +6139,6 @@ def _verified_done_owner_reassignment(
             or event.get("agent") != "Orchestrator"
             or not event.get("old_owner")
             or not event.get("new_owner")
-            or canonical_agent_name(event.get("old_owner"))
-            == canonical_agent_name(event.get("new_owner"))
             or str(event.get("event_id") or "")
             != _supervisor_reassignment_event_id(event)
         ):
@@ -6150,13 +6148,27 @@ def _verified_done_owner_reassignment(
             continue
         audited.append((event_timestamp, event))
 
-    if not audited:
+    owner_changes = [
+        item
+        for item in audited
+        if canonical_agent_name(item[1].get("old_owner"))
+        != canonical_agent_name(item[1].get("new_owner"))
+    ]
+    if not owner_changes:
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
             "audited supervisor task_reassigned event."
         )
 
-    event_timestamp, event = max(audited, key=lambda item: item[0])
+    latest_timestamp = max(item[0] for item in owner_changes)
+    latest_owner_changes = [
+        item for item in owner_changes if item[0] == latest_timestamp
+    ]
+    if len(latest_owner_changes) != 1:
+        raise SystemExit(
+            "Cannot finalize task: latest audited owner reassignment ordering is ambiguous."
+        )
+    event_timestamp, event = latest_owner_changes[0]
     if not (
         canonical_agent_name(event.get("old_owner")) == canonical_agent_name(commit_owner)
         and canonical_agent_name(event.get("new_owner")) == canonical_agent_name(current_owner)
@@ -6166,6 +6178,21 @@ def _verified_done_owner_reassignment(
         raise SystemExit(
             "Cannot finalize task: the latest audited owner reassignment does not "
             "bind the commit owner to the current owner with reviewer continuity."
+        )
+    later_reviewer_change = next(
+        (
+            later_event
+            for later_timestamp, later_event in audited
+            if later_timestamp > event_timestamp
+            and canonical_agent_name(later_event.get("old_reviewer"))
+            != canonical_agent_name(later_event.get("new_reviewer"))
+        ),
+        None,
+    )
+    if later_reviewer_change is not None:
+        raise SystemExit(
+            "Cannot finalize task: reviewer continuity changed after the audited "
+            "owner reassignment."
         )
 
     delivered_at = _parse_utc_timestamp(commit_timestamp)

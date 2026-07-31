@@ -6828,6 +6828,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
                 stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "drain_assistant_dev_packet_inbox", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
