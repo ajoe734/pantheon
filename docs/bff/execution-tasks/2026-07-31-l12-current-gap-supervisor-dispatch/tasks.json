@@ -2,10 +2,27 @@
   "schema_version": 1,
   "packet_id": "2026-07-31-l12-current-gap-supervisor-dispatch",
   "generated_at": "2026-07-31T06:40:20Z",
-  "updated_at": "2026-07-31T13:25:39Z",
+  "updated_at": "2026-07-31T13:39:17Z",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
   "base_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+  "guarded_remediation": {
+    "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+    "bootstrap_task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "dispatch_contract": "program-specific-guarded-dispatch",
+    "generic_dev_task_packet_for_product_tasks": false,
+    "new_product_task_count": 28,
+    "maximum_safe_parallel_frontier": 25,
+    "verified_baseline": {
+      "canonical_loops": 12,
+      "implemented_controller_contracts": 3,
+      "missing_controller_contracts": 9,
+      "archived_original_rows": 18,
+      "current_validator_and_checksum_pass": 2,
+      "current_evidence_revalidation_required": 16,
+      "both_pass_task_ids": ["L12-DIST-001", "L12-MANIFEST-001"]
+    }
+  },
   "do_not_use": [
     "Codex collaboration subagents",
     "manual .orchestrator/config.json edits",
@@ -17,7 +34,7 @@
     "Lovable publish status as Pantheon dev delivery truth"
   ],
   "authoritative_current_state": {
-    "observed_at": "2026-07-31T13:25:39Z",
+    "observed_at": "2026-07-31T13:39:17Z",
     "origin_dev": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
     "task_state_updated_at": "2026-07-31T06:40:20Z",
     "supervisor": {
@@ -45,6 +62,7 @@
     "wave0_required_before_l12_fleet_resume": [
       "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
       "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
       "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
       "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
       "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
@@ -300,6 +318,22 @@
             "A real canary worker remains alive beyond the configured five-minute stability grace unless it reaches a legitimate terminal state",
             "The canary records exact worker run ID, PID, task row transitions, and scan logs",
             "No .orchestrator/config.json edit is required"
+          ]
+        },
+        {
+          "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+          "title": "Extend the program-specific guarded dispatcher for current-proof remediation",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity", "Claude2", "Claude", "Codex2", "Codex"],
+          "reviewer_preference": ["Claude2", "Antigravity", "Codex2", "Codex"],
+          "depends_on": ["SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"],
+          "acceptance": [
+            "Consume guarded-remediation-tasks.json without narrowing its 28 product task contracts",
+            "Preserve loop, maturity, authority, evidence, artifact-conflict, product-level, and Human/Ops fields",
+            "Validate the complete immutable graph before mutation and fail atomically on duplicate IDs, dangling dependencies, overlap, stale command root, replay, or partial materialization",
+            "Add validate-only, dry-run, replay, concurrent conflict, archived-dependency, and exact canonical readback regressions",
+            "Deliver by clean branch, PR, exact-head review, protected merge, live command-root promotion, and dispatcher dry-run",
+            "Do not edit .orchestrator/config.json and do not use generic DevTaskPacket for the 28 product tasks"
           ]
         },
         {
@@ -613,7 +647,7 @@
     {
       "wave": "D",
       "parallel": true,
-      "purpose": "Run independent product proof lanes after canonical dispatch is proven.",
+      "purpose": "Run independent product proof lanes only after the guarded current-proof release gate is approved.",
       "tasks": [
         {
           "id": "L12-FE-TRUTH-001",
@@ -622,6 +656,7 @@
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2", "Antigravity"],
           "depends_on": [
+            "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
             "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
             "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
             "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
@@ -642,6 +677,7 @@
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
           "depends_on": [
+            "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
             "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
             "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
             "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
@@ -662,6 +698,7 @@
           "owner_preference": ["Claude2", "Antigravity"],
           "reviewer_preference": ["Antigravity", "Claude2"],
           "depends_on": [
+            "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
             "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
             "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
             "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
@@ -683,6 +720,7 @@
           "owner_preference": ["Antigravity", "Claude2"],
           "reviewer_preference": ["Claude2", "Antigravity"],
           "depends_on": [
+            "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
             "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
             "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
             "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"

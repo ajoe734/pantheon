@@ -14,6 +14,8 @@ Worker preemption churn updated: `2026-07-31T13:00:37Z`
 
 Scheduler root cause updated: `2026-07-31T13:25:39Z`
 
+Independent omission re-audit updated: `2026-07-31T13:39:17Z`
+
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
 work.
@@ -26,6 +28,10 @@ work.
   `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md`
 - Machine-readable task graph:
   `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json`
+- Program-specific guarded remediation graph:
+  `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json`
+- Current catalog/evidence replay baseline:
+  `docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json`
 
 ## Verified Current Facts
 
@@ -95,6 +101,16 @@ work.
 - No V3 superseding tasks are released until #4397 and #4399 are merged/live,
   repeated scan cycles are clean, and a real canary worker survives beyond the
   stability grace. This prevents another knowingly broken dispatch cycle.
+- Current catalog/BFF controller coverage is 3/12; nine canonical controller
+  implementations and one shared integration gate are missing.
+- Replaying the eighteen archived original task `review_file` manifests shows
+  only DIST and MANIFEST pass both the current ten-rule validator and companion
+  checksum; sixteen current evidence revalidation tasks are required.
+- The complete new product remediation graph is
+  `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json`.
+  It contains 28 product tasks with a maximum safe G1 frontier of 25.
+- Product tasks remain held for the program-specific guarded dispatcher; they
+  are not bulk-sent through the generic DevTaskPacket bridge.
 
 ## Acceptance Boundary
 
