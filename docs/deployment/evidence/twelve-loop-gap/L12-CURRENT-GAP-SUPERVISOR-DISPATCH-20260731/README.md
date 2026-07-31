@@ -1,0 +1,44 @@
+# L12 Current Gap Supervisor Dispatch Evidence
+
+Evidence ID: `L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731`
+
+Observed: `2026-07-31T06:40:20Z`
+
+This evidence packet records the current three-pass gap audit and the
+supervisor/auto-worker execution graph for completing the remaining twelve-loop
+work.
+
+## Files
+
+- Gap audit:
+  `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md`
+- Execution packet:
+  `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md`
+- Machine-readable task graph:
+  `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json`
+
+## Verified Current Facts
+
+- `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
+- `ai-status.json updated_at = 2026-07-31T06:40:20Z`
+- authoritative task-state checkpoint `updated_at = 2026-07-31T06:40:20Z`
+- supervisor lifecycle `running`
+- supervisor task-state shadow `ok=true`, `caught_up=true`
+- active auto workers observed: `0`
+- `L12-VERIFY-LEARN-REAL-VERIFIER-001` is missing from canonical task-state
+- prior `pkt-l12-actionable-gap-execution-20260730T163500Z` receipt is not
+  accepted as proof because canonical task materialization is absent
+
+## Acceptance Boundary
+
+This packet is complete as a gap/dispatch artifact when:
+
+1. JSON validates.
+2. The SHA-256 manifest validates.
+3. The branch passes repository diff/trailer checks.
+4. The task packet is handed to supervisor/dev-bridge.
+5. The handoff is accepted only if each intended task appears in canonical
+   task-state or remains explicitly gated behind Wave 0.
+
+The twelve loops themselves are not complete until the downstream `L12-CLOSE-001`
+row is archived done with hosted/verifier evidence.

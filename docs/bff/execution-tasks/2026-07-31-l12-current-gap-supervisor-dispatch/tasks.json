@@ -1,0 +1,347 @@
+{
+  "schema_version": 1,
+  "packet_id": "2026-07-31-l12-current-gap-supervisor-dispatch",
+  "generated_at": "2026-07-31T06:40:20Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+  "dispatch_model": "real-supervisor-auto-workers",
+  "base_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+  "do_not_use": [
+    "Codex collaboration subagents",
+    "manual .orchestrator/config.json edits",
+    "activity-log-only dispatch as success",
+    "DevTaskPacket receipt without canonical task-state materialization",
+    "stale behind PR heads as proof",
+    "merged PR without governed task closeout as done",
+    "legacy front-ai-trading-system",
+    "Lovable publish status as Pantheon dev delivery truth"
+  ],
+  "authoritative_current_state": {
+    "observed_at": "2026-07-31T06:40:20Z",
+    "origin_dev": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+    "task_state_updated_at": "2026-07-31T06:40:20Z",
+    "supervisor": {
+      "lifecycle": "running",
+      "task_state_shadow_ok": true,
+      "task_state_shadow_caught_up": true,
+      "mode_status": "idle",
+      "active_auto_workers": 0
+    },
+    "known_false_positive_dispatch": {
+      "packet_id": "pkt-l12-actionable-gap-execution-20260730T163500Z",
+      "observed": "receipt/admission said dispatched for eight tasks",
+      "contradiction": "task IDs including L12-VERIFY-LEARN-REAL-VERIFIER-001 are absent from canonical ai-status/task-state",
+      "required_rule": "downstream dispatch is not accepted until Wave 0 proves canonical materialization/readback"
+    },
+    "open_prs": [
+      {
+        "pr": 4390,
+        "task": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "head": "f13748e14145f432c4d8897e945552aef899c1a7",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success; Pantheon canonical review gate success",
+        "gap": "protected merge/root-freeze and GitHub approving review are absent"
+      },
+      {
+        "pr": 4382,
+        "task": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+        "head": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "canonical row still carries stale rejection text and no approving exact-head review"
+      },
+      {
+        "pr": 4364,
+        "task": "L12-VERIFY-OBS-001",
+        "head": "f3756cec99a8c44d47c075a475c25cf86a4d3171",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "needs exact-head review/approval and governed closeout"
+      },
+      {
+        "pr": 4376,
+        "task": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+        "head": "6f63b5f54c28514a68c6a7b3599889adf98553f9",
+        "merge_state": "BLOCKED",
+        "checks": "Branch CI success",
+        "gap": "needs exact-head review/approval and governed closeout"
+      },
+      {
+        "pr": 4363,
+        "task": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+        "head": "94695276e2d174505a107ccaa4346efb1692575e",
+        "merge_state": "BEHIND",
+        "checks": "old Branch CI success",
+        "gap": "must rebase/refresh evidence against current dev"
+      },
+      {
+        "pr": 4372,
+        "task": "SUP-L12-STALE-PR-RETIRE-20260729",
+        "head": "07f163cb21e047a491b1b90c5422dbba69ea0563",
+        "merge_state": "BEHIND",
+        "checks": "old Branch CI success",
+        "gap": "must wait for accepted #4364 head, then rebase/refresh evidence"
+      }
+    ]
+  },
+  "waves": [
+    {
+      "wave": "0",
+      "parallel": false,
+      "purpose": "Repair/prove supervisor DevTaskPacket materialization before downstream dispatch can be counted.",
+      "tasks": [
+        {
+          "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+          "title": "Merge/prove supervisor DevTaskPacket canonical materialization",
+          "target_repo": "pantheon",
+          "target_pr": 4390,
+          "owner_preference": ["Antigravity", "Claude2", "Codex2"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": [],
+          "acceptance": [
+            "PR #4390 exact head f13748e14145f432c4d8897e945552aef899c1a7 is reviewed and merged through the authorized protected path",
+            "Supervisor-owned drain, not manual Codex workflow, is the dispatch path",
+            "Every admitted task is present in canonical ai-status.json and authoritative task-state checkpoint",
+            "Receipt/admission cannot report success when canonical materialization is missing",
+            "Regression covers the 2026-07-30 activity-log-only false positive",
+            "No .orchestrator/config.json edit is required"
+          ],
+          "dispatch_after_materialization": [
+            "Do not send Wave D/E product tasks until this row is done or equivalent exact-head repair is active in the command root and proven by canonical readback"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "A",
+      "parallel": true,
+      "purpose": "Current-head review, stale PR repair, and dispatch-document review refresh.",
+      "tasks": [
+        {
+          "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+          "title": "Refresh exact-head review for PR #4382 or supersede with this packet",
+          "target_repo": "pantheon",
+          "target_pr": 4382,
+          "owner_preference": ["Codex2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "Stale rejection text from head 7766d704 is cleared only by exact-head review of ca00f813 or a superseding current packet",
+            "The reviewed packet includes L12-FE-TRUTH-001 and L12-VERIFY-LEARN-REAL-VERIFIER-001",
+            "The packet marks #4373 as already merged/archived and does not redispatch it",
+            "JSON, checksums, diff check, trailers, CI, and canonical review gate pass"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-OBS-001",
+          "title": "Finish observability verifier exact-head review and archive",
+          "target_repo": "pantheon",
+          "target_pr": 4364,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "Review exact PR #4364 head f3756cec99a8c44d47c075a475c25cf86a4d3171",
+            "Confirm telemetry/reconciliation/evolution/BFF evidence uses real service boundaries",
+            "Merge and archive governed evidence before hosted proof starts"
+          ]
+        },
+        {
+          "id": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+          "title": "Finish long finalize lease review/closeout",
+          "target_repo": "pantheon",
+          "target_pr": 4376,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2", "Codex2", "Antigravity"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "Review exact PR #4376 head 6f63b5f54c28514a68c6a7b3599889adf98553f9",
+            "Confirm 460 supervisor tests and relevant guard evidence",
+            "Merge and archive governed evidence"
+          ]
+        },
+        {
+          "id": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+          "title": "Rebase runtime reliability PR and refresh evidence",
+          "target_repo": "pantheon",
+          "target_pr": 4363,
+          "owner_preference": ["Claude2", "Antigravity", "Codex"],
+          "reviewer_preference": ["Antigravity", "Claude2", "Codex2"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "PR #4363 is no longer BEHIND current dev",
+            "Closeout evidence is refreshed against 6f87a207 or newer dev",
+            "CI and exact-head review pass",
+            "Governed closeout archives the row"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "B",
+      "parallel": false,
+      "purpose": "Retire stale PR evidence only after observability proof is accepted.",
+      "tasks": [
+        {
+          "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+          "title": "Refresh stale PR retire evidence after #4364 is accepted",
+          "target_repo": "pantheon",
+          "target_pr": 4372,
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2", "Codex2", "Antigravity"],
+          "depends_on": ["L12-VERIFY-OBS-001"],
+          "acceptance": [
+            "Do not count stale #4364 heads",
+            "PR #4372 is rebased/refreshed after accepted #4364 evidence",
+            "CI and exact-head review pass",
+            "Governed closeout archives the row"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "C",
+      "parallel": true,
+      "purpose": "Finalize review-approved support rows through governed status.",
+      "tasks": [
+        {
+          "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+          "title": "Finalize merged-row reconcile support row",
+          "target_repo": "pantheon",
+          "owner_preference": ["Codex", "Claude2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "Review-approved evidence remains valid",
+            "The support row is archived without reopening already archived target rows"
+          ]
+        },
+        {
+          "id": "L12-FLEET-STATUS-SYNC-001",
+          "title": "Finalize fleet status sync support row",
+          "target_repo": "pantheon",
+          "owner_preference": ["Codex", "Codex2", "Antigravity", "Claude2"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "Review-approved evidence still matches current dev",
+            "Governed closeout archives the row"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "D",
+      "parallel": true,
+      "purpose": "Run independent product proof lanes after canonical dispatch is proven.",
+      "tasks": [
+        {
+          "id": "L12-FE-TRUTH-001",
+          "title": "Finish execute-plans frontend truth acceptance",
+          "target_repo": "execute-plans",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-TRUTH-001", "PPL-ALLOC-009"],
+          "acceptance": [
+            "Use ajoe734/execute-plans dev, not legacy front-ai-trading-system",
+            "Evidence binds exact execute-plans commit and Pantheon BFF truth contract",
+            "Frontend truth UI/state behavior proves desired/controller/failure/actual/provenance/deployment truth",
+            "Reviewer approval is recorded before hosted proof starts"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-KNOW-001",
+          "title": "Run real knowledge-loop verifier drill",
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-DIST-001", "L12-ALPHA-001", "L12-TRUTH-001"],
+          "acceptance": [
+            "Real Source/Distillation/Alpha drill evidence is collected",
+            "Before/after readbacks and exact commands/results are archived",
+            "Reviewer-approved evidence manifest is archived"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-RUNTIME-001",
+          "title": "Run real runtime/capital/deployment verifier drill",
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730", "L12-CAP-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
+          "acceptance": [
+            "Real deployment/capital/runtime safety drill evidence is collected",
+            "No live-capital activation is performed",
+            "Safety negative checks and exact readbacks are archived",
+            "Reviewer-approved evidence manifest is archived"
+          ]
+        },
+        {
+          "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+          "title": "Replace rejected learning verifier with real cross-service proof",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity", "Claude2"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": ["SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"],
+          "acceptance": [
+            "Canonical task-state materializes this task; it is currently missing",
+            "scripts/verify_twelve_loop_learning.py no longer self-attests or print-passes",
+            "Verifier performs real Teaching/Agora/Imitation/Consultation calls",
+            "Before/after readbacks, tenant/RBAC negatives, restart/DLQ proof, and no-runtime-mutation assertion are included",
+            "Delivery uses branch, PR, checks, reviewer approval, merge, and governed evidence"
+          ]
+        }
+      ]
+    },
+    {
+      "wave": "E",
+      "parallel": false,
+      "purpose": "Run dependent learning product proof, hosted proof, and final closeout.",
+      "tasks": [
+        {
+          "id": "L12-VERIFY-LEARN-001",
+          "title": "Run accepted learning-loop verifier drill",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity", "Claude2"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": ["L12-VERIFY-LEARN-REAL-VERIFIER-001", "L12-TEACH-001", "L12-IMIT-001", "L12-CONS-001", "L12-TRUTH-001"],
+          "acceptance": [
+            "Uses the rebuilt real verifier, not the rejected self-attesting script",
+            "Archives real Teaching/Agora/Imitation/Consultation evidence",
+            "Includes RBAC negative, restart/DLQ, and no-runtime-mutation checks",
+            "Reviewer approval is recorded before hosted proof starts"
+          ]
+        },
+        {
+          "id": "L12-HOSTED-001",
+          "title": "Prove hosted FE/BFF exact identity and full-stack safety behavior",
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2", "Antigravity"],
+          "depends_on": ["L12-FE-TRUTH-001", "L12-VERIFY-KNOW-001", "L12-VERIFY-LEARN-001", "L12-VERIFY-RUNTIME-001", "L12-VERIFY-OBS-001"],
+          "acceptance": [
+            "Pantheon-owned hosted frontend deployment.json binds exact execute-plans commit",
+            "Pantheon dev BFF identity binds exact pantheon commit",
+            "Browser-visible truth UI proof is captured",
+            "Restart/no-duplicate dispatch proof is captured",
+            "Auth/tenant/safety negative checks are captured",
+            "No Lovable or legacy front-ai-trading-system proof is counted"
+          ]
+        },
+        {
+          "id": "L12-CLOSE-001",
+          "title": "Final protected twelve-loop closeout",
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2", "Antigravity"],
+          "reviewer_preference": ["Antigravity", "Claude2"],
+          "depends_on": ["L12-HOSTED-001", "L12-TRUTH-001", "L12-SIGNOFF-001"],
+          "acceptance": [
+            "Every twelve-loop requirement is proven from current authoritative state",
+            "Every nonterminal verifier/hosted/support row in this graph is archived done or explicitly superseded",
+            "No stale PR head, receipt-only dispatch, branch-only evidence, or merged-without-closeout proof is counted",
+            "Final closeout passes protected review/merge gates"
+          ]
+        }
+      ]
+    }
+  ]
+}
