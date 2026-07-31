@@ -2,26 +2,75 @@
   "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
   "owner": "Antigravity",
   "reviewer": "Human/Ops",
-  "status": "review_approved",
+  "status": "in_progress",
   "promoted_target_commit": "012dab969455e7146f2437159d7d38fc5904a195",
-  "pr_number": 4430,
+  "pr_number": 4431,
+  "incident_chronology": {
+    "first_promotion_attempt": {
+      "pid": 3497098,
+      "root_type": "disposable_task_worktree",
+      "cwd_after_cleanup": "/tmp/pantheon-worker-worktrees/pantheon/sup-agent-alias-guard-live-promotion-20260731 (deleted)",
+      "worktree_head_drift": "ac4fc7fe0e03cbd125389a830efde2873aedb73e",
+      "false_lease_claim": "active_worker_leases_preserved=0"
+    },
+    "human_ops_live_rescue": {
+      "timestamp_utc": "2026-07-31T23:26:14Z",
+      "action": "admission-lock rollback",
+      "rollback_target_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+      "incumbent_pid": 3509070,
+      "config_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc"
+    },
+    "automatic_rollback_exercised": false,
+    "automatic_rollback_note": "First promotion failure required Human/Ops live rescue. Automatic rollback capability for postcheck failure requires dedicated fail-closed validation command contract."
+  },
+  "persistent_root_proof": {
+    "path": "/home/lupin/pantheon-ci-deploy/command-runtimes/012dab969455e7146f2437159d7d38fc5904a195",
+    "head_commit": "012dab969455e7146f2437159d7d38fc5904a195",
+    "tree_clean": true,
+    "untracked_files": [
+      ".orchestrator/task-briefs/sup_agent_alias_guard_live_promotion_20260731.md"
+    ],
+    "origin_url": "https://github.com/ajoe734/pantheon.git",
+    "origin_fetch_ref": "refs/heads/dev"
+  },
   "incumbent_supervisor": {
-    "pid": 3319508,
+    "pid": 3509070,
     "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
     "commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
   },
   "promoted_supervisor": {
-    "pid": 3497098,
-    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/sup-agent-alias-guard-live-promotion-20260731",
+    "pid": 3523046,
+    "cwd": "/home/lupin/pantheon-ci-deploy/command-runtimes/012dab969455e7146f2437159d7d38fc5904a195",
+    "cmdline": "/usr/bin/python3.12 -u .orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
     "commit": "012dab969455e7146f2437159d7d38fc5904a195",
-    "log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-alias-guard-live-promotion-20260731T232416Z.log"
+    "log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-alias-guard-live-promotion-20260731-v2-20260731T232827Z.log"
   },
+  "completed_utc_loops": [
+    "2026-07-31T23:28:33Z",
+    "2026-07-31T23:29:07Z",
+    "2026-07-31T23:29:42Z",
+    "2026-07-31T23:30:16Z",
+    "2026-07-31T23:30:50Z"
+  ],
   "live_config_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
   "live_config_sha256_unmodified": true,
   "intentional_restart_recorded": true,
   "runtime_admission_lock_held_during_term": true,
-  "active_worker_leases_preserved": 0,
+  "active_worker_leases_preserved": 1,
+  "active_worker_lease_detail": {
+    "run_id": "antigravity1-1-20260731T232741Z-eb5284e9",
+    "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+    "status": "running"
+  },
+  "projection_status": {
+    "source": "/home/lupin/pantheon/.orchestrator/state.json",
+    "version": 2,
+    "last_scan_at": "2026-07-31T23:32:36Z",
+    "tasks_count": 877,
+    "note": "Projection is fully operational across 877 tasks and state v2 schema"
+  },
   "duplicate_tasks_found": 0,
+  "duplicate_task_count_method": "scanned canonical tasks in .orchestrator/state.json for task_id 'SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731'",
   "provider_health": {
     "antigravity": {
       "supported": true,
@@ -30,10 +79,23 @@
       "selected_primary_model": "gemini-3.6-flash-low"
     }
   },
+  "rollback_root_availability": {
+    "rollback_root_path": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "rollback_target_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+    "available": true
+  },
+  "future_rollback_contract": {
+    "status": "unmet_acceptance_item",
+    "note": "Automatic rollback on postcheck failure was not exercised; live rescue was executed by Human/Ops."
+  },
   "verification": {
     "discover_only_preflight": "passed",
     "supervisor_swap_execution": "passed",
     "live_pid_post_check": "passed",
-    "live_config_hash_check": "passed"
+    "live_config_hash_check": "passed",
+    "three_fresh_supervisor_loops": "passed",
+    "immutable_command_runtime_cwd": "passed",
+    "active_worker_lease_preservation": "passed",
+    "incident_chronology_preserved": "passed"
   }
 }
