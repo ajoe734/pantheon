@@ -8,6 +8,8 @@ Updated: `2026-07-31T12:25:00Z`
 
 Pipeline status updated: `2026-07-31T12:46:41Z`
 
+Supervisor redispatch updated: `2026-07-31T12:58:21Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md`
 
@@ -92,6 +94,23 @@ partial architecture progress, not end-to-end reliability:
 
 This packet must therefore be read as an architecture gap/dispatch plan, not as
 proof that supervisor/auto-worker dispatch and closeout are already fixed.
+
+## 2026-07-31T12:58Z Supervisor Redispatch Addendum
+
+The updated Wave 0X requeue against the original task IDs failed with
+`Bridge assignment conflict`, proving already materialized task specs are
+immutable-bound to their original packet/spec hashes. A V2 superseding packet
+was then accepted:
+`pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z`.
+
+It materialized:
+
+- `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731`
+- `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731`
+
+Both V2 tasks auto-started workers, but both runs exited with `SIGTERM 15` and
+the supervisor returned the rows to `todo`. This proves handoff and
+materialization, but not auto-worker completion.
 
 ## Completion Boundary
 

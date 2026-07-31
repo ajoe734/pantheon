@@ -10,6 +10,8 @@ Fleet reconcile addendum observed: `2026-07-31T12:25:00Z`
 
 Pipeline architecture addendum observed: `2026-07-31T12:46:41Z`
 
+Supervisor re-dispatch addendum observed: `2026-07-31T12:58:21Z`
+
 Repository base inspected: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
 
 Status roots inspected:
@@ -120,6 +122,40 @@ Pipeline architecture readback at `2026-07-31T12:46:41Z`:
   it is "architectural repair in progress, with exact remaining gates known and
   supervisor-visible."
 
+Supervisor re-dispatch readback at `2026-07-31T12:58:21Z`:
+
+- Re-queuing updated specs under the original Wave 0X task IDs failed through
+  the real dev-bridge, not by manual inspection. Receipt
+  `.orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json`
+  reports `Bridge assignment conflict`: both original task IDs are already
+  bound to packet `pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z` and
+  their old task spec hashes. The bridge currently has no safe "update an
+  already materialized task spec" path.
+- A superseding V2 packet
+  `pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z` was drained and
+  admitted by the real supervisor. It materialized
+  `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731` and
+  `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731` in canonical
+  task-state with current-head acceptance criteria.
+- The packet requested Antigravity owner and Claude2 reviewer, but the
+  supervisor/fleet scheduler fell back through helper-claim to Codex/Codex2
+  lanes. This is real fleet behavior, not Codex conversation subagents, but it
+  violates the preferred Antigravity/Claude-first operating intent unless
+  readiness/fallback is explicitly justified.
+- Both V2 tasks auto-started real worker runs, but both worker status files
+  ended with `exit_code=143`, `signal=15`. The task rows were returned to
+  `todo` after supervisor preemption:
+  `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731` at
+  `2026-07-31T12:57:23Z` and
+  `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731` at
+  `2026-07-31T12:57:32Z`.
+- Therefore current fleet status is: dispatch and materialization are proven
+  for the V2 tasks, but auto-worker execution did not complete development.
+  The remaining dispatch/closeout infrastructure gap is now narrower and
+  concrete: immutable task-spec updates require superseding task IDs, and
+  worker preemption/retry must reliably progress these tasks to terminal
+  reviewed/archived states rather than cycling todo.
+
 Current PR readback:
 
 | PR | Task / purpose | Head | State | Current gap |
@@ -207,10 +243,21 @@ Missing development:
     though its task row says review-approved; #4396 records current-head support
     evidence and is no longer draft, but remains blocked from protected
     merge/governed closeout.
+14. Dev-bridge task-spec update gap: an updated packet cannot revise already
+    materialized task IDs; it fails with `Bridge assignment conflict`. Current
+    workaround is superseding V2 task IDs, but the architecture still needs an
+    explicit update/supersede policy and validation.
+15. Worker preemption/retry gap: V2 workers launched and then exited with
+    `SIGTERM 15`; the supervisor returned rows to `todo` instead of completing
+    development. Fleet completion remains unproven until retry/restart produces
+    terminal reviewed/archived evidence.
 
 Missing validation:
 
 - Canonical task-state readback for every queued DevTaskPacket task.
+- Explicit bridge behavior for updating or superseding already materialized
+  task specs, including a test that same-ID spec changes fail closed with a
+  useful operator path and do not silently leave workers on stale acceptance.
 - Regression that activity-log-only `assign` rows cannot produce a successful
   dispatch receipt.
 - Worker source-root readback proving new auto-worker worktrees come from
@@ -224,6 +271,9 @@ Missing validation:
   at a nonexistent SHA.
 - Governed ready/merge/closeout handling for #4396 before its exact-head support
   evidence can be integrated.
+- Worker runtime preemption/retry validation proving `SIGTERM 15` worker exits
+  are reconciled to a fresh run, terminal blocker, or governed retry, not left
+  as recurring todo churn.
 - Rebase/current-dev evidence refresh for #4363/#4372.
 - Real service-bound verifiers with before/after readbacks.
 - Tenant/RBAC/MFA/auth negative checks where applicable.
@@ -276,7 +326,8 @@ one-off deployment. It is a supervisor/dev-bridge task packet whose success is
 verified by canonical materialization, then auto-worker pickup, then governed
 review/archive. The Wave 0X preemption evidence also means "task created" is
 not enough; the fleet must be observed restarting, completing, and archiving
-the concrete fallout tasks.
+the concrete fallout tasks. The 12:58Z V2 readback proves materialization and
+startup but contradicts completion because both worker runs were preempted.
 
 ## Dispatch Artifact
 
