@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-31T16:11:46Z",
-    "evidence_cut_semantics": "Implementation and local regression cut only. Independent review, protected merge, immutable live promotion, and 25-task G1 admission remain pending and cannot be inferred from this record.",
+    "evidence_cut_at": "2026-07-31T16:27:21Z",
+    "evidence_cut_semantics": "Implementation, pre-review remediation, and local authoritative-transaction regression cut only. Independent exact-head review, protected merge, immutable live promotion, and 25-task G1 admission remain pending and cannot be inferred from this record.",
     "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
     "overall_admission": "implementation_ready_for_independent_review_live_admission_pending",
     "owner": "Codex2",
@@ -35,6 +35,7 @@
     "actual_state": [
       "PR #4394 exact head and Branch CI Gate run 30635898120",
       "task branch anchor 5646d3499853b5af59b8c9e75086da402d40f6eb",
+      "Antigravity pre-review findings and remediation anchor 8ca95d7488c4b79dfa7c99389cc9e999c4fb4508",
       "focused local pytest, compile, validate-only, and live fail-closed dry-run outputs"
     ],
     "desired_state": [
@@ -72,6 +73,12 @@
         "subject": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731: anchor core",
         "delivery_state": "task_branch_anchor_pending_PR",
         "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508",
+        "subject": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731: anchor review",
+        "delivery_state": "pre_review_findings_resolved_pending_PR",
+        "hosted_cut_inclusion": false
       }
     ],
     "required_checks": [
@@ -92,7 +99,7 @@
     "commands": [
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
-        "result": "11 passed in 3.73s",
+        "result": "16 passed in 3.54s, including real authoritative journal failure, two-process contention/replay, Human/Ops rejection, and prepared-receipt recovery",
         "conclusion": "pass"
       },
       {
@@ -106,13 +113,13 @@
         "conclusion": "pass"
       },
       {
-        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
+        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --current",
         "result": "valid; 28 tasks; exact catalog bytes 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca; PR #4394 exact head and Branch CI success bound",
         "conclusion": "pass"
       },
       {
-        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --catalog docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json",
-        "result": "valid; legacy 25-task catalog compatibility retained",
+        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
+        "result": "valid; no-catalog legacy default remains the original 25-task profile with proof-ownership validation",
         "conclusion": "pass"
       },
       {
@@ -121,9 +128,9 @@
         "conclusion": "expected_fail_closed_live_gate"
       }
     ],
-    "validated_at": "2026-07-31T16:11:46Z",
+    "validated_at": "2026-07-31T16:27:21Z",
     "validated_base_sha": "2ddce6c25",
-    "validated_head_sha": "5646d3499853b5af59b8c9e75086da402d40f6eb"
+    "validated_head_sha": "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508"
   },
   "deployment": {
     "applicable": true,
@@ -150,34 +157,36 @@
       "status": "pass_local",
       "proof": [
         "A complete exact G1 replay creates zero tasks.",
-        "A partial G1 materialization is rejected instead of resumed."
+        "A partial G1 materialization is rejected instead of resumed.",
+        "Two competing operating-system processes serialize on canonical locks: exactly one commits 25 tasks and the other returns an exact replay."
       ]
     },
     "failure_and_degraded_behavior": {
       "status": "pass_local_and_live_fail_closed",
       "proof": [
         "Duplicate IDs, dangling dependencies, G1 artifact-prefix overlap, live concurrent overlap, unavailable providers, stale command root, and canonical readback mismatch fail closed.",
+        "Injected second-assign and pre-commit sync failures against the real authoritative task-state writer leave the journal and projection with zero catalog tasks.",
         "The live pre-merge overlap produced no canonical mutation."
       ]
     },
     "request_receipt_downstream_correlation": {
       "status": "pending_live_apply",
       "proof": [
-        "The atomic writer emits one program_catalog_materialized activity event and an external deterministic admission archive; live IDs remain pending."
+        "Before canonical commit, the atomic writer durably fsyncs one deterministic prepared admission receipt and binds its ID/path in the single program_catalog_materialized activity event; exact readback promotes it to committed. Live IDs remain pending."
       ]
     },
     "restart_and_recovery": {
       "status": "pass_contract_pending_live",
       "proof": [
         "Apply requires an exact clean merged command runtime and replays canonical journal truth under the writer lock.",
-        "A deterministic replay can reconstruct a missing admission archive from exact G1 rows."
+        "If failure occurs after canonical commit but before receipt finalization, exact replay observes all 25 canonical rows and promotes the prepared receipt to committed without creating another task or activity event."
       ]
     },
     "rollback_or_compensation": {
       "status": "pass_local",
       "proof": [
         "All task rows are prepared on a deep copy and committed in one authoritative task-state transaction only after every assignment validates.",
-        "An injected second-assignment failure leaves the source state byte-equivalent and admits no partial rows."
+        "Injected second-assignment and sync failures leave the authoritative journal event count unchanged and admit zero partial rows; any failure after the one commit leaves all 25 rows plus the recoverable prepared receipt."
       ]
     }
   },
@@ -200,7 +209,7 @@
     },
     "rbac": {
       "status": "pass",
-      "proof": "The real caller identity is preserved; owner/reviewer remain distinct; no Human/Ops identity is synthesized."
+      "proof": "The real auto-worker caller identity is preserved; owner/reviewer remain distinct; current --apply rejects Human/Ops instead of accepting or synthesizing protected authority."
     },
     "tenant_isolation": {
       "status": "not_applicable",
@@ -322,7 +331,7 @@
   "integrity": {
     "algorithm": "sha256",
     "checksum_coverage": [
-      "task brief, dispatcher, legacy regression adjustment, current remediation regression suite, and exact guarded-remediation catalog at anchor 5646d3499853b5af59b8c9e75086da402d40f6eb"
+      "task brief and exact catalog at anchor 5646d3499853b5af59b8c9e75086da402d40f6eb; dispatcher and both regression suites through pre-review remediation anchor 8ca95d7488c4b79dfa7c99389cc9e999c4fb4508"
     ],
     "companion_checksum_path": "not_applicable; immutable values are embedded below",
     "hosted_semantic_sha256": {},
@@ -337,6 +346,11 @@
         "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py": "31a2fb92735d269c0fd2962a801b8083795e8d763a397f3bbe183c3cea4977af",
         "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "1e53d8675bdfa228250bbd340ef33d463c986b4669357d2ca9a349047e0378d2",
         "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca"
+      },
+      "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508": {
+        "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "3ce148986f4e43e47d492d8be7078f8956aa7193099f0815e469fb3bc98119d4",
+        "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py": "f52190a8c3348003a235e013aa161400d540dbc171c31822195c3e208d0dda8e",
+        "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "c3101886b0a31c78eb7c9c64dae0c75f49857bc86640d3b340ad137acb166ce5"
       }
     }
   },
@@ -366,6 +380,23 @@
       "status": "implementation_pass_live_apply_fail_closed",
       "actor": "Codex2",
       "reference": "validation.commands"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-31T16:15:08Z",
+      "kind": "independent_pre_review_findings",
+      "status": "changes_required",
+      "actor": "Antigravity",
+      "reference": "canonical task next: legacy default, caller authority, authoritative atomic tests, and receipt recovery"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-31T16:26:48Z",
+      "kind": "pre_review_findings_remediated",
+      "status": "pass_local_pending_exact_head_review",
+      "actor": "Codex2",
+      "reference": "task branch review anchor",
+      "sha": "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508"
     }
   ]
 }
