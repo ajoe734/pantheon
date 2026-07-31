@@ -12,6 +12,8 @@ Pipeline architecture addendum observed: `2026-07-31T12:46:41Z`
 
 Supervisor re-dispatch addendum observed: `2026-07-31T12:58:21Z`
 
+Worker preemption churn addendum observed: `2026-07-31T13:00:37Z`
+
 Repository base inspected: `origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e`
 
 Status roots inspected:
@@ -156,6 +158,20 @@ Supervisor re-dispatch readback at `2026-07-31T12:58:21Z`:
   worker preemption/retry must reliably progress these tasks to terminal
   reviewed/archived states rather than cycling todo.
 
+Worker preemption churn readback at `2026-07-31T13:00:37Z`:
+
+- The V2 tasks did not merely fail once. Additional worker runs
+  `codex-20260731T125821Z-f615aa77` and
+  `codex-20260731T125858Z-acfa9855` also exited with `exit_code=143`,
+  `signal=15`.
+- At that readback both V2 rows were back to `todo`, with helper-claim ownership
+  churn between Codex/Codex2 and reviewers Codex2/Codex. This confirms the
+  fleet can drain/materialize/start workers, but currently cannot keep these
+  repairs running long enough to complete.
+- This is a supervisor/auto-worker scheduling and lifecycle defect that must be
+  repaired or governed-blocked before more downstream twelve-loop product work
+  is dispatched.
+
 Current PR readback:
 
 | PR | Task / purpose | Head | State | Current gap |
@@ -247,10 +263,10 @@ Missing development:
     materialized task IDs; it fails with `Bridge assignment conflict`. Current
     workaround is superseding V2 task IDs, but the architecture still needs an
     explicit update/supersede policy and validation.
-15. Worker preemption/retry gap: V2 workers launched and then exited with
-    `SIGTERM 15`; the supervisor returned rows to `todo` instead of completing
-    development. Fleet completion remains unproven until retry/restart produces
-    terminal reviewed/archived evidence.
+15. Worker preemption/retry gap: V2 workers launched repeatedly and then exited
+    with `SIGTERM 15`; the supervisor returned rows to `todo` instead of
+    completing development. Fleet completion remains unproven until
+    retry/restart produces terminal reviewed/archived evidence.
 
 Missing validation:
 

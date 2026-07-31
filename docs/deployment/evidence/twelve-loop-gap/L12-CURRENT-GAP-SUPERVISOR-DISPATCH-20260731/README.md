@@ -10,6 +10,8 @@ Pipeline status updated: `2026-07-31T12:46:41Z`
 
 Supervisor redispatch updated: `2026-07-31T12:58:21Z`
 
+Worker preemption churn updated: `2026-07-31T13:00:37Z`
+
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
 work.
@@ -73,6 +75,11 @@ work.
 - Both V2 tasks auto-started workers, but both worker runs exited with
   `exit_code=143`, `signal=15`, and were returned to `todo` after supervisor
   preemption. Auto-worker development completion remains unproven.
+- At `2026-07-31T13:00:37Z`, both V2 tasks had repeated SIGTERM/preemption
+  cycles and remained `todo`, with recent runs
+  `codex-20260731T125821Z-f615aa77` and
+  `codex-20260731T125858Z-acfa9855` also ending in `exit_code=143`,
+  `signal=15`.
 
 ## Acceptance Boundary
 

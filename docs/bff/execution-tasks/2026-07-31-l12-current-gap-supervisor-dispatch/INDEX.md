@@ -10,6 +10,8 @@ Pipeline status updated: `2026-07-31T12:46:41Z`
 
 Supervisor redispatch updated: `2026-07-31T12:58:21Z`
 
+Worker preemption churn updated: `2026-07-31T13:00:37Z`
+
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md`
 
@@ -111,6 +113,10 @@ It materialized:
 Both V2 tasks auto-started workers, but both runs exited with `SIGTERM 15` and
 the supervisor returned the rows to `todo`. This proves handoff and
 materialization, but not auto-worker completion.
+
+At `2026-07-31T13:00:37Z`, both V2 tasks had repeated SIGTERM/preemption
+cycles and were still `todo`. The immediate fleet blocker is now worker
+preemption/lifecycle churn, not packet creation.
 
 ## Completion Boundary
 
