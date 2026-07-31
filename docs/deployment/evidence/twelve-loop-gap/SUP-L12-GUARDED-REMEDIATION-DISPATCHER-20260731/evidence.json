@@ -16,16 +16,16 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-31T16:27:21Z",
-    "evidence_cut_semantics": "Implementation, pre-review remediation, and local authoritative-transaction regression cut only. Independent exact-head review, protected merge, immutable live promotion, and 25-task G1 admission remain pending and cannot be inferred from this record.",
+    "evidence_cut_at": "2026-07-31T16:54:42Z",
+    "evidence_cut_semantics": "Implementation, pre-review remediation, supervisor ownership redispatch, and current-owner local authoritative-transaction revalidation cut only. Independent exact-head review, protected merge, immutable live promotion, and 25-task G1 admission remain pending and cannot be inferred from this record.",
     "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
     "overall_admission": "implementation_ready_for_independent_review_live_admission_pending",
-    "owner": "Codex2",
+    "owner": "Codex",
     "phase": "Supervisor Runtime Repair / Wave 0 Program Dispatcher Gate",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json",
-    "reviewer": "Antigravity",
+    "reviewer": "Codex2",
     "target_environment": "Pantheon development supervisor runtime",
     "target_maturity": "merged_live_promoted_atomic_G1_admission",
     "task_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
@@ -36,6 +36,8 @@
       "PR #4394 exact head and Branch CI Gate run 30635898120",
       "task branch anchor 5646d3499853b5af59b8c9e75086da402d40f6eb",
       "Antigravity pre-review findings and remediation anchor 8ca95d7488c4b79dfa7c99389cc9e999c4fb4508",
+      "supervisor ownership redispatch anchor 2a8c108ab1db9689e16f63528470756bb5379450",
+      "Codex owner revalidation of both regression profiles and the live fail-closed dry-run",
       "focused local pytest, compile, validate-only, and live fail-closed dry-run outputs"
     ],
     "desired_state": [
@@ -46,7 +48,7 @@
     "task_packet": ".orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731.md"
   },
   "scope": {
-    "authoritative_write_owner": "Codex2 owns dispatcher implementation and closeout evidence; Antigravity owns independent exact-head review; protected Human/Ops closeout authority is not exercised by this task.",
+    "authoritative_write_owner": "Codex owns the supervisor-redispatched task and current evidence cut; Codex2 owns independent exact-head review. Earlier Codex2 implementation and Antigravity pre-review records remain historical. Protected Human/Ops closeout authority is not exercised by this task.",
     "composes_with": [
       "PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
       "PR #4406 scheduler runtime gate merge 2ddce6c25",
@@ -78,6 +80,12 @@
         "sha": "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508",
         "subject": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731: anchor review",
         "delivery_state": "pre_review_findings_resolved_pending_PR",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "2a8c108ab1db9689e16f63528470756bb5379450",
+        "subject": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731: anchor owner",
+        "delivery_state": "ownership_redispatch_recorded_pending_exact_head_review",
         "hosted_cut_inclusion": false
       }
     ],
@@ -126,11 +134,41 @@
         "command": "live status-root --dry-run with exact current catalog and live readiness inputs before merge",
         "result": "failed closed before mutation on L12-CONTROLLER-BFF-20260731 overlap with nonterminal SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
         "conclusion": "expected_fail_closed_live_gate"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+        "result": "16 passed in 4.35s during Codex owner revalidation",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -k 'not human_task_cards_mirror_assignment_header'",
+        "result": "31 passed, 1 deselected in 4.06s during Codex owner revalidation; the unchanged origin/dev mismatch remains outside task scope",
+        "conclusion": "pass_with_documented_baseline_exclusion"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile scripts/dispatch_twelve_loop_gap_2026_07_26.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+        "result": "passed during Codex owner revalidation",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --current",
+        "result": "valid; 28 tasks; exact catalog bytes 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca; PR #4394 exact head and Branch CI success bound",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
+        "result": "valid; legacy 25-task profile and proof-ownership binding preserved",
+        "conclusion": "pass"
+      },
+      {
+        "command": "AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/pantheon .venv-pantheon/bin/python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --dry-run --current",
+        "result": "failed closed before mutation on L12-CONTROLLER-BFF-20260731 overlap with nonterminal SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "conclusion": "expected_fail_closed_live_gate"
       }
     ],
-    "validated_at": "2026-07-31T16:27:21Z",
-    "validated_base_sha": "2ddce6c25",
-    "validated_head_sha": "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508"
+    "validated_at": "2026-07-31T16:54:42Z",
+    "validated_base_sha": "314e02f2b922f75c6aa25f200b6f326fb674a24c",
+    "validated_head_sha": "2a8c108ab1db9689e16f63528470756bb5379450"
   },
   "deployment": {
     "applicable": true,
@@ -217,7 +255,7 @@
     },
     "two_person_approval": {
       "status": "pending",
-      "proof": "Antigravity exact-head independent review remains required before protected merge and owner closeout."
+      "proof": "Codex2 exact-head independent review remains required before protected merge and owner closeout."
     }
   },
   "acceptance": [
@@ -280,7 +318,7 @@
       "id": "AC7",
       "statement": "Deliver through exact-head independent review, protected merge, and immutable live command-root promotion.",
       "status": "pending",
-      "blocking_until": "Antigravity exact-head review, task PR merge, and immutable command-root promotion",
+      "blocking_until": "Codex2 exact-head review, task PR merge, and immutable command-root promotion",
       "evidence_refs": [
         "deployment",
         "security_and_safety.two_person_approval"
@@ -314,7 +352,7 @@
       "containment": "Keep apply fail-closed. Re-read canonical active/archive truth after immutable promotion and require a clean dry-run before materialization.",
       "description": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 is nonterminal and overlaps the controller-BFF artifact prefix.",
       "expiry": "When the overlapping task becomes governed terminal or its exact canonical scope no longer conflicts through an independently reviewed change.",
-      "owner": "Supervisor task owner and guarded-dispatch owner",
+      "owner": "Codex and the supervisor task owner",
       "recheck_trigger": "Post-merge immutable command-root dry-run",
       "severity": "blocking"
     },
@@ -331,7 +369,7 @@
   "integrity": {
     "algorithm": "sha256",
     "checksum_coverage": [
-      "task brief and exact catalog at anchor 5646d3499853b5af59b8c9e75086da402d40f6eb; dispatcher and both regression suites through pre-review remediation anchor 8ca95d7488c4b79dfa7c99389cc9e999c4fb4508"
+      "task brief and exact catalog at anchor 5646d3499853b5af59b8c9e75086da402d40f6eb; dispatcher and both regression suites through pre-review remediation anchor 8ca95d7488c4b79dfa7c99389cc9e999c4fb4508; supervisor ownership redispatch at anchor 2a8c108ab1db9689e16f63528470756bb5379450"
     ],
     "companion_checksum_path": "not_applicable; immutable values are embedded below",
     "hosted_semantic_sha256": {},
@@ -351,6 +389,13 @@
         "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "3ce148986f4e43e47d492d8be7078f8956aa7193099f0815e469fb3bc98119d4",
         "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py": "f52190a8c3348003a235e013aa161400d540dbc171c31822195c3e208d0dda8e",
         "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "c3101886b0a31c78eb7c9c64dae0c75f49857bc86640d3b340ad137acb166ce5"
+      },
+      "2a8c108ab1db9689e16f63528470756bb5379450": {
+        ".orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731.md": "168ae912d67e434ac5a0f8495ba8295e8278b2df878b730a9e51900393a9fbf2",
+        "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "3ce148986f4e43e47d492d8be7078f8956aa7193099f0815e469fb3bc98119d4",
+        "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py": "f52190a8c3348003a235e013aa161400d540dbc171c31822195c3e208d0dda8e",
+        "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "c3101886b0a31c78eb7c9c64dae0c75f49857bc86640d3b340ad137acb166ce5",
+        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca"
       }
     }
   },
@@ -397,6 +442,15 @@
       "actor": "Codex2",
       "reference": "task branch review anchor",
       "sha": "8ca95d7488c4b79dfa7c99389cc9e999c4fb4508"
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-31T16:54:42Z",
+      "kind": "redispatched_owner_revalidation",
+      "status": "pass_local_live_apply_fail_closed_pending_exact_head_review",
+      "actor": "Codex",
+      "reference": "validation commands and supervisor ownership redispatch anchor",
+      "sha": "2a8c108ab1db9689e16f63528470756bb5379450"
     }
   ]
 }
