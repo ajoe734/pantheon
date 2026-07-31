@@ -4,7 +4,7 @@ Evidence ID: `L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731`
 
 Observed: `2026-07-31T06:40:20Z`
 
-Updated: `2026-07-31T11:59:43Z`
+Updated: `2026-07-31T12:25:00Z`
 
 This evidence packet records the current three-pass gap audit and the
 supervisor/auto-worker execution graph for completing the remaining twelve-loop
@@ -40,6 +40,13 @@ work.
 - PR #4392 and PR #4385 are now explicit Wave 0 blockers before L12 fleet
   resume; PR #4386 is explicit support closeout and cannot be counted done from
   review-approved row state alone
+- Real supervisor/auto-worker reconcile rows produced PR #4395 and PR #4396.
+  #4395 records that #4385 evidence names nonexistent anchor
+  `9d53a94a265c55af4c8d15c50ab3751f1440ac0f`; #4385 therefore needs an
+  evidence-anchor repair before Wave 0 can pass.
+- #4396 records #4386 current-head support proof, but it is still draft and
+  blocked from auto-integration; it cannot be counted until governed
+  ready/merge/closeout handling is complete.
 
 ## Acceptance Boundary
 

@@ -4,7 +4,7 @@ Packet ID: `2026-07-31-l12-current-gap-supervisor-dispatch`
 
 Generated: `2026-07-31T06:40:20Z`
 
-Updated: `2026-07-31T11:59:43Z`
+Updated: `2026-07-31T12:25:00Z`
 
 Source audit:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md`
@@ -34,13 +34,15 @@ fleets, with maximum safe parallelism and no Codex conversation subagents.
 
 1. Wave 0 repairs/proves the supervisor DevTaskPacket materialization path,
    worker worktree source-root path, and stale failure-streak cleanup.
-2. Wave 0R resumes L12 fleets through the existing real supervisor controller
+2. Wave 0X repairs the newly discovered #4385 nonexistent evidence anchor and
+   moves #4396 current-head support proof through governed PR/closeout handling.
+3. Wave 0R resumes L12 fleets through the existing real supervisor controller
    after all Wave 0 blockers are proven.
-3. Wave A refreshes exact-head PR review/closeout blockers in parallel.
-4. Wave B retires stale PR evidence only after observability evidence is fresh.
-5. Wave C finalizes already review-approved support rows.
-6. Wave D starts independent product proof lanes after Wave 0/0R.
-7. Wave E runs learning product proof, hosted proof, and final closeout after
+4. Wave A refreshes exact-head PR review/closeout blockers in parallel.
+5. Wave B retires stale PR evidence only after observability evidence is fresh.
+6. Wave C finalizes already review-approved support rows.
+7. Wave D starts independent product proof lanes after Wave 0/0R.
+8. Wave E runs learning product proof, hosted proof, and final closeout after
    their dependencies are archived.
 
 ## 2026-07-31T11:59Z Addendum
@@ -51,6 +53,16 @@ so it must not be used alone to claim the supervisor is down. The current
 fleet-resume gate also depends on `SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730`
 and `SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729`, not just the dev-bridge
 materialization row.
+
+## 2026-07-31T12:25Z Fleet Reconcile Addendum
+
+The real supervisor drained the exact-head reconcile packet and auto-workers
+processed the #4385/#4386 reconcile rows. #4385 now has concrete repair work:
+its current evidence points at nonexistent anchor
+`9d53a94a265c55af4c8d15c50ab3751f1440ac0f` instead of actual anchor
+`9d53a94a295d71ee49aea6f4b96e47fbcfd29093`. #4386 current-head support
+evidence was review-approved, but ReviewBus PR #4396 is still draft, so it
+cannot be counted as integrated proof yet.
 
 ## Completion Boundary
 
