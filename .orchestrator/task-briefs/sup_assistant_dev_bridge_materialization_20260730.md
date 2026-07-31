@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Repair supervisor DevTaskPacket materialization readback
 - Status: review_approved
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Antigravity
-- Next: PR #4390 merged the reviewed exact head 93dddc1436eeb57256480523837f6e1b888ec77a into dev as squash commit 314e02f2b922f75c6aa25f200b6f326fb674a24c after Branch CI, canonical review, and root-freeze gates passed. Owner closeout re-ran py_compile and the focused Dev Bridge reliability suite (29 passed). Follow-up PR #4411 is task-brief-only: it preserves the reviewed implementation and evidence while restoring merge-commit ancestry required by the installed governed done runtime.
+- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex tool auth: GitHub CLI auth unavailable
 
 ## Summary
 Repair the assistant dev bridge so supervisor-visible canonical task-state readback, not receipt text alone, is the success gate before auto-worker execution tasks are considered accepted.
