@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Validate and materialize the 2026-07-26 twelve-loop remediation DAG.
 
-The catalog is validated as one immutable graph before any live mutation.
-Materialization then uses the canonical ``scripts/ai_status.py assign`` writer
-one task at a time. Exact active or successfully archived catalog tasks are
-skipped; malformed, non-successful, or conflicting IDs fail closed. This avoids
-the DevTaskPacket bulk delimiter/partial-replay limitation while preserving the
-repository task-state locks and audit log.
+The catalog is validated as one immutable graph before any live mutation. The
+legacy profile retains its canonical ``scripts/ai_status.py assign`` workflow;
+the explicit current-proof profile stages its G1 frontier in memory and commits
+one authoritative task-state transaction. Exact active or successfully archived
+catalog tasks are skipped; malformed, non-successful, or conflicting IDs fail
+closed. This avoids the DevTaskPacket bulk delimiter/partial-replay limitation
+while preserving the repository task-state locks and audit log.
 """
 from __future__ import annotations
 
@@ -22,7 +23,6 @@ import os
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
-import tempfile
 from typing import Any, Callable, Iterable
 
 
@@ -31,7 +31,7 @@ ORCHESTRATOR_DIR = REPO_ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-from common import validate_status_command_runtime
+from common import durable_write_bytes, validate_status_command_runtime
 from rewrite.task_state_store import load_events, project_latest_state
 
 
@@ -2032,15 +2032,99 @@ def _admission_archive_path(
     )
 
 
-def write_current_admission_archive(
+def _write_current_admission_archive_payload(
+    path: Path,
+    payload: dict[str, Any],
+) -> None:
+    serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    durable_write_bytes(path, serialized.encode("utf-8"), mode=0o600)
+    if path.read_text(encoding="utf-8") != serialized:
+        raise DispatchError("admission archive readback mismatch")
+
+
+def _validate_current_admission_archive(
+    payload: dict[str, Any],
+    *,
+    path: Path,
+    plan: dict[str, Any],
+    admitted_task_ids: list[str],
+    command_runtime: dict[str, str],
+) -> None:
+    required = {
+        "schema_version",
+        "admission_id",
+        "program_id",
+        "catalog_sha256",
+        "catalog_file_sha256",
+        "source_specification",
+        "prepared_by",
+        "finalized_by",
+        "command_runtime",
+        "admitted_task_ids",
+        "assignment_decisions",
+        "status",
+        "prepared_at",
+        "committed_at",
+        "canonical_readback",
+    }
+    if set(payload) != required:
+        raise DispatchError(f"admission archive schema is not exact: {path}")
+    expected = {
+        "schema_version": 1,
+        "admission_id": path.stem,
+        "program_id": CURRENT_PROGRAM_ID,
+        "catalog_sha256": plan["catalog_sha256"],
+        "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
+        "source_specification": plan["source_specification"],
+        "command_runtime": {
+            "source_sha": command_runtime["source_sha"],
+            "remote": command_runtime["remote"],
+            "base_ref": command_runtime["base_ref"],
+        },
+        "admitted_task_ids": admitted_task_ids,
+        "assignment_decisions": {
+            task_id: plan["assignment_decisions"][task_id]
+            for task_id in admitted_task_ids
+        },
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise DispatchError(f"admission archive {key} conflicts: {path}")
+    if payload.get("status") not in {"prepared", "committed"}:
+        raise DispatchError(f"admission archive status is invalid: {path}")
+    if not str(payload.get("prepared_by") or "").strip() or not str(
+        payload.get("prepared_at") or ""
+    ).strip():
+        raise DispatchError(f"admission archive preparation is incomplete: {path}")
+    if payload["status"] == "prepared":
+        if any(
+            payload.get(key) is not None
+            for key in ("finalized_by", "committed_at", "canonical_readback")
+        ):
+            raise DispatchError(f"prepared admission archive claims commit: {path}")
+        return
+    readback = payload.get("canonical_readback")
+    if (
+        not str(payload.get("finalized_by") or "").strip()
+        or not str(payload.get("committed_at") or "").strip()
+        or not isinstance(readback, dict)
+        or readback.get("exact") != admitted_task_ids
+        or readback.get("state_sha256") != readback.get("projection_sha256")
+    ):
+        raise DispatchError(f"committed admission archive proof is incomplete: {path}")
+
+
+def prepare_current_admission_archive(
     *,
     status_root: Path,
     plan: dict[str, Any],
     admitted_task_ids: list[str],
     command_runtime: dict[str, str],
     actor: str,
-    readback: dict[str, Any],
+    allow_committed: bool,
 ) -> Path:
+    """Durably record admission intent before canonical task-state commit."""
+
     path = _admission_archive_path(
         status_root,
         catalog_sha256=plan["catalog_sha256"],
@@ -2052,14 +2136,15 @@ def write_current_admission_archive(
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise DispatchError(f"admission archive cannot be a symlink: {path}")
-    payload = {
+    payload: dict[str, Any] = {
         "schema_version": 1,
         "admission_id": path.stem,
         "program_id": CURRENT_PROGRAM_ID,
         "catalog_sha256": plan["catalog_sha256"],
         "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
         "source_specification": plan["source_specification"],
-        "actor": actor,
+        "prepared_by": actor,
+        "finalized_by": None,
         "command_runtime": {
             "source_sha": command_runtime["source_sha"],
             "remote": command_runtime["remote"],
@@ -2070,40 +2155,73 @@ def write_current_admission_archive(
             task_id: plan["assignment_decisions"][task_id]
             for task_id in admitted_task_ids
         },
-        "canonical_readback": readback,
-        "recorded_at": datetime.now(timezone.utc)
+        "status": "prepared",
+        "prepared_at": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
+        "committed_at": None,
+        "canonical_readback": None,
     }
     if path.exists():
         existing = load_json_object(path)
-        immutable_keys = (
-            "admission_id",
-            "program_id",
-            "catalog_sha256",
-            "catalog_file_sha256",
-            "source_specification",
-            "admitted_task_ids",
-            "assignment_decisions",
+        _validate_current_admission_archive(
+            existing,
+            path=path,
+            plan=plan,
+            admitted_task_ids=admitted_task_ids,
+            command_runtime=command_runtime,
         )
-        if any(existing.get(key) != payload.get(key) for key in immutable_keys):
-            raise DispatchError(f"admission archive replay conflicts: {path}")
+        if existing["status"] == "committed" and not allow_committed:
+            raise DispatchError(
+                "committed admission archive conflicts with absent canonical tasks"
+            )
         return path
-    serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=path.parent,
-        delete=False,
-    ) as handle:
-        handle.write(serialized)
-        handle.flush()
-        os.fsync(handle.fileno())
-        temp_path = Path(handle.name)
-    os.replace(temp_path, path)
-    if path.read_text(encoding="utf-8") != serialized:
-        raise DispatchError("admission archive readback mismatch")
+    _write_current_admission_archive_payload(path, payload)
+    return path
+
+
+def finalize_current_admission_archive(
+    *,
+    path: Path,
+    plan: dict[str, Any],
+    admitted_task_ids: list[str],
+    command_runtime: dict[str, str],
+    actor: str,
+    readback: dict[str, Any],
+) -> Path:
+    """Promote a prepared intent after exact canonical journal/projection readback."""
+
+    existing = load_json_object(path)
+    _validate_current_admission_archive(
+        existing,
+        path=path,
+        plan=plan,
+        admitted_task_ids=admitted_task_ids,
+        command_runtime=command_runtime,
+    )
+    if existing["status"] == "committed":
+        return path
+    finalized = deepcopy(existing)
+    finalized.update(
+        {
+            "status": "committed",
+            "finalized_by": actor,
+            "committed_at": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "canonical_readback": readback,
+        }
+    )
+    _validate_current_admission_archive(
+        finalized,
+        path=path,
+        plan=plan,
+        admitted_task_ids=admitted_task_ids,
+        command_runtime=command_runtime,
+    )
+    _write_current_admission_archive_payload(path, finalized)
     return path
 
 
@@ -2119,8 +2237,7 @@ def apply_current_materialization_atomic(
     provider_capabilities_path: Path,
 ) -> dict[str, Any]:
     actor = os.environ.get("AI_NAME", "").strip()
-    allowed_actors = CURRENT_ALLOWED_FLEET_ACTORS | {"Human/Ops"}
-    if actor not in allowed_actors:
+    if actor not in CURRENT_ALLOWED_FLEET_ACTORS:
         raise DispatchError(
             "--apply requires the real governed caller identity; "
             f"AI_NAME={actor!r} is not allowed"
@@ -2144,6 +2261,8 @@ def apply_current_materialization_atomic(
         committed_state: dict[str, Any] | None = None
         final_plan: dict[str, Any] | None = None
         readiness: dict[str, Any] | None = None
+        prepared_archive_path: Path | None = None
+        archive_ids: list[str] = []
         with ai_status.runtime_state_lock(config, shared=True):
             readiness = load_current_readiness_snapshot(
                 config_path=config_path,
@@ -2162,7 +2281,22 @@ def apply_current_materialization_atomic(
                         state=state,
                         readiness=readiness,
                     )
+                    archive_ids = list(final_plan["create"]) or [
+                        task_id
+                        for task_id in final_plan["exact"]
+                        if task_id
+                        in {task["id"] for task in tasks if task["wave"] == "G1"}
+                    ]
                     if not final_plan["create_tasks"]:
+                        if archive_ids:
+                            prepared_archive_path = prepare_current_admission_archive(
+                                status_root=status_root,
+                                plan=final_plan,
+                                admitted_task_ids=archive_ids,
+                                command_runtime=command_runtime,
+                                actor=actor,
+                                allow_committed=True,
+                            )
                         committed_state = deepcopy(state)
                     else:
                         with ai_status.buffer_activity_events():
@@ -2204,6 +2338,14 @@ def apply_current_materialization_atomic(
                                 raise DispatchError(
                                     "in-memory exact readback failed before atomic commit"
                                 )
+                            prepared_archive_path = prepare_current_admission_archive(
+                                status_root=status_root,
+                                plan=final_plan,
+                                admitted_task_ids=archive_ids,
+                                command_runtime=command_runtime,
+                                actor=actor,
+                                allow_committed=False,
+                            )
                             ai_status.append_log(
                                 {
                                     "ts": ai_status.iso_now(),
@@ -2219,6 +2361,9 @@ def apply_current_materialization_atomic(
                                     "program_id": CURRENT_PROGRAM_ID,
                                     "catalog_sha256": final_plan["catalog_sha256"],
                                     "admitted_task_ids": final_plan["create"],
+                                    "admission_id": prepared_archive_path.stem,
+                                    "admission_archive": str(prepared_archive_path),
+                                    "admission_archive_state": "prepared",
                                     "readiness_sha256": readiness["sha256"],
                                 }
                             )
@@ -2241,11 +2386,10 @@ def apply_current_materialization_atomic(
         admitted_task_ids=readback_ids,
         readiness=readiness,
     )
-    archive_path = None
-    archive_ids = admitted or readback_ids
-    if archive_ids:
-        archive_path = write_current_admission_archive(
-            status_root=status_root,
+    archive_path = prepared_archive_path
+    if archive_ids and archive_path is not None:
+        archive_path = finalize_current_admission_archive(
+            path=archive_path,
             plan=final_plan,
             admitted_task_ids=archive_ids,
             command_runtime=command_runtime,
@@ -2369,7 +2513,12 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--validate-only", action="store_true")
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--apply", action="store_true")
-    parser.add_argument("--catalog", default=str(DEFAULT_CURRENT_CATALOG_PATH))
+    parser.add_argument(
+        "--current",
+        action="store_true",
+        help="Use the reviewed 2026-07-31 current-proof remediation profile.",
+    )
+    parser.add_argument("--catalog", default=None)
     parser.add_argument(
         "--proof-ownership",
         default=str(DEFAULT_PROOF_OWNERSHIP_PATH),
@@ -2388,7 +2537,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider-capabilities", default=None)
     args = parser.parse_args(argv)
 
-    catalog_path = Path(args.catalog).resolve()
+    if args.current and args.catalog:
+        parser.error("--current and --catalog are mutually exclusive")
+    catalog_path = Path(
+        args.catalog
+        or (DEFAULT_CURRENT_CATALOG_PATH if args.current else DEFAULT_CATALOG_PATH)
+    ).resolve()
     catalog = load_json_object(catalog_path)
     tasks = validate_catalog(catalog)
     validate_catalog_file_binding(catalog_path, catalog)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import importlib.util
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import subprocess
@@ -24,7 +25,7 @@ SPEC = importlib.util.spec_from_file_location("current_guarded_dispatch", SCRIPT
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
-from rewrite.task_state_store import append_state_commit
+from rewrite.task_state_store import append_state_commit, load_snapshot
 
 
 def catalog() -> dict:
@@ -81,6 +82,104 @@ def external_rows() -> list[dict]:
 
 def active_state(tasks: list[dict] | None = None) -> dict:
     return {"tasks": [*external_rows(), *(tasks or [])]}
+
+
+def canonical_test_state(ai_status) -> dict:
+    state = ai_status.default_state()
+    state["tasks"] = [
+        {
+            "id": row["id"],
+            "title": f"External dependency {row['id']}",
+            "summary_zh": "Authoritative transaction fixture dependency",
+            "phase": "Test prerequisite",
+            "owner": "Codex2",
+            "reviewer": "Codex",
+            "status": "done",
+            "depends_on": [],
+            "artifacts": [],
+            "acceptance": ["fixture dependency is complete"],
+            "next": "Satisfied",
+            "last_update": "2026-07-31T16:00:00Z",
+        }
+        for row in external_rows()
+    ]
+    state["handoffs"] = []
+    state["blockers"] = []
+    return state
+
+
+def isolated_ai_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(tmp_path))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    spec = importlib.util.spec_from_file_location(
+        f"guarded_dispatch_ai_status_{tmp_path.name}",
+        ROOT / "scripts" / "ai_status.py",
+    )
+    assert spec and spec.loader
+    ai_status = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ai_status)
+    ai_status.load_config = lambda: {}
+    ai_status.validate_status_command_runtime_binding = lambda: None
+    ai_status.validate_status_root_binding = lambda: None
+    ai_status.refresh_derived_status_views_if_current = lambda _state: True
+    monkeypatch.setattr(module, "_load_ai_status_module", lambda _script: ai_status)
+    return ai_status
+
+
+def current_apply_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[object, dict, list[dict], dict, dict, tuple[Path, Path, Path]]:
+    ai_status = isolated_ai_status(tmp_path, monkeypatch)
+    state = canonical_test_state(ai_status)
+    authority = write_authority(tmp_path, state)
+    config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
+    command_runtime = {
+        "root": str(ROOT),
+        "script": str(ROOT / "scripts" / "ai_status.py"),
+        "source_sha": subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "remote": "ajoe734/pantheon",
+        "base_ref": "origin/dev",
+    }
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    monkeypatch.setenv("AI_NAME", "Codex2")
+    return (
+        ai_status,
+        payload,
+        tasks,
+        authority,
+        command_runtime,
+        (config_path, runtime_path, capabilities_path),
+    )
+
+
+def apply_fixture(
+    fixture: tuple[object, dict, list[dict], dict, dict, tuple[Path, Path, Path]],
+    *,
+    status_root: Path,
+) -> dict:
+    _ai_status, payload, tasks, authority, command_runtime, readiness_paths = fixture
+    config_path, runtime_path, capabilities_path = readiness_paths
+    return module.apply_current_materialization_atomic(
+        catalog=payload,
+        tasks=tasks,
+        status_root=status_root,
+        authority=authority,
+        command_runtime=command_runtime,
+        config_path=config_path,
+        runtime_state_path=runtime_path,
+        provider_capabilities_path=capabilities_path,
+    )
 
 
 def materialized_row(
@@ -184,7 +283,7 @@ def readiness_files(root: Path) -> tuple[Path, Path, Path]:
 
 def test_current_catalog_validate_only_binds_exact_pr_head() -> None:
     result = subprocess.run(
-        ["python3", str(SCRIPT), "--validate-only", "--catalog", str(CATALOG)],
+        ["python3", str(SCRIPT), "--validate-only", "--current"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -451,6 +550,180 @@ def test_current_atomic_failure_never_mutates_input_state(tmp_path: Path) -> Non
             assign_one=failing_assign,
         )
     assert state == before
+
+
+def test_current_apply_rejects_human_ops_actor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AI_NAME", "Human/Ops")
+    with pytest.raises(module.DispatchError, match="is not allowed"):
+        module.apply_current_materialization_atomic(
+            catalog={},
+            tasks=[],
+            status_root=tmp_path,
+            authority={},
+            command_runtime={"root": str(ROOT)},
+            config_path=tmp_path / "config.json",
+            runtime_state_path=tmp_path / "state.json",
+            provider_capabilities_path=tmp_path / "capabilities.json",
+        )
+
+
+@pytest.mark.parametrize("failure_point", ["assign", "sync"])
+def test_current_authoritative_transaction_failure_leaves_zero_catalog_tasks(
+    failure_point: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture = current_apply_fixture(tmp_path, monkeypatch)
+    ai_status, _payload, tasks, authority, _runtime, _paths = fixture
+    if failure_point == "assign":
+        real_assign = ai_status.command_assign
+        calls = 0
+
+        def fail_second_assign(state: dict, args: list[str]):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise module.DispatchError("injected authoritative assign failure")
+            return real_assign(state, args)
+
+        ai_status.command_assign = fail_second_assign
+        expected = "injected authoritative assign failure"
+    else:
+        ai_status.sync_all = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            module.DispatchError("injected authoritative sync failure")
+        )
+        expected = "injected authoritative sync failure"
+
+    with pytest.raises(module.DispatchError, match=expected):
+        apply_fixture(fixture, status_root=tmp_path)
+
+    snapshot = load_snapshot(authority["event_log"])
+    catalog_ids = {task["id"] for task in tasks}
+    assert snapshot["event_count"] == 1
+    assert not catalog_ids.intersection(
+        row["id"] for row in snapshot["state"]["tasks"]
+    )
+    projection = json.loads((tmp_path / "ai-status.json").read_text(encoding="utf-8"))
+    assert not catalog_ids.intersection(row["id"] for row in projection["tasks"])
+    log_path = tmp_path / "ai-activity-log.jsonl"
+    assert not log_path.exists() or "program_catalog_materialized" not in log_path.read_text(
+        encoding="utf-8"
+    )
+    archives = list(
+        (tmp_path / ".orchestrator" / "program-dispatch-admissions").rglob("*.json")
+    )
+    if failure_point == "sync":
+        assert len(archives) == 1
+        assert json.loads(archives[0].read_text(encoding="utf-8"))["status"] == "prepared"
+    else:
+        assert archives == []
+
+
+def test_current_concurrent_authoritative_apply_is_one_commit_plus_exact_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture = current_apply_fixture(tmp_path, monkeypatch)
+    _ai_status, _payload, tasks, authority, _runtime, _paths = fixture
+
+    process_context = multiprocessing.get_context("fork")
+    result_queue = process_context.Queue()
+
+    def run_apply() -> None:
+        try:
+            result_queue.put(
+                {"ok": apply_fixture(fixture, status_root=tmp_path)}
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced in parent
+            result_queue.put({"error": f"{type(exc).__name__}: {exc}"})
+
+    processes = [process_context.Process(target=run_apply) for _index in range(2)]
+    for process in processes:
+        process.start()
+    received = [result_queue.get(timeout=30) for _process in processes]
+    for process in processes:
+        process.join(timeout=30)
+        assert process.exitcode == 0
+    assert all("ok" in item for item in received), received
+    results = [item["ok"] for item in received]
+
+    assert sorted(len(result["created"]) for result in results) == [0, 25]
+    snapshot = load_snapshot(authority["event_log"])
+    g1_ids = {task["id"] for task in tasks if task["wave"] == "G1"}
+    materialized = [
+        row["id"]
+        for row in snapshot["state"]["tasks"]
+        if row.get("id") in g1_ids
+    ]
+    assert len(materialized) == 25
+    assert set(materialized) == g1_ids
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "ai-activity-log.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert sum(event.get("type") == "program_catalog_materialized" for event in events) == 1
+    archive_paths = list(
+        (tmp_path / ".orchestrator" / "program-dispatch-admissions").rglob("*.json")
+    )
+    assert len(archive_paths) == 1
+    archive = json.loads(archive_paths[0].read_text(encoding="utf-8"))
+    assert archive["status"] == "committed"
+    assert set(archive["admitted_task_ids"]) == g1_ids
+
+    replay = apply_fixture(fixture, status_root=tmp_path)
+    assert replay["created"] == []
+    assert set(replay["exact"]) == g1_ids
+    assert replay["admission_archive"] == str(archive_paths[0])
+
+
+def test_current_post_commit_archive_gap_is_recovered_by_exact_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture = current_apply_fixture(tmp_path, monkeypatch)
+    _ai_status, _payload, tasks, authority, _runtime, _paths = fixture
+    real_readback = module.verify_current_canonical_readback
+    monkeypatch.setattr(
+        module,
+        "verify_current_canonical_readback",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            module.DispatchError("injected post-commit readback failure")
+        ),
+    )
+
+    with pytest.raises(module.DispatchError, match="post-commit readback failure"):
+        apply_fixture(fixture, status_root=tmp_path)
+
+    snapshot = load_snapshot(authority["event_log"])
+    g1_ids = {task["id"] for task in tasks if task["wave"] == "G1"}
+    assert {
+        row["id"]
+        for row in snapshot["state"]["tasks"]
+        if row.get("id") in g1_ids
+    } == g1_ids
+    archive_paths = list(
+        (tmp_path / ".orchestrator" / "program-dispatch-admissions").rglob("*.json")
+    )
+    assert len(archive_paths) == 1
+    prepared = json.loads(archive_paths[0].read_text(encoding="utf-8"))
+    assert prepared["status"] == "prepared"
+    assert prepared["canonical_readback"] is None
+
+    monkeypatch.setattr(module, "verify_current_canonical_readback", real_readback)
+    replay = apply_fixture(fixture, status_root=tmp_path)
+    assert replay["created"] == []
+    assert set(replay["exact"]) == g1_ids
+    recovered = json.loads(archive_paths[0].read_text(encoding="utf-8"))
+    assert recovered["status"] == "committed"
+    assert recovered["canonical_readback"]["exact"] == [
+        task["id"] for task in tasks if task["wave"] == "G1"
+    ]
 
 
 def test_current_exact_canonical_readback_and_mismatch(tmp_path: Path) -> None:

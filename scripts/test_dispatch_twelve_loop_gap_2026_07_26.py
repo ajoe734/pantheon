@@ -254,8 +254,6 @@ def test_validate_only_cli() -> None:
             "python3",
             str(SCRIPT),
             "--validate-only",
-            "--catalog",
-            str(CATALOG),
         ],
         cwd=ROOT,
         capture_output=True,
