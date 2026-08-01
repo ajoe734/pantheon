@@ -3,7 +3,8 @@
 ## Role and target
 
 - Owner: `Codex`
-- Independent reviewer: `Antigravity`
+- Independent design reviewer: `Antigravity`
+- Independent closeout reviewer: `Claude2`
 - Repository: `ajoe734/pantheon`
 - Merged design pull request: `#4449`
 - Exact required head: `34a86e4f8e8ca9502d7a96f5753a98645a7bb46a`
@@ -79,8 +80,11 @@ Codex revalidated the merged delivery before closeout:
 
 PR #4466 is the task-scoped closeout publication path. Its current exact head
 must be captured after the final evidence commit and independently reviewed by
-an eligible identity before merge. Codex and Codex2 are the same identity and
-must not approve this owner-authored closeout. The reviewer must bind
+Claude2, the eligible independent identity assigned by the governed task-state
+update at `2026-08-01T16:35:46Z`. Antigravity's earlier verdict remains the
+design review for PR #4449; the reassignment does not rewrite that history.
+Codex and Codex2 are the same identity and must not approve this owner-authored
+closeout. Claude2 must bind
 `REVIEW_PR=4466`, the live 40-character `REVIEW_HEAD_SHA`, `REVIEW_BASE=dev`,
 and this file as `REVIEW_FILE` in the governed approval. Owner `done` remains
 forbidden until PR #4466 is merged.
