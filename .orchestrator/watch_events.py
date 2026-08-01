@@ -431,11 +431,34 @@ def _queue_delivery_event_locked(config: dict[str, Any], event: dict[str, Any]) 
     return True
 
 
+_SEEN_EVENT_KEY_TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
+
+
+def _normalized_seen_event_value(key: Any, value: Any) -> str:
+    if isinstance(value, str) and value:
+        return value
+    if value is None:
+        match = _SEEN_EVENT_KEY_TS_RE.search(str(key))
+        if match:
+            return match.group(1)
+    return str(value or "")
+
+
 def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
     seen = state.get("seen_event_keys", {})
+    if not isinstance(seen, dict):
+        state["seen_event_keys"] = {}
+        return
+    normalized = {str(key): _normalized_seen_event_value(key, value) for key, value in seen.items()}
+    if normalized != seen:
+        seen = normalized
+        state["seen_event_keys"] = seen
+    if max_entries <= 0:
+        state["seen_event_keys"] = {}
+        return
     if len(seen) <= max_entries:
         return
-    ordered = sorted(seen.items(), key=lambda item: item[1])
+    ordered = sorted(seen.items(), key=lambda item: (item[1], item[0]))
     state["seen_event_keys"] = dict(ordered[-max_entries:])
 
 

@@ -4,8 +4,8 @@
     "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
     "title": "Repair promote PR CI trigger and auto-merge path",
     "phase": "Repository Merge Governance",
-    "owner": "Codex2",
-    "reviewer": "Codex",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
@@ -15,8 +15,8 @@
     "review_file": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
-  "status": "in_progress",
-  "generated_at": "2026-07-27T16:31:15Z",
+  "status": "review_approved",
+  "generated_at": "2026-07-29T13:03:56Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -99,6 +99,7 @@
   },
   "implementation": {
     "anchor_commit": "a61c7a0318c32788cdd3c7123d70364ddae8f999",
+    "rollup_repair_anchor_commit": "5cff7b71f307761538841c5efc45ff2038e571fa",
     "files": [
       ".github/workflows/branch-ci.yml",
       ".github/workflows/publish-promote.yml",
@@ -118,34 +119,452 @@
         "github.ref_name starts with promote/",
         "github.sha equals expected_head_sha in both independent required jobs"
       ],
-      "caller_permission": "actions: write",
+      "caller_permissions": [
+        "actions: write",
+        "checks: read"
+      ],
       "idempotency": "existing PRs with all required context names are not redispatched",
       "backlog_selection": "bulk discovery selects only a maximal non-superseded existing promote candidate; one exact-branch lookup obtains its check rollup and dispatches only when required contexts are missing",
-      "bulk_lookup": "omits statusCheckRollup to avoid GraphQL fanout across the 1,000-row query",
+      "bulk_lookup": "uses paginated REST and omits statusCheckRollup; the single exact candidate obtains check runs from the REST commit check-runs endpoint",
       "bulk_lookup_incident_runs": [
         30284788017,
-        30284856368
-      ]
+        30284856368,
+        30285398658
+      ],
+      "legacy_ref_handling": "read the exact promote head workflow through REST; return legacy_ci_contract without dispatch when the guarded inputs are absent",
+      "auto_merge_verification": "fail closed on gh pr merge --auto failure, then require REST to expose auto_merge or merged_at",
+      "bot_pr_rollup_repair": "after the exact-head workflow_dispatch, find only the action_required pull_request Branch CI placeholder bound to the same PR number and head SHA, then rerun that workflow so GitHub branch protection receives the required PR rollup contexts"
     }
   },
   "validation": [
     {
-      "command": "python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
-      "result": "20 passed"
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
+      "result": "22 passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py",
-      "result": "68 passed in 11.86s"
+      "result": "70 passed in 8.19s"
     },
     {
-      "command": "python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
       "result": "passed"
     },
     {
-      "command": "parse .github/workflows/branch-ci.yml and .github/workflows/publish-promote.yml; git diff --check",
+      "command": "parse .github/workflows/branch-ci.yml and .github/workflows/publish-promote.yml plus evidence.json; git diff --check origin/dev...HEAD",
+      "result": "passed"
+    },
+    {
+      "command": "live read-only list_open_promote_prs('master') and find_open_promote_pr('promote/v2026.07.26.2') through paginated REST",
+      "result": "26 promote PRs, exact PR 4138, zero exact-head checks, no API error"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
+      "result": "27 passed in 0.617s at rollup repair anchor 5cff7b71f307761538841c5efc45ff2038e571fa"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py",
+      "result": "75 passed in 16.32s at rollup repair anchor 5cff7b71f307761538841c5efc45ff2038e571fa"
+    },
+    {
+      "command": "py_compile publish_promote.py and test_git_workflow_helpers.py; parse branch-ci.yml, publish-promote.yml, and evidence.json; git diff --check",
       "result": "passed"
     }
   ],
+  "owner_rescue": {
+    "previous_owner": "Codex2",
+    "current_owner": "Codex",
+    "reviewer": "Claude",
+    "metadata_anchor_commit": "09af22e3c05ebea666f65ee34f57862cfc265840",
+    "base_commit": "87166a352c0b90a26a6e35c138acfaea195fa4ee",
+    "base_update_merge_commit": "8f4731aa86cbe99da6b535fa565a1dcb84474c40",
+    "scope_changed": false,
+    "validation_repeated": true
+  },
+  "closeout_preparation": {
+    "review_evidence_anchor_commit": "7301f6e7a05145a1937f95d889f3af4be82b7072",
+    "base_commit": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+    "base_update_merge_commit": "a73a639c9db350943c4b4adff0dd92523799ec81",
+    "validated_at": "2026-07-27T20:03:43Z",
+    "validation": {
+      "unittest": "22 PublishPromoteTests passed",
+      "pytest": "70 focused tests passed in 8.65s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD passed",
+      "live_read_only": {
+        "open_promote_pr_count": 26,
+        "representative_pr": 4138,
+        "representative_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+        "representative_check_count": 0,
+        "reviewed_head_check_count": 8,
+        "reviewed_head_check_names": [
+          "Commit trailers",
+          "Python packaging provision",
+          "Runtime mirror guard",
+          "Smoke acceptance"
+        ]
+      }
+    }
+  },
+  "resumed_live_proof": {
+    "dispatched_at": "2026-07-29T04:34:06Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Codex2",
+    "base_commit": "e51c1220ab3582c9f45f2689dd546ee4a660b4e1",
+    "base_update_merge_commit": "d0d8e0398b41f39f6bd044d3469e573344c33b5f",
+    "scope_changed": false,
+    "merge_policy": "review_before_merge",
+    "validation": {
+      "unittest": "22 PublishPromoteTests passed in 0.315s",
+      "pytest": "70 focused tests passed in 8.40s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD passed",
+      "interpreter": "/home/lupin/pantheon/.venv/bin/python3"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "representative_pr": 4138,
+      "representative_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "representative_check_count": 0
+    },
+    "pre_push_pr_state": {
+      "pr": 4262,
+      "head": "3ade46dceb24ca621c3801d22db8d1348ce54643",
+      "merge_state": "BEHIND",
+      "auto_merge_enabled": true,
+      "github_actions_check_count": 8,
+      "all_github_actions_checks_successful": true
+    },
+    "next": "push the current composed head with auto-merge revoked, reacquire Branch CI, obtain Codex2 exact-head approval, merge through the governed integrator, then run a fresh promote candidate"
+  },
+  "current_dev_refresh": {
+    "review_reopen_context_anchor_commit": "13583c5ea8b54fd418453ba47a9b4bd0a5f2cb07",
+    "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+    "reviewed_head_ci": {
+      "push_run": 30423656277,
+      "pull_request_run": 30423658834,
+      "github_actions_check_count": 8,
+      "all_github_actions_checks_successful": true,
+      "required_contexts": {
+        "Commit trailers": "success",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "success"
+      },
+      "additional_contexts": {
+        "Python packaging provision": "success"
+      }
+    },
+    "base_compositions": [
+      {
+        "base_commit": "b1527e868654fb93765b3e5788adeea1f5e869a2",
+        "base_update_merge_commit": "d63ff5f7ad2a934b8fc9e2ed31179bf1f9fb5b1c"
+      },
+      {
+        "base_commit": "3eb6a6bd86093a0296fcd18871e0f014a4292e7b",
+        "base_update_merge_commit": "8d17cdbaf90d1469c36d111a5002ef95b6a3336c"
+      },
+      {
+        "base_commit": "22fb0b6ba2c1beccfd55a32b3e48bca250375192",
+        "base_update_merge_commit": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b"
+      }
+    ],
+    "scope_changed": false,
+    "validated_at": "2026-07-29T04:54:07Z",
+    "validation": {
+      "unittest": "22 PublishPromoteTests passed in 0.248s",
+      "pytest": "70 focused tests passed in 9.43s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD passed",
+      "interpreter": ".venv-pantheon/bin/python3"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "representative_pr": 4138,
+      "representative_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "representative_check_count": 0
+    },
+    "pre_push_pr_state": {
+      "pr": 4262,
+      "head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+      "base": "dev",
+      "merge_state": "BEHIND",
+      "auto_merge_enabled": false,
+      "github_actions_check_count": 8,
+      "all_github_actions_checks_successful": true,
+      "external_commit_status_count": 1,
+      "canonical_review_gate": "failure",
+      "strict_base_required": true
+    },
+    "next": "compose current origin/dev, commit and push this exact-head evidence refresh, reacquire Branch CI on the resulting PR head, obtain Codex2 exact-head approval, and merge through the governed integrator"
+  },
+  "owner_closeout_gap_repair": {
+    "reviewed_head": "77dc9e49cc105a81e213b3ff02c1b657685acf6e",
+    "review_approval_recorded_at": "2026-07-29T08:54:33Z",
+    "review_dispatch_anchor_commit": "ab31d3cebef86e4702e392cc7ea2bfecab11c29d",
+    "code_anchor_commit": "253858835a4671e9f905b030d4ff70f108ad0077",
+    "findings_addressed": {
+      "legacy_existing_pr": "exact-head workflow content is inspected through REST; refs predating workflow_dispatch return legacy_ci_contract without a hard workflow error",
+      "auto_merge": "gh pr merge --auto now uses check=True and the PR REST resource must expose auto_merge or merged_at"
+    },
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.284s",
+      "pytest": "73 focused tests passed in 8.75s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "legacy_pr": 4138,
+      "legacy_branch": "promote/v2026.07.26.2",
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_supports_dispatch": false,
+      "legacy_disposition": "legacy_ci_contract",
+      "legacy_missing_required_checks": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance"
+      ],
+      "fresh_release_tag": "release/v2026.07.29.5",
+      "fresh_release_commit": "57abe669fc0b2c9c871c09920e156adf85f7e30e",
+      "fresh_release_supports_dispatch": true,
+      "fresh_release_disposition": "eligible"
+    },
+    "next": "push the finalization refresh, reacquire Branch CI and Antigravity exact-head review, merge after Human Ops releases the root freeze, then execute fresh live proof and ancestry-based stale retirement"
+  },
+  "finalize_dispatch_refresh": {
+    "canonical_status_observed_at": "2026-07-29T10:07:10Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "prior_approved_head": "f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592",
+    "prior_approval_recorded_at": "2026-07-29T09:09:06Z",
+    "dispatch_metadata_anchor_commit": "7073c77b53d27b1bfe44107888ec4000e9208a52",
+    "base_commit": "18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d",
+    "base_update_merge_commit": "5d40efd33a300d70ab6aa05350bfbca3cfe5e46f",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T10:12:46Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.221s",
+      "pytest": "73 focused tests passed in 9.77s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "base_is_current": true,
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity approval on the resulting exact head, then wait for Human/Ops to bind the root-freeze context"
+    }
+  },
+  "strict_base_refresh_after_approval": {
+    "canonical_status_observed_at": "2026-07-29T10:21:42Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "f81a9b1e96de5d5bbfd1530daabd6f3441c13893",
+    "approval_recorded_at": "2026-07-29T10:20:30Z",
+    "dispatch_metadata_anchor_commit": "2f895c5f5e95b5256025528e31809f37407fcdc7",
+    "base_commit": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+    "base_update_merge_commit": "b88cf3d849fb948879ecb45a0dd15b85cacbf7b6",
+    "incoming_scope": ".orchestrator/task-briefs/sup_l12_review_priority_gate_20260729_closeout_evidence.md only",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T10:26:41Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.246s",
+      "pytest": "73 focused tests passed in 7.98s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "legacy_pr": 4138,
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_check_count": 0,
+      "legacy_supports_dispatch": false,
+      "fresh_release_tag": "release/v2026.07.29.5",
+      "fresh_release_commit": "57abe669fc0b2c9c871c09920e156adf85f7e30e",
+      "fresh_release_supports_dispatch": true
+    },
+    "next": "commit and push this refreshed evidence head, reacquire Branch CI and Antigravity exact-head approval, then merge PR #4262 through the governed integrator"
+  },
+  "codex2_owner_finalize_refresh": {
+    "canonical_status_observed_at": "2026-07-29T10:55:01Z",
+    "canonical_owner": "Codex2",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
+    "approval_recorded_at": "2026-07-29T10:50:50Z",
+    "dispatch_metadata_anchor_commit": "0b80fc368b6ad58e82bae73de8b1c2697a51dbd8",
+    "base_commit": "5503111f5e94d6e8be249db5ffa773b829629815",
+    "base_update_merge_commit": "0463d6a9a651ecc2d67529b0b37c98b5ea19ae64",
+    "incoming_scope": "supervisor preferred-lane scheduling and L12 recovery documents only; no promote implementation or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T11:02:40Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.204s",
+      "pytest": "73 focused tests passed in 9.63s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "legacy_pr": 4138,
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_check_count": 0,
+      "legacy_supports_dispatch": false,
+      "fresh_release_tag": "release/v2026.07.29.6",
+      "fresh_release_commit": "e7eab746afc8ad09321c6da69263dbda4d5eccce",
+      "fresh_release_supports_dispatch": true
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "base_is_current_at_validation": true,
+      "remote_pr_head_before_push": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
+      "local_pre_evidence_head": "0463d6a9a651ecc2d67529b0b37c98b5ea19ae64",
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity approval on the resulting exact head, then wait for Human/Ops to bind the root-freeze context"
+    }
+  },
+  "codex_owner_finalize_refresh": {
+    "canonical_status_observed_at": "2026-07-29T11:15:54Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "prior_approved_head": "c249265c8b6cde99ed20376491d3a8ff88a7aff2",
+    "prior_approval_recorded_at": "2026-07-29T10:50:50Z",
+    "dispatch_metadata_anchor_commit": "b374a5c05f3e4181d1ddd356fb6df3a186355959",
+    "base_commit": "24d9c547e7ce52ddcf0bda648be9d4a9bf3cefde",
+    "base_update_merge_commit": "f1fafb7c4db246d7054e6c748ed5e4bac9c579a0",
+    "incoming_scope": "supervisor urgent-only preemption and tests only; no promote implementation or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T11:20:43Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.268s",
+      "pytest": "73 focused tests passed in 9.18s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "legacy_pr": 4138,
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_check_count": 0,
+      "legacy_supports_dispatch": false,
+      "fresh_release_tag": "release/v2026.07.29.6",
+      "fresh_release_commit": "e7eab746afc8ad09321c6da69263dbda4d5eccce",
+      "fresh_release_supports_dispatch": true
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "base_is_current_at_validation": true,
+      "local_pre_evidence_head": "f1fafb7c4db246d7054e6c748ed5e4bac9c579a0",
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity approval on the resulting exact head, then merge through the governed integrator"
+    }
+  },
+  "codex_strict_base_refresh_after_approval": {
+    "canonical_status_observed_at": "2026-07-29T11:28:40Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "6d6586da85ce3e2bb48870052d6e8c0bece0f195",
+    "approval_recorded_at": "2026-07-29T11:27:36Z",
+    "canonical_review_status_id": 51285723012,
+    "dispatch_metadata_anchor_commit": "9d33e83b5785011f7ccf80904f60bb615d873d77",
+    "base_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+    "base_update_merge_commit": "7776a4967868b61e329cc72ec7808b4ac873ef0c",
+    "incoming_scope": "supervisor wave-0 preemption protection and tests only; no promote implementation or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T11:33:55Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.216s",
+      "pytest": "73 focused tests passed in 9.76s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "approved_head_became_behind": true,
+      "approved_head_branch_ci_check_runs": 8,
+      "approved_head_canonical_review_gate": "success",
+      "approved_head_root_freeze_context": "missing",
+      "local_pre_evidence_head": "7776a4967868b61e329cc72ec7808b4ac873ef0c",
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this evidence refresh, reacquire Branch CI and Antigravity exact-head approval, then wait for Human/Ops to bind the root-freeze context"
+    }
+  },
+  "codex2_owned_finalize_dispatch": {
+    "canonical_status_observed_at": "2026-07-29T11:54:19Z",
+    "canonical_owner": "Codex2",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "645609c0133f1e5a7badbf4a3e960810a8c2f3b3",
+    "approval_recorded_at": "2026-07-29T11:41:25Z",
+    "canonical_review_status_id": 51286379446,
+    "approved_head_branch_ci": {
+      "push_run": 30448185392,
+      "pull_request_run": 30448188497,
+      "github_actions_check_count": 8,
+      "all_github_actions_checks_successful": true
+    },
+    "dispatch_metadata_anchor_commit": "dced1f81956d963583598392ab3fb4c9e51e9980",
+    "base_commit": "575040212a14d1ededc5d8ed54b8c187a4ebe2b2",
+    "base_update_merge_commit": "2da04f364aa55d567c4e6aca49f3270716aa7e59",
+    "incoming_scope": "L12 gap audit and recovery task packet only; no promote implementation, tests, or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T12:00:13Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "25 PublishPromoteTests passed in 0.608s",
+      "pytest": "73 focused tests passed in 15.49s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed"
+    },
+    "live_read_only": {
+      "open_promote_pr_count": 26,
+      "legacy_pr": 4138,
+      "legacy_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "legacy_check_count": 0,
+      "fresh_release_tag": "release/v2026.07.29.7",
+      "fresh_release_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+      "fresh_release_supports_dispatch": true
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "approved_head_became_behind": true,
+      "local_pre_evidence_head": "2da04f364aa55d567c4e6aca49f3270716aa7e59",
+      "auto_merge_enabled": false,
+      "required_external_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "next": "commit and push this final evidence refresh, reacquire Branch CI and Antigravity exact-head approval, then merge through the governed integrator after the root-freeze context is present"
+    }
+  },
   "delivery": {
     "implementation_pr": 4258,
     "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
@@ -159,12 +578,48 @@
         "Smoke acceptance": "success"
       }
     },
-    "bulk_lookup_followup_pr": null,
-    "bulk_lookup_followup_head": null,
-    "bulk_lookup_followup_merge_commit": null
+    "bulk_lookup_followup_pr": 4259,
+    "bulk_lookup_followup_head": "b271c83fc3674f883dc6b7cf55c56afd612a0762",
+    "bulk_lookup_followup_merge_commit": "2644329db702068142d3e942a40b3bc5d76c0c1a",
+    "rest_followup_pr": 4262,
+    "rest_followup_code_commit": "c0254c6faa70b9bd18b6132567cb8cf87b46c136",
+    "rest_followup_pre_evidence_head": "25d8f0764352369dbb6394694627e05d29087448",
+    "rest_followup_head": "c6999529e7299c3730d3dad7de16b7c2935c3c4c",
+    "rest_followup_merge_commit": "3a7560f48096352146852a59552f2d01e76d0b6a",
+    "rest_followup_checks": {
+      "observed_head": "c6999529e7299c3730d3dad7de16b7c2935c3c4c",
+      "push_run": 30449913458,
+      "pull_request_run": 30449918268,
+      "required_contexts": {
+        "Commit trailers": "success",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "success"
+      },
+      "additional_contexts": {
+        "Python packaging provision": "success"
+      }
+    },
+    "merge_gate": {
+      "observed_at": "2026-07-29T12:08:46Z",
+      "observed_head": "c6999529e7299c3730d3dad7de16b7c2935c3c4c",
+      "pr_state": "merged",
+      "mergeable_state": "merged_exact_reviewed_head",
+      "auto_merge_enabled": false,
+      "merge_policy": "review_before_merge",
+      "external_required_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "head_check_runs": 8,
+      "head_commit_statuses": 2,
+      "canonical_review_status_id": 51287738733,
+      "root_merge_freeze_status": "success",
+      "owner_rescue_requires_fresh_head_gates": false,
+      "waiting_for": []
+    }
   },
   "live_proof": {
-    "status": "pending_bulk_lookup_followup_merge",
+    "status": "complete",
     "preliminary_publish_cut_run": 30284714199,
     "preliminary_release_tag": "release/v2026.07.27.2",
     "preliminary_release_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
@@ -178,31 +633,269 @@
         "run": 30284856368,
         "result": "fail_closed_without_pr",
         "detail": "bulk GraphQL query returned HTTP 502"
+      },
+      {
+        "run": 30285398658,
+        "result": "fail_closed_without_pr",
+        "detail": "GraphQL lookup returned HTTP 502 after bulk rollup removal"
       }
     ],
-    "release_tag": null,
-    "release_commit": null,
-    "promote_branch": null,
-    "promote_pr": null,
-    "promote_head": null,
-    "branch_ci_run": null,
-    "required_check_conclusions": null,
-    "auto_merge_enabled": null,
-    "master_merge_commit": null,
-    "release_reachable_from_master": null
+    "first_post_merge_candidate": {
+      "publish_promote_run": 30450668323,
+      "release_tag": "release/v2026.07.29.7",
+      "release_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+      "promote_branch": "promote/v2026.07.29.7",
+      "promote_pr": 4375,
+      "promote_head": "596d190930d27d41e35191e37b9dc9471ad8bb43",
+      "branch_ci_run": 30450718720,
+      "auto_merge_enabled": true,
+      "exact_head_dispatch_guard": "passed",
+      "required_check_conclusions": {
+        "Commit trailers": "failure",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "skipped"
+      },
+      "disposition": "fail_closed",
+      "detail": "workflow_dispatch rescanned already-validated release history and rejected five malformed historical squash messages plus two overlong historical subjects"
+    },
+    "dispatch_trailer_history_repair": {
+      "anchor_commit": "3e75f7a413d3e951a310a51131ecc5ef23c84b74",
+      "scope": [
+        ".github/workflows/branch-ci.yml",
+        "scripts/git/test_git_workflow_helpers.py"
+      ],
+      "behavior": "after the existing exact-head promote workflow_dispatch guard passes, skip only the already-validated publish-history trailer re-scan",
+      "not_changing": [
+        "task and hotfix trailer enforcement",
+        "Runtime mirror guard",
+        "Smoke acceptance",
+        "master branch protection",
+        "release tree immutability",
+        "deployment admission"
+      ],
+      "validation": {
+        "unittest": "25 PublishPromoteTests passed",
+        "compile": "test_git_workflow_helpers.py passed py_compile",
+        "workflow_parse": "branch-ci.yml parsed",
+        "diff_check": "git diff --check passed"
+      }
+    },
+    "publish_cut_run": 30451782773,
+    "publish_cut_completed_at": "2026-07-29T12:29:35Z",
+    "release_tag": "release/v2026.07.29.8",
+    "release_commit": "715308c381a73b80cfe974689f00b4a42877255f",
+    "publish_branch": "publish/v2026.07.29.8",
+    "publish_promote_run": 30451859583,
+    "promote_branch": "promote/v2026.07.29.8",
+    "promote_pr": 4378,
+    "promote_head": "d46444611ab0eacf2b2b4f5c8fa0ec3018d37348",
+    "branch_ci_run": 30451897051,
+    "branch_ci_event": "workflow_dispatch",
+    "branch_ci_check_suite": 82545023762,
+    "required_check_conclusions": {
+      "Commit trailers": "success",
+      "Runtime mirror guard": "success",
+      "Smoke acceptance": "success"
+    },
+    "dispatch_rollup_finding": "the exact-head workflow_dispatch suite passed but GitHub left statusCheckRollup null while the bot-created pull_request Branch CI placeholder remained action_required",
+    "pull_request_ci_run": 30451895166,
+    "pull_request_ci_initial_conclusion": "action_required",
+    "pull_request_ci_rerun_attempt": 2,
+    "pull_request_ci_final_conclusion": "success",
+    "pull_request_ci_check_suite": 82545018256,
+    "pull_request_rollup_conclusions": {
+      "Commit trailers": "success",
+      "Runtime mirror guard": "success",
+      "Smoke acceptance": "success",
+      "Python packaging provision": "success"
+    },
+    "auto_merge_enabled": true,
+    "auto_merge_enabled_at": "2026-07-29T12:30:42Z",
+    "master_merged_at": "2026-07-29T12:36:16Z",
+    "master_merge_commit": "2c9388e07b9a99ac2938d58a0edf6e4d34002dd5",
+    "release_reachable_from_master": true,
+    "promote_head_reachable_from_master": true,
+    "rollup_repair": {
+      "anchor_commit": "5cff7b71f307761538841c5efc45ff2038e571fa",
+      "scope": [
+        "scripts/git/publish_promote.py",
+        "scripts/git/test_git_workflow_helpers.py"
+      ],
+      "behavior": "automatically rerun only the action_required pull_request Branch CI workflow run whose PR number and head SHA exactly match the promote candidate",
+      "validation": {
+        "unittest": "27 PublishPromoteTests passed in 0.617s",
+        "pytest": "75 focused tests passed in 16.32s",
+        "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed"
+      }
+    }
   },
   "stale_pr_retirement": {
-    "status": "pending_live_proof",
+    "status": "complete",
     "rule": "close only an older open promote PR whose release tag is an ancestor of the accepted fresh release and is reachable from master after the fresh candidate merges",
-    "closed_pr_numbers": [],
+    "closed_pr_numbers": [
+      4375,
+      4138,
+      4137,
+      4132,
+      4129,
+      4126,
+      4125,
+      4122,
+      4116,
+      4113,
+      4112,
+      4108,
+      4098,
+      4095,
+      4092,
+      4090,
+      4085,
+      4082,
+      4076,
+      4071,
+      4069,
+      4065,
+      4059,
+      4057,
+      4052,
+      4048,
+      4039
+    ],
     "retained_pr_numbers": [],
-    "ancestry_evidence": null
+    "ancestry_evidence": {
+      "accepted_release": "release/v2026.07.29.8",
+      "accepted_release_commit": "715308c381a73b80cfe974689f00b4a42877255f",
+      "observed_master_commit": "2c9388e07b9a99ac2938d58a0edf6e4d34002dd5",
+      "accepted_release_reachable_from_master": true,
+      "all_stale_releases_ancestor_of_accepted_release": true,
+      "all_stale_releases_reachable_from_master": true,
+      "closed_count": 27,
+      "retained_count": 0,
+      "open_promote_pr_count_after_retirement": 0,
+      "release_commits_by_pr": {
+        "4375": {"version": "v2026.07.29.7", "commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e"},
+        "4138": {"version": "v2026.07.26.2", "commit": "09159159fbac9b43d3e97011a12a224699677620"},
+        "4137": {"version": "v2026.07.26.1", "commit": "d8c1a81756e5ad904d173c2ffeea83373d4f2d97"},
+        "4132": {"version": "v2026.07.26.0", "commit": "8bdb85b6441536bd095426abb5c4226a1bd7828b"},
+        "4129": {"version": "v2026.07.25.9", "commit": "5e5a3ff072c325173040704c495ea77aa2a36b4e"},
+        "4126": {"version": "v2026.07.25.8", "commit": "57bacc4e11e6ef63c1060761a0c022b7fed27cc7"},
+        "4125": {"version": "v2026.07.25.7", "commit": "f6c5653be9d30662df5670be4b9a5b8cd88dcb50"},
+        "4122": {"version": "v2026.07.25.6", "commit": "ad73bef92f268cc873e1840af3163328ad49baea"},
+        "4116": {"version": "v2026.07.25.5", "commit": "2df79baff6ecd3257443c896b20efeb9c9fa41b8"},
+        "4113": {"version": "v2026.07.25.4", "commit": "0655e7f648c931b8bac3714841d16e93efc93997"},
+        "4112": {"version": "v2026.07.25.3", "commit": "10c84d4674b5722ca7be1cb38d0f17e3fc350b60"},
+        "4108": {"version": "v2026.07.25.2", "commit": "f843f963991f13c6fc576fd3c710a1277956fbec"},
+        "4098": {"version": "v2026.07.25.1", "commit": "5b1c155d7512875a7c53354ba81a0b4150dfc4ca"},
+        "4095": {"version": "v2026.07.25.0", "commit": "c164021c670c023a08d48fd3b453507b6dd894ea"},
+        "4092": {"version": "v2026.07.24.15", "commit": "ef9c7300818622ef758829700564302e7c8c8eed"},
+        "4090": {"version": "v2026.07.24.14", "commit": "c0e978d691e499fe55e4e63de777a23a7e768849"},
+        "4085": {"version": "v2026.07.24.12", "commit": "92b394a6f9219a5fb2b741e2b9e7b308e70adc75"},
+        "4082": {"version": "v2026.07.24.11", "commit": "789f5e0865b4a87294def470f06079ae83baf07f"},
+        "4076": {"version": "v2026.07.24.10", "commit": "c31e77ad1b1fd2510ec85b00d4c6057c03c1477f"},
+        "4071": {"version": "v2026.07.24.9", "commit": "2f4623d2dab27c9f55b341141fec70313ce95339"},
+        "4069": {"version": "v2026.07.24.8", "commit": "dee5e2712cd187d174b1ff076ac96ef23e9ea8e1"},
+        "4065": {"version": "v2026.07.24.7", "commit": "4bc156cfb96d3bd5c6141a367c3b833851bafc88"},
+        "4059": {"version": "v2026.07.24.6", "commit": "4ce1d1af7836c8eebed6db72596fcafc43292522"},
+        "4057": {"version": "v2026.07.24.5", "commit": "d17010c0733066f56ed63f6838e2587de730bacc"},
+        "4052": {"version": "v2026.07.24.4", "commit": "cd4f42c4fb1a98e7eee82f8de6faedeb81c44bb4"},
+        "4048": {"version": "v2026.07.24.3", "commit": "406abcad90421bc262961adb6cb3b6ab89c04962"},
+        "4039": {"version": "v2026.07.24.2", "commit": "0346b28790d9534cfff76625caeadee8d5ea13b8"}
+      }
+    }
+  },
+  "owner_closeout_finalization": {
+    "status": "pending_final_exact_head_review_and_merge",
+    "canonical_status_observed_at": "2026-07-29T12:59:17Z",
+    "canonical_owner": "Codex",
+    "canonical_reviewer": "Antigravity",
+    "approved_head": "a72f80ddad120452b0d0c8cd4549a55fe771a942",
+    "approval_recorded_at": "2026-07-29T12:57:27Z",
+    "canonical_review_status_id": 51290534381,
+    "pr": 4380,
+    "approval_checkpoint_anchor": "a4df29864c7952736addc92368de8988380373d2",
+    "base_commit": "2c07f509bd74c022acd742bad8bbccfaa4053cd2",
+    "base_update_merge_commit": "7f8d84169e617da73a1f0659348b0057073efcd2",
+    "incoming_scope": "SUP-L12-MERGED-ROW-RECONCILE-20260729 evidence packet only; no promote implementation, workflow, test, or task evidence overlap",
+    "scope_changed": false,
+    "validated_at": "2026-07-29T13:03:56Z",
+    "validation": {
+      "interpreter": ".venv-pantheon/bin/python3",
+      "unittest": "27 PublishPromoteTests passed in 0.242s",
+      "pytest": "75 focused tests passed in 8.93s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD and git diff --check passed",
+      "live_promote_pr": "PR #4378 remains merged at d46444611ab0eacf2b2b4f5c8fa0ec3018d37348 as master commit 2c9388e07b9a99ac2938d58a0edf6e4d34002dd5 with all four Branch CI checks successful",
+      "stale_pr_readback": "27 of 27 PRs remain closed; every release commit is an ancestor of release/v2026.07.29.8 and reachable from origin/master; zero failures",
+      "open_promote_pr_count": 0
+    },
+    "merge_gate": {
+      "strict_base_required": true,
+      "approved_head_became_behind": true,
+      "local_pre_evidence_head": "7f8d84169e617da73a1f0659348b0057073efcd2",
+      "auto_merge_enabled": false,
+      "next": "commit and push this final strict-base evidence, reacquire Antigravity approval on the resulting exact PR #4380 head, merge through the governed integrator, then run governed done"
+    }
   },
   "review": {
-    "status": "pending",
-    "reviewer": "Codex",
-    "reviewed_head": null,
-    "decision": null
+    "status": "approved_exact_head_superseded_for_merge_by_required_strict_base_refresh",
+    "reviewer": "Antigravity",
+    "reviewed_head": "a72f80ddad120452b0d0c8cd4549a55fe771a942",
+    "reviewed_at": "2026-07-29T12:57:27Z",
+    "decision": "approved",
+    "latest_exact_head_review": {
+      "reviewer": "Antigravity",
+      "reviewed_head": "a72f80ddad120452b0d0c8cd4549a55fe771a942",
+      "reviewed_at": "2026-07-29T12:57:27Z",
+      "decision": "approved",
+      "canonical_review_status_id": 51290534381,
+      "pr": 4380,
+      "verification": {
+        "unittest": "27 PublishPromoteTests passed",
+        "pytest": "75 focused tests passed",
+        "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed",
+        "exact_head_ci": "PR #4380 exact head supplied successful Branch CI checks and canonical review status 51290534381"
+      }
+    },
+    "latest_reopened_review": {
+      "reviewer": "Codex2",
+      "reviewed_head": "1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b",
+      "reviewed_at": "2026-07-29T05:04:54Z",
+      "decision": "reopened_for_stale_base_and_stale_evidence",
+      "implementation_finding": "REST repair is sound at the reviewed head",
+      "verification": {
+        "unittest": "22 PublishPromoteTests passed",
+        "pytest": "70 focused tests passed",
+        "compile_and_artifacts": "py_compile, workflow YAML, evidence JSON, and diff checks passed",
+        "live_read_only": "26 promote PRs discovered through REST; PR 4138 exact head had zero check runs",
+        "exact_head_ci": "push run 30423656277 and pull-request run 30423658834 supplied eight successful Branch CI checks"
+      },
+      "required_changes": [
+        "compose the latest origin/dev into the task branch",
+        "commit evidence naming the reviewed exact head and its check runs",
+        "reacquire Branch CI and independent review on the resulting new PR head"
+      ]
+    },
+    "prior_independent_review": {
+      "reviewer": "Claude",
+      "reviewed_head": "50c1a229f4d0bc31035a8dd67146e8dc5f28b211",
+      "reviewed_at": "2026-07-27T19:59:35Z",
+      "decision": "approved_with_required_closeout_followups",
+      "verification": {
+        "unittest": "22 PublishPromoteTests passed",
+        "pytest": "70 focused tests passed",
+        "live_read_only": "26 promote PRs discovered through REST; PR 4138 exact head had zero check runs; exact task head exposed all required check names"
+      }
+    },
+    "owner_closeout_followup": {
+      "reason": "fresh PR #4378 proved workflow_dispatch checks succeeded but did not enter the PR rollup until the action_required pull_request Branch CI placeholder was rerun",
+      "anchor_commit": "5cff7b71f307761538841c5efc45ff2038e571fa",
+      "final_gate": "the strict-base refreshed task PR containing this narrow rollup repair and completed evidence must reacquire Antigravity exact-head approval and merge to dev before done"
+    },
+    "required_closeout_followups": [
+      "merge the final rollup repair and completed evidence through a task PR with exact-head review",
+      "run governed done only after that PR is an ancestor of origin/dev"
+    ]
   },
   "safety": {
     "force_push": false,
@@ -210,6 +903,8 @@
     "release_or_publish_ref_rewritten": false,
     "shared_workflow_disabled": false,
     "unrelated_run_cancelled": false,
+    "stale_promote_prs_closed": 27,
+    "stale_promote_branches_deleted": false,
     "hosted_deployment": false,
     "real_capital_or_broker_action": false
   }

@@ -2,9 +2,9 @@
   "schema_version": 1,
   "packet_id": "2026-07-29-l12-gap-recovery",
   "generated_at": "2026-07-29T07:23:00Z",
-  "updated_at": "2026-07-29T10:25:00Z",
+  "updated_at": "2026-07-29T11:40:00Z",
   "program_id": "pantheon-twelve-loop-gap-2026-07-26",
-  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1140Z.md",
   "dispatch_model": "real-supervisor-auto-workers",
   "do_not_use": [
     "Codex collaboration subagents",
@@ -18,13 +18,29 @@
     "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
     "config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
     "status_root": "/home/lupin/pantheon",
-    "runtime_sha_observed": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+    "runtime_sha_observed": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
     "watchdog_reason": "supervisor_healthy",
     "priority_gate_archived": {
       "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
       "delivery_commit": "18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d",
       "closeout_evidence_commit": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
       "archived_at": "2026-07-29T10:16:49Z"
+    },
+    "post_priority_merges_observed": {
+      "preferred_lane_helper_claim_pr": 4368,
+      "preferred_fallback_lane_pr": 4369,
+      "owned_backlog_preempt_guard_pr": 4370,
+      "wave0_preemption_protect_pr": 4371,
+      "live_promoted_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+      "supervisor_pid_after_restart": 4191254,
+      "config_diff": "none"
+    },
+    "temporary_live_repairs": {
+      "stale_claude2_l12_missing_process_streak_clear": {
+        "performed_at": "2026-07-29T11:33:00Z",
+        "backup": ".orchestrator/state.json.bak-human-ops-clear-l12-stale-failure-streaks-20260729T1133Z",
+        "formalization_task": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+      }
     }
   },
   "current_dispatch_waves_2026_07_29T1025Z": [
@@ -109,7 +125,11 @@
         {"id": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729", "current_pr": 4363},
         {"id": "SUP-L12-TASK-BRIEF-SYNC-20260729"},
         {"id": "SUP-L12-WORKER-PYDEPS-20260729"},
-        {"id": "SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729"}
+        {"id": "SUP-L12-CHAIR-TRIAGE-STREAK-GUARD-20260729"},
+        {"id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"},
+        {"id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729"},
+        {"id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729"},
+        {"id": "SUP-L12-LONG-FINALIZE-LEASE-20260729"}
       ]
     }
   ],
@@ -255,6 +275,56 @@
       "Cooldown/failure-loop/chair-triage recovery plus #4365 review/merge/promotion remains required before the 12 loop lanes can progress."
     ]
   },
+  "fleet_checkpoint_2026_07_29T1140Z": {
+    "live_command_root": {
+      "promoted_commit": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+      "supervisor_pid": 4191254,
+      "config_diff": "none",
+      "restart_reason": "intentional deploy restart after PR #4371 merge"
+    },
+    "real_fleet_workers_observed": {
+      "antigravity": {
+        "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+        "run_id": "antigravity1-1-20260729T112638Z-2b127a26",
+        "status": "completed",
+        "exit_code": 0
+      },
+      "claude2": {
+        "task_id": "L12-VERIFY-OBS-001",
+        "run_id": "claude2-20260729T113336Z-08eddb2f",
+        "status": "running_at_checkpoint"
+      }
+    },
+    "invalid_provider_first_deviations": [
+      {
+        "task_id": "SUP-L12-STALE-PR-RETIRE-20260729",
+        "run_id": "codex-20260729T113504Z-3f621b50",
+        "provider": "Codex2",
+        "exit_code": 143,
+        "reason_invalid": "Codex2 helper fallback while Claude2 was busy is not valid Claude2/Antigravity-first fleet proof"
+      },
+      {
+        "task_id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+        "run_id": "codex-20260729T113520Z-78d3fc84",
+        "provider": "Codex2",
+        "exit_code": 143,
+        "reason_invalid": "Codex2 helper fallback while Claude2 was busy is not valid Claude2/Antigravity-first fleet proof"
+      }
+    ],
+    "new_required_guard_tasks": [
+      "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+      "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+      "SUP-L12-LONG-FINALIZE-LEASE-20260729"
+    ],
+    "not_complete": [
+      "The stale failure-streak clear was a temporary live repair and must become code plus regression coverage",
+      "Provider-first helper claim still needs busy-preferred-lane tests",
+      "Running worker truth and row owner/reviewer truth still need reconciliation",
+      "Long finalize/OPS leases must not mask L12 readiness",
+      "KNOW, LEARN, RUNTIME, OBS, FE, HOSTED, and CLOSE still lack accepted current product evidence"
+    ]
+  },
   "waves": [
     {
       "wave": 0,
@@ -290,8 +360,8 @@
           "target_repo": "pantheon",
           "owner_preference": ["Antigravity"],
           "reviewer_preference": ["Claude2"],
-          "status_at_packet_update": "review_waiting_for_claude2_on_pr_4364",
-          "live_run_id": null,
+          "status_at_packet_update": "review_claude2_worker_running_after_1140_stale_streak_live_repair",
+          "live_run_id": "claude2-20260729T113336Z-08eddb2f",
           "latest_owner_run_id": "antigravity1-1-20260729T083928Z-4bc23525",
           "current_pr": 4364,
           "current_head": "ffd90cab757ee3939cbf7c4e5e5c7956f29f0bdd",
@@ -436,6 +506,86 @@
             "Provider-first fallbacks still permit Antigravity/Claude-family recovery candidates when viable",
             "Interrupted non-L12 queue events do not immediately redispatch ahead of a waiting L12 review",
             "Regression covers queue event ordering, lease cleanup, and provider quota accounting",
+            "No .orchestrator/config.json edits"
+          ]
+        },
+        {
+          "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/supervisor.py failure-streak and chair-triage policy",
+            ".orchestrator/state.json schema-safe stale streak handling",
+            ".orchestrator/test_supervisor.py regression coverage"
+          ],
+          "acceptance": [
+            "Reproduce stale L12 missing_process streaks blocking healthy Claude2/Antigravity dispatch after a merged supervisor fix",
+            "Add bounded reaper or eligibility check for stale or cleared failure causes",
+            "Prove Claude2/Antigravity are attempted before Codex-family fallback for L12/SUP-L12 rows",
+            "Preserve runtime repair audit trail without manual config edits",
+            "Run focused tests and full supervisor regression suite"
+          ]
+        },
+        {
+          "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/supervisor.py helper-claim candidate selection",
+            "provider-first busy preferred-provider behavior",
+            ".orchestrator/test_supervisor.py Codex/Codex2 fallback admission tests"
+          ],
+          "acceptance": [
+            "Reproduce Claude2 busy on L12-VERIFY-OBS-001 while SUP-L12 helper claims launched Codex2",
+            "Defer or choose Claude/Antigravity-family fallback before Codex-family fallback when preferred lanes are temporarily busy",
+            "Prove Codex/Codex2 cannot claim provider-first L12/SUP-L12 work merely because preferred providers are busy",
+            "Keep explicitly allowed non-L12 emergency fallback behavior intact",
+            "No .orchestrator/config.json edits"
+          ]
+        },
+        {
+          "id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Claude2"],
+          "reviewer_preference": ["Antigravity"],
+          "depends_on": [],
+          "scope": [
+            "authoritative task rows",
+            "live worker_runner.py process/run records",
+            ".orchestrator/task-briefs and evidence row reconciliation"
+          ],
+          "acceptance": [
+            "Reproduce row owner/reviewer changes while live or recently terminal workers exist for the same canonical task",
+            "Report exact row owner, reviewer, status, run id, PID, exit code, and source SHA before claiming fleet health",
+            "Prevent stale fallback failures from overwriting provider-first owner truth without a recorded reason",
+            "Archive an evidence table for active rows and terminal runs",
+            "No .orchestrator/config.json edits"
+          ]
+        },
+        {
+          "id": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+          "canonical_task": null,
+          "target_repo": "pantheon",
+          "owner_preference": ["Antigravity"],
+          "reviewer_preference": ["Claude2"],
+          "depends_on": [],
+          "scope": [
+            ".orchestrator/supervisor.py long-running finalize/review lease detection",
+            "provider quota accounting for non-L12 OPS/finalize competition",
+            "supervisor status and readback messages"
+          ],
+          "acceptance": [
+            "Reproduce a long owner/reviewer/finalize run consuming a provider slot while L12 work is eligible",
+            "Distinguish healthy long-running work from a stuck lease that masks L12 readiness",
+            "Prove L12 provider-first priority after lease expiry, completion, interruption, or terminal cleanup",
+            "Do not terminate healthy workers except in isolated task-owned fixtures",
             "No .orchestrator/config.json edits"
           ]
         }
