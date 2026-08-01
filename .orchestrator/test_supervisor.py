@@ -4527,6 +4527,19 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value={"providers": {}}):
             self.assertTrue(supervisor.agent_can_take_task(config, "Codex2", task))
 
+    def test_known_agent_display_names_filters_legacy_aliases(self) -> None:
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+            }
+        }
+        names = supervisor.known_agent_display_names(config)
+        self.assertIn("Codex", names)
+        self.assertIn("Copilot", names)
+        self.assertNotIn("Copilot (legacy alias)", names)
+
     def test_normalize_reassigns_todo_owned_by_auth_down_agent(self) -> None:
         config = {
             "schema": {
@@ -6828,6 +6841,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
                 stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "drain_assistant_dev_packet_inbox", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
@@ -7626,6 +7640,177 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             )
         )
 
+    def test_priority_preemption_respects_dispatch_cooldown(self) -> None:
+        worker = {
+            "run_id": "codex-wave0-v2",
+            "task_id": "SUP-L12-WAVE0-V2",
+            "agent_id": "codex",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        task_map = {
+            "SUP-L12-WAVE0-V2": {
+                "id": "SUP-L12-WAVE0-V2",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+            "BLOCKED-FINALIZE": {
+                "id": "BLOCKED-FINALIZE",
+                "status": "review_approved",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+        }
+        resolver = supervisor.task_resolver_for_config(self.config, task_map)
+        finalize_event = supervisor.build_dispatch_event(
+            task_map["BLOCKED-FINALIZE"],
+            "Codex",
+            supervisor.REASON_OWNED_FINALIZE,
+            resolver,
+        )
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {
+                finalize_event["key"]: "2026-07-31T13:00:00Z",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:01:00Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:16:00Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_priority_preemption_respects_failure_loop_triage(self) -> None:
+        worker = {
+            "run_id": "codex-wave0-v2",
+            "task_id": "SUP-L12-WAVE0-V2",
+            "agent_id": "codex",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        task_map = {
+            "SUP-L12-WAVE0-V2": {
+                "id": "SUP-L12-WAVE0-V2",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+            "FAILING-REVIEW": {
+                "id": "FAILING-REVIEW",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "FAILING-REVIEW:codex": {
+                        "task_id": "FAILING-REVIEW",
+                        "provider": "codex",
+                        "count": 2,
+                    }
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_priority_preemption_gives_new_worker_a_stability_grace(self) -> None:
+        worker = {
+            "run_id": "codex-wave0-v2",
+            "task_id": "SUP-L12-WAVE0-V2",
+            "agent_id": "codex",
+            "status": "running",
+            "lease_acquired_at": "2026-07-31T13:00:00Z",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        task_map = {
+            "SUP-L12-WAVE0-V2": {
+                "id": "SUP-L12-WAVE0-V2",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            },
+            "URGENT-REVIEW": {
+                "id": "URGENT-REVIEW",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:01:00Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+        with (
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T13:05:01Z"),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        ):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(
+                    self.config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
     def test_l12_review_preempts_unrelated_same_tier_claude2_review(self) -> None:
         config = {
             "schema": {
@@ -7809,6 +7994,134 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 supervisor.higher_priority_ready_task_exists(
                     config,
                     state["workers"]["run-low-1"],
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_unslotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-wave0-readback",
+            "task_id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "SUP-L12-FLEET-DISPATCH-READBACK-20260729": {
+                "id": "SUP-L12-FLEET-DISPATCH-READBACK-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+            "SUP-L12-STALE-PR-RETIRE-20260729": {
+                "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+            "SUP-L12-MERGED-ROW-RECONCILE-20260729": {
+                "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+                "status": "todo",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
+                    task_map,
+                    state,
+                )
+            )
+
+    def test_wave0_recovery_worker_is_not_preempted_for_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                },
+            },
+            "providers": {"claude2": {"delivery_mode": "claude"}},
+        }
+        worker = {
+            "run_id": "claude2-wave0-stale-retire",
+            "task_id": "SUP-L12-STALE-PR-RETIRE-20260729",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_ready_dispatch"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+        }
+        task_map = {
+            "SUP-L12-STALE-PR-RETIRE-20260729": {
+                "id": "SUP-L12-STALE-PR-RETIRE-20260729",
+                "status": "in_progress",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+                "dispatch_model": "real-supervisor-auto-workers",
+                "preferred_lane_order": [
+                    "Antigravity",
+                    "Claude2",
+                    "Claude",
+                    "Codex2",
+                    "Codex",
+                ],
+                "phase": "Twelve Loop Remediation / Wave 0 Fleet Hygiene",
+            },
+            "L12-VERIFY-OBS-001": {
+                "id": "L12-VERIFY-OBS-001",
+                "status": "review",
+                "owner": "Antigravity",
+                "reviewer": "Claude2",
+                "depends_on": [],
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    worker,
                     task_map,
                     state,
                 )
@@ -9064,6 +9377,64 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
+    def test_assignment_stage_completes_owner_after_canonical_review_handoff(self) -> None:
+        worker = {
+            "run_id": "run-owner-handoff",
+            "task_id": "TASK-HANDOFF",
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-owner-handoff",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state = {
+            "queue": {
+                "events": {
+                    "evt-owner-handoff": {
+                        "status": "started",
+                        "run_id": worker["run_id"],
+                    }
+                }
+            }
+        }
+        task = {
+            "id": "TASK-HANDOFF",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Antigravity",
+        }
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+            },
+            "ready_dispatcher": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                state,
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=False,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        self.assertNotIn("last_error", worker)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+        finalize_queue_event_record.assert_called_once_with(
+            config, state, worker, "completed"
+        )
+        reassign.assert_not_called()
+
     def test_approval_stage_auto_denies_pending_request_after_worker_exit(self) -> None:
         worker = {
             "run_id": "run-dead-approval",
@@ -12644,6 +13015,230 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertIn("Task returned to todo until Antigravity starts a fresh run.", kwargs["message"])
 
+    def test_reassign_after_worker_failure_never_assigns_legacy_alias(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                "reviewer_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        worker = {
+            "task_id": "GUARD-TASK-001",
+            "agent_id": "codex",
+            "provider": "codex",
+            "retry_count": 1,
+            "run_id": "codex-failed-run",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "GUARD-TASK-001",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Terminal error",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Copilot")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Copilot")
+        self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+    def test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_path = root / "ai-status.json"
+            original_status = {
+                "project": "pantheon",
+                "agents": [
+                    {"name": "Codex", "status": "idle", "current_task_ids": ["GUARD-TASK-REAL"]},
+                    {"name": "Copilot", "status": "idle", "current_task_ids": []},
+                    {"name": "Claude", "status": "idle", "current_task_ids": []},
+                ],
+                "tasks": [
+                    {
+                        "id": "GUARD-TASK-REAL",
+                        "status": "todo",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "next": "Initial next action",
+                    }
+                ],
+                "handoffs": [],
+                "blockers": [
+                    {
+                        "task_id": "GUARD-TASK-REAL",
+                        "owner": "Codex",
+                        "waiting_for": "Claude",
+                        "message": "Stuck waiting",
+                        "status": "open",
+                    }
+                ],
+            }
+            status_path.write_text(json.dumps(original_status), encoding="utf-8")
+
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(root / "ai-activity-log.jsonl"),
+                },
+                "worker_reassignment": {
+                    "enabled": True,
+                    "after_attempts": 1,
+                    "reassign_on_terminal_failure": True,
+                    "owner_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                    "reviewer_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                    "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                },
+                "agents": {
+                    "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                    "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                    "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+                    "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                },
+            }
+            worker = {
+                "task_id": "GUARD-TASK-REAL",
+                "agent_id": "codex",
+                "provider": "codex",
+                "retry_count": 1,
+                "run_id": "codex-failed-run",
+            }
+
+            with (
+                mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T20:00:00Z"),
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                    config,
+                    worker,
+                    "Terminal error",
+                    terminal=True,
+                )
+
+            self.assertEqual(reassigned_to, "Copilot")
+
+            # Read back saved ai-status.json from temporary root
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+            task = saved["tasks"][0]
+            self.assertEqual(task["owner"], "Copilot")
+            self.assertEqual(task["reviewer"], "Claude")
+            self.assertNotEqual(task["owner"], "Copilot (legacy alias)")
+            self.assertNotEqual(task["reviewer"], "Copilot (legacy alias)")
+
+            # Clear outbox as sync_status_pipeline normally does
+            saved.pop("status_activity_outbox", None)
+            status_path.write_text(json.dumps(saved), encoding="utf-8")
+
+            # Execute explicit persist_task_reassignment with handoff_to to verify handoff creation with canonical identity
+            with (
+                mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T20:01:00Z"),
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                applied = supervisor.persist_task_reassignment(
+                    config,
+                    task_id="GUARD-TASK-REAL",
+                    new_owner="Copilot",
+                    new_reviewer="Claude",
+                    message="Owner reassigned to Copilot with handoff",
+                    handoff_to="Copilot",
+                    handoff_from="Codex",
+                    resolve_open_blockers=True,
+                )
+            self.assertTrue(applied)
+
+            saved_with_handoff = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(saved_with_handoff["handoffs"]), 1)
+            handoff = saved_with_handoff["handoffs"][0]
+            self.assertEqual(handoff["from"], "Codex")
+            self.assertEqual(handoff["to"], "Copilot")
+            self.assertNotEqual(handoff["to"], "Copilot (legacy alias)")
+
+            # Verify blocker resolved
+            blocker = saved_with_handoff["blockers"][0]
+            self.assertEqual(blocker["status"], "resolved")
+
+            # Execute governed ai_status note & owner/reviewer transition via python module
+            import scripts.ai_status as ai_status_mod
+            env_override = {
+                "PANTHEON_STATUS_ROOT": str(root),
+                "AI_NAME": "Copilot",
+            }
+            with mock.patch.dict(os.environ, env_override):
+                ai_status_mod.configure_status_root_paths(root)
+                state_now = ai_status_mod.load_state()
+                ai_status_mod.command_progress(state_now, ["GUARD-TASK-REAL", "Progress update by new owner"])
+                ai_status_mod.save_state(state_now)
+
+            # Read back again to ensure governed ai-status command succeeds and keeps state canonical
+            saved_after_cmd = json.loads(status_path.read_text(encoding="utf-8"))
+            task_after_cmd = saved_after_cmd["tasks"][0]
+            self.assertEqual(task_after_cmd["owner"], "Copilot")
+            self.assertEqual(task_after_cmd["reviewer"], "Claude")
+            self.assertNotEqual(task_after_cmd["owner"], "Copilot (legacy alias)")
+
+    def test_normalize_mainline_task_assignment_never_assigns_legacy_alias(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Unregistered": ["Copilot (legacy alias)", "Copilot"]},
+                "reviewer_fallbacks": {},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "copilot": {"auth_ready": True}, "claude": {"auth_ready": True}}}
+        task = {"id": "GUARD-TASK-002", "status": "todo", "owner": "Unregistered", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "GUARD-TASK-002")
+        self.assertEqual(kwargs["new_owner"], "Copilot")
+        self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+
+
 
 class MissingHandoffBlockerTests(unittest.TestCase):
     """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 7."""
@@ -12906,6 +13501,58 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Grok")
         self.assertEqual(kwargs["new_reviewer"], "Codex")
         self.assertIsNone(kwargs["new_status"])
+
+    def test_bound_finalize_failure_never_reassigns_delivery_owner(self) -> None:
+        config = {
+            **self.config,
+            "worker_reassignment": {
+                **self.config["worker_reassignment"],
+                "owner_fallbacks": {
+                    **self.config["worker_reassignment"]["owner_fallbacks"],
+                    "Claude": ["Grok", "Gemini"],
+                },
+            },
+        }
+        worker = {
+            "task_id": "RUN-BOUND",
+            "agent_id": "claude",
+            "retry_count": 5,
+            "run_id": "claude-run-bound",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "RUN-BOUND",
+                    "status": "review_approved",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "review_binding": {
+                        "pr": 4407,
+                        "head_sha": "a" * 40,
+                        "head_branch": "task/RUN-BOUND",
+                        "base": "dev",
+                    },
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+                force=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
 
 
 class WorkerOsDuplicateGuardTests(unittest.TestCase):
@@ -13465,6 +14112,53 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 metrics["last_measurements"]["boot_reconciliation"]["counts"]["started_queue_records_requeued"],
                 1,
             )
+
+    def test_reconcile_runtime_completes_owner_whose_task_reached_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _, state, worker, write_activity_log = self._missing_worker_case(
+                root,
+                task_id="OPS-OWNER-HANDOFF",
+                task_status="review",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=2,
+            )
+
+            self.assertEqual(worker["status"], "completed")
+            self.assertNotIn("next_retry_at", worker)
+            self.assertNotIn("last_error", worker)
+            self.assertEqual(
+                state["queue"]["events"]["evt-ops-owner-handoff"]["status"],
+                "completed",
+            )
+            event_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+            self.assertEqual(event_types, ["worker_completed"])
+
+    def test_reconcile_runtime_owner_handoff_stays_complete_after_reviewer_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config, state, worker, _ = self._missing_worker_case(
+                root,
+                task_id="OPS-OWNER-APPROVED",
+                task_status="review_approved",
+                owner="Codex",
+                reviewer="Claude",
+                dispatch_reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                max_attempts=2,
+            )
+
+            self.assertEqual(worker["status"], "completed")
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertFalse(changed)
+            self.assertEqual(worker["status"], "completed")
+            write_activity_log.assert_not_called()
 
     def test_reconcile_queue_records_fails_started_event_when_worker_already_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

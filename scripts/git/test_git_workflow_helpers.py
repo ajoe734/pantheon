@@ -10,6 +10,7 @@ or with unittest discovery:
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import importlib.util
 import io
@@ -857,6 +858,21 @@ class PublishPromoteTests(unittest.TestCase):
                     ),
                 ],
             ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "request_verified_auto_merge",
+                return_value={"auto_merge_enabled": True, "merged": False},
+            ) as auto_merge,
+            mock.patch.object(
+                publish_promote,
+                "rerun_action_required_branch_ci",
+                return_value=1234,
+            ) as rerun_branch_ci,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             run_git.side_effect = lambda *args: "a" * 40 if args == ("rev-parse", "HEAD") else ""
@@ -868,7 +884,6 @@ class PublishPromoteTests(unittest.TestCase):
         for call in run_git.call_args_list:
             self.assertNotIn("--force", call.args)
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertIn(["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"], commands)
         self.assertIn(
             ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
             commands,
@@ -888,6 +903,9 @@ class PublishPromoteTests(unittest.TestCase):
             ],
             commands,
         )
+        rerun_branch_ci.assert_called_once_with("a" * 40, 42)
+        self.assertEqual(result["pull_request_ci_rerun"], 1234)
+        auto_merge.assert_called_once_with("promote/v2026.20.0", 42)
 
     def test_open_candidate_is_idempotent_when_pr_exists(self) -> None:
         candidate = {
@@ -918,6 +936,16 @@ class PublishPromoteTests(unittest.TestCase):
                     None,
                 ),
             ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "request_verified_auto_merge",
+                return_value={"auto_merge_enabled": True, "merged": False},
+            ) as auto_merge,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
@@ -950,6 +978,21 @@ class PublishPromoteTests(unittest.TestCase):
                     None,
                 ),
             ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "request_verified_auto_merge",
+                return_value={"auto_merge_enabled": True, "merged": False},
+            ) as auto_merge,
+            mock.patch.object(
+                publish_promote,
+                "rerun_action_required_branch_ci",
+                return_value=5678,
+            ) as rerun_branch_ci,
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
@@ -971,10 +1014,176 @@ class PublishPromoteTests(unittest.TestCase):
             ],
             commands,
         )
-        self.assertIn(
-            ["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"],
-            commands,
+        rerun_branch_ci.assert_called_once_with("c" * 40, 42)
+        self.assertEqual(result["pull_request_ci_rerun"], 5678)
+        auto_merge.assert_called_once_with("promote/v2026.20.0", 42)
+
+    def test_reruns_exact_action_required_branch_ci_placeholder(self) -> None:
+        row = {
+            "id": 30451895166,
+            "path": ".github/workflows/branch-ci.yml",
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "action_required",
+            "head_sha": "d" * 40,
+            "pull_requests": [{"number": 4378}],
+        }
+        completed = subprocess.CompletedProcess(
+            ["gh", "api"], returncode=0, stdout="{}", stderr=""
         )
+        with (
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_rows",
+                return_value=([row], None),
+            ) as lookup,
+            mock.patch.object(
+                publish_promote.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+        ):
+            run_id = publish_promote.rerun_action_required_branch_ci(
+                "d" * 40,
+                4378,
+                discovery_attempts=1,
+                discovery_interval=0,
+            )
+
+        self.assertEqual(run_id, 30451895166)
+        self.assertIn("event=pull_request", lookup.call_args.args[0])
+        self.assertIn("head_sha=" + "d" * 40, lookup.call_args.args[0])
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                "repos/{owner}/{repo}/actions/runs/30451895166/rerun",
+            ],
+        )
+
+    def test_placeholder_rerun_ignores_a_different_pr_or_head(self) -> None:
+        rows = [
+            {
+                "id": 9,
+                "path": ".github/workflows/branch-ci.yml",
+                "event": "pull_request",
+                "conclusion": "action_required",
+                "head_sha": "e" * 40,
+                "pull_requests": [{"number": 99}],
+            },
+            {
+                "id": 8,
+                "path": ".github/workflows/branch-ci.yml",
+                "event": "pull_request",
+                "conclusion": "success",
+                "head_sha": "d" * 40,
+                "pull_requests": [{"number": 42}],
+            },
+        ]
+        with (
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_rows",
+                return_value=(rows, None),
+            ),
+            mock.patch.object(publish_promote.subprocess, "run") as run,
+        ):
+            run_id = publish_promote.rerun_action_required_branch_ci(
+                "d" * 40,
+                42,
+                discovery_attempts=1,
+                discovery_interval=0,
+            )
+
+        self.assertIsNone(run_id)
+        self.assertFalse(run.called)
+
+    def test_existing_legacy_promote_ref_is_retained_without_dispatch_error(self) -> None:
+        candidate = {
+            "version": "v2026.07.26.2",
+            "publish_branch": "publish/v2026.07.26.2",
+            "age_days": 3.0,
+            "blockers": [],
+            "promote_branch": "promote/v2026.07.26.2",
+            "promotion_mode": "clean_merge",
+        }
+        with (
+            mock.patch.object(publish_promote, "run_git"),
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                return_value=(
+                    {
+                        "number": 4138,
+                        "url": "https://example.invalid/4138",
+                        "headRefOid": "c" * 40,
+                        "statusCheckRollup": [],
+                    },
+                    None,
+                ),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "promote_ref_supports_ci_dispatch",
+                return_value=(False, None),
+            ),
+            mock.patch.object(
+                publish_promote, "dispatch_promote_ci"
+            ) as dispatch,
+            mock.patch.object(
+                publish_promote, "request_verified_auto_merge"
+            ) as auto_merge,
+        ):
+            result = publish_promote.open_candidate(candidate, self.SETTINGS)
+        self.assertEqual(result["disposition"], "legacy_ci_contract")
+        self.assertEqual(result["head_sha"], "c" * 40)
+        self.assertFalse(dispatch.called)
+        self.assertFalse(auto_merge.called)
+
+    def test_promote_ref_dispatch_contract_is_read_from_exact_head(self) -> None:
+        workflow = (
+            "on:\n  workflow_dispatch:\n    inputs:\n"
+            "      expected_head_sha:\n      promote_pr_number:\n"
+        )
+        with mock.patch.object(
+            publish_promote,
+            "_gh_api_object",
+            return_value=(
+                {
+                    "content": base64.b64encode(workflow.encode()).decode(),
+                },
+                None,
+            ),
+        ) as api:
+            supported, error = publish_promote.promote_ref_supports_ci_dispatch(
+                "d" * 40
+            )
+        self.assertEqual((supported, error), (True, None))
+        self.assertIn("?ref=" + "d" * 40, api.call_args.args[0])
+
+    def test_verified_auto_merge_fails_when_rest_cannot_observe_it(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["gh", "pr", "merge"], returncode=0, stdout="", stderr=""
+        )
+        with (
+            mock.patch.object(
+                publish_promote.subprocess, "run", return_value=completed
+            ) as run,
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_object",
+                return_value=({"auto_merge": None, "merged_at": None}, None),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "was not observable"):
+                publish_promote.request_verified_auto_merge(
+                    "promote/v2026.20.0", 42
+                )
+        self.assertTrue(run.call_args.kwargs["check"])
 
     def test_branch_ci_exposes_exact_head_promote_dispatch(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
@@ -986,11 +1195,20 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertEqual(workflow.count("Validate explicit promote dispatch"), 2)
         self.assertIn('[[ "$REF_NAME" != promote/* ]]', workflow)
         self.assertIn('[[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]', workflow)
+        self.assertIn(
+            '[[ "$EVENT" == "workflow_dispatch" && "$REF_NAME" == promote/* ]]',
+            workflow,
+        )
+        self.assertIn(
+            "Skipping commit trailer re-scan for exact-head promote dispatch",
+            workflow,
+        )
         self.assertIn("actions: write", publish_workflow)
+        self.assertIn("checks: read", publish_workflow)
 
     def test_bulk_promote_pr_lookup_omits_expensive_status_rollup(self) -> None:
         completed = subprocess.CompletedProcess(
-            ["gh", "pr", "list"], returncode=0, stdout="[]", stderr=""
+            ["gh", "api"], returncode=0, stdout="", stderr=""
         )
         with mock.patch.object(
             publish_promote.subprocess, "run", return_value=completed
@@ -998,8 +1216,67 @@ class PublishPromoteTests(unittest.TestCase):
             rows, error = publish_promote.list_open_promote_prs("master")
         self.assertEqual((rows, error), ({}, None))
         command = run.call_args.args[0]
-        json_fields = command[command.index("--json") + 1]
-        self.assertNotIn("statusCheckRollup", json_fields)
+        self.assertEqual(command[:2], ["gh", "api"])
+        self.assertIn("--paginate", command)
+        self.assertNotIn("graphql", command)
+        self.assertNotIn("statusCheckRollup", " ".join(command))
+
+    def test_exact_promote_lookup_uses_rest_check_runs(self) -> None:
+        pull = {
+            "number": 42,
+            "html_url": "https://example.invalid/42",
+            "head": {"ref": "promote/v2026.20.0", "sha": "d" * 40},
+        }
+        checks = [{"name": "Commit trailers", "status": "completed"}]
+        with (
+            mock.patch.object(
+                publish_promote,
+                "_list_open_pull_rows",
+                return_value=([pull], None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "_required_check_rollup",
+                return_value=(checks, None),
+            ) as check_lookup,
+        ):
+            pr, error = publish_promote.find_open_promote_pr("promote/v2026.20.0")
+        self.assertIsNone(error)
+        self.assertEqual(pr["number"], 42)
+        self.assertEqual(pr["statusCheckRollup"], checks)
+        check_lookup.assert_called_once_with("d" * 40)
+
+    def test_regression_issue_lookup_uses_rest_and_ignores_pull_requests(self) -> None:
+        issues = [
+            {
+                "number": 7,
+                "title": "block release",
+                "labels": [{"name": "regression/v2026.20.0"}],
+                "pull_request": None,
+            },
+            {
+                "number": 8,
+                "title": "PR label is not a blocker issue",
+                "labels": [{"name": "regression/v2026.20.0"}],
+                "pull_request": {"url": "https://example.invalid/pr/8"},
+            },
+        ]
+        with (
+            mock.patch.dict(os.environ, {"GH_TOKEN": "test-token"}),
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_rows",
+                return_value=(issues, None),
+            ) as api,
+        ):
+            by_version, global_blockers, error = (
+                publish_promote.fetch_blocking_issue_map("regression/", [])
+            )
+        self.assertIsNone(error)
+        self.assertEqual(global_blockers, [])
+        self.assertEqual(by_version, {"v2026.20.0": ["#7 block release"]})
+        self.assertIn("/issues?", api.call_args.args[0])
+        self.assertNotIn("graphql", api.call_args.args[0])
 
     def test_open_prs_continues_after_candidate_conflict(self) -> None:
         candidates = [{"version": "v1"}, {"version": "v2"}]

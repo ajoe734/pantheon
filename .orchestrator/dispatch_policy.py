@@ -49,6 +49,7 @@ DEFAULT_MAX_CONCURRENT_WORKERS: int | None = None
 DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
 DEFAULT_MAX_CONCURRENT_PER_ACCOUNT: dict[str, int] = {}
 DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
+DEFAULT_PRIORITY_PREEMPTION_GRACE_SECONDS = 300
 
 
 def dispatch_reason_priority(reason: str | None) -> int | None:
@@ -92,4 +93,8 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     if "max_concurrent_per_account" not in settings and "max_concurrent_per_quota_group" not in settings:
         settings["max_concurrent_per_account"] = dict(DEFAULT_MAX_CONCURRENT_PER_ACCOUNT)
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
+    settings.setdefault(
+        "priority_preemption_grace_seconds",
+        DEFAULT_PRIORITY_PREEMPTION_GRACE_SECONDS,
+    )
     return settings
