@@ -37,3 +37,11 @@ Repair the concrete nonexistent-anchor defect found by the real auto-worker exac
 - Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.
 - Keep execution updates short and structured.
 - If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.
+
+## Owner implementation record
+- Exact source head verified before editing: PR #4385 at `f5e70e86e01bde005dae5fed94b151c9bc07f389`.
+- Independent finding source verified: PR #4395 at `f68827c8e17d6a1f081afe24f62ba85c116166e8` rejects that head because it names a nonexistent anchor.
+- Correct source anchor: `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`; the invalid value was `9d53a94a265c55af4c8d15c50ab3751f1440ac0f`.
+- Superseding composition anchor: `87dd23dc84552dc58f72bd58cb58b968d358b684`, with parents `origin/dev@93e5b3d4ad0ad94f79bfe512ba3f67402da8d468` and PR #4385 head `f5e70e86e01bde005dae5fed94b151c9bc07f389`.
+- Owner validation: five focused stale-reaper tests passed; the complete supervisor suite passed 473 tests; JSON, diff, trailer, ancestry, and config-boundary checks are recorded in the task evidence manifest.
+- This record is owner implementation evidence only. Antigravity must independently review the exact task PR head before merge or governed closeout.

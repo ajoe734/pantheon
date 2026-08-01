@@ -1,0 +1,148 @@
+{
+  "schema_version": "pantheon.supervisor.stale_reaper_evidence_anchor_repair.v1",
+  "task": {
+    "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+    "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "owner_implementation_complete_review_pending",
+    "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json",
+    "evidence_cut_at": "2026-08-01T14:28:11Z"
+  },
+  "scope": {
+    "owned_layer": "Superseding composition of the PR #4385 stale L12 missing_process failure-streak reaper and repair of its invalid evidence anchor.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      "provider credentials, readiness, or dispatch capacity",
+      "generic quota, authentication, or non-L12 failure-loop policy",
+      "product services, hosted deployment, or live-capital authority",
+      "independent reviewer authority or protected merge policy"
+    ],
+    "composes_with": [
+      "PR #4385 exact rejected head f5e70e86e01bde005dae5fed94b151c9bc07f389",
+      "PR #4395 exact-head reconciliation evidence at f68827c8e17d6a1f081afe24f62ba85c116166e8",
+      "Antigravity independent review of the resulting task PR exact head"
+    ],
+    "changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/task-briefs/sup_l12_stale_failure_streak_reaper_20260729.md",
+      ".orchestrator/task-briefs/sup_l12_stale_reaper_evidence_anchor_repair_20260731.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json"
+    ]
+  },
+  "source_reconciliation": {
+    "subject_task": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "subject_pull_request": 4385,
+    "subject_pr_state_before_edit": "OPEN",
+    "subject_pr_head_before_edit": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+    "subject_pr_merge_state_before_edit": "BEHIND",
+    "exact_head_reconcile_pull_request": 4395,
+    "exact_head_reconcile_head": "f68827c8e17d6a1f081afe24f62ba85c116166e8",
+    "exact_head_reconcile_decision": "reject_f5e70e86_and_repair_subject_anchor",
+    "invalid_anchor": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+    "actual_anchor": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+    "invalid_anchor_is_commit": false,
+    "actual_anchor_is_commit": true,
+    "actual_anchor_is_ancestor_of_repair_head": true,
+    "subject_head_is_ancestor_of_repair_head": true
+  },
+  "repair": {
+    "strategy": "superseding_task_pr_with_preserved_subject_ancestry",
+    "integration_base": "93e5b3d4ad0ad94f79bfe512ba3f67402da8d468",
+    "anchor_commit": "87dd23dc84552dc58f72bd58cb58b968d358b684",
+    "anchor_parents": [
+      "93e5b3d4ad0ad94f79bfe512ba3f67402da8d468",
+      "f5e70e86e01bde005dae5fed94b151c9bc07f389"
+    ],
+    "corrected_locations": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/implementation/anchor_commit",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/delivery/anchor_commit"
+    ],
+    "config_json_changed": false
+  },
+  "verification": {
+    "python": ".venv-pantheon/bin/python3",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Provisioned the checkout-scoped interpreter and verified Pantheon imports from a foreign working directory."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "result": "pass",
+        "conclusion": "Ran 5 focused stale-reaper regressions in 0.007 seconds."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "Ran 473 supervisor tests in 11.729 seconds. Test-generated dashboard bundles and two empty assistant packet lock files were restored or removed before evidence commit."
+      },
+      {
+        "command": "jq empty docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json",
+        "result": "pass",
+        "conclusion": "Both subject and repair evidence manifests are syntactically valid JSON."
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "result": "pass",
+        "conclusion": "Every non-merge task commit in the delivery range carries valid task trailers."
+      },
+      {
+        "command": "git diff --check origin/dev..HEAD",
+        "result": "pass",
+        "conclusion": "No whitespace errors in the delivery range."
+      },
+      {
+        "command": "git diff --quiet origin/dev HEAD -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "No supervisor configuration change."
+      },
+      {
+        "command": "git cat-file -e 9d53a94a265c55af4c8d15c50ab3751f1440ac0f^{commit}; git cat-file -e 9d53a94a295d71ee49aea6f4b96e47fbcfd29093^{commit}",
+        "result": "pass",
+        "conclusion": "The invalid SHA exits 128; the corrected SHA resolves as a commit."
+      },
+      {
+        "command": "git merge-base --is-ancestor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 HEAD; git merge-base --is-ancestor f5e70e86e01bde005dae5fed94b151c9bc07f389 HEAD",
+        "result": "pass",
+        "conclusion": "The real implementation anchor and rejected subject head are both preserved in the superseding task ancestry."
+      }
+    ],
+    "validated_at": "2026-08-01T14:28:11Z",
+    "command_runtime_sha": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
+  },
+  "delivery": {
+    "supersedes_pull_request": 4385,
+    "task_pull_request": null,
+    "reviewed_head_sha": null,
+    "merge_commit": null,
+    "protected_merge_complete": false,
+    "governed_closeout_complete": false
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "status": "pending_independent_review",
+    "decision": null,
+    "reviewed_task_pr": null,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "notes": []
+  },
+  "admission": {
+    "owner_implementation_complete": true,
+    "exact_head_independent_review_complete": false,
+    "protected_merge_complete": false,
+    "governed_closeout_complete": false,
+    "wave0_dependency_satisfied": false
+  }
+}
