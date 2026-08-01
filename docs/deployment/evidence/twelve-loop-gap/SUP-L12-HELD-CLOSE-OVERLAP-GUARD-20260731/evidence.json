@@ -1,0 +1,313 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 implementation acceptance",
+    "note": "This cut records the implementation and local/live fail-closed checks; independent review, merge, and immutable promotion remain pending.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "not_applicable; exact source SHA-256 values are embedded in integrity",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Review, protected merge, promotion, and any later live admission result require a task-scoped reviewed update.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-01T14:57:25Z",
+    "evidence_cut_semantics": "Implementation-ready candidate only. Exact-head independent review, protected merge, immutable command-root promotion, and post-promotion live readback are pending.",
+    "id": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
+    "overall_admission": "implementation_ready_for_independent_review",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime Repair / Guarded Dispatcher Held Sink",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "Pantheon development supervisor runtime",
+    "target_maturity": "merged_reviewed_live_promoted_guard",
+    "task_branch": "task/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
+    "title": "Order the held closeout sink behind current controller integration"
+  },
+  "authorities": {
+    "actual_state": [
+      "task branch anchors 281ef8094efa10a695130db2ffd022a73f59cd35 and e9d3b312d7de48181a387ec02d28a69af40ff38a",
+      "focused local pytest and catalog validate-only outputs",
+      "live current dry-run fail-closed result against the canonical task state"
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md",
+      "canonical task row acceptance for SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
+      "schemas/product-evidence.schema.json"
+    ],
+    "task_packet": ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 owns the exact overlap predicate, regressions, and candidate evidence; Antigravity owns independent exact-head review.",
+    "composes_with": [
+      "L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
+      "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
+      "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "held legacy sink L12-CLOSE-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/evidence.json"
+    ],
+    "implementation_changed_files": [
+      ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md",
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py"
+    ],
+    "not_changing": ".orchestrator/config.json, immutable catalog contents, product task materialization, legacy task-card ownership, frontend, product services, or live capital.",
+    "owned_layer": "Current guarded dispatcher live-overlap admission for one exact controller-integration to held-close registry edge."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "281ef8094efa10a695130db2ffd022a73f59cd35",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: anchor exact guard",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "e9d3b312d7de48181a387ec02d28a69af40ff38a",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: anchor scope guard",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false
+      }
+    ],
+    "pull_request": {
+      "number": 4425,
+      "url": "https://github.com/ajoe734/pantheon/pull/4425",
+      "head_sha": "e9d3b312d7de48181a387ec02d28a69af40ff38a",
+      "base": "dev"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "pending final evidence commit",
+        "conclusion": "pending"
+      },
+      {
+        "workflow": "Pantheon canonical review gate",
+        "event": "status",
+        "head_sha": "pending final evidence commit",
+        "conclusion": "pending independent Antigravity review"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+        "result": "53 passed in 6.91s; includes exact held-close CLI dry-run with 25 G1 creates, immutable status/journal bytes, malformed-field matrix, mutated catalog/release-gate negatives, and other-pair negatives",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -k 'not human_task_cards_mirror_assignment_header'",
+        "result": "31 passed, 1 deselected in 3.73s; the deselected Claude/Codex task-card owner mismatch exists unchanged on origin/dev and is outside this task scope",
+        "conclusion": "pass_with_documented_baseline_exclusion"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile scripts/dispatch_twelve_loop_gap_2026_07_26.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+        "result": "passed",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --current",
+        "result": "valid; 28 tasks; maximum_parallel_frontier_G1=25; catalog file and canonical digests match the reviewed PR #4394 source",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
+        "result": "valid; legacy 25-task catalog and proof-ownership binding preserved",
+        "conclusion": "pass"
+      },
+      {
+        "command": "AI_NAME=Codex2 .venv-pantheon/bin/python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --dry-run --current --command-root $PANTHEON_COMMAND_ROOT --command-sha $PANTHEON_COMMAND_RUNTIME_SHA",
+        "result": "failed closed before mutation on L12-CONTROLLER-BFF-20260731 overlap with nonterminal SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+        "conclusion": "expected_fail_closed_live_unrelated_overlap"
+      }
+    ],
+    "validated_at": "2026-08-01T14:57:25Z",
+    "validated_base_sha": "76bbb04b569331a81916330d1cf713d068527c89",
+    "validated_head_sha": "e9d3b312d7de48181a387ec02d28a69af40ff38a"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "Pantheon development supervisor runtime",
+    "public_bff_base_url": "not_applicable; dispatcher has no HTTP surface",
+    "publish_cut": {
+      "status": "pending protected merge"
+    },
+    "canonical_root_deploy": {
+      "status": "pending immutable command-root promotion"
+    },
+    "identity_admission": {
+      "status": "pending exact merged SHA and tree readback"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "fail_closed",
+      "proof": "The live pre-merge dry-run admitted no remediation tasks because a separate nonterminal BFF artifact overlap remains active."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass_local",
+      "proof": "Dry-run is byte-preserving for both the status projection and authoritative journal with and without the exact held close row."
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass_local_and_live_fail_closed",
+      "proof": "Malformed active-close fields, target-repo scope spoofing, release-order mutations, extra close overlap, non-integration overlap, and unrelated live overlap all fail closed."
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "not_applicable",
+      "proof": "This repair does not apply or materialize product tasks."
+    },
+    "restart_and_recovery": {
+      "status": "pending_post_merge_promotion",
+      "proof": "Immutable command-root promotion and post-promotion process identity are later delivery gates."
+    },
+    "rollback_or_compensation": {
+      "status": "pass_source_control",
+      "proof": "The change is isolated to one task PR; no runtime or canonical task-state mutation occurred."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Development supervisor dispatcher only."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend files or routes changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No authentication surface changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "No trading, broker, deployment-stage, or capital authority changed."
+    },
+    "rbac": {
+      "status": "not_applicable",
+      "proof": "No authorization contract changed."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant-scoped runtime data path changed."
+    },
+    "two_person_approval": {
+      "status": "pending",
+      "proof": "Independent Antigravity exact-head review is required before merge and closeout."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Allow only the exact controller-integration versus held-close registry overlap.",
+      "status": "pass_local",
+      "evidence_refs": [
+        "_held_close_overlap_is_release_ordered",
+        "test_current_held_close_reassignment_and_legacy_row_matrix",
+        "test_current_held_close_rejects_any_other_overlap_pair"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Bind admission to the immutable controller integration, release gate, and real verifier ordering contract.",
+      "status": "pass_local",
+      "evidence_refs": [
+        "CURRENT_RELEASE_ORDER_CONTRACT_SHA256",
+        "test_current_held_close_rejects_mutated_release_order_contract"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Keep malformed or unrelated live overlap fail-closed.",
+      "status": "pass_local_and_live",
+      "evidence_refs": [
+        "test_current_held_close_rejects_each_malformed_active_field",
+        "live dry-run SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801 overlap rejection"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Current catalog validates as 28 tasks and isolated exact held-close CLI dry-run reports exactly 25 G1 creates without mutation.",
+      "status": "pass_local",
+      "evidence_refs": [
+        "test_current_dry_run_cli_is_read_only[True]",
+        "--validate-only --current"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Deliver through exact-head review, protected merge, and immutable live promotion without product task apply.",
+      "status": "pending",
+      "blocking_until": "Antigravity review, required checks, protected merge, and command-root promotion complete",
+      "evidence_refs": [
+        "PR #4425",
+        "Pantheon canonical review gate"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "independent_review_and_delivery_pending": {
+      "blocking_for_this_task": true,
+      "containment": "PR remains unmerged and canonical review gate remains closed.",
+      "description": "The candidate has not yet received independent exact-head review, protected merge, or immutable command-root promotion.",
+      "expiry": "At reviewed protected merge and verified promotion",
+      "owner": "Antigravity and Pantheon supervisor delivery flow",
+      "recheck_trigger": "PR #4425 head changes, review decision, merge, or command-root promotion",
+      "severity": "high"
+    },
+    "unrelated_live_bff_overlap": {
+      "blocking_for_this_task": false,
+      "containment": "The dispatcher rejects the whole current materialization dry-run before mutation.",
+      "description": "A separate live BFF artifact overlap currently prevents a 25-create live plan; weakening this guard is outside scope.",
+      "expiry": "When the owning SUP-ASSISTANT task becomes terminal or dependency-ordered",
+      "owner": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801 owner",
+      "recheck_trigger": "Post-promotion live dry-run",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md",
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py"
+    ],
+    "companion_checksum_path": "not_applicable",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The manifest cannot contain its own stable digest.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-08-01T14:57:25Z": {
+        ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md": "4715ea70d5c2cf87dd57a95c3736f8b94b49d94fd7c374cefc0c7d1cd42f59b8",
+        "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "191218684286d4497067812efae6e34184af8e074558bf8ee25fe9f0bf3137f1",
+        "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "7f6e96635fee38e450e6822847154653d1f24af1e337c367209279cca036b491"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-08-01T14:57:25Z",
+      "kind": "implementation_candidate",
+      "status": "ready_for_independent_review",
+      "actor": "Codex2",
+      "reference": "PR #4425",
+      "sha": "e9d3b312d7de48181a387ec02d28a69af40ff38a"
+    }
+  ]
+}
