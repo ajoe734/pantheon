@@ -12850,10 +12850,11 @@ def choose_helper_claim_agent(
         state=state,
     ):
         return False
-    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
-    for preferred_fallback in task_preferred_helper_fallbacks(config, task=task, owner_name=owner_name):
-        if preferred_fallback not in fallbacks:
-            fallbacks.append(preferred_fallback)
+    preferred_fallbacks = task_preferred_helper_fallbacks(config, task=task, owner_name=owner_name)
+    if preferred_fallbacks:
+        fallbacks = preferred_fallbacks
+    else:
+        fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
     if not fallbacks:
         return False
     if owner_paused:
