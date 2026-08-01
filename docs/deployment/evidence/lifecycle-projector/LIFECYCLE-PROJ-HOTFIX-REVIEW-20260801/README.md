@@ -46,6 +46,11 @@ The exact command transcript is in
 [`codex-author-revalidation.log`](./codex-author-revalidation.log). Machine-
 readable task state is in [`evidence.json`](./evidence.json).
 
+The owner closeout disposition, including the post-approval head change and
+the explicit rollout blocker, is recorded in
+[`owner-closeout.md`](./owner-closeout.md). This does not replace or expand
+Antigravity's exact-head verdict in `evidence.json`.
+
 ## Data and rollout boundary
 
 No live container was started or restarted during this review. No projection
@@ -91,4 +96,3 @@ rewrite is authorized by this packet.
 6. Record the merge commit and dev rollout result, or the explicit rollout
    blocker. Do not restart the stopped projector on the unbounded
    implementation and do not delete state or generations.
-
