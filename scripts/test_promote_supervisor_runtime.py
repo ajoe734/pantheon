@@ -15,6 +15,8 @@ from unittest.mock import Mock, patch
 
 from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
+    FilesystemIdentity,
+    PathComponentIdentity,
     build_candidate_runtime_identity,
     capture_promotion_snapshot,
     evaluate_promotion_invariants,
@@ -103,6 +105,14 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.candidate_root = repo
     identity.candidate_root_device = 1
     identity.candidate_root_inode = 2
+    identity.git_directory_device = 3
+    identity.git_directory_inode = 4
+    identity.git_objects_device = 5
+    identity.git_objects_inode = 6
+    identity.git_config_device = 7
+    identity.git_config_inode = 8
+    identity.git_head_device = 9
+    identity.git_head_inode = 10
     identity.basename = "a" * 40
     identity.head_commit = "a" * 40
     identity.tracked_tree_identity = "b" * 40
@@ -111,8 +121,14 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.canonical_remote = "github.com/ajoe734/pantheon"
     identity.repository_slug = "ajoe734/pantheon"
     identity.config_path = promotion.LIVE_SUPERVISOR_CONFIG_PATH
-    identity.config_device = 3
-    identity.config_inode = 4
+    identity.config_device = 11
+    identity.config_inode = 12
+    identity.config_path_components = (
+        PathComponentIdentity(
+            path=promotion.LIVE_SUPERVISOR_CONFIG_PATH,
+            identity=FilesystemIdentity(device=11, inode=12, mode=0),
+        ),
+    )
     identity.config_byte_length = 2
     identity.config_sha256 = "d" * 64
     return identity
@@ -935,6 +951,10 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         identity = build_candidate_runtime_identity(candidate)
         assert isinstance(identity, CandidateRuntimeIdentity)
         assert identity.candidate_root == candidate
+        assert identity.git_directory_inode == (candidate / ".git").stat().st_ino
+        assert identity.git_objects_inode == (candidate / ".git" / "objects").stat().st_ino
+        assert identity.git_config_inode == (candidate / ".git" / "config").stat().st_ino
+        assert identity.git_head_inode == (candidate / ".git" / "HEAD").stat().st_ino
         assert identity.basename == commit
         assert identity.head_commit == commit
         assert identity.tracked_tree_identity == tree
@@ -942,6 +962,8 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert identity.canonical_remote == "github.com/ajoe734/pantheon"
         assert identity.repository_slug == "ajoe734/pantheon"
         assert identity.config_path == live_config
+        assert identity.config_path_components[-1].path == live_config
+        assert identity.config_path_components[-2].path == live_config.parent
         assert identity.config_bytes == config_bytes
         assert identity.config_byte_length == len(config_bytes)
         assert len(identity.config_sha256) == 64
@@ -1058,6 +1080,98 @@ def test_candidate_root_rejects_symlinked_trusted_parent(tmp_path: Path) -> None
     ):
         with pytest.raises(ValueError, match="symlink|non-directory component"):
             resolve_candidate_root(parent_alias / commit)
+
+
+def test_git_identity_rejects_external_symlinked_git_directory(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    external_git = tmp_path / "external-git"
+    (candidate / ".git").rename(external_git)
+    (candidate / ".git").symlink_to(external_git, target_is_directory=True)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Candidate Git directory.*symlink"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_linked_worktree_gitfile(tmp_path: Path) -> None:
+    candidate, parent, _remote, commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    shutil.rmtree(candidate)
+    _git(
+        tmp_path / "source",
+        "worktree",
+        "add",
+        "--detach",
+        str(candidate),
+        commit,
+    )
+    assert (candidate / ".git").is_file()
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Candidate Git directory.*wrong type"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_external_commondir_pointer(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    (candidate / ".git" / "commondir").write_text(
+        str(tmp_path / "external-common-dir"),
+        encoding="utf-8",
+    )
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Forbidden Candidate Git commondir"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_external_object_alternates(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    external_objects = tmp_path / "external-objects"
+    external_objects.mkdir()
+    alternates = candidate / ".git" / "objects" / "info" / "alternates"
+    alternates.parent.mkdir(parents=True, exist_ok=True)
+    alternates.write_text(f"{external_objects}\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="objects/info/alternates"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_symlinked_object_directory(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    objects = candidate / ".git" / "objects"
+    external_objects = tmp_path / "external-objects"
+    objects.rename(external_objects)
+    objects.symlink_to(external_objects, target_is_directory=True)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Git objects directory.*symlink"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_external_config_include(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    external_config = tmp_path / "external-git-config"
+    external_config.write_text("[core]\n\tbare = true\n", encoding="utf-8")
+    with (candidate / ".git" / "config").open("a", encoding="utf-8") as config:
+        config.write(f"[include]\n\tpath = {external_config}\n")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="cannot include external config"):
+            resolve_candidate_root(candidate)
 
 
 def test_candidate_root_rejects_tmp_prefix(tmp_path: Path) -> None:
@@ -1223,6 +1337,28 @@ def test_trusted_dev_fetch_rejects_git_environment_url_rewrite(
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_NOSYSTEM",
     })
+
+
+def test_git_identity_revalidation_rejects_metadata_inode_replacement(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent,
+        remote,
+        live_config,
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+        git_config = candidate / ".git" / "config"
+        replacement = candidate / ".git" / "config.replacement"
+        replacement.write_bytes(git_config.read_bytes())
+        os.replace(replacement, git_config)
+        with pytest.raises(ValueError, match="Git metadata identity drift"):
+            identity.verify_immutable_snapshot()
 
 
 def test_git_identity_rejects_candidate_tree_mismatch(tmp_path: Path) -> None:
@@ -1452,6 +1588,40 @@ def test_live_config_parent_swap_during_open_is_rejected(tmp_path: Path) -> None
             build_candidate_runtime_identity(candidate)
 
 
+def test_live_config_same_inode_parent_replacement_during_capture_is_rejected(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    original_runtime = tmp_path / "original-runtime"
+    original_open_directory = promotion._open_directory_descriptor
+    swapped = False
+
+    def replace_parent_after_open(path: Path, *, label: str) -> int:
+        nonlocal swapped
+        descriptor = original_open_directory(path, label=label)
+        if path == live_config.parent and not swapped:
+            live_config.parent.rename(original_runtime)
+            live_config.parent.mkdir()
+            os.link(original_runtime / live_config.name, live_config)
+            swapped = True
+        return descriptor
+
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent,
+        remote,
+        live_config,
+    )
+    with parent_patch, remote_patch, config_patch, patch(
+        "promote_supervisor_runtime._open_directory_descriptor",
+        side_effect=replace_parent_after_open,
+    ):
+        with pytest.raises(ValueError, match="component changed"):
+            build_candidate_runtime_identity(candidate)
+
+
 def _build_test_candidate_identity(
     tmp_path: Path,
 ) -> tuple[CandidateRuntimeIdentity, Path, bytes]:
@@ -1528,4 +1698,18 @@ def test_live_config_revalidation_rejects_inode_replacement(tmp_path: Path) -> N
 
     with patch("promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH", live_config):
         with pytest.raises(ValueError, match="Config file identity drift"):
+            identity.verify_against_live_config(live_config)
+
+
+def test_live_config_revalidation_rejects_same_inode_parent_replacement(
+    tmp_path: Path,
+) -> None:
+    identity, live_config, _config_bytes = _build_test_candidate_identity(tmp_path)
+    original_runtime = tmp_path / "original-runtime"
+    live_config.parent.rename(original_runtime)
+    live_config.parent.mkdir()
+    os.link(original_runtime / live_config.name, live_config)
+
+    with patch("promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH", live_config):
+        with pytest.raises(ValueError, match="path component identity drift"):
             identity.verify_against_live_config(live_config)

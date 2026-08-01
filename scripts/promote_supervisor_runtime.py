@@ -86,10 +86,24 @@ class FilesystemIdentity:
 
 
 @dataclass(frozen=True)
+class PathComponentIdentity:
+    path: Path
+    identity: FilesystemIdentity
+
+
+@dataclass(frozen=True)
 class CandidateRootHandle:
     path: Path
     descriptor: int
     identity: FilesystemIdentity
+    git_descriptor: int
+    git_identity: FilesystemIdentity
+    git_objects_descriptor: int
+    git_objects_identity: FilesystemIdentity
+    git_config_descriptor: int
+    git_config_identity: FilesystemIdentity
+    git_head_descriptor: int
+    git_head_identity: FilesystemIdentity
 
 
 @dataclass(frozen=True)
@@ -103,6 +117,14 @@ class CandidateRuntimeIdentity:
     candidate_root: Path
     candidate_root_device: int
     candidate_root_inode: int
+    git_directory_device: int
+    git_directory_inode: int
+    git_objects_device: int
+    git_objects_inode: int
+    git_config_device: int
+    git_config_inode: int
+    git_head_device: int
+    git_head_inode: int
     basename: str
     head_commit: str
     tracked_tree_identity: str
@@ -113,6 +135,7 @@ class CandidateRuntimeIdentity:
     config_path: Path
     config_device: int
     config_inode: int
+    config_path_components: tuple[PathComponentIdentity, ...]
     config_bytes: bytes
     config_byte_length: int
     config_sha256: str
@@ -128,7 +151,7 @@ class CandidateRuntimeIdentity:
             live_config_path,
             expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
         )
-        content, file_identity = snapshot
+        content, file_identity, path_components = snapshot
         if len(content) != self.config_byte_length:
             raise ValueError(
                 "Config byte length drift: "
@@ -146,6 +169,8 @@ class CandidateRuntimeIdentity:
             or file_identity.inode != self.config_inode
         ):
             raise ValueError("Config file identity drift detected")
+        if path_components != self.config_path_components:
+            raise ValueError("Config path component identity drift detected")
 
     def verify_immutable_snapshot(self) -> None:
         """Revalidate every captured root, Git, and config identity value."""
@@ -158,6 +183,28 @@ class CandidateRuntimeIdentity:
                 or root_handle.identity.inode != self.candidate_root_inode
             ):
                 raise ValueError("Candidate root file identity drift detected")
+            current_git_identity = (
+                root_handle.git_identity.device,
+                root_handle.git_identity.inode,
+                root_handle.git_objects_identity.device,
+                root_handle.git_objects_identity.inode,
+                root_handle.git_config_identity.device,
+                root_handle.git_config_identity.inode,
+                root_handle.git_head_identity.device,
+                root_handle.git_head_identity.inode,
+            )
+            captured_git_identity = (
+                self.git_directory_device,
+                self.git_directory_inode,
+                self.git_objects_device,
+                self.git_objects_inode,
+                self.git_config_device,
+                self.git_config_inode,
+                self.git_head_device,
+                self.git_head_inode,
+            )
+            if current_git_identity != captured_git_identity:
+                raise ValueError("Candidate Git metadata identity drift detected")
 
             remote_url = parse_origin_url(root_handle)
             remote = validate_remote_url(remote_url)
@@ -193,7 +240,7 @@ class CandidateRuntimeIdentity:
             )
             _assert_candidate_handle_path(root_handle)
         finally:
-            os.close(root_handle.descriptor)
+            _close_candidate_root_handle(root_handle)
         self.verify_against_live_config(self.config_path)
 
 
@@ -220,10 +267,37 @@ def _run_git(
     cwd: Path | CandidateRootHandle,
     *args: str,
 ) -> subprocess.CompletedProcess[str]:
+    env = _subprocess_environment()
     if isinstance(cwd, CandidateRootHandle):
         cwd_arg = Path(f"/dev/fd/{cwd.descriptor}")
-        pass_fds = (cwd.descriptor,)
+        pass_fds = (
+            cwd.descriptor,
+            cwd.git_descriptor,
+            cwd.git_objects_descriptor,
+            cwd.git_config_descriptor,
+            cwd.git_head_descriptor,
+        )
         display_cwd = cwd.path
+        env.update(
+            {
+                "GIT_DIR": f"/dev/fd/{cwd.git_descriptor}",
+                "GIT_WORK_TREE": f"/dev/fd/{cwd.descriptor}",
+                "GIT_COMMON_DIR": f"/dev/fd/{cwd.git_descriptor}",
+                "GIT_OBJECT_DIRECTORY": (
+                    f"/dev/fd/{cwd.git_objects_descriptor}"
+                ),
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_COUNT": "3",
+                "GIT_CONFIG_KEY_0": "core.fsmonitor",
+                "GIT_CONFIG_VALUE_0": "false",
+                "GIT_CONFIG_KEY_1": "core.untrackedCache",
+                "GIT_CONFIG_VALUE_1": "false",
+                "GIT_CONFIG_KEY_2": "core.hooksPath",
+                "GIT_CONFIG_VALUE_2": os.devnull,
+            }
+        )
     else:
         cwd_arg = cwd
         pass_fds = ()
@@ -234,7 +308,7 @@ def _run_git(
             cwd=cwd_arg,
             capture_output=True,
             check=True,
-            env=_subprocess_environment(),
+            env=env,
             pass_fds=pass_fds,
             text=True,
             timeout=60,
@@ -256,6 +330,23 @@ def _validate_absolute_identity_path(path: Path, *, label: str) -> None:
         raise ValueError(f"{label} must be an absolute path: {path}")
     if ".." in path.parts:
         raise ValueError(f"{label} cannot contain '..': {path}")
+
+
+def _filesystem_identity(descriptor: int) -> FilesystemIdentity:
+    descriptor_stat = os.fstat(descriptor)
+    return FilesystemIdentity(
+        device=descriptor_stat.st_dev,
+        inode=descriptor_stat.st_ino,
+        mode=descriptor_stat.st_mode,
+    )
+
+
+def _identity_from_stat(path_stat: os.stat_result) -> FilesystemIdentity:
+    return FilesystemIdentity(
+        device=path_stat.st_dev,
+        inode=path_stat.st_ino,
+        mode=path_stat.st_mode,
+    )
 
 
 def _open_directory_descriptor(path: Path, *, label: str) -> int:
@@ -293,6 +384,174 @@ def _open_directory_descriptor(path: Path, *, label: str) -> int:
     except BaseException:
         os.close(descriptor)
         raise
+
+
+def _capture_directory_component_identities(
+    path: Path,
+    *,
+    label: str,
+) -> tuple[PathComponentIdentity, ...]:
+    """Capture every no-follow directory identity from / through path."""
+    _validate_absolute_identity_path(path, label=label)
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path.anchor, flags)
+    traversed = Path(path.anchor)
+    components = [
+        PathComponentIdentity(
+            path=traversed,
+            identity=_filesystem_identity(descriptor),
+        )
+    ]
+    try:
+        for component in path.parts[1:]:
+            traversed = traversed / component
+            try:
+                next_descriptor = os.open(
+                    component,
+                    flags,
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    f"{label} does not exist: {traversed}"
+                ) from exc
+            except OSError as exc:
+                raise ValueError(
+                    f"{label} contains a symlink or non-directory component: "
+                    f"{traversed}: {exc}"
+                ) from exc
+            os.close(descriptor)
+            descriptor = next_descriptor
+            components.append(
+                PathComponentIdentity(
+                    path=traversed,
+                    identity=_filesystem_identity(descriptor),
+                )
+            )
+        return tuple(components)
+    finally:
+        os.close(descriptor)
+
+
+def _assert_path_component_identities(
+    expected: tuple[PathComponentIdentity, ...],
+    *,
+    label: str,
+) -> None:
+    if not expected:
+        raise ValueError(f"{label} component identity is empty")
+    path = expected[-1].path
+    if stat.S_ISDIR(expected[-1].identity.mode):
+        actual = _capture_directory_component_identities(path, label=label)
+    else:
+        parent_components = _capture_directory_component_identities(
+            path.parent,
+            label=label,
+        )
+        descriptor = _open_path_descriptor(
+            path,
+            label=label,
+            require_directory=False,
+        )
+        try:
+            actual = parent_components + (
+                PathComponentIdentity(
+                    path=path,
+                    identity=_filesystem_identity(descriptor),
+                ),
+            )
+        finally:
+            os.close(descriptor)
+    if actual != expected:
+        raise ValueError(f"{label} component changed during identity capture: {path}")
+
+
+def _open_relative_descriptor(
+    parent_descriptor: int,
+    name: str,
+    *,
+    label: str,
+    require_directory: bool,
+) -> int:
+    if not name or "/" in name or name in {".", ".."}:
+        raise ValueError(f"{label} must be one direct path component: {name!r}")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    if require_directory:
+        flags |= os.O_DIRECTORY
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"{label} does not exist") from exc
+    except OSError as exc:
+        raise ValueError(f"{label} is a symlink or has the wrong type: {exc}") from exc
+
+    try:
+        opened_stat = os.fstat(descriptor)
+        entry_stat = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if stat.S_ISLNK(entry_stat.st_mode):
+            raise ValueError(f"{label} is a symlink")
+        if (entry_stat.st_dev, entry_stat.st_ino) != (
+            opened_stat.st_dev,
+            opened_stat.st_ino,
+        ):
+            raise ValueError(f"{label} changed while it was opened")
+        if require_directory and not stat.S_ISDIR(opened_stat.st_mode):
+            raise ValueError(f"{label} is not a directory")
+        if not require_directory and not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError(f"{label} is not a regular file")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _assert_relative_identity(
+    parent_descriptor: int,
+    name: str,
+    expected: FilesystemIdentity,
+    *,
+    label: str,
+    require_directory: bool,
+) -> None:
+    descriptor = _open_relative_descriptor(
+        parent_descriptor,
+        name,
+        label=label,
+        require_directory=require_directory,
+    )
+    try:
+        if _filesystem_identity(descriptor) != expected:
+            raise ValueError(f"{label} identity changed")
+    finally:
+        os.close(descriptor)
+
+
+def _assert_relative_entry_absent(
+    parent_descriptor: int,
+    name: str,
+    *,
+    label: str,
+) -> None:
+    try:
+        os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ValueError(f"Cannot validate {label}: {exc}") from exc
+    raise ValueError(f"Forbidden {label} is present")
 
 
 def _open_path_descriptor(
@@ -377,6 +636,142 @@ def _assert_path_identity(
         os.close(descriptor)
 
 
+def _close_descriptors(*descriptors: int) -> None:
+    for descriptor in descriptors:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _close_candidate_root_handle(handle: CandidateRootHandle) -> None:
+    _close_descriptors(
+        handle.git_head_descriptor,
+        handle.git_config_descriptor,
+        handle.git_objects_descriptor,
+        handle.git_descriptor,
+        handle.descriptor,
+    )
+
+
+def _assert_optional_git_directory_is_local(
+    parent_descriptor: int,
+    name: str,
+    *,
+    label: str,
+) -> None:
+    try:
+        descriptor = _open_relative_descriptor(
+            parent_descriptor,
+            name,
+            label=label,
+            require_directory=True,
+        )
+    except FileNotFoundError:
+        return
+    else:
+        os.close(descriptor)
+
+
+def _assert_no_git_alternates(objects_descriptor: int) -> None:
+    try:
+        info_descriptor = _open_relative_descriptor(
+            objects_descriptor,
+            "info",
+            label="Candidate Git objects/info directory",
+            require_directory=True,
+        )
+    except FileNotFoundError:
+        return
+    try:
+        _assert_relative_entry_absent(
+            info_descriptor,
+            "alternates",
+            label="Candidate Git objects/info/alternates",
+        )
+    finally:
+        os.close(info_descriptor)
+
+
+def _assert_candidate_git_metadata(handle: CandidateRootHandle) -> None:
+    _assert_relative_identity(
+        handle.descriptor,
+        ".git",
+        handle.git_identity,
+        label="Candidate Git directory",
+        require_directory=True,
+    )
+    _assert_relative_identity(
+        handle.git_descriptor,
+        "objects",
+        handle.git_objects_identity,
+        label="Candidate Git objects directory",
+        require_directory=True,
+    )
+    _assert_relative_identity(
+        handle.git_descriptor,
+        "config",
+        handle.git_config_identity,
+        label="Candidate Git config",
+        require_directory=False,
+    )
+    _assert_relative_identity(
+        handle.git_descriptor,
+        "HEAD",
+        handle.git_head_identity,
+        label="Candidate Git HEAD",
+        require_directory=False,
+    )
+    _assert_relative_entry_absent(
+        handle.git_descriptor,
+        "commondir",
+        label="Candidate Git commondir pointer",
+    )
+    _assert_no_git_alternates(handle.git_objects_descriptor)
+    _assert_optional_git_directory_is_local(
+        handle.git_objects_descriptor,
+        "pack",
+        label="Candidate Git objects/pack directory",
+    )
+    _assert_optional_git_directory_is_local(
+        handle.git_descriptor,
+        "refs",
+        label="Candidate Git refs directory",
+    )
+
+    config_names = _run_git(
+        handle,
+        "config",
+        "--file",
+        f"/dev/fd/{handle.git_config_descriptor}",
+        "--no-includes",
+        "--name-only",
+        "--list",
+    ).stdout.splitlines()
+    if any(
+        name.lower().startswith(("include.", "includeif."))
+        for name in config_names
+    ):
+        raise ValueError("Candidate Git config cannot include external config")
+
+    git_dir = Path(_git_output(handle, "rev-parse", "--absolute-git-dir"))
+    common_dir = Path(_git_output(handle, "rev-parse", "--git-common-dir"))
+    try:
+        git_dir_identity = _identity_from_stat(os.stat(git_dir))
+        common_dir_identity = _identity_from_stat(os.stat(common_dir))
+    except OSError as exc:
+        raise ValueError(f"Candidate Git directory identity is unavailable: {exc}") from exc
+    if (
+        git_dir_identity != handle.git_identity
+        or common_dir_identity != handle.git_identity
+    ):
+        raise ValueError("Candidate Git directory/common directory escaped the root")
+    if _git_output(handle, "rev-parse", "--is-inside-work-tree") != "true":
+        raise ValueError("Candidate Git metadata is not a worktree repository")
+    if _git_output(handle, "rev-parse", "--is-bare-repository") != "false":
+        raise ValueError("Candidate Git metadata unexpectedly identifies a bare repository")
+
+
 def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
     path = candidate_path if isinstance(candidate_path, Path) else Path(candidate_path)
     trusted_parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
@@ -395,21 +790,57 @@ def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
         label="Candidate root",
         require_directory=True,
     )
-    root_stat = os.fstat(descriptor)
-    root_identity = FilesystemIdentity(
-        device=root_stat.st_dev,
-        inode=root_stat.st_ino,
-        mode=root_stat.st_mode,
-    )
-    handle = CandidateRootHandle(
-        path=path,
-        descriptor=descriptor,
-        identity=root_identity,
-    )
+    git_descriptor = -1
+    git_objects_descriptor = -1
+    git_config_descriptor = -1
+    git_head_descriptor = -1
     try:
+        git_descriptor = _open_relative_descriptor(
+            descriptor,
+            ".git",
+            label="Candidate Git directory",
+            require_directory=True,
+        )
+        git_objects_descriptor = _open_relative_descriptor(
+            git_descriptor,
+            "objects",
+            label="Candidate Git objects directory",
+            require_directory=True,
+        )
+        git_config_descriptor = _open_relative_descriptor(
+            git_descriptor,
+            "config",
+            label="Candidate Git config",
+            require_directory=False,
+        )
+        git_head_descriptor = _open_relative_descriptor(
+            git_descriptor,
+            "HEAD",
+            label="Candidate Git HEAD",
+            require_directory=False,
+        )
+        handle = CandidateRootHandle(
+            path=path,
+            descriptor=descriptor,
+            identity=_filesystem_identity(descriptor),
+            git_descriptor=git_descriptor,
+            git_identity=_filesystem_identity(git_descriptor),
+            git_objects_descriptor=git_objects_descriptor,
+            git_objects_identity=_filesystem_identity(git_objects_descriptor),
+            git_config_descriptor=git_config_descriptor,
+            git_config_identity=_filesystem_identity(git_config_descriptor),
+            git_head_descriptor=git_head_descriptor,
+            git_head_identity=_filesystem_identity(git_head_descriptor),
+        )
         _assert_candidate_handle_path(handle)
     except BaseException:
-        os.close(descriptor)
+        _close_descriptors(
+            git_head_descriptor,
+            git_config_descriptor,
+            git_objects_descriptor,
+            git_descriptor,
+            descriptor,
+        )
         raise
     return handle
 
@@ -421,6 +852,7 @@ def _assert_candidate_handle_path(handle: CandidateRootHandle) -> None:
         label="Candidate root",
         require_directory=True,
     )
+    _assert_candidate_git_metadata(handle)
 
 
 def _capture_candidate_root(candidate_path: Path) -> tuple[Path, FilesystemIdentity]:
@@ -428,7 +860,7 @@ def _capture_candidate_root(candidate_path: Path) -> tuple[Path, FilesystemIdent
     try:
         return handle.path, handle.identity
     finally:
-        os.close(handle.descriptor)
+        _close_candidate_root_handle(handle)
 
 
 def resolve_candidate_root(candidate_path: Path) -> Path:
@@ -448,20 +880,24 @@ def parse_origin_url(candidate_root: Path | CandidateRootHandle) -> str:
     """Read the single raw local remote.origin.url without URL rewriting."""
     handle, close_handle = _candidate_handle(candidate_root)
     try:
+        _assert_candidate_git_metadata(handle)
         raw = _run_git(
             handle,
             "config",
-            "--local",
+            "--file",
+            f"/dev/fd/{handle.git_config_descriptor}",
+            "--no-includes",
             "--get-all",
             "remote.origin.url",
         ).stdout
         urls = raw.splitlines()
         if len(urls) != 1 or not urls[0]:
             raise ValueError("Candidate must configure exactly one remote.origin.url")
+        _assert_candidate_git_metadata(handle)
         return urls[0]
     finally:
         if close_handle:
-            os.close(handle.descriptor)
+            _close_candidate_root_handle(handle)
 
 
 def validate_remote_url(url: str) -> GitRemoteIdentity:
@@ -514,6 +950,7 @@ def _read_head_tree(
 ) -> tuple[str, str]:
     handle, close_handle = _candidate_handle(candidate_root)
     try:
+        _assert_candidate_git_metadata(handle)
         prefix = _git_output(handle, "rev-parse", "--show-prefix")
         if prefix:
             raise ValueError(
@@ -541,10 +978,11 @@ def _read_head_tree(
             raise ValueError(
                 "Candidate HEAD/tree identity is not a full lowercase SHA-1"
             )
+        _assert_candidate_git_metadata(handle)
         return head, tree
     finally:
         if close_handle:
-            os.close(handle.descriptor)
+            _close_candidate_root_handle(handle)
 
 
 def _fetch_trusted_dev_identity(candidate_head: str) -> TrustedDevIdentity:
@@ -615,7 +1053,7 @@ def _capture_git_identity(
         return head_before, tree_before, trusted_dev
     finally:
         if close_handle:
-            os.close(handle.descriptor)
+            _close_candidate_root_handle(handle)
 
 
 def verify_git_head_and_dev_ancestry(
@@ -703,20 +1141,28 @@ def verify_working_tree_cleanliness(
         return tree
     finally:
         if close_handle:
-            os.close(handle.descriptor)
+            _close_candidate_root_handle(handle)
 
 
 def _capture_config_bytes(
     config_path: Path,
     *,
     expected_path: Path,
-) -> tuple[bytes, FilesystemIdentity]:
+) -> tuple[
+    bytes,
+    FilesystemIdentity,
+    tuple[PathComponentIdentity, ...],
+]:
     path = config_path if isinstance(config_path, Path) else Path(config_path)
     if path != expected_path:
         raise ValueError(
             f"Config path {path} does not match exact live config path {expected_path}"
         )
 
+    parent_components = _capture_directory_component_identities(
+        path.parent,
+        label="Live supervisor config path",
+    )
     descriptor = _open_path_descriptor(
         path,
         label="Live supervisor config path",
@@ -750,18 +1196,18 @@ def _capture_config_bytes(
     )
     if stable_fields_after != stable_fields_before or len(content) != before.st_size:
         raise ValueError(f"Live config changed during byte capture: {path}")
-    file_identity = FilesystemIdentity(
-        device=before.st_dev,
-        inode=before.st_ino,
-        mode=before.st_mode,
+    file_identity = _identity_from_stat(before)
+    path_components = parent_components + (
+        PathComponentIdentity(
+            path=path,
+            identity=file_identity,
+        ),
     )
-    _assert_path_identity(
-        path,
-        file_identity,
+    _assert_path_component_identities(
+        path_components,
         label="Live config",
-        require_directory=False,
     )
-    return content, file_identity
+    return content, file_identity, path_components
 
 
 def build_candidate_runtime_identity(
@@ -789,7 +1235,7 @@ def build_candidate_runtime_identity(
         )
 
         selected_config_path = config_path or LIVE_SUPERVISOR_CONFIG_PATH
-        config_bytes, config_identity = _capture_config_bytes(
+        config_bytes, config_identity, config_path_components = _capture_config_bytes(
             selected_config_path,
             expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
         )
@@ -812,6 +1258,14 @@ def build_candidate_runtime_identity(
             candidate_root=resolved_root,
             candidate_root_device=root_identity.device,
             candidate_root_inode=root_identity.inode,
+            git_directory_device=root_handle.git_identity.device,
+            git_directory_inode=root_handle.git_identity.inode,
+            git_objects_device=root_handle.git_objects_identity.device,
+            git_objects_inode=root_handle.git_objects_identity.inode,
+            git_config_device=root_handle.git_config_identity.device,
+            git_config_inode=root_handle.git_config_identity.inode,
+            git_head_device=root_handle.git_head_identity.device,
+            git_head_inode=root_handle.git_head_identity.inode,
             basename=basename,
             head_commit=head,
             tracked_tree_identity=tracked_tree,
@@ -822,12 +1276,13 @@ def build_candidate_runtime_identity(
             config_path=selected_config_path,
             config_device=config_identity.device,
             config_inode=config_identity.inode,
+            config_path_components=config_path_components,
             config_bytes=config_bytes,
             config_byte_length=len(config_bytes),
             config_sha256=hashlib.sha256(config_bytes).hexdigest(),
         )
     finally:
-        os.close(root_handle.descriptor)
+        _close_candidate_root_handle(root_handle)
 
 
 def load_json_strict(path: Path) -> dict[str, Any]:
@@ -846,6 +1301,14 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         "candidate_root": str(identity.candidate_root),
         "candidate_root_device": identity.candidate_root_device,
         "candidate_root_inode": identity.candidate_root_inode,
+        "git_directory_device": identity.git_directory_device,
+        "git_directory_inode": identity.git_directory_inode,
+        "git_objects_device": identity.git_objects_device,
+        "git_objects_inode": identity.git_objects_inode,
+        "git_config_device": identity.git_config_device,
+        "git_config_inode": identity.git_config_inode,
+        "git_head_device": identity.git_head_device,
+        "git_head_inode": identity.git_head_inode,
         "basename": identity.basename,
         "head_commit": identity.head_commit,
         "tracked_tree_identity": identity.tracked_tree_identity,
@@ -856,6 +1319,15 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         "config_path": str(identity.config_path),
         "config_device": identity.config_device,
         "config_inode": identity.config_inode,
+        "config_path_components": [
+            {
+                "path": str(component.path),
+                "device": component.identity.device,
+                "inode": component.identity.inode,
+                "mode": component.identity.mode,
+            }
+            for component in identity.config_path_components
+        ],
         "config_byte_length": identity.config_byte_length,
         "config_sha256": identity.config_sha256,
     }
