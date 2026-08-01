@@ -5,6 +5,7 @@ import pytest
 from dispatch_policy import (
     DEFAULT_ACTIVE_WORKER_STATUSES,
     DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,
+    DEFAULT_PRIORITY_PREEMPTION_GRACE_SECONDS,
     DEFAULT_REVIEW_REDISPATCH_TERMINAL_WORKER_STATUSES,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
@@ -81,6 +82,7 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["max_tasks_per_agent_by_agent"] == {}
     assert settings["max_dispatches_per_tick"] == 4
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
+    assert settings["priority_preemption_grace_seconds"] == DEFAULT_PRIORITY_PREEMPTION_GRACE_SECONDS
     assert settings["max_concurrent_per_account"] == {}
     assert "max_concurrent_per_quota_group" not in settings
 
@@ -98,6 +100,7 @@ def test_ready_dispatch_settings_preserves_configured_values() -> None:
                 "owned_statuses": ["queued"],
                 "max_tasks_per_agent": 2,
                 "max_dispatches_per_tick": 8,
+                "priority_preemption_grace_seconds": 120,
             }
         }
     )
@@ -107,6 +110,7 @@ def test_ready_dispatch_settings_preserves_configured_values() -> None:
     assert settings["owned_statuses"] == ["queued"]
     assert settings["max_tasks_per_agent"] == 2
     assert settings["max_dispatches_per_tick"] == 8
+    assert settings["priority_preemption_grace_seconds"] == 120
 
 
 def test_ready_dispatch_settings_preserves_legacy_account_cap_without_masking_it() -> None:

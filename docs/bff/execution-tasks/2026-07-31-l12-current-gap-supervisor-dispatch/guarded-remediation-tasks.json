@@ -1,0 +1,2237 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-twelve-loop-gap-current-proof-remediation-2026-07-31",
+  "generated_at": "2026-07-31T13:39:17Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+  "dispatch_contract": {
+    "bootstrap_task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "dispatcher": "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+    "mode": "program-specific-guarded-dispatch",
+    "generic_dev_task_packet_for_product_tasks": false,
+    "required_runtime_gates": [
+      "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
+      "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    ],
+    "materialize_only_after_dispatcher_merge_and_live_promotion": true
+  },
+  "completion_authority": {
+    "final_task_id": "L12-CLOSE-001",
+    "current_proof_release_gate_id": "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
+    "hosted_task_id": "L12-HOSTED-001",
+    "requires_protected_human_ops_verdict": true
+  },
+  "execution_task_counts": {
+    "controller_parallel": 9,
+    "evidence_revalidation_parallel": 16,
+    "shared_integration": 1,
+    "release_gate": 1,
+    "learning_verifier_rebuild": 1,
+    "total_new_product_tasks": 28,
+    "maximum_parallel_frontier_G1": 25
+  },
+  "verified_baseline": {
+    "canonical_loop_count": 12,
+    "implemented_controller_contract_count": 3,
+    "missing_controller_contract_count": 9,
+    "original_archived_done_evidence_count": 18,
+    "current_validator_and_checksum_pass_count": 2,
+    "current_revalidation_required_count": 16,
+    "both_pass_task_ids": [
+      "L12-DIST-001",
+      "L12-MANIFEST-001"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "L12-CONTROLLER-TEACH-20260731",
+      "title": "Implement canonical Persona Teaching controller contract",
+      "summary_zh": "補齊 Persona Teaching 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/training-session",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-TEACH-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for persona_teaching without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-persona_teaching",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/training-session",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-TEACH-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-AGORA-20260731",
+      "title": "Implement canonical Agora Interaction Evidence controller contract",
+      "summary_zh": "補齊 Agora Interaction Evidence 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/control-plane/specs/agora",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-AGORA-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for agora_interaction_evidence without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-agora_interaction_evidence",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "agora_interaction_evidence"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/control-plane/specs/agora",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-AGORA-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-IMIT-20260731",
+      "title": "Implement canonical Human Imitation / Shadow Evaluation controller contract",
+      "summary_zh": "補齊 Human Imitation / Shadow Evaluation 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/policy-learning",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-IMIT-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for human_imitation_shadow_evaluation without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-human_imitation_shadow_evaluation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "human_imitation_shadow_evaluation"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/policy-learning",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-IMIT-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-CONS-20260731",
+      "title": "Implement canonical Consultation controller contract",
+      "summary_zh": "補齊 Consultation 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/consultation",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-CONS-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for consultation without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-consultation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "consultation"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/consultation",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-CONS-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-DEP-20260731",
+      "title": "Implement canonical Promotion / Deployment controller contract",
+      "summary_zh": "補齊 Promotion / Deployment 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/control-plane/governance",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-DEP-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for promotion_deployment without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-promotion_deployment",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "promotion_deployment"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/control-plane/governance",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-DEP-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-CAP-20260731",
+      "title": "Implement canonical Capital Pool Execution controller contract",
+      "summary_zh": "補齊 Capital Pool Execution 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/runtime-manager",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-CAP-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for capital_pool_execution without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-capital_pool_execution",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/runtime-manager",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-CAP-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-TELREC-20260731",
+      "title": "Implement canonical Telemetry / Reconciliation controller contract",
+      "summary_zh": "補齊 Telemetry / Reconciliation 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/telemetry",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-TELREC-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for telemetry_reconciliation without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-telemetry_reconciliation",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/telemetry",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-TELREC-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-EVO-20260731",
+      "title": "Implement canonical Evolution controller contract",
+      "summary_zh": "補齊 Evolution 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/evolution",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-EVO-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for evolution without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-evolution",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/evolution",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-EVO-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-BFF-20260731",
+      "title": "Implement canonical BFF Health Monitoring controller contract",
+      "summary_zh": "補齊 BFF Health Monitoring 的 canonical loop-control controller、durable desired/actual query、restart/liveness 與 terminal readback；不在此 task 修改共用 catalog/Compose/BFF binding。",
+      "phase": "Twelve Loop Current Gap / Guarded Controller Wave",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-BFF-20260731"
+      ],
+      "acceptance": [
+        "Implement one durable canonical controller for bff_health_monitoring without claiming shared catalog admission in this task",
+        "Expose tenant/environment-scoped desired-state query, actual-state query, stable idempotency identity, heartbeat/liveness, last success, last failure, and provenance",
+        "Prove duplicate/concurrent dispatch, crash/restart recovery, failure/DLQ truth, auth/tenant negatives, and no-live-capital boundary where applicable",
+        "Write a schema-valid current evidence manifest and checksum bound to exact implementation/CI receipts",
+        "Use a clean task worktree, unique branch, PR to dev, independent review, protected merge, and governed closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then implement and deliver only the loop-specific controller surface.",
+      "wave": "G1",
+      "fleet_lane": "controller-bff_health_monitoring",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "implemented-domain-no-canonical-controller",
+      "target_maturity": "implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+      ],
+      "actual_state_sources": [
+        "services/control-plane/bff",
+        "services/loop-control controller record contract"
+      ],
+      "proof_required": [
+        "real service-bound controller test",
+        "restart/duplicate/failure test",
+        "current evidence validator",
+        "exact-head PR checks"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not edit shared catalog, docker-compose.yml, or BFF runtime binding in this parallel task",
+        "Fail closed if the declared service surface does not expose an authoritative terminal state",
+        "Do not count archived LOOP-AUTO or L12 task status as runtime proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-BFF-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-FLEET-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-FLEET-001",
+      "summary_zh": "重播 L12-FLEET-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-FLEET-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-FLEET-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-fleet",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-CTRL-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-CTRL-001",
+      "summary_zh": "重播 L12-CTRL-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-CTRL-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-CTRL-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-ctrl",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-TEL-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-TEL-001",
+      "summary_zh": "重播 L12-TEL-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-TEL-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-TEL-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-tel",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-REC-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-REC-001",
+      "summary_zh": "重播 L12-REC-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-REC-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-REC-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-REC-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-rec",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-REC-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-SRC-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-SRC-001",
+      "summary_zh": "重播 L12-SRC-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-SRC-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-SRC-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-src",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-SRC-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-ALPHA-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-ALPHA-001",
+      "summary_zh": "重播 L12-ALPHA-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-ALPHA-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-ALPHA-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-alpha",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-AGORA-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-AGORA-001",
+      "summary_zh": "重播 L12-AGORA-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-AGORA-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-AGORA-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-agora",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-CONS-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-CONS-001",
+      "summary_zh": "重播 L12-CONS-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-CONS-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-CONS-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-cons",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-DEP-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-DEP-001",
+      "summary_zh": "重播 L12-DEP-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-DEP-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-DEP-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-dep",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-TEACH-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-TEACH-001",
+      "summary_zh": "重播 L12-TEACH-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-TEACH-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-TEACH-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-teach",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-IMIT-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-IMIT-001",
+      "summary_zh": "重播 L12-IMIT-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-IMIT-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-IMIT-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-imit",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-CAP-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-CAP-001",
+      "summary_zh": "重播 L12-CAP-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-CAP-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-CAP-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-cap",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-EVO-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-EVO-001",
+      "summary_zh": "重播 L12-EVO-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-EVO-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-EVO-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-evo",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-BFF-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-BFF-001",
+      "summary_zh": "重播 L12-BFF-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-BFF-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-BFF-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-bff",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-SIGNOFF-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-SIGNOFF-001",
+      "summary_zh": "重播 L12-SIGNOFF-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-SIGNOFF-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-SIGNOFF-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-signoff",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-EVIDENCE-REVALIDATE-TRUTH-20260731",
+      "title": "Revalidate current fail-closed evidence for L12-TRUTH-001",
+      "summary_zh": "重播 L12-TRUTH-001 archived done 的現行 validator、checksum、delivery receipt 與 mutable observation；失敗時重切 current evidence，不得只沿用歷史 done 標籤。",
+      "phase": "Twelve Loop Current Gap / Parallel Evidence Revalidation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-TRUTH-001"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001"
+      ],
+      "acceptance": [
+        "Use the archived L12-TRUTH-001 review_file as the starting authority, not an arbitrary older manifest",
+        "Run the current ten-rule fail-closed evidence validator and checksum every companion artifact using its declared path base",
+        "Refresh stale head binding, current delivery checks, bound-document/current-cut consistency, mutable observations, and checksum drift as applicable",
+        "If behavior replay contradicts the archived claim, open a distinct implementation repair instead of recutting false evidence",
+        "Deliver the refreshed evidence through a clean branch, PR, independent exact-head review, protected merge, and governed revalidation closeout"
+      ],
+      "next": "Wait for scheduler runtime gate, then revalidate this disjoint evidence directory in parallel.",
+      "wave": "G1",
+      "fleet_lane": "evidence-truth",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "program-evidence"
+      ],
+      "current_maturity": "archived-done-current-proof-rejected",
+      "target_maturity": "current-evidence-accepted",
+      "desired_state_sources": [
+        "scripts/validate_twelve_loop_gap_evidence.py",
+        "archived task review_file"
+      ],
+      "actual_state_sources": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001",
+        "current git objects and exact-head CI/check status"
+      ],
+      "proof_required": [
+        "ten-rule validator zero rejection",
+        "companion checksum pass",
+        "receipt commit artifact replay",
+        "independent current-head review"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Only this evidence directory may be changed by this parallel task",
+        "Do not mutate the archived original task row",
+        "Do not convert a behavior failure into an evidence-only pass"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "title": "Replace the rejected self-attesting learning verifier",
+      "summary_zh": "在 current-proof release gate 通過後，實作真正跨 Teaching、Agora、Imitation、Consultation service boundary 的 learning verifier，禁止 print-pass 與自我證明。",
+      "phase": "Twelve Loop Current Gap / Product Verifier Rebuild",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "L12-CURRENT-PROOF-RELEASE-GATE-20260731"
+      ],
+      "artifacts": [
+        "scripts/verify_twelve_loop_learning.py",
+        "scripts/test_verify_twelve_loop_learning.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001"
+      ],
+      "acceptance": [
+        "Perform real Teaching, Agora, Imitation, and Consultation calls at service boundaries",
+        "Record before/after terminal-authority readbacks and correlate one non-seed persona flow",
+        "Prove tenant/RBAC/auth negatives, duplicate and multi-worker safety, restart/DLQ replay, and no runtime mutation",
+        "Fail on unavailable dependencies or contradictory readback; no print-pass or self-attesting fixtures",
+        "Deliver through clean branch, PR, exact-head checks, independent review, protected merge, and current evidence validation"
+      ],
+      "next": "Start only after current controller and archived-evidence release gate is accepted.",
+      "wave": "G3",
+      "fleet_lane": "verify-learning-rebuild",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation"
+      ],
+      "current_maturity": "rejected-self-attesting-verifier",
+      "target_maturity": "real-service-verifier",
+      "desired_state_sources": [
+        "L12-VERIFY-LEARN-001 acceptance",
+        "current controller contracts"
+      ],
+      "actual_state_sources": [
+        "Teaching/Agora/Imitation/Consultation terminal authorities",
+        "BFF loop truth readback"
+      ],
+      "proof_required": [
+        "real service drill",
+        "before/after readbacks",
+        "negative/restart/DLQ proof",
+        "no-runtime-mutation assertion"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not materialize through generic DevTaskPacket",
+        "Do not start before L12-CURRENT-PROOF-RELEASE-GATE-20260731",
+        "Do not mark dependency failures as verifier success"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
+      "title": "Integrate all nine missing controllers into catalog, Compose, and BFF truth",
+      "summary_zh": "在九個 disjoint controller 完成後，單一 owner 更新共用 catalog、Compose、loop-control/BFF binding，使十二個 loop 都能產生可接受 current controller record。",
+      "phase": "Twelve Loop Current Gap / Shared Controller Integration",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-TRUTH-001",
+        "L12-CONTROLLER-TEACH-20260731",
+        "L12-CONTROLLER-AGORA-20260731",
+        "L12-CONTROLLER-IMIT-20260731",
+        "L12-CONTROLLER-CONS-20260731",
+        "L12-CONTROLLER-DEP-20260731",
+        "L12-CONTROLLER-CAP-20260731",
+        "L12-CONTROLLER-TELREC-20260731",
+        "L12-CONTROLLER-EVO-20260731",
+        "L12-CONTROLLER-BFF-20260731"
+      ],
+      "artifacts": [
+        "docs/deployment/loop-catalog.registry.json",
+        "docker-compose.yml",
+        "scripts/deploy_nonprod_vm.sh",
+        "services/loop-control",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "tests/test_loop_catalog_registry.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-CATALOG-INTEGRATION-20260731"
+      ],
+      "acceptance": [
+        "RUNTIME_CONTROLLER_BINDINGS and catalog controller contracts cover all twelve canonical loop IDs, not only Source/Distillation/Alpha",
+        "Every controller has deployed Compose ownership, durable state path, desired/actual queries, restart behavior, liveness metric, tenant/environment identity, and terminal provenance",
+        "BFF no longer returns catalog controller contract is not implemented for any canonical loop when a current qualified record exists",
+        "All twelve current records pass conformance, stale/contradicted/archive-only negatives remain degraded, and no loop is promoted beyond evidence",
+        "Default dev deployment remains safe-write/paper-only and proves restart plus no duplicate legacy worker"
+      ],
+      "next": "Integrate shared truth only after all nine loop-specific controller PRs are merged.",
+      "wave": "G2",
+      "fleet_lane": "controller-shared-integration",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "three-of-twelve-controller-contracts-implemented",
+      "target_maturity": "twelve-of-twelve-controller-contracts-implemented",
+      "desired_state_sources": [
+        "docs/deployment/loop-catalog.registry.json",
+        "L12-CONTROLLER-TEACH-20260731",
+        "L12-CONTROLLER-AGORA-20260731",
+        "L12-CONTROLLER-IMIT-20260731",
+        "L12-CONTROLLER-CONS-20260731",
+        "L12-CONTROLLER-DEP-20260731",
+        "L12-CONTROLLER-CAP-20260731",
+        "L12-CONTROLLER-TELREC-20260731",
+        "L12-CONTROLLER-EVO-20260731",
+        "L12-CONTROLLER-BFF-20260731"
+      ],
+      "actual_state_sources": [
+        "docker-compose.yml",
+        "services/loop-control",
+        "BFF loop inventory/health readbacks"
+      ],
+      "proof_required": [
+        "12/12 catalog-runtime exactness",
+        "12/12 controller record acceptance",
+        "restart/no-duplicate Compose drill",
+        "host-safe deployment manifest"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "This is the only remediation task allowed to modify the shared catalog/Compose/BFF binding files",
+        "Do not integrate a controller whose loop-specific evidence has not merged",
+        "Do not promote reconciled or proven-live maturity before hosted proof"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
+      "title": "Release existing FE/verifier lanes only after current controller and evidence proof",
+      "summary_zh": "統一驗證九個 controller integration 與十六份 current evidence revalidation，完成後才讓 supervisor 重派 FE、四 verifier、HOSTED、CLOSE。",
+      "phase": "Twelve Loop Current Gap / Product Proof Release Gate",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "owner_preference": [
+        "Antigravity",
+        "Claude2",
+        "Claude",
+        "Codex2",
+        "Codex"
+      ],
+      "reviewer_preference": [
+        "Claude2",
+        "Antigravity",
+        "Codex2",
+        "Codex"
+      ],
+      "status": "todo",
+      "depends_on": [
+        "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
+        "L12-EVIDENCE-REVALIDATE-FLEET-20260731",
+        "L12-EVIDENCE-REVALIDATE-CTRL-20260731",
+        "L12-EVIDENCE-REVALIDATE-TEL-20260731",
+        "L12-EVIDENCE-REVALIDATE-REC-20260731",
+        "L12-EVIDENCE-REVALIDATE-SRC-20260731",
+        "L12-EVIDENCE-REVALIDATE-ALPHA-20260731",
+        "L12-EVIDENCE-REVALIDATE-AGORA-20260731",
+        "L12-EVIDENCE-REVALIDATE-CONS-20260731",
+        "L12-EVIDENCE-REVALIDATE-DEP-20260731",
+        "L12-EVIDENCE-REVALIDATE-TEACH-20260731",
+        "L12-EVIDENCE-REVALIDATE-IMIT-20260731",
+        "L12-EVIDENCE-REVALIDATE-CAP-20260731",
+        "L12-EVIDENCE-REVALIDATE-EVO-20260731",
+        "L12-EVIDENCE-REVALIDATE-BFF-20260731",
+        "L12-EVIDENCE-REVALIDATE-SIGNOFF-20260731",
+        "L12-EVIDENCE-REVALIDATE-TRUTH-20260731"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-PROOF-RELEASE-GATE-20260731"
+      ],
+      "acceptance": [
+        "All nine controller tasks and shared integration are governed done with 12/12 accepted current controller-record capability",
+        "All sixteen revalidation tasks pass the current ten-rule validator and companion checksum or carry a terminal implementation blocker",
+        "DIST and MANIFEST evidence are rechecked unchanged and still pass",
+        "Canonical task-state and archive readback agree; no receipt-only or stale PR-head claim is accepted",
+        "Only after approval, supervisor may resume L12-FE-TRUTH-001 and the four L12-VERIFY lanes"
+      ],
+      "next": "Hold existing product proof lanes until every dependency is current and accepted.",
+      "wave": "G2",
+      "fleet_lane": "current-proof-release",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "proof-release-blocked",
+      "target_maturity": "proof-release-approved",
+      "desired_state_sources": [
+        "guarded-remediation-tasks.json",
+        "current original product DAG"
+      ],
+      "actual_state_sources": [
+        "canonical task-state",
+        "archive evidence validator results",
+        "BFF 12/12 controller truth"
+      ],
+      "proof_required": [
+        "zero dangling dependencies",
+        "zero invalid current evidence",
+        "12/12 controller admission",
+        "supervisor canonical readback"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No live-capital activation",
+        "No .orchestrator/config.json edit"
+      ],
+      "dispatch_rules": [
+        "Do not alter existing immutable task specs; this gate controls when they may be resumed",
+        "Do not release hosted or closeout before FE and all four verifier rows are archived done",
+        "Do not accept terminal blockers as successful evidence"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-PROOF-RELEASE-GATE-20260731",
+      "task_doc": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md#guarded-current-proof-remediation",
+      "requires_human_ops_signoff": false
+    }
+  ]
+}
