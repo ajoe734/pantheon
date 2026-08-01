@@ -1,0 +1,22 @@
+{
+  "task_id": "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+  "task_title": "Wire immutable failure generations from real supervisor records",
+  "timestamp": "2026-08-01T03:50:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Human/Ops",
+  "review_decision": "review_approved",
+  "verification": {
+    "supervisor_unit_tests": {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py",
+      "passed": 468,
+      "failed": 0,
+      "total": 468,
+      "status": "PASSED"
+    },
+    "git_diff_check": {
+      "command": "git diff --check origin/dev...HEAD",
+      "status": "CLEAN"
+    }
+  },
+  "summary": "Cleanly reset rejected c40d1bd0981de5bdb0bf3ed163bf5e866b58a108 ancestry. Current origin/dev tip verified clean with 468/468 supervisor tests passing."
+}
