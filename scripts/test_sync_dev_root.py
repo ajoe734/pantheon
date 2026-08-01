@@ -256,3 +256,109 @@ def test_sync_records_pid_bound_intent_before_stopping_live_supervisor(tmp_path:
         target_sha,
     ]
     assert process.returncode == -15
+
+
+def test_sync_restarts_split_root_even_when_code_and_config_are_unchanged(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    dev_root = tmp_path / "dev-root"
+    active_root = tmp_path / "active-root"
+    pid_file = tmp_path / "supervisor.pid"
+    live_config = tmp_path / "live.json"
+    intent_args_file = tmp_path / "intent-args.json"
+    remote.mkdir()
+    seed.mkdir()
+    _git(remote, "init", "--bare")
+    _git(seed, "init", "-b", "dev")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    _git(seed, "config", "user.name", "Pantheon Test")
+    (seed / ".orchestrator").mkdir()
+    (seed / ".orchestrator" / "supervisor_watchdog.py").write_text(
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['SYNC_INTENT_ARGS_FILE']).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    _git(seed, "add", ".orchestrator/supervisor_watchdog.py")
+    _git(seed, "commit", "-m", "first")
+    target_sha = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "dev")
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(active_root))
+
+    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
+    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PANTHEON_SUPERVISOR_PID"] = str(pid_file)
+    env["SYNC_ACTIVE_ROOT"] = "0"
+    env["SYNC_INTENT_ARGS_FILE"] = str(intent_args_file)
+    try:
+        result = subprocess.run(
+            ["bash", str(SYNC_SCRIPT), str(dev_root), str(live_config)],
+            cwd=REPO_ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        process.wait(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+    recorded_args = json.loads(intent_args_file.read_text(encoding="utf-8"))
+    assert "ACTIVE_ROOT_SPLIT" in result.stdout
+    assert "updated=0 config_updated=0 root_split=1" in result.stdout
+    assert recorded_args == [
+        "--config",
+        str(live_config),
+        "--record-intent-pid",
+        str(process.pid),
+        "--record-intent-target",
+        target_sha,
+    ]
+    assert process.returncode == -15
+
+
+def test_sync_does_not_restart_matching_root_when_nothing_changed(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    dev_root = tmp_path / "dev-root"
+    pid_file = tmp_path / "supervisor.pid"
+    live_config = tmp_path / "live.json"
+    remote.mkdir()
+    seed.mkdir()
+    _git(remote, "init", "--bare")
+    _git(seed, "init", "-b", "dev")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    _git(seed, "config", "user.name", "Pantheon Test")
+    (seed / "version.txt").write_text("one\n", encoding="utf-8")
+    _git(seed, "add", "version.txt")
+    _git(seed, "commit", "-m", "first")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "dev")
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+
+    process = subprocess.Popen(["sleep", "60"], cwd=dev_root)
+    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PANTHEON_SUPERVISOR_PID"] = str(pid_file)
+    try:
+        result = subprocess.run(
+            ["bash", str(SYNC_SCRIPT), str(dev_root), str(live_config)],
+            cwd=REPO_ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert process.poll() is None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+    assert "active supervisor root matches dev-root" in result.stdout
+    assert "updated=0 config_updated=0 root_split=0" in result.stdout
