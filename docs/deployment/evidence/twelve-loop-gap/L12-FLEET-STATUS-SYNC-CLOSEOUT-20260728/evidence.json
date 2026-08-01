@@ -4,14 +4,15 @@
     "id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
     "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence",
     "owner": "Codex2",
-    "reviewer": "Codex",
-    "status": "owner_evidence_refresh_verified_parent_projection_blocked",
+    "reviewer": "Antigravity",
+    "status": "owner_refresh_anchored_parent_exact_head_rereview_required",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "pull_request": 4313,
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
-    "evidence_cut_at": "2026-07-29T10:41:00Z",
-    "overall_admission": "parent_refreshed_exact_head_ci_green_projection_refresh_rereview_freeze_merge_and_archive_blocked"
+    "evidence_cut_at": "2026-08-01T15:24:09Z",
+    "overall_admission": "source_refreshed_ci_green_exact_head_rereview_root_freeze_merge_and_archive_pending"
   },
   "scope": {
     "owned_layer": "Task-scoped receipt for refreshing and closing the already-merged fleet status synchronization delivery.",
@@ -39,20 +40,50 @@
     "merge_is_ancestor_of_origin_dev": true,
     "implementation_restarted": false
   },
-  "closeout_refresh": {
+  "source_closeout_refresh": {
     "pull_request": 4297,
     "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4297",
-    "original_evidence_head": "b24b454108dc2137f2b24d226c57ec1192bcf026",
-    "refreshed_evidence_commit": "7766d38064a814090e0f1ff41775b4c362bf7bf9",
-    "exact_head": "c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2",
-    "composed_dev": "352e8172c1d5a32555216ef54c5557042bdfce1f",
     "base_branch": "dev",
     "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
     "state": "open",
+    "is_draft": true,
     "mergeable": true,
-    "merge_state": "blocked_pending_projection_refresh_governed_rereview_root_freeze_and_exact_head_merge",
+    "merge_state": "blocked_pending_exact_head_review_and_root_freeze",
     "auto_merge": false,
+    "current_exact_head": "91b2937119bb2597d59ef995a8882e3f26407a41",
+    "guarded_updates": [
+      {
+        "performed_by": "Codex2",
+        "performed_at": "2026-08-01T15:14:34Z",
+        "expected_old_head": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+        "composed_dev": "76bbb04b569331a81916330d1cf713d068527c89",
+        "new_exact_head": "99907d249bb5ffd4faf04bea4f37f59d2063f3f0",
+        "new_head_parents": [
+          "38057216e8e2a02f2acb3f375a119286af6e01b2",
+          "76bbb04b569331a81916330d1cf713d068527c89"
+        ],
+        "result": "pass"
+      },
+      {
+        "performed_by": "Codex2",
+        "performed_at": "2026-08-01T15:22:35Z",
+        "expected_old_head": "99907d249bb5ffd4faf04bea4f37f59d2063f3f0",
+        "composed_dev": "d2a9a6079789b6da1f15978ff7310c22a129f379",
+        "new_exact_head": "91b2937119bb2597d59ef995a8882e3f26407a41",
+        "new_head_parents": [
+          "99907d249bb5ffd4faf04bea4f37f59d2063f3f0",
+          "d2a9a6079789b6da1f15978ff7310c22a129f379"
+        ],
+        "result": "pass"
+      }
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/l12_fleet_status_sync_001.md",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md"
+    ],
     "branch_ci": {
+      "exact_head": "91b2937119bb2597d59ef995a8882e3f26407a41",
       "status": "pass",
       "visible_runs": 8,
       "contexts": [
@@ -61,205 +92,173 @@
         "Python packaging provision",
         "Smoke acceptance"
       ]
-    },
-    "canonical_task": {
-      "status": "in_progress",
-      "owner": "Codex",
-      "reviewer": "Antigravity",
-      "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json"
-    },
-    "prior_canonical_review": {
-      "status": "superseded_by_head_refresh",
-      "reviewed_at": "2026-07-28T18:55:18Z",
-      "reviewer": "Codex2",
+    }
+  },
+  "canonical_source_task": {
+    "observed_at": "2026-08-01T15:15:13Z",
+    "status": "review_approved",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+    "review_binding": {
       "pull_request": 4297,
-      "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
       "base": "dev",
-      "status_context": "Pantheon canonical review gate",
-      "status_id": 51241172509,
-      "github_review_submission_error": "gh: Unprocessable Entity (HTTP 422)",
-      "note": "This review remains historical evidence for the old head and is not reused after the base refresh."
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2"
     },
-    "canonical_review": {
-      "status": "blocked_on_projection_refresh",
-      "reviewer": "Antigravity",
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "decision": "approve",
+      "head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51284662304,
+      "status_state": "success",
+      "recorded_at": "2026-07-29T11:05:57Z"
+    },
+    "binding_assessment": "superseded_by_guarded_base_refresh",
+    "required_transition": "Codex must return the source task to exact-head review and hand refreshed head 91b2937119bb2597d59ef995a8882e3f26407a41 to Antigravity."
+  },
+  "current_governed_status_read": {
+    "attempted_at": "2026-08-01T15:22:36Z",
+    "actor": "Codex2",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+    "target_task": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "result": "fail_closed",
+    "invariant": "status_task_lock_busy",
+    "note": "The receipt preserves the last successful source-task observation and does not infer or write canonical state while the task-state lock is busy."
+  },
+  "authority_gates": {
+    "refreshed_exact_head_review": {
+      "status": "pending",
+      "required_actor": "Antigravity",
+      "required_head": "91b2937119bb2597d59ef995a8882e3f26407a41",
+      "note": "The successful canonical status on old head 38057216e8e2a02f2acb3f375a119286af6e01b2 is historical and is not reused."
+    },
+    "root_freeze": {
+      "status": "pending",
+      "required_actor": "Human/Ops",
+      "required_head": "91b2937119bb2597d59ef995a8882e3f26407a41",
+      "note": "No root-freeze status is claimed at this cut. It must follow exact-head review and is head-specific."
+    },
+    "source_merge": {
+      "status": "pending",
       "pull_request": 4297,
-      "exact_head": "c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2",
-      "base": "dev",
-      "status_context": "Pantheon canonical review gate",
-      "note": "The current exact head has no canonical review-gate status. The source owner must first restore authoritative/generated projection parity under a supervisor-issued fresh command-runtime binding."
+      "required_head": "91b2937119bb2597d59ef995a8882e3f26407a41"
     },
-    "source_owner_resume_blocker": {
-      "status": "blocked",
-      "observed_at": "2026-07-29T10:35:42Z",
-      "authoritative_task_present": true,
-      "generated_projection_task_present": false,
-      "issued_command_runtime_sha": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
-      "current_command_root_sha": "352e8172c1d5a32555216ef54c5557042bdfce1f",
-      "required_action": "Supervisor issues a fresh command-runtime binding; Codex refreshes and re-verifies generated projection parity before Antigravity review."
+    "source_done_archive": {
+      "status": "pending",
+      "required_actor": "Codex",
+      "note": "Only the source task owner may finalize review_approved to done after merge."
     },
-    "changed_files": [
-      ".orchestrator/task-briefs/l12_fleet_status_sync_001.md",
-      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
-      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md"
-    ]
+    "wrapper_review": {
+      "status": "pending_parent_closeout",
+      "required_actor": "Antigravity",
+      "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json"
+    }
   },
   "verification": {
-    "performed_at": "2026-07-29T10:41:00Z",
-    "intermediate_exact_head": "193be7fe39b2767dfb8fde3aa931fc40080af34d",
-    "current_exact_head": "c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2",
-    "source_owner_current_head_record": {
-      "result": "pass_with_projection_blocker",
-      "focused_tests": "168 passed, 31 subtests passed in 29.36 seconds",
-      "targeted_regressions": "4 passed, 148 deselected",
-      "projection_refresh_test": "1 passed, 26 deselected",
-      "branch_ci": "8 passed",
-      "note": "The current branch history is test-green, but closeout remains blocked because the authoritative row is absent from generated projections and the owner cannot refresh under the stale issued command-runtime SHA."
-    },
+    "performed_at": "2026-08-01T15:24:09Z",
     "commands": [
       {
-        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "command": "gh api --method PUT repos/ajoe734/pantheon/pulls/4297/update-branch -f expected_head_sha=38057216e8e2a02f2acb3f375a119286af6e01b2",
         "result": "pass",
-        "conclusion": "Checkout-scoped .venv-pantheon was provisioned and import paths were verified from a foreign working directory without PYTHONPATH."
+        "conclusion": "GitHub created exact head 99907d249bb5ffd4faf04bea4f37f59d2063f3f0 by composing current dev 76bbb04b569331a81916330d1cf713d068527c89."
       },
       {
-        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py scripts/test_status_file_guard.py",
+        "command": "gh api --method PUT repos/ajoe734/pantheon/pulls/4297/update-branch -f expected_head_sha=99907d249bb5ffd4faf04bea4f37f59d2063f3f0",
         "result": "pass",
-        "conclusion": "168 passed, 31 subtests passed in 29.05 seconds on exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d. External command-root bindings were removed from the isolated test process so fixtures exercised this head's own wrapper."
+        "conclusion": "GitHub created exact head 91b2937119bb2597d59ef995a8882e3f26407a41 by composing current dev d2a9a6079789b6da1f15978ff7310c22a129f379."
       },
       {
-        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py -k authoritative_bridge_dispatch_survives_next_projection_cycle",
+        "command": "git diff --name-status d2a9a6079789b6da1f15978ff7310c22a129f379...91b2937119bb2597d59ef995a8882e3f26407a41",
         "result": "pass",
-        "conclusion": "1 passed, 26 deselected in 1.00 seconds on exact head 193be7fe39b2767dfb8fde3aa931fc40080af34d."
+        "conclusion": "The refreshed PR changes only the source task brief and two source closeout evidence files."
       },
       {
-        "command": "python3 -m json.tool <exact-head evidence.json>; git diff --check origin/dev...origin/pr-4297-current",
-        "result": "pass",
-        "conclusion": "The refreshed exact-head manifest is valid JSON and the evidence-only PR diff is clean."
+        "command": "git diff --check d2a9a6079789b6da1f15978ff7310c22a129f379...91b2937119bb2597d59ef995a8882e3f26407a41",
+        "result": "pass"
       },
       {
-        "command": "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev; git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
+        "command": "gh pr checks 4297 --repo ajoe734/pantheon --watch --interval 10",
         "result": "pass",
-        "conclusion": "Both the implementation head and merge commit are ancestors of current origin/dev."
+        "conclusion": "All eight visible Branch CI check runs completed successfully."
       },
       {
-        "command": "sha256sum status-root/{ai-status.json,current-work.md,dashboard-bundle.json} and docs-site mirrors",
-        "result": "historical_pass_current_projection_mismatch",
-        "conclusion": "Each status-root/docs-site pair remains byte-identical, but the 2026-07-29 generated projection consistently omits the authoritative active task row. Mirror parity does not satisfy task-row projection parity."
+        "command": "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev && git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
+        "result": "pass",
+        "conclusion": "Both the implementation head and merge commit remain ancestors of origin/dev."
       },
       {
-        "command": "gh pr checks 4297 --repo ajoe734/pantheon",
-        "result": "pass",
-        "conclusion": "All eight visible Branch CI check runs passed on current exact head c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2."
+        "command": "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show L12-FLEET-STATUS-SYNC-001",
+        "result": "historical_pass",
+        "conclusion": "The last successful governed observation bound review approval to old head 38057216e8e2a02f2acb3f375a119286af6e01b2, so the new head requires rereview."
+      },
+      {
+        "command": "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+        "result": "expected_fail_closed",
+        "conclusion": "The governed command returned invariant status_task_lock_busy; no canonical state was inferred or written."
       }
     ]
-  },
-  "governed_status_boundary": {
-    "worker_task_id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
-    "attempted_target": "L12-FLEET-STATUS-SYNC-001",
-    "command": "approve",
-    "result": "expected_fail_closed",
-    "error": "status command task mismatch: argv task L12-FLEET-STATUS-SYNC-001 != ORCH_TASK_ID L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
-    "required_path": "After Supervisor refreshes the command-runtime lease and Codex restores projection parity, a dedicated Antigravity review_ready_dispatch for L12-FLEET-STATUS-SYNC-001 must record canonical approval of the current head.",
-    "prior_dedicated_dispatch_result": {
-      "status": "superseded_by_head_refresh",
-      "recorded_at": "2026-07-28T18:55:18Z",
-      "pull_request": 4297,
-      "exact_head": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
-      "canonical_status_id": 51241172509
-    },
-    "current_required_dispatch": {
-      "status": "blocked_on_projection_refresh",
-      "reviewer": "Antigravity",
-      "pull_request": 4297,
-      "exact_head": "c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2"
-    }
   },
   "acceptance": [
     {
       "id": "AC1",
       "criterion": "Refresh or supersede PR #4297 from current dev.",
       "status": "pass",
-      "proof": "PR #4297 exact head c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2 composes dev 352e8172c1d5a32555216ef54c5557042bdfce1f, changes only the source brief and two evidence files, and has green Branch CI."
+      "proof": "The latest guarded update composed dev d2a9a6079789b6da1f15978ff7310c22a129f379 and produced exact head 91b2937119bb2597d59ef995a8882e3f26407a41 with eight green Branch CI jobs."
     },
     {
       "id": "AC2",
       "criterion": "Do not restart PR #4282 implementation.",
       "status": "pass",
-      "proof": "PR #4297 changes exactly one task brief and two evidence files; PR #4282 head and merge remain unchanged and ancestral to origin/dev."
+      "proof": "PR #4297 remains evidence-only; PR #4282 head and merge are unchanged and ancestral to origin/dev."
     },
     {
       "id": "AC3",
       "criterion": "Obtain exact-head independent review.",
-      "status": "blocked_on_projection_refresh",
-      "proof": "Prior status id 51241172509 approved old head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753. Current head c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2 has green focused tests and Branch CI, but governed Antigravity review is blocked until the source owner restores projection parity under a fresh supervisor command-runtime lease."
+      "status": "pending",
+      "proof": "Antigravity approval status 51284662304 binds old head 38057216e8e2a02f2acb3f375a119286af6e01b2. Refreshed head 91b2937119bb2597d59ef995a8882e3f26407a41 has no canonical review status."
     },
     {
       "id": "AC4",
       "criterion": "Obtain Human/Ops root freeze and merge the exact reviewed head.",
       "status": "pending",
-      "proof": "No root-freeze or merge claim is made at this owner evidence cut."
+      "proof": "No root-freeze or merge claim is made at this cut."
     },
     {
       "id": "AC5",
       "criterion": "Reach canonical done/archive for the source task and this wrapper task.",
       "status": "pending",
-      "proof": "Both rows remain nonterminal at this owner evidence cut."
+      "proof": "The last successful source-row observation was review_approved with a stale exact-head binding; the wrapper brief remains in_progress, and current governed reads fail closed while the canonical task-state lock is busy."
     }
   ],
-  "review": {
-    "reviewer": "Codex",
-    "status": "pending",
-    "decision": "independent_review_required_after_parent_closeout_receipt",
-    "review_targets": [
-      "Confirm Supervisor refreshed the source owner's command-runtime lease and Codex restored authoritative/generated projection parity.",
-      "Confirm Antigravity canonical review of PR #4297 exact head c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2.",
-      "Confirm Human/Ops root-freeze and PR #4297 exact-head merge identities.",
-      "Confirm L12-FLEET-STATUS-SYNC-001 reaches canonical done/archive without implementation restart.",
-      "Verify this wrapper manifest and checksum before binding it as REVIEW_FILE."
-    ]
-  },
-  "record_log": [
+  "next_actions": [
     {
-      "sequence": 1,
-      "actor": "Codex2",
-      "kind": "owner_anchor_after_exact_head_reproduction",
-      "recorded_at": "2026-07-28T18:52:58Z",
-      "status": "parent_closeout_pending",
-      "sha": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
-      "reference": "PR #4297 is refreshed on current dev and independently reproduced; canonical parent approval correctly remains with the dedicated review dispatch."
-    },
-    {
-      "sequence": 2,
-      "actor": "Codex2",
-      "kind": "dedicated_parent_exact_head_review_approved",
-      "recorded_at": "2026-07-28T18:55:18Z",
-      "status": "review_approved",
-      "sha": "6b2fd109a885d7eb26a985d621ef3ef9d3e26753",
-      "reference": "Pantheon canonical review gate status id 51241172509 approved PR #4297 exact head; source task returned to Codex for root-freeze, merge, and owner closeout."
-    },
-    {
-      "sequence": 3,
-      "actor": "Codex2",
-      "kind": "parent_base_refresh_verified",
-      "recorded_at": "2026-07-29T10:35:48Z",
-      "status": "rereview_pending",
-      "sha": "193be7fe39b2767dfb8fde3aa931fc40080af34d",
-      "reference": "GitHub update-branch composed dev 352e8172c1d5a32555216ef54c5557042bdfce1f; the diff remained evidence-only, all eight Branch CI jobs passed, and exact-head owner reproduction passed."
-    },
-    {
-      "sequence": 4,
       "actor": "Codex",
-      "kind": "source_owner_projection_blocker_anchored",
-      "recorded_at": "2026-07-29T10:39:02Z",
-      "status": "projection_refresh_blocked",
-      "sha": "c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2",
-      "reference": "The source owner composed the base refresh with task-scoped blocker evidence after governed show was ahead of generated projections and the refresh command failed closed on the stale issued command-runtime SHA; all eight Branch CI jobs passed."
+      "action": "Return L12-FLEET-STATUS-SYNC-001 to review for refreshed PR #4297 exact head 91b2937119bb2597d59ef995a8882e3f26407a41 without changing the evidence-only scope once governed status commands are available."
+    },
+    {
+      "actor": "Antigravity",
+      "action": "Independently review and bind PR #4297 exact head 91b2937119bb2597d59ef995a8882e3f26407a41."
+    },
+    {
+      "actor": "Human/Ops",
+      "action": "After exact-head approval, provide the head-specific root-freeze status and merge PR #4297."
+    },
+    {
+      "actor": "Codex",
+      "action": "After merge, finalize L12-FLEET-STATUS-SYNC-001 to canonical done/archive with its reviewed evidence manifest."
+    },
+    {
+      "actor": "Codex2",
+      "action": "Refresh this wrapper receipt with the source merge/archive identities, hand it to Antigravity, then finalize only after wrapper approval and PR #4313 merge."
     }
   ],
   "known_limitations": [
     "This task does not claim hosted deployment, runtime activation, program-level twelve-loop completion, or capital authority.",
-    "The legacy top-level source_pr/source_head fields are disclosed but are not migrated by this closeout.",
-    "Supervisor command-runtime rebinding and projection refresh, governed Antigravity rereview, Human/Ops root-freeze, merge, and owner done/archive are pending at this evidence cut."
+    "The source PR remains draft and cannot merge until its refreshed exact head receives canonical review and Human/Ops root freeze.",
+    "Governed status reads currently fail closed on status_task_lock_busy; this receipt does not remove the lock or bypass the canonical transaction.",
+    "The wrapper manifest is owner evidence only and does not contain an independent review decision yet."
   ]
 }

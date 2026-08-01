@@ -8,10 +8,10 @@ Do not read `current-work.md` by default for implementation context.
 - Title: Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence
 - Status: in_progress
 - Owner: Codex2
-- Reviewer: Codex
+- Reviewer: Antigravity
 - Phase: Twelve Loop Remediation / Wave 0 Fleet Status Sync Closeout
-- Last update: 2026-07-29T10:41:00Z
-- Next: PR #4297 exact head is now `c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2` with green Branch CI. Source-task owner evidence records an authoritative projection mismatch and stale command-runtime lease; Supervisor must issue a fresh binding before projection refresh, exact-head review, Human/Ops root freeze, merge, and canonical done/archive.
+- Last update: 2026-08-01T15:24:09Z
+- Next: PR #4297 was guarded-refreshed again from expected head 99907d249bb5ffd4faf04bea4f37f59d2063f3f0 onto dev d2a9a6079789b6da1f15978ff7310c22a129f379 as exact head 91b2937119bb2597d59ef995a8882e3f26407a41 with eight green Branch CI jobs. The prior Antigravity approval binds old head 38057216e8e2a02f2acb3f375a119286af6e01b2 and must not be reused; Codex must reopen/handoff the new exact head, then Antigravity must rereview before Human/Ops root freeze, merge, and canonical source-task closeout. Governed status reads currently fail closed on the busy canonical task-state lock.
 
 ## Summary
 刷新並完成 L12-FLEET-STATUS-SYNC-001 closeout；不得重做已 merged implementation。
@@ -20,20 +20,20 @@ Do not read `current-work.md` by default for implementation context.
 - PR #4282 implementation head
   `e806affaa279f8b9d4b41bae6117a9431c99b90e` remains merged to `dev` as
   `a0020c5ac50e510467a5e80c412c7703245cf4dd`; this task did not restart it.
-- PR #4297 was refreshed through GitHub's guarded update-branch API from
-  `dev` `352e8172c1d5a32555216ef54c5557042bdfce1f`, then composed with the
-  source owner's projection-blocker evidence; its exact head is now
-  `c8e947daf9c1b9c8650d2df7ee77cf73d13dcac2`.
-- The refreshed PR still changes only the source task brief and two closeout
-  evidence files. All eight Branch CI jobs passed, as did 168 status/guard
-  tests and the authoritative projection refresh test on the exact head.
-- The prior canonical approval applied to old head
-  `6b2fd109a885d7eb26a985d621ef3ef9d3e26753` and is not reused for the new
-  head. The source task is currently `in_progress`, owned by Codex and reviewed
-  by Antigravity. Its owner evidence now fails closed on a live authoritative
-  row omitted from generated projections plus a stale issued command-runtime
-  SHA; Supervisor must refresh that lease before exact-head rereview, Human/Ops
-  root freeze, and merge.
+- PR #4297 was refreshed twice through GitHub's expected-head guarded
+  update-branch API: first from old reviewed head
+  `38057216e8e2a02f2acb3f375a119286af6e01b2` onto `dev`
+  `76bbb04b569331a81916330d1cf713d068527c89`, then from expected head
+  `99907d249bb5ffd4faf04bea4f37f59d2063f3f0` onto `dev`
+  `d2a9a6079789b6da1f15978ff7310c22a129f379`.
+- The current exact head is `91b2937119bb2597d59ef995a8882e3f26407a41`.
+  Its diff remains limited to the source task brief and two task-scoped evidence
+  files, and all eight Branch CI jobs passed.
+- The last successful canonical source-task observation recorded
+  `review_approved` and review status id `51284662304` against old head
+  `38057216e8e2a02f2acb3f375a119286af6e01b2`. That approval is historical only
+  after the refresh. Current governed reads fail closed on the busy task-state
+  lock; root freeze, merge, and source-task `done`/archive are not claimed.
 
 ## Dependencies
 - none
