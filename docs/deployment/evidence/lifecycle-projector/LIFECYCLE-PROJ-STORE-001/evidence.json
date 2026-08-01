@@ -1,0 +1,31 @@
+{
+  "task_id": "LIFECYCLE-PROJ-STORE-001",
+  "program_id": "lifecycle-projector-incremental-redesign-2026-08-01",
+  "generated_at": "2026-08-01T16:00:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "status": "review",
+  "artifacts": [
+    "services/trade_journey/projection_store.py",
+    "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql",
+    "services/trade_journey/test_projection_store.py",
+    "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/evidence.json"
+  ],
+  "verification": {
+    "test_command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@localhost:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest services/trade_journey/test_projection_store.py",
+    "passed": true,
+    "tests_total": 5,
+    "tests_passed": 5,
+    "explain_plans": {
+      "identity_link_lookup": "Index Scan using idx_identity_links_tenant_env_journey on identity_links",
+      "journeys_list": "Index Scan using idx_journeys_tenant_env_updated_journey on journeys"
+    }
+  },
+  "acceptance_summary": [
+    "Added expand-only idempotent migration DDL for controller, event receipts, identity links, journeys, journey stages, loop runs, and quarantine with all plan-required keys and indexes.",
+    "Provided a least-privilege typed ProjectionStore Python API that never copies raw telemetry payloads into projection tables.",
+    "Provided execute_batch_transaction API that atomically updates receipts, identity links, journeys, stages, loop runs, quarantine, revision, and checkpoint with PostgreSQL advisory locking.",
+    "Proven schema creation idempotency, atomic batch transaction, duplicate event handling, conflicting duplicate detection, identity conflict handling, and quarantine recording against real PostgreSQL.",
+    "Captured query EXPLAIN plans verifying index scans for key query paths."
+  ]
+}
