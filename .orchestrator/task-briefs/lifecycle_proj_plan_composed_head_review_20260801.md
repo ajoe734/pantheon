@@ -5,10 +5,12 @@
 - Owner: `Codex`
 - Independent reviewer: `Antigravity`
 - Repository: `ajoe734/pantheon`
-- Pull request: `#4449`
+- Merged design pull request: `#4449`
 - Exact required head: `34a86e4f8e8ca9502d7a96f5753a98645a7bb46a`
 - Reviewed plan ancestor: `32528f8232d14b3eaf5a2fab51c4ae532de5a4c7`
 - Composed dev parent: `d2a9a6079789b6da1f15978ff7310c22a129f379`
+- Design merge commit: `3578f993b1b02f2ba4aa579a40325943cc0674e3`
+- Closeout pull request: `#4466`
 
 The prior approval at `2026-08-01T15:27:22Z` is invalid. It named the dev
 parent as the reviewed head and reported containment Compose tests instead of
@@ -16,8 +18,10 @@ this plan's acceptance. It must not be reused.
 
 ## Independent acceptance
 
-1. Confirm live PR #4449 is open at exact head
-   `34a86e4f8e8ca9502d7a96f5753a98645a7bb46a`.
+1. Confirm immutable PR #4449 history records exact head
+   `34a86e4f8e8ca9502d7a96f5753a98645a7bb46a` merged into `dev` as
+   `3578f993b1b02f2ba4aa579a40325943cc0674e3`. Do not reinterpret this
+   historical check as a requirement that the already merged PR remain open.
 2. Confirm that head contains both the independently approved plan commit
    `32528f8232d14b3eaf5a2fab51c4ae532de5a4c7` and dev parent
    `d2a9a6079789b6da1f15978ff7310c22a129f379`, with no conflict-resolution
@@ -34,7 +38,8 @@ this plan's acceptance. It must not be reused.
    signing, restart the projector, delete projection state, or perform
    production/live-capital writes.
 
-Approve only with a message that explicitly names PR #4449, exact head
+Accept the historical design review only with evidence that explicitly names
+PR #4449, exact head
 `34a86e4f8e8ca9502d7a96f5753a98645a7bb46a`, seven tasks, the source-packet
 SHA-256 above, and `signature: null`. Otherwise reopen with the exact gap.
 
@@ -55,7 +60,7 @@ PR #4449 merged into `dev` at `2026-08-01T15:34:04Z` as merge commit
 
 ## Owner closeout revalidation
 
-Codex2 revalidated the merged delivery before closeout:
+Codex revalidated the merged delivery before closeout:
 
 - `DevTaskPacket(**payload)` accepts the versioned source packet; the packet
   and `tasks.json` contain the same seven task IDs and the dependency graph is
@@ -67,10 +72,15 @@ Codex2 revalidated the merged delivery before closeout:
   the approved plan ancestor and form exactly the expected 13-file delta from
   that `dev` parent.
 - `git diff --check` is clean for both the reviewed plan delta and the task
-  closeout delta. PR #4449 exact-head checks and closeout PR #4466 branch
-  checks are successful.
+  closeout delta. PR #4449 exact-head checks and PR #4466 branch checks are
+  successful at the heads observed during revalidation.
 
-PR #4466 is the task-scoped closeout publication path. This record is not a
-self-approval: the assigned reviewer must inspect and bind PR #4466's exact
-head before the governed integrator may merge it. On approval, use this file
-as `REVIEW_FILE`; owner `done` remains forbidden until that PR is merged.
+## Closeout publication gate
+
+PR #4466 is the task-scoped closeout publication path. Its current exact head
+must be captured after the final evidence commit and independently reviewed by
+an eligible identity before merge. Codex and Codex2 are the same identity and
+must not approve this owner-authored closeout. The reviewer must bind
+`REVIEW_PR=4466`, the live 40-character `REVIEW_HEAD_SHA`, `REVIEW_BASE=dev`,
+and this file as `REVIEW_FILE` in the governed approval. Owner `done` remains
+forbidden until PR #4466 is merged.
