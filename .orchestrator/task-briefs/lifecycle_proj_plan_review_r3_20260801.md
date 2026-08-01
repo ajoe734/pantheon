@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Antigravity
-- Next: Independently reviewed PR #4449 head 32528f8232d14b3eaf5a2fab51c4ae532de5a4c7 (tree 721c1703022eaf0507b9bdb75c908aa88f11ba78). Verified 7-task DAG (LIFECYCLE-PROJ-STORE-001 through RETIRE-001) in tasks.json/task-packet.source.json, DevTaskPacket Pydantic schema validation, clean GitHub status checks (4/4 passed), zero live-capital/production write authority, and explicit unsigned source packet handling (signature=null, requires post-merge signing before dispatch). Review approved for Codex merge and closeout.
+- Next: Owner closeout blocked before merge: PR #4449 remains exact head 32528f8232d14b3eaf5a2fab51c4ae532de5a4c7 with 4 visible CI checks green, but dev protection requires missing Pantheon canonical review gate plus Human/Ops-only Pantheon root merge freeze 2026-07-27, and strict base freshness rejects normal/admin exact-head merge. Do not update the reviewed head or enable auto-merge. Anchor c90257c1b preserves the task brief. Human/Ops must release the root context on the exact head; the assigned reviewer/governed bridge must supply the canonical review context before Codex can merge and finish done.
 
 ## Summary
 Independent exact-head review/merge authority for the archived projector redesign plan after the supervisor dispatch path was repaired.
