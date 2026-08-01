@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Validate and hand off chatbox routing rules for independent review
 - Status: review_approved
-- Owner: Codex2
+- Owner: Codex
 - Reviewer: Antigravity
-- Next: Codex2 refreshed PR #4405 onto `origin/dev` `dc5136394eb1041ceea1dcc066e55ac2179ca0e5`; Antigravity must approve the resulting exact head before integration and `done`.
+- Next: Auto-reassigned OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.
 
 ## Summary
 Governed review handoff for the already published routing-policy PR. Codex validates and hands off; Antigravity independently reviews the exact head. No parallel implementation is authorized.
@@ -29,8 +29,8 @@ Governed review handoff for the already published routing-policy PR. Codex valid
 - The reviewer-bound evidence path is `docs/reviews/ops-codex-chatbox-routing-rules-review-20260731-v2.md`.
 - This task closes exact-head validation and independent review only; it does not modify PR #4401 or claim that the routing-policy change is merged into `dev`.
 
-## Owner Closeout Gate (2026-07-31)
-- Antigravity re-approved PR #4405 exact head `53f79431af29065c8009e23698be1ab1ad96d64b` at audit event `ai-status-event-45063b88772aab17146492a9e659096f4da8f61957a60526b489f6a5ab9eca65`, confirming the two-file review-only scope and preserved PR #4401 evidence.
-- `origin/dev` then advanced to `dc5136394eb1041ceea1dcc066e55ac2179ca0e5`; the governed integrator dry-run correctly returned `waiting` because the approved head no longer contained the current target base.
-- Codex2 merged that exact `origin/dev` tip into the task branch and preserved the task-only artifact scope. Green CI does not replace exact-head review.
-- Keep owner Codex2 and reviewer Antigravity unchanged. Antigravity must inspect and approve the resulting final PR #4405 head before the integrator may merge it and the owner may run governed `done`.
+## Owner Closeout Gate (2026-08-01)
+- Antigravity approved PR #4405 exact head `dea12686ebd39ccec1e17cf1584719d2e8b6ef4f`; the canonical review gate status and task `review_binding` both name that exact head.
+- The supervisor subsequently reassigned the owner from Codex2 to Codex while preserving Antigravity as reviewer. This brief records that durable owner identity without changing the reviewed PR #4401 evidence or its routing-policy scope.
+- `origin/dev` advanced to `76bbb04b569331a81916330d1cf713d068527c89`, so PR #4405 is `BEHIND`. The owner must refresh the task branch and preserve its two-file artifact scope, then Antigravity must inspect and approve the resulting final head before the integrator may merge it and governed `done` may run.
+- Keep owner Codex and reviewer Antigravity unchanged. Green CI does not replace exact-head review.
