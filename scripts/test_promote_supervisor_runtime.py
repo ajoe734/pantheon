@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,6 +181,32 @@ def test_capture_promotion_snapshot_fail_closed_on_missing_files(tmp_path: Path)
     assert len(snapshot["file_errors"]) > 0
     inv = next(i for i in snapshot["invariants"] if i["name"] == "config_and_state_files_readable")
     assert inv["ok"] is False
+
+
+def test_main_preserves_lexical_candidate_alias_for_identity_rejection(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "command-runtimes" / ("a" * 40)
+    candidate.mkdir(parents=True)
+    alias = tmp_path / "candidate-alias"
+    alias.symlink_to(candidate, target_is_directory=True)
+    snapshot = {
+        "eligible_for_promotion": False,
+        "timestamp": "2026-08-01T00:00:00Z",
+        "invariants": [],
+    }
+
+    with patch.object(
+        sys,
+        "argv",
+        ["promote_supervisor_runtime.py", "--repo", str(alias)],
+    ), patch(
+        "promote_supervisor_runtime.capture_promotion_snapshot",
+        return_value=snapshot,
+    ) as capture:
+        assert promotion.main() == 1
+
+    capture.assert_called_once_with(alias, config_path_arg=None)
 
 
 @patch("promote_supervisor_runtime.lock_held", return_value=True)

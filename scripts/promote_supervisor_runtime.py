@@ -1459,10 +1459,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _absolute_path_without_resolving_alias(path: str) -> Path:
+    expanded = Path(path).expanduser()
+    return expanded if expanded.is_absolute() else Path.cwd() / expanded
+
+
 def main() -> int:
     args = parse_args()
-    repo_root = Path(args.repo).expanduser().resolve()
-    config_path = Path(args.config_path).expanduser().resolve() if args.config_path else None
+    repo_root = _absolute_path_without_resolving_alias(args.repo)
+    config_path = (
+        _absolute_path_without_resolving_alias(args.config_path)
+        if args.config_path
+        else None
+    )
 
     snapshot = capture_promotion_snapshot(repo_root, config_path_arg=config_path)
 
