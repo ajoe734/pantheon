@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Independently review and merge lifecycle projector redesign plan
 - Status: review_approved
-- Owner: Codex
-- Reviewer: Antigravity
-- Next: Owner closeout blocked before merge: PR #4449 remains exact head 32528f8232d14b3eaf5a2fab51c4ae532de5a4c7 with 4 visible CI checks green, but dev protection requires missing Pantheon canonical review gate plus Human/Ops-only Pantheon root merge freeze 2026-07-27, and strict base freshness rejects normal/admin exact-head merge. Do not update the reviewed head or enable auto-merge. Anchor c90257c1b preserves the task brief. Human/Ops must release the root context on the exact head; the assigned reviewer/governed bridge must supply the canonical review context before Codex can merge and finish done.
+- Owner: Codex2
+- Reviewer: Codex
+- Next: Auto-reassigned LIFECYCLE-PROJ-PLAN-REVIEW-R3-20260801 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.
 
 ## Summary
 Independent exact-head review/merge authority for the archived projector redesign plan after the supervisor dispatch path was repaired.
