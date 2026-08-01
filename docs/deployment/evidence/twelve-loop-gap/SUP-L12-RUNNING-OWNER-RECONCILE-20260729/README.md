@@ -1,8 +1,8 @@
 # SUP-L12 running owner reconciliation evidence
 
-Task: `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`  
-Owner: Codex  
-Reviewer: Antigravity  
+Task: `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
+Owner: Codex
+Reviewer: Antigravity
 Review manifest: `evidence.json`
 
 ## Outcome
