@@ -61,26 +61,51 @@ The retention default of four is intentionally only a configuration change in
 this hotfix. Existing projector maintenance code will prune generations beyond
 the configured retention when the projector next runs. Therefore the reviewer
 must not treat this packet as authorization to restart the stopped unbounded
-projector or to perform manual state cleanup. Dev rollout remains pending the
-independent verdict, merge, and a separately governed rollout decision.
+projector or to perform manual state cleanup. At the original review, dev
+rollout remained pending the independent verdict, merge, and a separately
+governed rollout decision.
 
-## Current merge gate
+## Historical merge gate at original review
 
 At 2026-08-01T14:41:22Z GitHub reported the PR `OPEN`, `MERGEABLE`, and
 `BEHIND`, with no review and no auto-merge request. The head is one commit
 ahead of its merge base, and current `origin/dev` is one non-conflicting task-
 brief commit ahead of the same merge base.
 
-The `dev` protection rule has strict up-to-date checking enabled. The task also
-requires that PR #4448 be reviewed and merged without changing
+The `dev` protection rule had strict up-to-date checking enabled. The original
+task also required that PR #4448 be reviewed and merged without changing
 `85e835448f7b86ce77ad9e4e0cc80961879b29c0`. Updating the hotfix branch would
-change that head, so there is currently no ordinary policy-compliant merge
+change that head, so there was no ordinary policy-compliant merge
 operation satisfying both constraints. In addition to independent exact-head
-approval, Human/Ops must resolve the strict-base/exact-head conflict and supply
+approval, Human/Ops had to resolve the strict-base/exact-head conflict and supply
 the required `Pantheon root merge freeze 2026-07-27` status. No bypass or head
 rewrite is authorized by this packet.
 
-## Independent reviewer completion checklist
+## Composed-head follow-up and merged delivery
+
+The strict-base conflict was resolved with merge-only composed head
+`c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa`. Its parents are the independently
+approved implementation `85e835448f7b86ce77ad9e4e0cc80961879b29c0` and the
+then-current `dev` base `76bbb04b569331a81916330d1cf713d068527c89`.
+
+Antigravity independently approved that exact composed head under task
+`LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801`. The canonical review
+gate and Human/Ops root-freeze status both passed, all GitHub check rollups
+reported success, and PR #4448 merged into `dev` as
+`d2a9a6079789b6da1f15978ff7310c22a129f379` at 2026-08-01T15:16:58Z.
+
+Owner closeout revalidation on the merged source passed 31 focused tests,
+`docker compose -f docker-compose.yml config --quiet`, merge-tree identity,
+implementation-file identity, and delta-path checks. The composed review and
+delivery identities are recorded in [`evidence.json`](./evidence.json), with
+the full closeout in
+[`composed-head-owner-closeout.md`](./composed-head-owner-closeout.md).
+
+This source merge did not start or restart the projector, restart the BFF,
+delete projection state, or delete retained generations. Runtime rollout and
+any data maintenance remain separately governed operations.
+
+## Original independent reviewer completion checklist
 
 1. Fetch PR #4448 and independently confirm the head is exactly
    `85e835448f7b86ce77ad9e4e0cc80961879b29c0`.

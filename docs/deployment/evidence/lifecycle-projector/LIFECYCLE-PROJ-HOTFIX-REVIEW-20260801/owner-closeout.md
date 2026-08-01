@@ -30,11 +30,18 @@ implementation `85e835448f7b86ce77ad9e4e0cc80961879b29c0` and then-current `dev`
 delta between the approved implementation commit and the composed head, but
 exact-head authority does not transfer across commit IDs.
 
-Consequently, PR #4448 remains open and blocked. The follow-up task
-`LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801` owns independent review,
-canonical review binding, Human/Ops root-freeze binding, and merge of the
-composed head. This original task does not claim that composed head as reviewed
-or merged.
+At this checkpoint PR #4448 remained open and blocked. The follow-up task
+`LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801` therefore took ownership
+of independent review, canonical review binding, Human/Ops root-freeze binding,
+and merge of the composed head. The original task did not transfer its approval
+across commit IDs.
+
+That follow-up subsequently passed independent Antigravity review for exact
+head `c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa`. GitHub recorded both required
+review/freeze contexts as successful and merged PR #4448 into `dev` as
+`d2a9a6079789b6da1f15978ff7310c22a129f379` at 2026-08-01T15:16:58Z. This
+resolution is recorded without retroactively changing the original exact-head
+review verdict.
 
 ## Owner closeout verification
 
@@ -56,8 +63,8 @@ review verdict for `c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa`.
 
 ## Rollout disposition
 
-Dev rollout is explicitly blocked until the follow-up task approves and merges
-the exact composed PR #4448 head. No projector restart or data cleanup was
-performed during owner closeout. The stopped unbounded implementation must not
-be restarted, and projection state or retained generations must not be deleted
-under this task.
+The bounded source change is merged into `dev`; runtime rollout is still a
+separately governed operation. No projector restart or data cleanup was
+performed during owner closeout or the composed-head closeout. The stopped
+unbounded implementation must not be restarted, and projection state or
+retained generations must not be deleted under either review task.
