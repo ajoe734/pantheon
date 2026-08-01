@@ -113,6 +113,8 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.git_config_inode = 8
     identity.git_head_device = 9
     identity.git_head_inode = 10
+    identity.git_index_device = 11
+    identity.git_index_inode = 12
     identity.basename = "a" * 40
     identity.head_commit = "a" * 40
     identity.tracked_tree_identity = "b" * 40
@@ -121,12 +123,12 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.canonical_remote = "github.com/ajoe734/pantheon"
     identity.repository_slug = "ajoe734/pantheon"
     identity.config_path = promotion.LIVE_SUPERVISOR_CONFIG_PATH
-    identity.config_device = 11
-    identity.config_inode = 12
+    identity.config_device = 13
+    identity.config_inode = 14
     identity.config_path_components = (
         PathComponentIdentity(
             path=promotion.LIVE_SUPERVISOR_CONFIG_PATH,
-            identity=FilesystemIdentity(device=11, inode=12, mode=0),
+            identity=FilesystemIdentity(device=13, inode=14, mode=0),
         ),
     )
     identity.config_byte_length = 2
@@ -955,6 +957,7 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert identity.git_objects_inode == (candidate / ".git" / "objects").stat().st_ino
         assert identity.git_config_inode == (candidate / ".git" / "config").stat().st_ino
         assert identity.git_head_inode == (candidate / ".git" / "HEAD").stat().st_ino
+        assert identity.git_index_inode == (candidate / ".git" / "index").stat().st_ino
         assert identity.basename == commit
         assert identity.head_commit == commit
         assert identity.tracked_tree_identity == tree
@@ -1157,6 +1160,48 @@ def test_git_identity_rejects_symlinked_object_directory(tmp_path: Path) -> None
 
     with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
         with pytest.raises(ValueError, match="Git objects directory.*symlink"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_external_symlinked_index(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    index = candidate / ".git" / "index"
+    external_index = tmp_path / "external-index"
+    index.rename(external_index)
+    index.symlink_to(external_index)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Candidate Git index.*symlink"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_symlinked_ref_metadata(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    branch_ref = candidate / ".git" / "refs" / "heads" / "dev"
+    external_ref = tmp_path / "external-ref"
+    branch_ref.rename(external_ref)
+    branch_ref.symlink_to(external_ref)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="refs directory/heads/dev.*symlink"):
+            resolve_candidate_root(candidate)
+
+
+def test_git_identity_rejects_hardlinked_config_metadata(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    git_config = candidate / ".git" / "config"
+    external_config = tmp_path / "external-config-hardlink"
+    git_config.rename(external_config)
+    os.link(external_config, git_config)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Git config must not be hard-linked"):
             resolve_candidate_root(candidate)
 
 

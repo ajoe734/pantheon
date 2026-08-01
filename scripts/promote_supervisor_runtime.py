@@ -104,6 +104,8 @@ class CandidateRootHandle:
     git_config_identity: FilesystemIdentity
     git_head_descriptor: int
     git_head_identity: FilesystemIdentity
+    git_index_descriptor: int
+    git_index_identity: FilesystemIdentity
 
 
 @dataclass(frozen=True)
@@ -125,6 +127,8 @@ class CandidateRuntimeIdentity:
     git_config_inode: int
     git_head_device: int
     git_head_inode: int
+    git_index_device: int
+    git_index_inode: int
     basename: str
     head_commit: str
     tracked_tree_identity: str
@@ -192,6 +196,8 @@ class CandidateRuntimeIdentity:
                 root_handle.git_config_identity.inode,
                 root_handle.git_head_identity.device,
                 root_handle.git_head_identity.inode,
+                root_handle.git_index_identity.device,
+                root_handle.git_index_identity.inode,
             )
             captured_git_identity = (
                 self.git_directory_device,
@@ -202,6 +208,8 @@ class CandidateRuntimeIdentity:
                 self.git_config_inode,
                 self.git_head_device,
                 self.git_head_inode,
+                self.git_index_device,
+                self.git_index_inode,
             )
             if current_git_identity != captured_git_identity:
                 raise ValueError("Candidate Git metadata identity drift detected")
@@ -276,6 +284,7 @@ def _run_git(
             cwd.git_objects_descriptor,
             cwd.git_config_descriptor,
             cwd.git_head_descriptor,
+            cwd.git_index_descriptor,
         )
         display_cwd = cwd.path
         env.update(
@@ -287,6 +296,7 @@ def _run_git(
                     f"/dev/fd/{cwd.git_objects_descriptor}"
                 ),
                 "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_INDEX_FILE": f"/dev/fd/{cwd.git_index_descriptor}",
                 "GIT_OPTIONAL_LOCKS": "0",
                 "GIT_TERMINAL_PROMPT": "0",
                 "GIT_CONFIG_COUNT": "3",
@@ -646,6 +656,7 @@ def _close_descriptors(*descriptors: int) -> None:
 
 def _close_candidate_root_handle(handle: CandidateRootHandle) -> None:
     _close_descriptors(
+        handle.git_index_descriptor,
         handle.git_head_descriptor,
         handle.git_config_descriptor,
         handle.git_objects_descriptor,
@@ -654,7 +665,66 @@ def _close_candidate_root_handle(handle: CandidateRootHandle) -> None:
     )
 
 
-def _assert_optional_git_directory_is_local(
+def _assert_optional_git_file_is_local(
+    parent_descriptor: int,
+    name: str,
+    *,
+    label: str,
+) -> None:
+    try:
+        descriptor = _open_relative_descriptor(
+            parent_descriptor,
+            name,
+            label=label,
+            require_directory=False,
+        )
+    except FileNotFoundError:
+        return
+    try:
+        if os.fstat(descriptor).st_nlink != 1:
+            raise ValueError(f"{label} must not be hard-linked")
+    finally:
+        os.close(descriptor)
+
+
+def _assert_git_metadata_tree_has_no_symlinks(
+    descriptor: int,
+    *,
+    label: str,
+) -> None:
+    pending: list[tuple[int, str]] = [(os.dup(descriptor), label)]
+    entries_seen = 0
+    try:
+        while pending:
+            current, current_label = pending.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        entries_seen += 1
+                        if entries_seen > 100_000:
+                            raise ValueError(
+                                f"{label} exceeds the bounded metadata entry limit"
+                            )
+                        entry_label = f"{current_label}/{entry.name}"
+                        entry_stat = entry.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(entry_stat.st_mode):
+                            raise ValueError(f"{entry_label} cannot be a symlink")
+                        if stat.S_ISDIR(entry_stat.st_mode):
+                            child = _open_relative_descriptor(
+                                current,
+                                entry.name,
+                                label=entry_label,
+                                require_directory=True,
+                            )
+                            pending.append((child, entry_label))
+            finally:
+                os.close(current)
+    except BaseException:
+        _close_descriptors(*(item[0] for item in pending))
+        raise
+
+
+def _assert_optional_git_tree_is_local(
     parent_descriptor: int,
     name: str,
     *,
@@ -669,7 +739,9 @@ def _assert_optional_git_directory_is_local(
         )
     except FileNotFoundError:
         return
-    else:
+    try:
+        _assert_git_metadata_tree_has_no_symlinks(descriptor, label=label)
+    finally:
         os.close(descriptor)
 
 
@@ -694,6 +766,26 @@ def _assert_no_git_alternates(objects_descriptor: int) -> None:
 
 
 def _assert_candidate_git_metadata(handle: CandidateRootHandle) -> None:
+    metadata_identities = (
+        handle.git_identity,
+        handle.git_objects_identity,
+        handle.git_config_identity,
+        handle.git_head_identity,
+        handle.git_index_identity,
+    )
+    if any(
+        identity.device != handle.identity.device
+        for identity in metadata_identities
+    ):
+        raise ValueError("Candidate Git metadata must stay on the candidate filesystem")
+    for descriptor, label in (
+        (handle.git_config_descriptor, "Candidate Git config"),
+        (handle.git_head_descriptor, "Candidate Git HEAD"),
+        (handle.git_index_descriptor, "Candidate Git index"),
+    ):
+        if os.fstat(descriptor).st_nlink != 1:
+            raise ValueError(f"{label} must not be hard-linked")
+
     _assert_relative_identity(
         handle.descriptor,
         ".git",
@@ -722,21 +814,43 @@ def _assert_candidate_git_metadata(handle: CandidateRootHandle) -> None:
         label="Candidate Git HEAD",
         require_directory=False,
     )
+    _assert_relative_identity(
+        handle.git_descriptor,
+        "index",
+        handle.git_index_identity,
+        label="Candidate Git index",
+        require_directory=False,
+    )
     _assert_relative_entry_absent(
         handle.git_descriptor,
         "commondir",
         label="Candidate Git commondir pointer",
     )
     _assert_no_git_alternates(handle.git_objects_descriptor)
-    _assert_optional_git_directory_is_local(
+    _assert_optional_git_tree_is_local(
         handle.git_objects_descriptor,
         "pack",
         label="Candidate Git objects/pack directory",
     )
-    _assert_optional_git_directory_is_local(
+    _assert_optional_git_tree_is_local(
         handle.git_descriptor,
         "refs",
         label="Candidate Git refs directory",
+    )
+    _assert_optional_git_tree_is_local(
+        handle.git_descriptor,
+        "info",
+        label="Candidate Git info directory",
+    )
+    _assert_optional_git_file_is_local(
+        handle.git_descriptor,
+        "packed-refs",
+        label="Candidate Git packed-refs",
+    )
+    _assert_optional_git_file_is_local(
+        handle.git_descriptor,
+        "shallow",
+        label="Candidate Git shallow boundary",
     )
 
     config_names = _run_git(
@@ -794,6 +908,7 @@ def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
     git_objects_descriptor = -1
     git_config_descriptor = -1
     git_head_descriptor = -1
+    git_index_descriptor = -1
     try:
         git_descriptor = _open_relative_descriptor(
             descriptor,
@@ -819,6 +934,12 @@ def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
             label="Candidate Git HEAD",
             require_directory=False,
         )
+        git_index_descriptor = _open_relative_descriptor(
+            git_descriptor,
+            "index",
+            label="Candidate Git index",
+            require_directory=False,
+        )
         handle = CandidateRootHandle(
             path=path,
             descriptor=descriptor,
@@ -831,10 +952,13 @@ def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
             git_config_identity=_filesystem_identity(git_config_descriptor),
             git_head_descriptor=git_head_descriptor,
             git_head_identity=_filesystem_identity(git_head_descriptor),
+            git_index_descriptor=git_index_descriptor,
+            git_index_identity=_filesystem_identity(git_index_descriptor),
         )
         _assert_candidate_handle_path(handle)
     except BaseException:
         _close_descriptors(
+            git_index_descriptor,
             git_head_descriptor,
             git_config_descriptor,
             git_objects_descriptor,
@@ -1266,6 +1390,8 @@ def build_candidate_runtime_identity(
             git_config_inode=root_handle.git_config_identity.inode,
             git_head_device=root_handle.git_head_identity.device,
             git_head_inode=root_handle.git_head_identity.inode,
+            git_index_device=root_handle.git_index_identity.device,
+            git_index_inode=root_handle.git_index_identity.inode,
             basename=basename,
             head_commit=head,
             tracked_tree_identity=tracked_tree,
@@ -1309,6 +1435,8 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         "git_config_inode": identity.git_config_inode,
         "git_head_device": identity.git_head_device,
         "git_head_inode": identity.git_head_inode,
+        "git_index_device": identity.git_index_device,
+        "git_index_inode": identity.git_index_inode,
         "basename": identity.basename,
         "head_commit": identity.head_commit,
         "tracked_tree_identity": identity.tracked_tree_identity,
