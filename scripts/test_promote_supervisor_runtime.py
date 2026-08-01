@@ -789,3 +789,33 @@ def test_evaluate_governed_launch_contract(tmp_path: Path) -> None:
     assert "log_file" in info
     assert info["scrubbed_env_keys"] == ["PANTHEON_STATUS_ROOT", "PANTHEON_COMMAND_ROOT", "PANTHEON_COMMAND_RUNTIME_SHA", "PATH", "PYTHONPATH"]
 
+
+def test_config_bytes_identity_capture_and_revalidation(tmp_path: Path) -> None:
+    from promote_supervisor_runtime import capture_config_bytes_identity, revalidate_config_bytes_identity
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"foo": "bar"}', encoding="utf-8")
+
+    info = capture_config_bytes_identity(cfg)
+    assert info["ok"] is True
+    sha = info["sha256"]
+    assert info["byte_length"] == len('{"foo": "bar"}')
+
+    # Revalidation success
+    reval = revalidate_config_bytes_identity(cfg, expected_sha256=sha)
+    assert reval["ok"] is True
+
+    # Revalidation failure on mismatch
+    reval_bad = revalidate_config_bytes_identity(cfg, expected_sha256="0000000000000000000000000000000000000000000000000000000000000000")
+    assert reval_bad["ok"] is False
+    assert any("config_sha256_mismatch" in r for r in reval_bad["reasons"])
+
+
+def test_discover_only_mode_rejects_non_prefix_worktree(tmp_path: Path) -> None:
+    from promote_supervisor_runtime import validate_candidate_root
+
+    info = validate_candidate_root(tmp_path, discover_only=True)
+    assert info["ok"] is False
+    assert "discover_only_preflight_failed" in info["reasons"]
+
+

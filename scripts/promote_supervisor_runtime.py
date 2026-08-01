@@ -47,6 +47,7 @@ def capture_promotion_snapshot(
     config_path_arg: Path | None = None,
     now: datetime | None = None,
     skip_identity_guards: bool = False,
+    discover_only: bool = False,
 ) -> dict[str, Any]:
     """Capture live-schema supervisor runtime state and evaluate promotion invariants."""
     repo_root = Path(repo_root) if not isinstance(repo_root, Path) else repo_root
@@ -139,7 +140,7 @@ def capture_promotion_snapshot(
         launch_contract_info = {"ok": True, "reasons": []}
     else:
         # Candidate root validation
-        candidate_root_info = validate_candidate_root(repo_root)
+        candidate_root_info = validate_candidate_root(repo_root, discover_only=discover_only)
 
         # Git identity validation
         git_identity_info = validate_git_identity(repo_root)
@@ -204,29 +205,52 @@ def capture_promotion_snapshot(
     }
 
 
-def capture_config_bytes_identity(config_path: Path) -> dict[str, Any]:
-    """Capture live config bytes, byte length, and SHA256 before handoff."""
+def capture_config_bytes_identity(
+    config_path: Path,
+    expected_bytes: bytes | None = None,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Capture live config bytes, byte length, and SHA256, optionally validating against expected bytes and sha."""
     if not config_path.exists():
         return {"ok": False, "error": f"Config file does not exist: {config_path}"}
     try:
         data = config_path.read_bytes()
         sha = hashlib.sha256(data).hexdigest()
+        reasons: list[str] = []
+        if expected_bytes is not None and data != expected_bytes:
+            reasons.append("config_bytes_mismatch")
+        if expected_sha256 is not None and sha != expected_sha256:
+            reasons.append(f"config_sha256_mismatch:{sha}!={expected_sha256}")
         return {
-            "ok": True,
+            "ok": len(reasons) == 0,
+            "reasons": reasons,
             "path": str(config_path),
             "byte_length": len(data),
             "sha256": sha,
         }
     except Exception as e:
-        return {"ok": False, "error": f"Failed to read config bytes: {e}"}
+        return {"ok": False, "reasons": [f"Failed to read config bytes: {e}"]}
 
 
-def validate_candidate_root(candidate_root: Path | str) -> dict[str, Any]:
+def revalidate_config_bytes_identity(
+    config_path: Path,
+    expected_sha256: str,
+    expected_bytes: bytes | None = None,
+) -> dict[str, Any]:
+    """Revalidate live config bytes identity against captured sha256 and optional bytes."""
+    return capture_config_bytes_identity(
+        config_path,
+        expected_bytes=expected_bytes,
+        expected_sha256=expected_sha256,
+    )
+
+
+
+def validate_candidate_root(candidate_root: Path | str, discover_only: bool = False) -> dict[str, Any]:
     """Validate that candidate root resolves under /home/lupin/pantheon-ci-deploy/command-runtimes/<40-hex-commit>."""
     reasons: list[str] = []
     candidate_root = Path(candidate_root) if not isinstance(candidate_root, Path) else candidate_root
     resolved_root = candidate_root.resolve()
-
 
     if not resolved_root.exists():
         reasons.append(f"candidate_root_does_not_exist:{resolved_root}")
@@ -269,6 +293,9 @@ def validate_candidate_root(candidate_root: Path | str) -> dict[str, Any]:
     str_candidate_raw = str(candidate_root)
     if str_candidate_raw.startswith("/tmp") or "/pantheon-worker-worktrees/" in str_candidate_raw:
         reasons.append("candidate_root_in_disallowed_dir")
+
+    if discover_only and not (str_resolved.startswith(str_prefix + "/") and len(reasons) == 0):
+        reasons.append("discover_only_preflight_failed")
 
     return {
         "ok": len(reasons) == 0,
@@ -970,6 +997,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo", default=".", help="Pantheon repository root. Defaults to cwd.")
     parser.add_argument("--config-path", default=None, help="Path to .orchestrator/config.json.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON snapshot.")
+    parser.add_argument("--discover-only", action="store_true", help="Run full preflight discovery without altering state.")
     return parser.parse_args()
 
 
@@ -978,7 +1006,7 @@ def main() -> int:
     repo_root = Path(args.repo).expanduser().resolve()
     config_path = Path(args.config_path).expanduser().resolve() if args.config_path else None
 
-    snapshot = capture_promotion_snapshot(repo_root, config_path_arg=config_path)
+    snapshot = capture_promotion_snapshot(repo_root, config_path_arg=config_path, discover_only=args.discover_only)
 
     if args.json:
         print(json.dumps(snapshot, indent=2, sort_keys=True))
