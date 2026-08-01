@@ -5,13 +5,13 @@
     "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "implementation_anchored",
+    "status": "ready_for_independent_review",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
-    "evidence_cut_at": "2026-08-01T15:41:40Z"
+    "evidence_cut_at": "2026-08-01T15:44:59Z"
   },
   "supersession": {
     "prior_task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
@@ -99,8 +99,8 @@
     {
       "id": "AC4",
       "criterion": "Run focused stale-reaper tests, full supervisor tests, JSON, diff, trailer, and config-boundary checks.",
-      "status": "pending",
-      "proof": null
+      "status": "pass",
+      "proof": "Five focused regressions and all 473 supervisor tests passed; both JSON manifests, diff whitespace, commit trailers, anchor ancestry, and config boundary passed."
     },
     {
       "id": "AC5",
@@ -110,13 +110,55 @@
     }
   ],
   "verification": {
-    "status": "pending_after_anchor",
-    "commands": [],
-    "validated_at": null,
+    "status": "pass",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Provisioned a checkout-scoped interpreter from the main worktree dependency environment and verified Pantheon imports plus pytest from a foreign cwd."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "result": "pass",
+        "conclusion": "Five focused stale-reaper regressions passed in 0.010 seconds."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "All 473 supervisor tests passed in 13.747 seconds."
+      },
+      {
+        "command": "jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json && jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
+        "result": "pass",
+        "conclusion": "Both subject and repair manifests are valid JSON."
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "pass",
+        "conclusion": "No whitespace errors in the task PR delta."
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "result": "pass",
+        "conclusion": "Every non-merge commit in the task PR range passed the repository trailer gate."
+      },
+      {
+        "command": "git diff --quiet origin/dev...HEAD -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "The task PR delta does not change supervisor configuration."
+      },
+      {
+        "command": "git merge-base --is-ancestor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 HEAD && ! git cat-file -e 9d53a94a265c55af4c8d15c50ab3751f1440ac0f^{commit}",
+        "result": "pass",
+        "conclusion": "The corrected anchor is an ancestor of the task branch and the invalid object is absent."
+      }
+    ],
+    "validated_at": "2026-08-01T15:44:59Z",
     "command_runtime_sha": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
   },
   "delivery": {
     "supersedes_pull_request": 4385,
+    "implementation_anchor_commit": "5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e",
     "pull_request": null,
     "task_head_sha": null,
     "merge_commit": null,

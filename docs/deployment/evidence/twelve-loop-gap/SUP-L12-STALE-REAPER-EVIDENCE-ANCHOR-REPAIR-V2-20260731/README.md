@@ -51,5 +51,6 @@ Not changed here:
 - the independent exact-head review and protected-merge gates.
 
 Machine-readable proof and the independent review decision belong in
-[`evidence.json`](evidence.json). At this anchor stage, validation and review
-remain pending.
+[`evidence.json`](evidence.json). Five focused regressions and the full 473-test
+supervisor suite pass on the composed branch; independent exact-head review,
+protected merge, and governed closeout remain pending.
