@@ -691,7 +691,11 @@ def _assert_git_metadata_tree_has_no_symlinks(
     descriptor: int,
     *,
     label: str,
+    expected_device: int,
 ) -> None:
+    """Reject aliases, mount escapes, and non-file entries in a Git tree."""
+    if os.fstat(descriptor).st_dev != expected_device:
+        raise ValueError(f"{label} escaped the candidate filesystem")
     pending: list[tuple[int, str]] = [(os.dup(descriptor), label)]
     entries_seen = 0
     try:
@@ -709,6 +713,10 @@ def _assert_git_metadata_tree_has_no_symlinks(
                         entry_stat = entry.stat(follow_symlinks=False)
                         if stat.S_ISLNK(entry_stat.st_mode):
                             raise ValueError(f"{entry_label} cannot be a symlink")
+                        if entry_stat.st_dev != expected_device:
+                            raise ValueError(
+                                f"{entry_label} escaped the candidate filesystem"
+                            )
                         if stat.S_ISDIR(entry_stat.st_mode):
                             child = _open_relative_descriptor(
                                 current,
@@ -717,6 +725,24 @@ def _assert_git_metadata_tree_has_no_symlinks(
                                 require_directory=True,
                             )
                             pending.append((child, entry_label))
+                        elif stat.S_ISREG(entry_stat.st_mode):
+                            child = _open_relative_descriptor(
+                                current,
+                                entry.name,
+                                label=entry_label,
+                                require_directory=False,
+                            )
+                            try:
+                                if os.fstat(child).st_dev != expected_device:
+                                    raise ValueError(
+                                        f"{entry_label} escaped the candidate filesystem"
+                                    )
+                            finally:
+                                os.close(child)
+                        else:
+                            raise ValueError(
+                                f"{entry_label} is not regular Git metadata"
+                            )
             finally:
                 os.close(current)
     except BaseException:
@@ -729,6 +755,7 @@ def _assert_optional_git_tree_is_local(
     name: str,
     *,
     label: str,
+    expected_device: int,
 ) -> None:
     try:
         descriptor = _open_relative_descriptor(
@@ -740,7 +767,11 @@ def _assert_optional_git_tree_is_local(
     except FileNotFoundError:
         return
     try:
-        _assert_git_metadata_tree_has_no_symlinks(descriptor, label=label)
+        _assert_git_metadata_tree_has_no_symlinks(
+            descriptor,
+            label=label,
+            expected_device=expected_device,
+        )
     finally:
         os.close(descriptor)
 
@@ -826,21 +857,23 @@ def _assert_candidate_git_metadata(handle: CandidateRootHandle) -> None:
         "commondir",
         label="Candidate Git commondir pointer",
     )
-    _assert_no_git_alternates(handle.git_objects_descriptor)
-    _assert_optional_git_tree_is_local(
+    _assert_git_metadata_tree_has_no_symlinks(
         handle.git_objects_descriptor,
-        "pack",
-        label="Candidate Git objects/pack directory",
+        label="Candidate Git objects directory",
+        expected_device=handle.identity.device,
     )
+    _assert_no_git_alternates(handle.git_objects_descriptor)
     _assert_optional_git_tree_is_local(
         handle.git_descriptor,
         "refs",
         label="Candidate Git refs directory",
+        expected_device=handle.identity.device,
     )
     _assert_optional_git_tree_is_local(
         handle.git_descriptor,
         "info",
         label="Candidate Git info directory",
+        expected_device=handle.identity.device,
     )
     _assert_optional_git_file_is_local(
         handle.git_descriptor,
@@ -1201,6 +1234,53 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
     )
 
 
+def _assert_allowed_generated_untracked_file(
+    handle: CandidateRootHandle,
+    relative_path: str,
+) -> None:
+    """Bind an allowlisted generated path to a symlink-free regular file."""
+    if relative_path.endswith("/"):
+        raise ValueError(
+            "Allowed generated path must identify a regular file, not a directory: "
+            f"{relative_path}"
+        )
+    candidate = PurePosixPath(relative_path)
+    if (
+        candidate.is_absolute()
+        or not candidate.parts
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+    ):
+        raise ValueError(f"Invalid generated path: {relative_path!r}")
+
+    descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in candidate.parts[:-1]:
+            descriptors.append(
+                _open_relative_descriptor(
+                    descriptors[-1],
+                    component,
+                    label=f"Allowed generated path component {component!r}",
+                    require_directory=True,
+                )
+            )
+        leaf = _open_relative_descriptor(
+            descriptors[-1],
+            candidate.parts[-1],
+            label=f"Allowed generated file {relative_path!r}",
+            require_directory=False,
+        )
+        try:
+            if os.fstat(leaf).st_dev != handle.identity.device:
+                raise ValueError(
+                    "Allowed generated file escaped the candidate filesystem: "
+                    f"{relative_path}"
+                )
+        finally:
+            os.close(leaf)
+    finally:
+        _close_descriptors(*reversed(descriptors))
+
+
 def verify_working_tree_cleanliness(
     candidate_root: Path | CandidateRootHandle,
     *,
@@ -1241,11 +1321,18 @@ def verify_working_tree_cleanliness(
                 raise ValueError(
                     f"Tracked git tree is dirty ({status_code}): {relative_path}"
                 )
+            if relative_path.endswith("/"):
+                kind = "ignored" if status_code == "!!" else "untracked"
+                raise ValueError(
+                    f"Forbidden {kind} directory found in candidate root: "
+                    f"{relative_path}"
+                )
             if not _is_allowed_generated_untracked_path(relative_path):
                 kind = "ignored" if status_code == "!!" else "untracked"
                 raise ValueError(
                     f"Forbidden {kind} file found in candidate root: {relative_path}"
                 )
+            _assert_allowed_generated_untracked_file(handle, relative_path)
 
         try:
             _run_git(handle, "diff-index", "--cached", "--quiet", "HEAD", "--")

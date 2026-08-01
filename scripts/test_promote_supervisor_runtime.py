@@ -1163,6 +1163,33 @@ def test_git_identity_rejects_symlinked_object_directory(tmp_path: Path) -> None
             resolve_candidate_root(candidate)
 
 
+def test_git_identity_rejects_external_loose_object_fanout_symlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    objects = candidate / ".git" / "objects"
+    loose_fanout = next(
+        entry
+        for entry in objects.iterdir()
+        if entry.is_dir() and len(entry.name) == 2
+    )
+    external_fanout = tmp_path / "external-loose-objects"
+    loose_fanout.rename(external_fanout)
+    loose_fanout.symlink_to(external_fanout, target_is_directory=True)
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent,
+        remote,
+        live_config,
+    )
+
+    with parent_patch, remote_patch, config_patch:
+        with pytest.raises(ValueError, match="objects directory/.+ cannot be a symlink"):
+            build_candidate_runtime_identity(candidate)
+
+
 def test_git_identity_rejects_external_symlinked_index(tmp_path: Path) -> None:
     candidate, parent, _remote, _commit, _tree, _config_bytes = (
         _make_candidate_fixture(tmp_path)
@@ -1511,6 +1538,59 @@ def test_git_identity_allows_each_enumerated_generated_untracked_path(
 
     with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
         assert verify_working_tree_cleanliness(candidate) == tree
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".orchestrator/supervisor.lock",
+        ".orchestrator/task-briefs/sup_runtime_identity_001.md",
+    ],
+)
+def test_git_identity_rejects_allowlisted_generated_symlink(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    external_file = tmp_path / "external-generated-file"
+    external_file.write_text("external\n", encoding="utf-8")
+    generated = candidate / relative_path
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.symlink_to(external_file)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="symlink|wrong type"):
+            verify_working_tree_cleanliness(candidate)
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".orchestrator/supervisor.lock",
+        ".orchestrator/task-briefs/evil.md",
+    ],
+)
+def test_git_identity_rejects_ignored_directory_at_allowlisted_file_path(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    generated_directory = candidate / relative_path
+    generated_directory.mkdir(parents=True, exist_ok=True)
+    (generated_directory / "payload.py").write_text(
+        "raise RuntimeError('injected')\n",
+        encoding="utf-8",
+    )
+    exclude = candidate / ".git" / "info" / "exclude"
+    exclude.write_text(f"/{relative_path}/\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Forbidden ignored directory"):
+            verify_working_tree_cleanliness(candidate)
 
 
 @pytest.mark.parametrize(
