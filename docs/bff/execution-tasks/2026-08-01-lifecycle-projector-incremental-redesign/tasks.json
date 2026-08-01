@@ -1,0 +1,352 @@
+{
+  "schema_version": 3,
+  "program_id": "lifecycle-projector-incremental-redesign-2026-08-01",
+  "generated_at": "2026-08-01T09:30:00Z",
+  "source_plan": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+  "task_doc_contract_source": "tasks.json",
+  "target_repo": "pantheon",
+  "merge_target": "dev",
+  "dispatch_authority": "pantheon-supervisor",
+  "existing_task_dependencies": [
+    "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801"
+  ],
+  "tasks": [
+    {
+      "id": "LIFECYCLE-PROJ-STORE-001",
+      "title": "Build the lifecycle projection relational store",
+      "summary": "Create additive Postgres schema, indexes, typed persistence API, and atomic event-to-checkpoint transaction primitives without changing telemetry source authority.",
+      "phase": "wave-1-storage",
+      "wave": 1,
+      "owner": "Antigravity",
+      "owner_capability": "backend-data auto-worker with PostgreSQL migration and transaction expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent database correctness, security, and operability review",
+      "status": "todo",
+      "depends_on": [],
+      "expected_branch": "task/lifecycle-proj-store-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-store-001",
+      "artifacts": [
+        "services/trade_journey/projection_store.py",
+        "services/trade_journey/migrations/",
+        "services/trade_journey/test_projection_store.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/"
+      ],
+      "out_of_scope": [
+        "telemetry_events mutation or retention changes",
+        "lifecycle reducer behavior",
+        "BFF route changes",
+        "docker-compose.yml",
+        "deployment or cutover"
+      ],
+      "acceptance": [
+        "Add expand-only idempotent migrations for controller, event receipts, identity links, journeys, journey stages, loop runs, and quarantine with all plan-required keys and indexes.",
+        "Use a least-privilege runtime contract and never copy unrestricted raw telemetry payloads into projection tables.",
+        "Provide one transaction API that atomically records disposition, identity/stage/aggregate changes, projection revision, and contiguous checkpoint.",
+        "Prove duplicate, conflicting duplicate, identity conflict, quarantine, rollback, retry, and two-writer/advisory-lock behavior against real Postgres.",
+        "Publish reviewed PR, required checks, merge SHA, migration up/idempotency evidence, and checksummed evidence.json."
+      ],
+      "validation": [
+        "focused projection store tests against real Postgres",
+        "migration apply twice and backward-compatible prior-reader probe",
+        "EXPLAIN evidence for source checkpoint, identity resolution, journey list, timeline, and loop list indexes"
+      ],
+      "rollout": "Apply the additive schema in target-dev with no worker or BFF reader enabled.",
+      "rollback": "Stop consumers and leave additive tables unused; destructive down migration is prohibited."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-REDUCER-001",
+      "title": "Replace full rebuild with a bounded incremental reducer",
+      "summary": "Extract deterministic per-event reduction and rewire the lifecycle worker so one batch mutates only affected relational aggregates and controller state.",
+      "phase": "wave-2-worker",
+      "wave": 2,
+      "owner": "Antigravity",
+      "owner_capability": "backend auto-worker with event-sourcing, idempotency, and Python performance expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent lifecycle semantics, recovery, and memory review",
+      "status": "todo",
+      "depends_on": [
+        "LIFECYCLE-PROJ-STORE-001"
+      ],
+      "expected_branch": "task/lifecycle-proj-reducer-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-reducer-001",
+      "artifacts": [
+        "services/trade_journey/lifecycle_projector.py",
+        "services/trade_journey/incremental_materializer.py",
+        "services/trade_journey/test_lifecycle_projector.py",
+        "services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/"
+      ],
+      "out_of_scope": [
+        "BFF query implementation",
+        "telemetry ingestion changes",
+        "compose resource/cutover configuration",
+        "legacy data deletion"
+      ],
+      "acceptance": [
+        "Remove all-history canonical_events and identity_chains from runtime state and remove full-state deepcopy/full-global render from the active worker path.",
+        "Keep memory bounded to the configured batch, per-batch maps, and affected aggregate rows.",
+        "Preserve canonical lifecycle event, fixture, identity, stage ordering, duplicate, conflict, quarantine, live/recovery/backfill/replay, and freshness semantics.",
+        "Commit each source batch through the store transaction and advance only the highest contiguous durably disposed sequence.",
+        "Prove deterministic convergence for duplicate, out-of-order, restart, replay, backfill, SIGKILL, and injected transaction failure.",
+        "Publish reviewed PR, required checks, merge SHA, focused/adjacent tests, and checksummed evidence.json."
+      ],
+      "validation": [
+        "property and differential tests over accepted legacy fixtures",
+        "canonical paper lifecycle integration tests",
+        "SIGTERM/SIGKILL and database reconnect fault tests",
+        "static assertion that active code has no full-history in-memory store or global rebuild"
+      ],
+      "rollout": "Deploy disabled, then run only as a target-dev shadow writer after migration task admission.",
+      "rollback": "Stop the new worker; source rows and relational schema remain intact."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-BFF-001",
+      "title": "Serve Trade Journey and loop-run reads from Postgres",
+      "summary": "Implement tenant-scoped indexed repositories and keyset pagination behind the current BFF DTO and route contracts.",
+      "phase": "wave-2-read-api",
+      "wave": 2,
+      "owner": "Antigravity",
+      "owner_capability": "BFF/backend auto-worker with PostgreSQL query, pagination, RBAC, and API compatibility expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent API contract, tenant isolation, privacy, and performance review",
+      "status": "todo",
+      "depends_on": [
+        "LIFECYCLE-PROJ-STORE-001"
+      ],
+      "expected_branch": "task/lifecycle-proj-bff-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-bff-001",
+      "artifacts": [
+        "services/control-plane/bff/trade_journeys.py",
+        "services/control-plane/bff/trade_journey_projection_store.py",
+        "services/control-plane/bff/read_store.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-BFF-001/"
+      ],
+      "out_of_scope": [
+        "frontend changes",
+        "lifecycle worker or reducer changes",
+        "unrelated read_store refactors",
+        "reader cutover",
+        "legacy data deletion"
+      ],
+      "acceptance": [
+        "Add scoped Postgres repository methods for journey page/detail/timeline/graph/resolve/evidence/metrics, loop page/detail, and controller freshness.",
+        "Preserve existing route paths and response contracts while adding bounded keyset pagination with default 50 and maximum 200.",
+        "Reject tampered or filter/scope-incompatible page tokens and prohibit unscoped global list APIs.",
+        "Preserve identifier-existence protection, RBAC, tenant/environment isolation, and live-sensitive-field redaction.",
+        "Expose stale/error/backlog truth without representing fallback JSON as current Postgres truth.",
+        "Publish reviewed PR, required checks, merge SHA, compatibility/security/query-plan evidence, and checksummed evidence.json."
+      ],
+      "validation": [
+        "existing Trade Journey and loop-run contract suites",
+        "pagination stability and token tamper tests",
+        "cross-tenant/environment and sensitive-field negative tests",
+        "indexed query and bounded returned-row evidence"
+      ],
+      "rollout": "Ship behind one disabled projection-reader backend flag in target-dev.",
+      "rollback": "Leave the BFF on its previously accepted reader backend."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-MIGRATE-001",
+      "title": "Backfill, shadow, and prove lifecycle projection parity",
+      "summary": "Build resumable source backfill and deterministic old/new parity tooling, then close the delta in shadow-live mode without serving the new store.",
+      "phase": "wave-3-migration",
+      "wave": 3,
+      "owner": "Antigravity",
+      "owner_capability": "backend/data migration auto-worker with replay, reconciliation, and evidence expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent migration safety, parity, and recovery review",
+      "status": "todo",
+      "depends_on": [
+        "LIFECYCLE-PROJ-REDUCER-001",
+        "LIFECYCLE-PROJ-BFF-001"
+      ],
+      "expected_branch": "task/lifecycle-proj-migrate-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-migrate-001",
+      "artifacts": [
+        "services/trade_journey/projection_migration.py",
+        "services/trade_journey/test_projection_migration.py",
+        "scripts/lifecycle_projector_migrate.py",
+        "scripts/lifecycle_projector_parity.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-MIGRATE-001/"
+      ],
+      "out_of_scope": [
+        "BFF reader cutover",
+        "production migration",
+        "canonical source mutation",
+        "legacy generation deletion"
+      ],
+      "acceptance": [
+        "Backfill from telemetry_events with a separate durable migration watermark and resumable bounded transactions.",
+        "Capture a source high watermark, close the delta with the incremental worker, and enter shadow-live with backlog zero.",
+        "Compare controller, identity, stage, journey, loop, quarantine, duplicate, replay, and recovery semantics using stable scoped hashes and drill-down reports.",
+        "Classify every mismatch as an approved documented contract change or blocker; unexplained mismatch count is zero.",
+        "Prove safe interruption/restart at multiple backfill and delta positions without duplicates or skipped source rows.",
+        "Publish reviewed PR, required checks, merge SHA, redacted parity manifest, and checksummed evidence.json."
+      ],
+      "validation": [
+        "full dev-source backfill in bounded batches",
+        "restart and source-growth-during-backfill tests",
+        "stable hash plus sampled row-level parity",
+        "no raw payload or sensitive identifier leakage in evidence"
+      ],
+      "rollout": "Run only in target-dev shadow mode with BFF reads unchanged.",
+      "rollback": "Stop shadow/backfill jobs; retain the new schema for inspection and leave the accepted reader unchanged."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "title": "Prove bounded lifecycle projection capacity and failure behavior",
+      "summary": "Exercise one million events, query plans, resource ceilings, and transactional fault recovery before any reader cutover.",
+      "phase": "wave-3-capacity",
+      "wave": 3,
+      "owner": "Antigravity",
+      "owner_capability": "performance/reliability auto-worker with Python, PostgreSQL, Docker, and fault-injection expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent capacity, SLO, and rollback evidence review",
+      "status": "todo",
+      "depends_on": [
+        "LIFECYCLE-PROJ-REDUCER-001",
+        "LIFECYCLE-PROJ-BFF-001"
+      ],
+      "expected_branch": "task/lifecycle-proj-capacity-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-capacity-001",
+      "artifacts": [
+        "services/trade_journey/lifecycle_projector_capacity.py",
+        "services/trade_journey/test_lifecycle_projector_capacity.py",
+        "services/trade_journey/test_lifecycle_projector_compose.py",
+        "docker-compose.yml",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/"
+      ],
+      "out_of_scope": [
+        "business-contract redesign",
+        "BFF reader cutover",
+        "production load testing",
+        "legacy data deletion"
+      ],
+      "acceptance": [
+        "Pass at least 1,000,000 canonical events and 150,000 loop runs with steady RSS <=2.0 GiB, peak RSS <=2.5 GiB, and 500k-to-1M RSS growth <=256 MiB.",
+        "Pass 500-row batch p95 <=5 seconds, steady backlog age p95 <=30 seconds, and baseline-plus-100k catch-up <=30 minutes on the documented dev profile.",
+        "Pass journey/loop list and detail p95 gates with page <=200 and indexed query plans without unbounded scans.",
+        "Pass SIGKILL, DB disconnect, deadlock, transaction rollback, second-writer, duplicate, and out-of-order fault cases with RPO=0 and no duplicate stages.",
+        "Set the target worker memory limit to 4 GiB only after the measured gates pass; keep fail-stopped semantics on deterministic defects.",
+        "Publish reproducible corpus seed/config, raw redacted metrics, reviewed PR, merge SHA, and checksummed evidence.json."
+      ],
+      "validation": [
+        "one-million-event benchmark on documented hardware",
+        "RSS/time/backlog sample series and query EXPLAIN plans",
+        "fault matrix with authoritative post-restart controller and row counts",
+        "docker compose config and focused/adjacent test suites"
+      ],
+      "rollout": "Apply resource defaults only to the disabled/shadow target worker in target-dev.",
+      "rollback": "Revert the compose/config commit and stop the shadow worker; do not restart the legacy unbounded worker."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-CUTOVER-001",
+      "title": "Canary and cut over target-dev lifecycle reads",
+      "summary": "Deploy exact merged identities, canary the Postgres reader, prove a real paper lifecycle and rollback, then switch target-dev reads.",
+      "phase": "wave-4-cutover",
+      "wave": 4,
+      "owner": "Antigravity",
+      "owner_capability": "dev release/reliability auto-worker with hosted probes, migration, and rollback expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent release, security, readback, and rollback approval",
+      "status": "todo",
+      "depends_on": [
+        "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+        "LIFECYCLE-PROJ-MIGRATE-001",
+        "LIFECYCLE-PROJ-CAPACITY-001"
+      ],
+      "expected_branch": "task/lifecycle-proj-cutover-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-cutover-001",
+      "artifacts": [
+        "docker-compose.yml",
+        "services/trade_journey/hosted_lifecycle_probe.py",
+        "services/trade_journey/hosted_bff_readback.py",
+        "services/trade_journey/test_hosted_lifecycle_probe.py",
+        "services/trade_journey/test_hosted_bff_readback.py",
+        "docs/operations/lifecycle-projector-incremental-runbook.md",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CUTOVER-001/"
+      ],
+      "out_of_scope": [
+        "production cutover",
+        "live-capital or broker side effects",
+        "legacy code/data retirement",
+        "supervisor or fleet changes"
+      ],
+      "acceptance": [
+        "Deploy exact merged Pantheon SHA and image digest with migration identity, configuration, and controller row recorded before enabling reads.",
+        "Keep shadow backlog zero and unexplained parity mismatch zero, then enable Postgres reads for an authorized target-dev paper canary before all target-dev paper reads.",
+        "Prove one real paper signal-to-reconciliation lifecycle with identity-consistent journey and loop run through authenticated canonical BFF readback.",
+        "Prove stale, conflict, cross-tenant/environment, sensitive-field, and unauthorized negative behavior.",
+        "Rehearse rollback to the last accepted reader and forward recovery without data loss; the stale legacy bundle must remain labeled stale.",
+        "Observe 24 hours with accepted freshness/resource/error gates and publish reviewed PR, merge SHA, deployment manifest, and checksummed evidence.json."
+      ],
+      "validation": [
+        "pre-switch parity/capacity/security gate",
+        "authenticated hosted list/detail/timeline/graph/loop/controller readback",
+        "real target-dev paper lifecycle correlation",
+        "rollback and forward-recovery rehearsal"
+      ],
+      "rollout": "Shadow -> authorized target-dev paper canary -> all target-dev paper reads -> 24-hour observation.",
+      "rollback": "Switch the single BFF reader flag to the last accepted backend, restart only BFF, stop the new worker if necessary, and report stale truth."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-RETIRE-001",
+      "title": "Retire legacy lifecycle JSON projection after accepted soak",
+      "summary": "After seven accepted dev days and explicit approval, remove legacy writer/read paths and prune obsolete dev generations through a dry-run, checksummed process.",
+      "phase": "wave-5-retirement",
+      "wave": 5,
+      "owner": "Antigravity",
+      "owner_capability": "backend/operations auto-worker with compatibility cleanup and safe data-retirement expertise",
+      "reviewer": "Human/Ops",
+      "reviewer_capability": "independent retention, recovery, and destructive-action approval",
+      "status": "todo",
+      "depends_on": [
+        "LIFECYCLE-PROJ-CUTOVER-001"
+      ],
+      "expected_branch": "task/lifecycle-proj-retire-001",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/lifecycle-proj-retire-001",
+      "artifacts": [
+        "services/trade_journey/lifecycle_projector.py",
+        "services/control-plane/bff/trade_journeys.py",
+        "services/control-plane/bff/read_store.py",
+        "docker-compose.yml",
+        "scripts/lifecycle_projector_legacy_retire.py",
+        "docs/operations/lifecycle-projector-incremental-runbook.md",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/"
+      ],
+      "out_of_scope": [
+        "telemetry_events deletion or retention change",
+        "projection table deletion",
+        "production cleanup",
+        "cleanup before seven accepted dev days and explicit operator approval"
+      ],
+      "acceptance": [
+        "Show at least seven days of accepted target-dev freshness, capacity, parity, security, and error evidence after cutover.",
+        "Remove legacy JSON writer and read fallback code/config through a reviewed PR while preserving public BFF contracts.",
+        "Generate an allow-listed dry-run inventory and checksum manifest for obsolete dev generations; no broad path, glob, unresolved variable, or canonical source is eligible.",
+        "Require explicit Human/Ops approval after dry-run before moving/deleting legacy dev files, and record whether recovery remains possible.",
+        "Run hosted regression and restart/recovery proof on the Postgres-only path, then update the runbook and residual-risk register.",
+        "Publish reviewed PR, required checks, merge SHA, deletion receipt if approved, and checksummed evidence.json."
+      ],
+      "validation": [
+        "seven-day soak manifest",
+        "legacy-reference static search and compatibility suites",
+        "dry-run exact-path inventory and checksums",
+        "Postgres-only hosted restart/readback and rollback documentation"
+      ],
+      "rollout": "Remove legacy code/config first; execute dev file cleanup separately only after explicit post-dry-run approval.",
+      "rollback": "Revert application code to the schema-compatible prior reader. Recover moved legacy files from the recorded quarantine/archive location if cleanup occurred."
+    }
+  ],
+  "program_acceptance": [
+    "All dependencies are done rather than superseded, cancelled, missing, or merely submitted.",
+    "Every task has a merged reviewed PR, exact merge SHA, required checks, and checksummed evidence manifest.",
+    "Target-dev serves Postgres projection reads with accepted freshness after a real paper lifecycle and a successful rollback rehearsal.",
+    "The target worker meets the one-million-event resource gates and has no all-history runtime object graph or global rebuild path.",
+    "No production, live-capital, canonical source deletion, or supervisor-control-plane change occurred."
+  ]
+}
