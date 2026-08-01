@@ -9,14 +9,15 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.controller (
     controller_id TEXT NOT NULL,
     tenant_scope TEXT NOT NULL,
     environment_scope TEXT NOT NULL,
-    checkpoint_seq BIGINT NOT NULL DEFAULT 0,
-    source_high_watermark BIGINT NOT NULL DEFAULT 0,
-    backlog_count BIGINT NOT NULL DEFAULT 0,
-    projection_revision BIGINT NOT NULL DEFAULT 0,
+    checkpoint_seq BIGINT NOT NULL DEFAULT 0 CHECK (checkpoint_seq >= 0),
+    source_high_watermark BIGINT NOT NULL DEFAULT 0 CHECK (source_high_watermark >= 0),
+    backlog_count BIGINT NOT NULL DEFAULT 0 CHECK (backlog_count >= 0),
+    projection_revision BIGINT NOT NULL DEFAULT 0 CHECK (projection_revision >= 0),
     deployment_sha TEXT NOT NULL DEFAULT '',
-    mode TEXT NOT NULL DEFAULT 'live',
+    mode TEXT NOT NULL DEFAULT 'live'
+        CHECK (mode IN ('live', 'backfill', 'recovery', 'replay')),
     status TEXT NOT NULL DEFAULT 'ok',
-    accepted_live BOOLEAN NOT NULL DEFAULT FALSE,
+    accepted_live BOOLEAN NOT NULL DEFAULT FALSE CHECK (NOT accepted_live OR mode = 'live'),
     last_poll_at TIMESTAMPTZ,
     last_success_at TIMESTAMPTZ,
     last_live_success_at TIMESTAMPTZ,
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.controller (
     last_replay_at TIMESTAMPTZ,
     last_failure_at TIMESTAMPTZ,
     last_error_message TEXT NOT NULL DEFAULT '',
-    unresolved_quarantine_count BIGINT NOT NULL DEFAULT 0,
+    unresolved_quarantine_count BIGINT NOT NULL DEFAULT 0
+        CHECK (unresolved_quarantine_count >= 0),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (controller_id, tenant_scope, environment_scope)
 );
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.controller (
 -- 2. Event receipts table
 CREATE TABLE IF NOT EXISTS trade_journey_projection.event_receipts (
     event_id TEXT PRIMARY KEY,
-    ingested_seq BIGINT UNIQUE NOT NULL,
+    ingested_seq BIGINT UNIQUE NOT NULL CHECK (ingested_seq > 0),
     fingerprint TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     environment TEXT NOT NULL,
@@ -42,7 +44,7 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.event_receipts (
     source_event_type TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     disposition TEXT NOT NULL CHECK (disposition IN ('applied', 'duplicate', 'ignored', 'quarantined')),
-    projection_revision BIGINT NOT NULL DEFAULT 0,
+    projection_revision BIGINT NOT NULL DEFAULT 0 CHECK (projection_revision >= 0),
     projected_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
@@ -58,16 +60,25 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.identity_links (
     tenant_id TEXT NOT NULL,
     environment TEXT NOT NULL,
     identifier_type TEXT NOT NULL CHECK (identifier_type IN (
-        'journey_id', 'trade_id', 'order_id', 'fill_id', 'position_id',
-        'signal_id', 'proposal_id', 'allocation_id', 'intent_id', 'loop_run_id'
+        'journey_id', 'research_journey_id', 'strategy_lifecycle_id',
+        'persona_id', 'strategy_id', 'signal_id', 'decision_id',
+        'risk_decision_id', 'client_order_id', 'order_id', 'broker_order_id',
+        'fill_id', 'broker_trade_id', 'ledger_entry_id', 'reconciliation_id',
+        'run_id', 'loop_run_id', 'runtime_id', 'binding_id',
+        'capital_pool_id', 'persona_capital_binding_id', 'artifact_id',
+        'artifact_version', 'plan_id', 'trace_id'
     )),
     identifier_value TEXT NOT NULL,
     journey_id TEXT NOT NULL,
     first_ingested_seq BIGINT NOT NULL,
     last_ingested_seq BIGINT NOT NULL,
+    first_occurred_at TIMESTAMPTZ NOT NULL,
+    last_occurred_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (tenant_id, environment, identifier_type, identifier_value)
+    PRIMARY KEY (tenant_id, environment, identifier_type, identifier_value),
+    CHECK (first_ingested_seq > 0 AND first_ingested_seq <= last_ingested_seq),
+    CHECK (first_occurred_at <= last_occurred_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_identity_links_tenant_env_journey
@@ -89,10 +100,12 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.journeys (
     evidence_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
     diagnostic_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
     loop_run_id TEXT NOT NULL DEFAULT '',
-    projection_revision BIGINT NOT NULL DEFAULT 0,
+    projection_revision BIGINT NOT NULL DEFAULT 0 CHECK (projection_revision >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (tenant_id, environment, journey_id)
+    PRIMARY KEY (tenant_id, environment, journey_id),
+    CHECK (first_ingested_seq > 0 AND first_ingested_seq <= last_ingested_seq),
+    CHECK (first_occurred_at <= last_occurred_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_journeys_tenant_env_updated_journey
@@ -116,14 +129,14 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.journey_stages (
     source_event_id TEXT NOT NULL,
     stage_name TEXT NOT NULL,
     stage_status TEXT NOT NULL DEFAULT 'completed',
-    stage_ordinal INT NOT NULL,
-    source_ingested_seq BIGINT NOT NULL,
-    event_sequence BIGINT NOT NULL DEFAULT 0,
+    stage_ordinal INT NOT NULL CHECK (stage_ordinal >= 0),
+    source_ingested_seq BIGINT NOT NULL CHECK (source_ingested_seq > 0),
+    event_sequence BIGINT NOT NULL DEFAULT 0 CHECK (event_sequence >= 0),
     occurred_at TIMESTAMPTZ NOT NULL,
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     contract_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
     evidence_references JSONB NOT NULL DEFAULT '[]'::jsonb,
-    projection_revision BIGINT NOT NULL DEFAULT 0,
+    projection_revision BIGINT NOT NULL DEFAULT 0 CHECK (projection_revision >= 0),
     fingerprint TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (tenant_id, environment, journey_id, source_event_id, stage_name)
 );
@@ -141,7 +154,7 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.loop_runs (
     lifecycle_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
     freshness_lineage JSONB NOT NULL DEFAULT '{}'::jsonb,
     contract_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    projection_revision BIGINT NOT NULL DEFAULT 0,
+    projection_revision BIGINT NOT NULL DEFAULT 0 CHECK (projection_revision >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, environment, loop_run_id)
@@ -167,8 +180,9 @@ CREATE TABLE IF NOT EXISTS trade_journey_projection.quarantine (
     fingerprint TEXT NOT NULL DEFAULT '',
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    occurrence_count INT NOT NULL DEFAULT 1,
-    resolution_status TEXT NOT NULL DEFAULT 'unresolved',
+    occurrence_count INT NOT NULL DEFAULT 1 CHECK (occurrence_count > 0),
+    resolution_status TEXT NOT NULL DEFAULT 'unresolved'
+        CHECK (resolution_status IN ('unresolved', 'resolved', 'dismissed')),
     resolution_audit_ref TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (event_id, ingested_seq)
 );

@@ -8,11 +8,15 @@ typed persistence API, advisory locks, duplicate/conflict/quarantine, and two-wr
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 
+from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
+from services.trade_journey.materializer import IDENTIFIER_FIELDS
 from services.trade_journey.projection_store import (
     BatchProjectionMutation,
     ConflictingDuplicateException,
@@ -20,12 +24,14 @@ from services.trade_journey.projection_store import (
     EventReceiptRow,
     IdentityConflictException,
     IdentityLinkRow,
+    INITIAL_MIGRATION_PATH,
     JourneyRow,
     JourneyStageRow,
     LoopRunRow,
     ProjectionStore,
     ProjectionStoreException,
     QuarantineRow,
+    controller_advisory_lock_id,
 )
 
 
@@ -37,10 +43,19 @@ def postgres_dsn() -> str:
     return dsn
 
 
+@pytest.fixture
+def postgres_admin_dsn() -> str:
+    dsn = os.getenv("TEST_DATABASE_ADMIN_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_ADMIN_URL is not set")
+    return dsn
+
+
 def test_projection_store_bootstrap_and_schema_idempotency(postgres_dsn: str) -> None:
     schema_name = f"test_proj_{uuid4().hex[:8]}"
     store = ProjectionStore(postgres_dsn, schema=schema_name)
-    # Bootstrap again to prove idempotency
+    store.bootstrap_schema()
+    # Bootstrap again to prove idempotency.
     store.bootstrap_schema()
 
     ctrl = store.get_controller_state("ctrl-1", "default", "paper")
@@ -78,11 +93,13 @@ def test_projection_store_atomic_batch_transaction(postgres_dsn: str) -> None:
             IdentityLinkRow(
                 tenant_id="tenant-a",
                 environment="paper",
-                identifier_type="trade_id",
+                identifier_type="signal_id",
                 identifier_value="t-100",
                 journey_id="j-1",
                 first_ingested_seq=1,
                 last_ingested_seq=1,
+                first_occurred_at=now,
+                last_occurred_at=now,
             )
         ],
         journeys=[
@@ -144,7 +161,7 @@ def test_projection_store_atomic_batch_transaction(postgres_dsn: str) -> None:
     assert receipt.disposition == "applied"
     assert receipt.journey_id == "j-1"
 
-    resolved_journey = store.resolve_identity("tenant-a", "paper", "trade_id", "t-100")
+    resolved_journey = store.resolve_identity("tenant-a", "paper", "signal_id", "t-100")
     assert resolved_journey == "j-1"
 
     # Cleanup schema after test
@@ -210,6 +227,22 @@ def test_projection_store_duplicate_and_conflicting_duplicate(postgres_dsn: str)
     with pytest.raises(ConflictingDuplicateException, match="conflicting fingerprint"):
         store.execute_batch_transaction("ctrl-1", "t-1", "paper", mutation_conflict)
 
+    batch_conflict = BatchProjectionMutation(
+        receipts=[
+            EventReceiptRow(
+                "evt-batch-conflict", 12, "fp-a", "t-1", "paper", "j-dup", "",
+                "opened", now, "applied", 2,
+            ),
+            EventReceiptRow(
+                "evt-batch-conflict", 13, "fp-b", "t-1", "paper", "j-dup", "",
+                "opened", now, "applied", 2,
+            ),
+        ]
+    )
+    with pytest.raises(ConflictingDuplicateException, match="within one batch"):
+        store.execute_batch_transaction("ctrl-1", "t-1", "paper", batch_conflict)
+    assert store.get_receipt("evt-batch-conflict") is None
+
     # Cleanup schema after test
     import psycopg
 
@@ -220,30 +253,47 @@ def test_projection_store_duplicate_and_conflicting_duplicate(postgres_dsn: str)
 def test_projection_store_identity_conflict_detection(postgres_dsn: str) -> None:
     schema_name = f"test_proj_{uuid4().hex[:8]}"
     store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    now = datetime.now(timezone.utc)
 
     link1 = IdentityLinkRow(
         tenant_id="t-1",
         environment="paper",
-        identifier_type="trade_id",
+        identifier_type="signal_id",
         identifier_value="t-shared-99",
         journey_id="j-first",
         first_ingested_seq=100,
         last_ingested_seq=100,
+        first_occurred_at=now,
+        last_occurred_at=now,
     )
-    mutation1 = BatchProjectionMutation(identity_links=[link1], new_checkpoint_seq=100)
+    receipt1 = EventReceiptRow(
+        "evt-identity-1", 1, "fp-identity-1", "t-1", "paper", "j-first", "",
+        "opened", now, "applied", 1,
+    )
+    mutation1 = BatchProjectionMutation(
+        receipts=[receipt1], identity_links=[link1], new_checkpoint_seq=100
+    )
     store.execute_batch_transaction("ctrl-1", "t-1", "paper", mutation1)
 
     # Attempting to bind the same identifier to a different journey_id must fail
     link_conflict = IdentityLinkRow(
         tenant_id="t-1",
         environment="paper",
-        identifier_type="trade_id",
+        identifier_type="signal_id",
         identifier_value="t-shared-99",
         journey_id="j-SECOND-CONFLICT",
         first_ingested_seq=101,
         last_ingested_seq=101,
+        first_occurred_at=now,
+        last_occurred_at=now,
     )
-    mutation_conflict = BatchProjectionMutation(identity_links=[link_conflict], new_checkpoint_seq=101)
+    receipt2 = EventReceiptRow(
+        "evt-identity-2", 2, "fp-identity-2", "t-1", "paper",
+        "j-SECOND-CONFLICT", "", "opened", now, "applied", 2,
+    )
+    mutation_conflict = BatchProjectionMutation(
+        receipts=[receipt2], identity_links=[link_conflict], new_checkpoint_seq=101
+    )
     with pytest.raises(IdentityConflictException, match="already bound to journey j-first"):
         store.execute_batch_transaction("ctrl-1", "t-1", "paper", mutation_conflict)
 
@@ -329,9 +379,22 @@ def test_projection_store_exact_duplicate_does_not_mutate_stage_or_increment_rev
         disposition="applied",
         projection_revision=1,
     )
+    journey = JourneyRow(
+        tenant_id="t-1",
+        environment="paper",
+        journey_id="j-1",
+        status="open",
+        stage_coverage={"opened": True},
+        is_terminal=False,
+        first_occurred_at=now,
+        last_occurred_at=now,
+        first_ingested_seq=1,
+        last_ingested_seq=1,
+    )
     mutation = BatchProjectionMutation(
         receipts=[receipt],
         stages=[stage],
+        journeys=[journey],
         new_checkpoint_seq=1,
         source_high_watermark=1,
     )
@@ -352,8 +415,35 @@ def test_projection_store_exact_duplicate_does_not_mutate_stage_or_increment_rev
         disposition="duplicate",
         projection_revision=1,
     )
+    mutated_stage = JourneyStageRow(
+        tenant_id="t-1",
+        environment="paper",
+        journey_id="j-1",
+        source_event_id="evt-1",
+        stage_name="opened",
+        stage_status="tampered",
+        stage_ordinal=1,
+        source_ingested_seq=1,
+        event_sequence=1,
+        occurred_at=now,
+        fingerprint="fp-1",
+    )
+    mutated_journey = JourneyRow(
+        tenant_id="t-1",
+        environment="paper",
+        journey_id="j-1",
+        status="tampered",
+        stage_coverage={"opened": False},
+        is_terminal=True,
+        first_occurred_at=now,
+        last_occurred_at=now,
+        first_ingested_seq=1,
+        last_ingested_seq=1,
+    )
     dup_mutation = BatchProjectionMutation(
         receipts=[exact_dup_receipt],
+        stages=[mutated_stage],
+        journeys=[mutated_journey],
         new_checkpoint_seq=1,
         source_high_watermark=1,
     )
@@ -365,9 +455,14 @@ def test_projection_store_exact_duplicate_does_not_mutate_stage_or_increment_rev
     # Verify stage_status in database was NOT changed
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT stage_status FROM {schema_name}.journey_stages WHERE source_event_id='evt-1'")
-        row = cur.fetchone()
-        assert row[0] == "completed"
+        cur.execute(
+            f"SELECT stage_status FROM {schema_name}.journey_stages WHERE source_event_id='evt-1'"
+        )
+        assert cur.fetchone()[0] == "completed"
+        cur.execute(
+            f"SELECT status, stage_coverage, is_terminal FROM {schema_name}.journeys WHERE journey_id='j-1'"
+        )
+        assert cur.fetchone() == ("open", {"opened": True}, False)
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
 
@@ -397,12 +492,45 @@ def test_projection_store_contiguous_checkpoint_advancement(postgres_dsn: str) -
     # Checkpoint must remain 3
     assert ctrl2.checkpoint_seq == 3
 
+    with pytest.raises(
+        ProjectionStoreException,
+        match="mutations require at least one durable event receipt",
+    ):
+        store.execute_batch_transaction(
+            "ctrl-1",
+            "t-1",
+            "paper",
+            BatchProjectionMutation(
+                journeys=[
+                    JourneyRow(
+                        "t-1", "paper", "receiptless", "tampered", {}, False,
+                        now, now, 999, 999,
+                    )
+                ],
+                new_checkpoint_seq=999,
+            ),
+        )
+
     # Now provide receipt 5 (gap at 4)
     receipt5 = EventReceiptRow("evt-5", 5, "fp-5", "t-1", "paper", "j-1", "", "opened", now, "applied", 2)
     mutation5 = BatchProjectionMutation(receipts=[receipt5], new_checkpoint_seq=5, source_high_watermark=5)
     ctrl3 = store.execute_batch_transaction("ctrl-1", "t-1", "paper", mutation5)
     # Gap at 4 prevents advancement to 5
     assert ctrl3.checkpoint_seq == 3
+
+    # Filling the durable gap must cross the already persisted receipt 5.
+    receipt4 = EventReceiptRow(
+        "evt-4", 4, "fp-4", "t-1", "paper", "j-1", "", "opened", now, "applied", 3
+    )
+    ctrl4 = store.execute_batch_transaction(
+        "ctrl-1",
+        "t-1",
+        "paper",
+        BatchProjectionMutation(
+            receipts=[receipt4], new_checkpoint_seq=999, source_high_watermark=999
+        ),
+    )
+    assert ctrl4.checkpoint_seq == 5
 
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
@@ -434,6 +562,41 @@ def test_projection_store_mode_freshness_timestamps(postgres_dsn: str) -> None:
     ctrl_bf = store.execute_batch_transaction("ctrl-1", "t-1", "paper", m_backfill)
     assert ctrl_bf.last_live_success_at == initial_live_ts
     assert ctrl_bf.last_backfill_at is not None
+    assert ctrl_bf.accepted_live is False
+
+    m_recovery = BatchProjectionMutation(
+        receipts=[
+            EventReceiptRow(
+                "evt-3", 3, "fp-3", "t-1", "paper", "j-1", "", "opened", now,
+                "applied", 3,
+            )
+        ],
+        mode="recovery",
+        accepted_live=True,
+    )
+    ctrl_recovery = store.execute_batch_transaction(
+        "ctrl-1", "t-1", "paper", m_recovery
+    )
+    assert ctrl_recovery.last_recovery_at is not None
+    assert ctrl_recovery.last_live_success_at == initial_live_ts
+    assert ctrl_recovery.accepted_live is False
+
+    m_replay = BatchProjectionMutation(
+        receipts=[
+            EventReceiptRow(
+                "evt-4", 4, "fp-4", "t-1", "paper", "j-1", "", "opened", now,
+                "applied", 4,
+            )
+        ],
+        mode="replay",
+        accepted_live=True,
+    )
+    ctrl_replay = store.execute_batch_transaction(
+        "ctrl-1", "t-1", "paper", m_replay
+    )
+    assert ctrl_replay.last_replay_at is not None
+    assert ctrl_replay.last_live_success_at == initial_live_ts
+    assert ctrl_replay.accepted_live is False
 
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
@@ -449,9 +612,49 @@ def test_projection_store_unresolved_quarantine_count_derivation(postgres_dsn: s
     q1 = QuarantineRow("q-1", 1, "BAD_PAYLOAD", "detail", "opened", "t-1", "paper", resolution_status="unresolved")
     q2 = QuarantineRow("q-2", 2, "BAD_PAYLOAD", "detail", "opened", "t-1", "paper", resolution_status="resolved")
 
-    m = BatchProjectionMutation(quarantines=[q1, q2], new_checkpoint_seq=2)
+    receipt1 = EventReceiptRow(
+        "q-1", 1, "fp-q-1", "t-1", "paper", "", "", "opened", now,
+        "quarantined", 1,
+    )
+    receipt2 = EventReceiptRow(
+        "q-2", 2, "fp-q-2", "t-1", "paper", "", "", "opened", now,
+        "quarantined", 1,
+    )
+    m = BatchProjectionMutation(
+        receipts=[receipt1, receipt2], quarantines=[q1, q2], new_checkpoint_seq=2
+    )
     ctrl = store.execute_batch_transaction("ctrl-1", "t-1", "paper", m)
     assert ctrl.unresolved_quarantine_count == 1
+
+    # An exact retry must not increment occurrence or controller count.
+    retried = store.execute_batch_transaction(
+        "ctrl-1",
+        "t-1",
+        "paper",
+        BatchProjectionMutation(receipts=[receipt1], quarantines=[q1]),
+    )
+    assert retried.unresolved_quarantine_count == 1
+
+    # Another controller scope has independent quarantine readiness truth.
+    q_other = QuarantineRow(
+        "q-other", 3, "BAD_PAYLOAD", "detail", "opened", "t-2", "paper",
+        resolution_status="unresolved",
+    )
+    receipt_other = EventReceiptRow(
+        "q-other", 3, "fp-q-other", "t-2", "paper", "", "", "opened", now,
+        "quarantined", 1,
+    )
+    other = store.execute_batch_transaction(
+        "ctrl-2",
+        "t-2",
+        "paper",
+        BatchProjectionMutation(receipts=[receipt_other], quarantines=[q_other]),
+    )
+    assert other.unresolved_quarantine_count == 1
+    refreshed = store.execute_batch_transaction(
+        "ctrl-1", "t-1", "paper", BatchProjectionMutation()
+    )
+    assert refreshed.unresolved_quarantine_count == 1
 
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
@@ -471,7 +674,17 @@ def test_projection_store_deterministic_out_of_order_bounds(postgres_dsn: str) -
         stage_coverage={}, is_terminal=False, first_occurred_at=t2, last_occurred_at=t2,
         first_ingested_seq=10, last_ingested_seq=10
     )
-    m1 = BatchProjectionMutation(journeys=[j_newer], new_checkpoint_seq=10)
+    receipt_newer = EventReceiptRow(
+        "evt-newer", 10, "fp-newer", "t-1", "paper", "j-1", "", "opened",
+        t2, "applied", 1,
+    )
+    link_newer = IdentityLinkRow(
+        "t-1", "paper", "signal_id", "sig-1", "j-1", 10, 10, t2, t2
+    )
+    m1 = BatchProjectionMutation(
+        receipts=[receipt_newer], identity_links=[link_newer], journeys=[j_newer],
+        new_checkpoint_seq=10,
+    )
     store.execute_batch_transaction("ctrl-1", "t-1", "paper", m1)
 
     # Ingest older event later (seq=5, time=t1)
@@ -480,7 +693,17 @@ def test_projection_store_deterministic_out_of_order_bounds(postgres_dsn: str) -
         stage_coverage={}, is_terminal=False, first_occurred_at=t1, last_occurred_at=t1,
         first_ingested_seq=5, last_ingested_seq=5
     )
-    m2 = BatchProjectionMutation(journeys=[j_older], new_checkpoint_seq=10)
+    receipt_older = EventReceiptRow(
+        "evt-older", 5, "fp-older", "t-1", "paper", "j-1", "", "opened",
+        t1, "applied", 2,
+    )
+    link_older = IdentityLinkRow(
+        "t-1", "paper", "signal_id", "sig-1", "j-1", 5, 5, t1, t1
+    )
+    m2 = BatchProjectionMutation(
+        receipts=[receipt_older], identity_links=[link_older], journeys=[j_older],
+        new_checkpoint_seq=10,
+    )
     store.execute_batch_transaction("ctrl-1", "t-1", "paper", m2)
 
     import psycopg
@@ -491,7 +714,33 @@ def test_projection_store_deterministic_out_of_order_bounds(postgres_dsn: str) -
         assert row[1] == t2
         assert row[2] == 5
         assert row[3] == 10
+        cur.execute(
+            f"""
+            SELECT first_occurred_at, last_occurred_at,
+                   first_ingested_seq, last_ingested_seq
+            FROM {schema_name}.identity_links
+            WHERE identifier_type='signal_id' AND identifier_value='sig-1'
+            """
+        )
+        assert cur.fetchone() == (t1, t2, 5, 10)
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_controller_advisory_lock_id_is_stable_across_processes() -> None:
+    expected = controller_advisory_lock_id("ctrl-1", "t-1", "paper")
+    code = (
+        "from services.trade_journey.projection_store import "
+        "controller_advisory_lock_id; "
+        "print(controller_advisory_lock_id('ctrl-1', 't-1', 'paper'))"
+    )
+    observed = []
+    for seed in ("1", "987654"):
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        observed.append(
+            int(subprocess.check_output([sys.executable, "-c", code], env=env, text=True))
+        )
+    assert observed == [expected, expected]
 
 
 def test_projection_store_two_writers_and_nonblocking_lock(postgres_dsn: str) -> None:
@@ -504,13 +753,18 @@ def test_projection_store_two_writers_and_nonblocking_lock(postgres_dsn: str) ->
     # Hold lock in separate transaction
     with psycopg.connect(postgres_dsn) as conn:
         with conn.cursor() as cur:
-            lock_str = "ctrl-1:t-1:paper"
-            lock_id = (hash(lock_str) & 0x7FFFFFFF) or PROJECTION_CONTROLLER_ADVISORY_LOCK_ID
+            lock_id = controller_advisory_lock_id("ctrl-1", "t-1", "paper")
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_id,))
 
             m = BatchProjectionMutation(new_checkpoint_seq=1)
             with pytest.raises(ProjectionStoreException, match="Could not acquire advisory lock"):
                 store2.execute_batch_transaction("ctrl-1", "t-1", "paper", m)
+
+            # A distinct controller scope uses a distinct lock and remains ready.
+            other = store2.execute_batch_transaction(
+                "ctrl-2", "t-1", "paper", BatchProjectionMutation()
+            )
+            assert other.controller_id == "ctrl-2"
 
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
@@ -524,19 +778,161 @@ def test_projection_store_identifier_type_check_constraint_and_runtime_construct
 
     # Runtime constructor (bootstrap=False) does not run DDL
     store_runtime = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=False)
+    now = datetime.now(timezone.utc)
+
+    canonical_types = tuple(
+        dict.fromkeys(
+            ("journey_id",)
+            + IDENTIFIER_FIELDS
+            + tuple(
+                field
+                for field in STABLE_IDENTITY_FIELDS
+                if field not in {"tenant_id", "environment"}
+            )
+        )
+    )
+    links = [
+        IdentityLinkRow(
+            tenant_id="t-1",
+            environment="paper",
+            identifier_type=identifier_type,
+            identifier_value=f"value-{index}",
+            journey_id="j-1",
+            first_ingested_seq=1,
+            last_ingested_seq=1,
+            first_occurred_at=now,
+            last_occurred_at=now,
+        )
+        for index, identifier_type in enumerate(canonical_types)
+    ]
+    store_runtime.execute_batch_transaction(
+        "ctrl-1",
+        "t-1",
+        "paper",
+        BatchProjectionMutation(
+            receipts=[
+                EventReceiptRow(
+                    "evt-valid-types", 1, "fp-valid-types", "t-1", "paper", "j-1",
+                    "", "opened", now, "applied", 1,
+                )
+            ],
+            identity_links=links,
+        ),
+    )
 
     # Attempting to insert invalid identifier_type should fail check constraint
     invalid_link = IdentityLinkRow(
         tenant_id="t-1", environment="paper", identifier_type="INVALID_TYPE",
-        identifier_value="val-1", journey_id="j-1", first_ingested_seq=1, last_ingested_seq=1
+        identifier_value="val-1", journey_id="j-1", first_ingested_seq=2,
+        last_ingested_seq=2, first_occurred_at=now, last_occurred_at=now,
     )
-    m = BatchProjectionMutation(identity_links=[invalid_link])
+    m = BatchProjectionMutation(
+        receipts=[
+            EventReceiptRow(
+                "evt-invalid-type", 2, "fp-invalid-type", "t-1", "paper", "j-1",
+                "", "opened", now, "applied", 2,
+            )
+        ],
+        identity_links=[invalid_link],
+    )
     import psycopg
     with pytest.raises(psycopg.errors.CheckViolation):
         store_runtime.execute_batch_transaction("ctrl-1", "t-1", "paper", m)
 
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_runtime_role_has_dml_without_ddl(
+    postgres_admin_dsn: str,
+) -> None:
+    """Migration and runtime credentials are operationally separable."""
+
+    import psycopg
+    from psycopg import sql
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    forbidden_schema = f"test_forbidden_{uuid4().hex[:8]}"
+    role_name = f"test_projection_runtime_{uuid4().hex[:8]}"
+    role_password = f"pw_{uuid4().hex}"
+    admin_info = psycopg.conninfo.conninfo_to_dict(postgres_admin_dsn)
+    database_name = admin_info.get("dbname") or "postgres"
+
+    admin_store = ProjectionStore(
+        postgres_admin_dsn, schema=schema_name, bootstrap=True
+    )
+    del admin_store
+
+    runtime_dsn = psycopg.conninfo.make_conninfo(
+        host=admin_info.get("host") or "localhost",
+        port=admin_info.get("port") or "5432",
+        dbname=database_name,
+        user=role_name,
+        password=role_password,
+    )
+
+    try:
+        with psycopg.connect(postgres_admin_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+                    sql.Identifier(role_name), sql.Literal(role_password)
+                )
+            )
+            cur.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(database_name), sql.Identifier(role_name)
+                )
+            )
+            cur.execute(
+                sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    sql.Identifier(schema_name), sql.Identifier(role_name)
+                )
+            )
+            cur.execute(
+                sql.SQL(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {}"
+                ).format(sql.Identifier(schema_name), sql.Identifier(role_name))
+            )
+
+        runtime_store = ProjectionStore(
+            runtime_dsn, schema=schema_name, bootstrap=False
+        )
+        now = datetime.now(timezone.utc)
+        state = runtime_store.execute_batch_transaction(
+            "runtime-controller",
+            "t-1",
+            "paper",
+            BatchProjectionMutation(
+                receipts=[
+                    EventReceiptRow(
+                        "evt-runtime", 1, "fp-runtime", "t-1", "paper", "j-1",
+                        "", "opened", now, "applied", 1,
+                    )
+                ]
+            ),
+        )
+        assert state.checkpoint_seq == 1
+
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            ProjectionStore(
+                runtime_dsn, schema=forbidden_schema, bootstrap=True
+            )
+    finally:
+        with psycopg.connect(postgres_admin_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                    sql.Identifier(forbidden_schema)
+                )
+            )
+            cur.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                    sql.Identifier(schema_name)
+                )
+            )
+            cur.execute(
+                sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role_name))
+            )
+            cur.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name)))
 
 
 def test_projection_store_transaction_rollback_and_retry(postgres_dsn: str) -> None:
@@ -547,7 +943,9 @@ def test_projection_store_transaction_rollback_and_retry(postgres_dsn: str) -> N
 
     # Valid receipt + invalid identity link type in same batch
     receipt = EventReceiptRow("evt-1", 1, "fp-1", "t-1", "paper", "j-1", "", "opened", now, "applied", 1)
-    bad_link = IdentityLinkRow("t-1", "paper", "BAD_TYPE", "val-1", "j-1", 1, 1)
+    bad_link = IdentityLinkRow(
+        "t-1", "paper", "BAD_TYPE", "val-1", "j-1", 1, 1, now, now
+    )
 
     m = BatchProjectionMutation(receipts=[receipt], identity_links=[bad_link], new_checkpoint_seq=1)
     import psycopg
@@ -558,6 +956,21 @@ def test_projection_store_transaction_rollback_and_retry(postgres_dsn: str) -> N
     assert store.get_receipt("evt-1") is None
     assert store.get_controller_state("ctrl-1", "t-1", "paper") is None
 
+    valid_link = IdentityLinkRow(
+        "t-1", "paper", "signal_id", "sig-retry", "j-1", 1, 1, now, now
+    )
+    retried = store.execute_batch_transaction(
+        "ctrl-1",
+        "t-1",
+        "paper",
+        BatchProjectionMutation(
+            receipts=[receipt], identity_links=[valid_link], new_checkpoint_seq=1
+        ),
+    )
+    assert retried.checkpoint_seq == 1
+    assert retried.projection_revision == 1
+    assert store.get_receipt("evt-1") is not None
+
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
@@ -565,15 +978,30 @@ def test_projection_store_transaction_rollback_and_retry(postgres_dsn: str) -> N
 def test_projection_store_migration_applied_twice_and_prior_reader_compat(postgres_dsn: str) -> None:
     """Requirement 8b: Migration applied twice is idempotent and schema is backward compatible."""
     schema_name = f"test_proj_{uuid4().hex[:8]}"
-    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
-    # Apply migration again
-    store.bootstrap_schema()
+    migration_sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8").replace(
+        "trade_journey_projection", schema_name
+    )
 
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(migration_sql)
+        cur.execute(migration_sql)
         cur.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{schema_name}'")
         count = cur.fetchone()[0]
         assert count == 7
+
+        # A reader compiled against the original controller projection remains
+        # valid after the exact migration file is reapplied.
+        cur.execute(
+            f"""
+            SELECT controller_id, tenant_scope, environment_scope, checkpoint_seq,
+                   source_high_watermark, backlog_count, projection_revision,
+                   deployment_sha, mode, status, accepted_live
+            FROM {schema_name}.controller
+            WHERE controller_id='prior-reader'
+            """
+        )
+        assert cur.fetchone() is None
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
 
@@ -610,4 +1038,3 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
         assert "Index Scan" in plan5 or "Bitmap Index Scan" in plan5
 
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
-

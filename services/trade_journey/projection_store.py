@@ -7,16 +7,36 @@ typed persistence interfaces, advisory locking, and atomic batch projection tran
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Tuple
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# Advisory lock ID for Trade Journey Projector Controller
-PROJECTION_CONTROLLER_ADVISORY_LOCK_ID = 918273645
+DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
+INITIAL_MIGRATION_PATH = (
+    Path(__file__).resolve().parent
+    / "migrations"
+    / "001_create_trade_journey_projection_schema.sql"
+)
+
+
+def controller_advisory_lock_id(
+    controller_id: str, tenant_scope: str, environment_scope: str
+) -> int:
+    """Return a stable signed-bigint lock key for one controller scope.
+
+    Python's built-in ``hash`` is randomized independently in every process,
+    so it cannot coordinate PostgreSQL advisory locks across worker processes.
+    """
+
+    identity = f"{controller_id}\x1f{tenant_scope}\x1f{environment_scope}"
+    digest = hashlib.sha256(identity.encode("utf-8")).digest()[:8]
+    return int.from_bytes(digest, byteorder="big", signed=True)
 
 
 class ProjectionStoreException(Exception):
@@ -85,6 +105,8 @@ class IdentityLinkRow:
     journey_id: str
     first_ingested_seq: int
     last_ingested_seq: int
+    first_occurred_at: datetime
+    last_occurred_at: datetime
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -191,7 +213,7 @@ class ProjectionStore:
         self,
         dsn: str,
         *,
-        schema: str = "trade_journey_projection",
+        schema: str = DEFAULT_PROJECTION_SCHEMA,
         connect: Optional[Callable[..., Any]] = None,
         bootstrap: bool = False,
     ) -> None:
@@ -209,175 +231,10 @@ class ProjectionStore:
             self.bootstrap_schema()
 
     def bootstrap_schema(self) -> None:
-        """Applies initial schema and tables idempotently."""
-        sql = f"""
-        CREATE SCHEMA IF NOT EXISTS {self.schema};
+        """Apply the versioned migration explicitly with migration credentials."""
 
-        CREATE TABLE IF NOT EXISTS {self.schema}.controller (
-            controller_id TEXT NOT NULL,
-            tenant_scope TEXT NOT NULL,
-            environment_scope TEXT NOT NULL,
-            checkpoint_seq BIGINT NOT NULL DEFAULT 0,
-            source_high_watermark BIGINT NOT NULL DEFAULT 0,
-            backlog_count BIGINT NOT NULL DEFAULT 0,
-            projection_revision BIGINT NOT NULL DEFAULT 0,
-            deployment_sha TEXT NOT NULL DEFAULT '',
-            mode TEXT NOT NULL DEFAULT 'live',
-            status TEXT NOT NULL DEFAULT 'ok',
-            accepted_live BOOLEAN NOT NULL DEFAULT FALSE,
-            last_poll_at TIMESTAMPTZ,
-            last_success_at TIMESTAMPTZ,
-            last_live_success_at TIMESTAMPTZ,
-            last_recovery_at TIMESTAMPTZ,
-            last_backfill_at TIMESTAMPTZ,
-            last_replay_at TIMESTAMPTZ,
-            last_failure_at TIMESTAMPTZ,
-            last_error_message TEXT NOT NULL DEFAULT '',
-            unresolved_quarantine_count BIGINT NOT NULL DEFAULT 0,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            PRIMARY KEY (controller_id, tenant_scope, environment_scope)
-        );
-
-        CREATE TABLE IF NOT EXISTS {self.schema}.event_receipts (
-            event_id TEXT PRIMARY KEY,
-            ingested_seq BIGINT UNIQUE NOT NULL,
-            fingerprint TEXT NOT NULL,
-            tenant_id TEXT NOT NULL,
-            environment TEXT NOT NULL,
-            journey_id TEXT NOT NULL DEFAULT '',
-            loop_run_id TEXT NOT NULL DEFAULT '',
-            source_event_type TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            disposition TEXT NOT NULL CHECK (disposition IN ('applied', 'duplicate', 'ignored', 'quarantined')),
-            projection_revision BIGINT NOT NULL DEFAULT 0,
-            projected_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_event_receipts_ingested_seq
-            ON {self.schema}.event_receipts (ingested_seq);
-
-        CREATE INDEX IF NOT EXISTS idx_event_receipts_tenant_env_journey
-            ON {self.schema}.event_receipts (tenant_id, environment, journey_id)
-            WHERE journey_id != '';
-
-        CREATE TABLE IF NOT EXISTS {self.schema}.identity_links (
-            tenant_id TEXT NOT NULL,
-            environment TEXT NOT NULL,
-            identifier_type TEXT NOT NULL CHECK (identifier_type IN (
-                'journey_id', 'trade_id', 'order_id', 'fill_id', 'position_id',
-                'signal_id', 'proposal_id', 'allocation_id', 'intent_id', 'loop_run_id'
-            )),
-            identifier_value TEXT NOT NULL,
-            journey_id TEXT NOT NULL,
-            first_ingested_seq BIGINT NOT NULL,
-            last_ingested_seq BIGINT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            PRIMARY KEY (tenant_id, environment, identifier_type, identifier_value)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_identity_links_tenant_env_journey
-            ON {self.schema}.identity_links (tenant_id, environment, journey_id);
-
-        CREATE TABLE IF NOT EXISTS {self.schema}.journeys (
-            tenant_id TEXT NOT NULL,
-            environment TEXT NOT NULL,
-            journey_id TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'open',
-            stage_coverage JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            is_terminal BOOLEAN NOT NULL DEFAULT FALSE,
-            first_occurred_at TIMESTAMPTZ NOT NULL,
-            last_occurred_at TIMESTAMPTZ NOT NULL,
-            first_ingested_seq BIGINT NOT NULL,
-            last_ingested_seq BIGINT NOT NULL,
-            current_identity_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            evidence_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            diagnostic_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            loop_run_id TEXT NOT NULL DEFAULT '',
-            projection_revision BIGINT NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            PRIMARY KEY (tenant_id, environment, journey_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_journeys_tenant_env_updated_journey
-            ON {self.schema}.journeys (tenant_id, environment, updated_at DESC, journey_id DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_journeys_tenant_env_created_journey
-            ON {self.schema}.journeys (tenant_id, environment, created_at DESC, journey_id DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_journeys_tenant_env_status_updated_journey
-            ON {self.schema}.journeys (tenant_id, environment, status, updated_at DESC, journey_id DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_journeys_tenant_env_loop_run
-            ON {self.schema}.journeys (tenant_id, environment, loop_run_id)
-            WHERE loop_run_id != '';
-
-        CREATE TABLE IF NOT EXISTS {self.schema}.journey_stages (
-            tenant_id TEXT NOT NULL,
-            environment TEXT NOT NULL,
-            journey_id TEXT NOT NULL,
-            source_event_id TEXT NOT NULL,
-            stage_name TEXT NOT NULL,
-            stage_status TEXT NOT NULL DEFAULT 'completed',
-            stage_ordinal INT NOT NULL,
-            source_ingested_seq BIGINT NOT NULL,
-            event_sequence BIGINT NOT NULL DEFAULT 0,
-            occurred_at TIMESTAMPTZ NOT NULL,
-            recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            contract_fields JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            evidence_references JSONB NOT NULL DEFAULT '[]'::jsonb,
-            projection_revision BIGINT NOT NULL DEFAULT 0,
-            fingerprint TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (tenant_id, environment, journey_id, source_event_id, stage_name)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_journey_stages_timeline
-            ON {self.schema}.journey_stages (tenant_id, environment, journey_id, stage_ordinal, event_sequence, occurred_at, source_ingested_seq, source_event_id);
-
-        CREATE TABLE IF NOT EXISTS {self.schema}.loop_runs (
-            tenant_id TEXT NOT NULL,
-            environment TEXT NOT NULL,
-            loop_run_id TEXT NOT NULL,
-            journey_id TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'active',
-            lifecycle_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            freshness_lineage JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            contract_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-            projection_revision BIGINT NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            PRIMARY KEY (tenant_id, environment, loop_run_id)
-        );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_loop_runs_tenant_env_journey
-            ON {self.schema}.loop_runs (tenant_id, environment, journey_id)
-            WHERE journey_id != '';
-
-        CREATE INDEX IF NOT EXISTS idx_loop_runs_tenant_env_updated_loop
-            ON {self.schema}.loop_runs (tenant_id, environment, updated_at DESC, loop_run_id DESC);
-
-        CREATE TABLE IF NOT EXISTS {self.schema}.quarantine (
-            event_id TEXT NOT NULL,
-            ingested_seq BIGINT NOT NULL,
-            reason_code TEXT NOT NULL,
-            reason_detail TEXT NOT NULL DEFAULT '',
-            source_event_type TEXT NOT NULL,
-            tenant_id TEXT NOT NULL DEFAULT '',
-            environment TEXT NOT NULL DEFAULT '',
-            journey_id TEXT NOT NULL DEFAULT '',
-            fingerprint TEXT NOT NULL DEFAULT '',
-            first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-            occurrence_count INT NOT NULL DEFAULT 1,
-            resolution_status TEXT NOT NULL DEFAULT 'unresolved',
-            resolution_audit_ref TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (event_id, ingested_seq)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_quarantine_status_first_seen
-            ON {self.schema}.quarantine (resolution_status, first_seen_at);
-        """
+        sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
+        sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
         with self._connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(sql)
 
@@ -445,9 +302,74 @@ class ProjectionStore:
         5. Upserts journey stages, journeys, loop runs, receipts, quarantines.
         6. Advances controller revision and contiguous checkpoint atomically.
         """
-        # Derive controller-scoped lock ID from controller_id, tenant_scope, environment_scope
-        lock_str = f"{controller_id}:{tenant_scope}:{environment_scope}"
-        lock_id = (hash(lock_str) & 0x7FFFFFFF) or PROJECTION_CONTROLLER_ADVISORY_LOCK_ID
+        has_derived_mutations = any(
+            (
+                mutation.identity_links,
+                mutation.journeys,
+                mutation.stages,
+                mutation.loop_runs,
+                mutation.quarantines,
+            )
+        )
+        if has_derived_mutations and not mutation.receipts:
+            raise ProjectionStoreException(
+                "Projection row mutations require at least one durable event receipt"
+            )
+
+        mode = mutation.mode.lower()
+        if mode not in {"live", "backfill", "recovery", "replay"}:
+            raise ProjectionStoreException(f"Unsupported projection mode: {mutation.mode}")
+        if mutation.source_high_watermark < 0 or mutation.backlog_count < 0:
+            raise ProjectionStoreException(
+                "Controller high watermark and backlog must be non-negative"
+            )
+
+        def validate_scope(kind: str, tenant_id: str, environment: str) -> None:
+            if tenant_scope not in {"", "*"} and tenant_id not in {"", tenant_scope}:
+                raise ProjectionStoreException(
+                    f"{kind} tenant {tenant_id!r} is outside controller scope {tenant_scope!r}"
+                )
+            if (
+                environment_scope not in {"", "*"}
+                and environment not in {"", environment_scope}
+            ):
+                raise ProjectionStoreException(
+                    f"{kind} environment {environment!r} is outside controller scope {environment_scope!r}"
+                )
+
+        for receipt in mutation.receipts:
+            validate_scope("receipt", receipt.tenant_id, receipt.environment)
+        for link in mutation.identity_links:
+            validate_scope("identity link", link.tenant_id, link.environment)
+        for journey in mutation.journeys:
+            validate_scope("journey", journey.tenant_id, journey.environment)
+        for stage in mutation.stages:
+            validate_scope("stage", stage.tenant_id, stage.environment)
+        for loop_run in mutation.loop_runs:
+            validate_scope("loop run", loop_run.tenant_id, loop_run.environment)
+        for quarantine in mutation.quarantines:
+            validate_scope("quarantine", quarantine.tenant_id, quarantine.environment)
+
+        receipt_keys = {
+            (receipt.event_id, receipt.ingested_seq) for receipt in mutation.receipts
+        }
+        receipt_event_ids = {event_id for event_id, _ in receipt_keys}
+        if any(stage.source_event_id not in receipt_event_ids for stage in mutation.stages):
+            raise ProjectionStoreException(
+                "Every stage mutation must reference an event receipt in the same batch"
+            )
+        if any(
+            (quarantine.event_id, quarantine.ingested_seq) not in receipt_keys
+            for quarantine in mutation.quarantines
+        ):
+            raise ProjectionStoreException(
+                "Every quarantine mutation must reference its event receipt in the same batch"
+            )
+
+        effective_accepted_live = mode == "live" and mutation.accepted_live
+        lock_id = controller_advisory_lock_id(
+            controller_id, tenant_scope, environment_scope
+        )
 
         with self._connect(self.dsn) as conn:
             with conn.cursor() as cur:
@@ -490,7 +412,7 @@ class ProjectionStore:
                             mutation.deployment_sha,
                             mutation.mode,
                             mutation.status,
-                            mutation.accepted_live,
+                            effective_accepted_live,
                         ),
                     )
                     curr_checkpoint_seq = 0
@@ -504,14 +426,24 @@ class ProjectionStore:
                 # 3. Check receipts: filter out exact duplicates & raise on fingerprint conflict
                 new_receipts: list[EventReceiptRow] = []
                 exact_duplicate_receipts: list[EventReceiptRow] = []
+                batch_fingerprints: dict[str, str] = {}
                 for receipt in mutation.receipts:
+                    prior_fingerprint = batch_fingerprints.get(receipt.event_id)
+                    if prior_fingerprint is not None:
+                        if prior_fingerprint != receipt.fingerprint:
+                            raise ConflictingDuplicateException(
+                                f"Event {receipt.event_id} has conflicting fingerprints within one batch"
+                            )
+                        exact_duplicate_receipts.append(receipt)
+                        continue
+                    batch_fingerprints[receipt.event_id] = receipt.fingerprint
                     cur.execute(
-                        f"SELECT fingerprint, disposition FROM {self.schema}.event_receipts WHERE event_id=%s",
+                        f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
                         (receipt.event_id,),
                     )
                     existing_r = cur.fetchone()
                     if existing_r is not None:
-                        existing_fp, existing_disp = existing_r[0], existing_r[1]
+                        existing_fp = existing_r[0]
                         if existing_fp != receipt.fingerprint:
                             raise ConflictingDuplicateException(
                                 f"Event {receipt.event_id} reused with conflicting fingerprint {receipt.fingerprint} vs {existing_fp}"
@@ -521,19 +453,10 @@ class ProjectionStore:
                     else:
                         new_receipts.append(receipt)
 
-                # If all receipts in mutation are exact duplicates and no new non-receipt mutations exist:
-                is_pure_exact_duplicate = (
-                    len(mutation.receipts) > 0
-                    and len(exact_duplicate_receipts) == len(mutation.receipts)
-                    and len(mutation.identity_links) == 0
-                    and len(mutation.stages) == 0
-                    and len(mutation.journeys) == 0
-                    and len(mutation.loop_runs) == 0
-                    and len(mutation.quarantines) == 0
-                )
-
-                if is_pure_exact_duplicate:
-                    # Pure exact duplicate: do NOT increment revision, do NOT rewrite stage/aggregate rows
+                if mutation.receipts and not new_receipts:
+                    # Every event is already durable with the same fingerprint. Ignore
+                    # all caller-supplied derived mutations so retries cannot rewrite
+                    # stages or aggregates with non-canonical retry payloads.
                     cur.execute(
                         f"""
                         SELECT controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark,
@@ -548,7 +471,7 @@ class ProjectionStore:
                     )
                     return ControllerStateRow(*cur.fetchone())
 
-                next_revision = curr_revision + 1
+                next_revision = curr_revision + (1 if new_receipts else 0)
 
                 # 4. Process identity links & check for identity conflicts
                 for link in mutation.identity_links:
@@ -569,12 +492,15 @@ class ProjectionStore:
                         f"""
                         INSERT INTO {self.schema}.identity_links (
                             tenant_id, environment, identifier_type, identifier_value, journey_id,
-                            first_ingested_seq, last_ingested_seq, created_at, updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            first_ingested_seq, last_ingested_seq, first_occurred_at,
+                            last_occurred_at, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (tenant_id, environment, identifier_type, identifier_value)
                         DO UPDATE SET
                             first_ingested_seq = LEAST({self.schema}.identity_links.first_ingested_seq, EXCLUDED.first_ingested_seq),
                             last_ingested_seq = GREATEST({self.schema}.identity_links.last_ingested_seq, EXCLUDED.last_ingested_seq),
+                            first_occurred_at = LEAST({self.schema}.identity_links.first_occurred_at, EXCLUDED.first_occurred_at),
+                            last_occurred_at = GREATEST({self.schema}.identity_links.last_occurred_at, EXCLUDED.last_occurred_at),
                             updated_at = EXCLUDED.updated_at
                         """,
                         (
@@ -585,6 +511,8 @@ class ProjectionStore:
                             link.journey_id,
                             link.first_ingested_seq,
                             link.last_ingested_seq,
+                            link.first_occurred_at,
+                            link.last_occurred_at,
                             now,
                             now,
                         ),
@@ -601,12 +529,7 @@ class ProjectionStore:
                             projection_revision, fingerprint
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
                         ON CONFLICT (tenant_id, environment, journey_id, source_event_id, stage_name)
-                        DO UPDATE SET
-                            stage_status = EXCLUDED.stage_status,
-                            contract_fields = EXCLUDED.contract_fields,
-                            evidence_references = EXCLUDED.evidence_references,
-                            projection_revision = EXCLUDED.projection_revision,
-                            recorded_at = EXCLUDED.recorded_at
+                        DO NOTHING
                         """,
                         (
                             stage.tenant_id,
@@ -626,6 +549,27 @@ class ProjectionStore:
                             stage.fingerprint,
                         ),
                     )
+                    if cur.rowcount == 0:
+                        cur.execute(
+                            f"""
+                            SELECT fingerprint
+                            FROM {self.schema}.journey_stages
+                            WHERE tenant_id=%s AND environment=%s AND journey_id=%s
+                              AND source_event_id=%s AND stage_name=%s
+                            """,
+                            (
+                                stage.tenant_id,
+                                stage.environment,
+                                stage.journey_id,
+                                stage.source_event_id,
+                                stage.stage_name,
+                            ),
+                        )
+                        existing_stage = cur.fetchone()
+                        if existing_stage is None or existing_stage[0] != stage.fingerprint:
+                            raise ConflictingDuplicateException(
+                                f"Stage {stage.source_event_id}/{stage.stage_name} reused with a conflicting fingerprint"
+                            )
 
                 # 6. Upsert Journeys
                 for journey in mutation.journeys:
@@ -767,43 +711,71 @@ class ProjectionStore:
                         ),
                     )
 
-                # Calculate contiguous checkpoint advancement from durable event receipts
-                if mutation.receipts:
-                    durable_seqs = sorted(r.ingested_seq for r in mutation.receipts)
-                    expected_seq = curr_checkpoint_seq + 1
-                    calculated_checkpoint = curr_checkpoint_seq
-                    for seq in durable_seqs:
-                        if seq == expected_seq:
-                            calculated_checkpoint = seq
-                            expected_seq += 1
-                        elif seq <= curr_checkpoint_seq:
-                            continue
-                        else:
-                            break
-                    target_checkpoint_seq = calculated_checkpoint
-                else:
-                    target_checkpoint_seq = curr_checkpoint_seq
-
-                # Compute actual unresolved quarantine count from database
+                # Derive the checkpoint from durable database truth. The recursive
+                # index lookups also cross a previously persisted gap tail when the
+                # missing receipt arrives in a later transaction.
                 cur.execute(
-                    f"SELECT COUNT(*) FROM {self.schema}.quarantine WHERE resolution_status='unresolved'"
+                    f"""
+                    WITH RECURSIVE contiguous(seq) AS (
+                        SELECT %s::bigint
+                        UNION ALL
+                        SELECT contiguous.seq + 1
+                        FROM contiguous
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM {self.schema}.event_receipts AS receipt
+                            WHERE receipt.ingested_seq = contiguous.seq + 1
+                              AND (%s IN ('', '*') OR receipt.tenant_id=%s)
+                              AND (%s IN ('', '*') OR receipt.environment=%s)
+                        )
+                    )
+                    SELECT MAX(seq) FROM contiguous
+                    """,
+                    (
+                        curr_checkpoint_seq,
+                        tenant_scope,
+                        tenant_scope,
+                        environment_scope,
+                        environment_scope,
+                    ),
+                )
+                target_checkpoint_seq = cur.fetchone()[0]
+
+                # Compute controller-scoped unresolved quarantine truth.
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM {self.schema}.quarantine
+                    WHERE resolution_status='unresolved'
+                      AND (%s IN ('', '*') OR tenant_id=%s)
+                      AND (%s IN ('', '*') OR environment=%s)
+                    """,
+                    (
+                        tenant_scope,
+                        tenant_scope,
+                        environment_scope,
+                        environment_scope,
+                    ),
                 )
                 actual_unresolved_quarantine_count = cur.fetchone()[0]
 
                 # Mode-dependent timestamp updates
-                mode = mutation.mode.lower()
-                is_live_mode = (mode == "live")
-                update_last_live = is_live_mode and mutation.accepted_live
+                update_last_live = effective_accepted_live
 
                 last_backfill_ts = now if mode == "backfill" else None
                 last_recovery_ts = now if mode == "recovery" else None
                 last_replay_ts = now if mode == "replay" else None
+                last_failure_ts = (
+                    now
+                    if mutation.error_message or mutation.status.lower() == "failed"
+                    else None
+                )
 
                 cur.execute(
                     f"""
                     UPDATE {self.schema}.controller
-                    SET checkpoint_seq = GREATEST(checkpoint_seq, %s),
-                        source_high_watermark = %s,
+                    SET checkpoint_seq = %s,
+                        source_high_watermark = GREATEST(source_high_watermark, %s, %s),
                         backlog_count = %s,
                         projection_revision = %s,
                         deployment_sha = %s,
@@ -816,6 +788,7 @@ class ProjectionStore:
                         last_backfill_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_backfill_at END,
                         last_recovery_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_recovery_at END,
                         last_replay_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_replay_at END,
+                        last_failure_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_failure_at END,
                         last_error_message = %s,
                         unresolved_quarantine_count = %s,
                         updated_at = %s
@@ -829,12 +802,13 @@ class ProjectionStore:
                     (
                         target_checkpoint_seq,
                         mutation.source_high_watermark,
+                        target_checkpoint_seq,
                         mutation.backlog_count,
                         next_revision,
                         mutation.deployment_sha,
                         mutation.mode,
                         mutation.status,
-                        mutation.accepted_live,
+                        effective_accepted_live,
                         now,
                         now,
                         update_last_live,
@@ -845,6 +819,8 @@ class ProjectionStore:
                         last_recovery_ts,
                         last_replay_ts,
                         last_replay_ts,
+                        last_failure_ts,
+                        last_failure_ts,
                         mutation.error_message,
                         actual_unresolved_quarantine_count,
                         now,
