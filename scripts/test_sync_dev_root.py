@@ -225,7 +225,7 @@ def test_sync_records_pid_bound_intent_before_stopping_live_supervisor(tmp_path:
     target_sha = _git(seed, "rev-parse", "HEAD")
     _git(seed, "push", "origin", "dev")
 
-    process = subprocess.Popen(["sleep", "60"])
+    process = subprocess.Popen(["sleep", "60"], cwd=dev_root)
     pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
     env = os.environ.copy()
     env["PANTHEON_SUPERVISOR_PID"] = str(pid_file)
