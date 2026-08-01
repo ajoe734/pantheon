@@ -3596,6 +3596,131 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
+    def test_dispatcher_helper_claim_prefers_higher_available_preferred_lane_when_busy(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Antigravity": ["Claude2", "Codex2", "Codex"],
+                }
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "worker_slots": ["s1"],
+                },
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                    "worker_slots": ["s2"],
+                },
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                    "worker_slots": ["s3"],
+                },
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "worker_slots": ["s4"],
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "w1": {
+                    "agent_id": "antigravity",
+                    "task_id": "L12-OBS-001",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                },
+                "w2": {
+                    "agent_id": "claude2",
+                    "task_id": "L12-OBS-002",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                },
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-TEST-TASK-20260729",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Antigravity",
+                        "Claude2",
+                        "Codex2",
+                        "Codex",
+                    ],
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-TEST-TASK-20260729",
+                    "status": "todo",
+                    "owner": "Codex2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Antigravity",
+                        "Claude2",
+                        "Codex2",
+                        "Codex",
+                    ],
+                    "last_update": "2026-07-29T10:51:28Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=initial_status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "SUP-L12-TEST-TASK-20260729")
+        self.assertEqual(kwargs["new_owner"], "Codex2")
+        self.assertEqual(kwargs["new_reviewer"], "Antigravity")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "SUP-L12-TEST-TASK-20260729")
+        self.assertEqual(queued_event["target_agent"], "Codex2")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
     def test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused(self) -> None:
         config = {
             "schema": {

@@ -12861,15 +12861,16 @@ def choose_helper_claim_agent(
     if helper_settings.get("claim_idle_work", False):
         return idle_agent_name in fallbacks
     owner_loads = agent_loads.get(owner_name, [])
-    if helper_settings.get("require_owner_higher_priority_load", True):
-        dispatch_reason_for_status = {
-            "in_progress": REASON_OWNED_IN_PROGRESS,
-            "todo": REASON_OWNED_READY,
-        }.get(task_status, REASON_OWNED_READY)
-        current_priority = dispatch_reason_priority(dispatch_reason_for_status)
-        if current_priority is None or not any(priority < current_priority for priority in owner_loads):
-            return False
-    return idle_agent_name in fallbacks
+    if not helper_settings.get("require_owner_higher_priority_load", True):
+        return idle_agent_name in fallbacks
+    dispatch_reason_for_status = {
+        "in_progress": REASON_OWNED_IN_PROGRESS,
+        "todo": REASON_OWNED_READY,
+    }.get(task_status, REASON_OWNED_READY)
+    current_priority = dispatch_reason_priority(dispatch_reason_for_status)
+    if current_priority is not None and any(priority <= current_priority for priority in owner_loads):
+        return idle_agent_name in fallbacks
+    return False
 
 
 def task_preferred_lane_blocks_helper_claim(
@@ -12888,17 +12889,15 @@ def task_preferred_lane_blocks_helper_claim(
     owner_name = canonical_agent_name(config, owner_name)
     if idle_agent_name not in preferred_lanes:
         return True
-    if owner_paused:
-        next_lane = task_next_preferred_helper_lane(
-            config,
-            task=task,
-            owner_name=owner_name,
-            state=state,
-        )
-        return idle_agent_name != next_lane
-    if owner_name not in preferred_lanes:
-        return False
-    return preferred_lanes.index(idle_agent_name) > preferred_lanes.index(owner_name)
+    next_lane = task_next_preferred_helper_lane(
+        config,
+        task=task,
+        owner_name=owner_name,
+        state=state,
+        owner_paused=owner_paused,
+    )
+    return idle_agent_name != next_lane
+
 
 
 def task_next_preferred_helper_lane(
@@ -12907,6 +12906,7 @@ def task_next_preferred_helper_lane(
     task: dict[str, Any],
     owner_name: str,
     state: dict[str, Any] | None = None,
+    owner_paused: bool = False,
 ) -> str | None:
     preferred_lanes = task_preferred_lane_order(config, task)
     if not preferred_lanes:
@@ -12916,11 +12916,21 @@ def task_next_preferred_helper_lane(
         start_index = preferred_lanes.index(owner_name) + 1
     except ValueError:
         start_index = 0
+    
+    settings = ready_dispatch_settings(config)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    agent_loads = agent_dispatch_loads(config, state, active_statuses) if state else {}
+
     for lane in preferred_lanes[start_index:]:
         if lane == owner_name:
             continue
-        if agent_can_take_task(config, lane, task, state=state):
-            return lane
+        if not agent_can_take_task(config, lane, task, state=state):
+            continue
+        if not owner_paused and state is not None:
+            capacity = agent_dispatch_capacity(config, lane, settings)
+            if len(agent_loads.get(lane, [])) >= capacity:
+                continue
+        return lane
     return None
 
 
