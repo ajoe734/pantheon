@@ -1,0 +1,33 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+    "title": "Provider-first helper claim when preferred lane is busy",
+    "phase": "L12 runtime/fleet guardrails",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review_approved",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+    "repository": "ajoe734/pantheon"
+  },
+  "scope": {
+    "owned_layer": "Supervisor helper claim preferred lane dispatch logic and state-aware capacity check",
+    "not_changing": "Supervisor status persistence, worker execution loop, or config schema",
+    "composes_with": "Orchestrator dispatch policy and worker reassignment rules"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator /tmp/pantheon-worker-worktrees/pantheon/sup-l12-helper-claim-busy-preferred-lane-20260729/.venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"helper_claim\"",
+        "result": "pass",
+        "details": "19 passed, 440 deselected in 2.42s"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /tmp/pantheon-worker-worktrees/pantheon/sup-l12-helper-claim-busy-preferred-lane-20260729/.venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"test_dispatcher_helper_claim_skips_full_capacity_preferred_lane or test_dispatcher_helper_claim_prefers_higher_available_preferred_lane_when_busy\"",
+        "result": "pass",
+        "details": "2 passed in 1.16s"
+      }
+    ]
+  }
+}
