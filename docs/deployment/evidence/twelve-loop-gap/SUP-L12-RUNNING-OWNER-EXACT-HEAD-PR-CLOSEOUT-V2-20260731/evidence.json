@@ -1,0 +1,28 @@
+{
+  "schema_version": "supervisor_exact_head_pr_closeout_v2.v1",
+  "task": {
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+    "title": "Supersede Wave0X #4396 governed closeout with current-head spec",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "done",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json"
+  },
+  "pr_target": {
+    "number": 4396,
+    "title": "[ReviewBus] SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 Reconcile running-owner PR exact head before support closeout is counted",
+    "head_ref_name": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "head_ref_oid": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
+    "auto_merge_enabled": true,
+    "status_checks": "all_success"
+  },
+  "validation": {
+    "status": "pass",
+    "receipt": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json verified immutable-bound",
+    "pr_4396_head": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
+    "auto_merge_set": true
+  }
+}
