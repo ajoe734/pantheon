@@ -854,6 +854,7 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert identity.head_commit == commit
         assert identity.tracked_tree_identity == tree
         assert identity.accepted_dev_commit == commit
+        assert identity.canonical_remote == "github.com/ajoe734/pantheon"
         assert identity.repository_slug == "ajoe734/pantheon"
         assert identity.config_path == live_config
         assert identity.config_bytes == config_bytes
@@ -944,6 +945,30 @@ def test_candidate_root_deny_matrix(tmp_path: Path) -> None:
     ):
         with pytest.raises(ValueError, match="symlink component"):
             resolve_candidate_root(parent_alias / commit)
+
+
+def test_candidate_root_rejects_tmp_and_worker_worktree_prefixes(
+    tmp_path: Path,
+) -> None:
+    trusted_parent = tmp_path / "command-runtimes"
+    trusted_parent.mkdir()
+    tmp_candidate = tmp_path / ("a" * 40)
+    tmp_candidate.mkdir()
+    worker_candidate = (
+        tmp_path
+        / "pantheon-worker-worktrees"
+        / "pantheon"
+        / ("b" * 40)
+    )
+    worker_candidate.mkdir(parents=True)
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        trusted_parent,
+    ):
+        with pytest.raises(ValueError, match="not a direct child"):
+            resolve_candidate_root(tmp_candidate)
+        with pytest.raises(ValueError, match="not a direct child"):
+            resolve_candidate_root(worker_candidate)
 
 
 def test_candidate_root_deleted_during_capture_is_rejected(tmp_path: Path) -> None:

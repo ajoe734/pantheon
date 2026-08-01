@@ -101,6 +101,7 @@ class CandidateRuntimeIdentity:
     tracked_tree_identity: str
     accepted_dev_commit: str
     remote_url: str
+    canonical_remote: str
     repository_slug: str
     config_path: Path
     config_device: int
@@ -147,7 +148,11 @@ class CandidateRuntimeIdentity:
 
         remote_url = parse_origin_url(resolved_root)
         remote = validate_remote_url(remote_url)
-        if remote_url != self.remote_url or remote.slug != self.repository_slug:
+        if (
+            remote_url != self.remote_url
+            or remote.slug != self.repository_slug
+            or f"github.com/{remote.slug}" != self.canonical_remote
+        ):
             raise ValueError("Candidate remote identity drift detected")
 
         head, tree, accepted = _capture_git_identity(resolved_root, self.basename)
@@ -371,6 +376,7 @@ def _fetch_trusted_dev_identity(candidate_head: str) -> TrustedDevIdentity:
             "--quiet",
             "--no-tags",
             "--force",
+            "--filter=blob:none",
             TRUSTED_ORIGIN_DEV_URL,
             "+refs/heads/dev:refs/heads/accepted-dev",
         )
@@ -585,6 +591,10 @@ def build_candidate_runtime_identity(
         expected_head=head,
         expected_tree=tracked_tree,
     )
+    final_remote_url = parse_origin_url(resolved_root)
+    final_remote = validate_remote_url(final_remote_url)
+    if final_remote_url != remote_url or final_remote.slug != remote.slug:
+        raise ValueError("Candidate remote identity changed during capture")
 
     return CandidateRuntimeIdentity(
         candidate_root=resolved_root,
@@ -595,6 +605,7 @@ def build_candidate_runtime_identity(
         tracked_tree_identity=tracked_tree,
         accepted_dev_commit=trusted_dev.commit,
         remote_url=remote_url,
+        canonical_remote=f"github.com/{remote.slug}",
         repository_slug=remote.slug,
         config_path=selected_config_path,
         config_device=config_identity.device,
