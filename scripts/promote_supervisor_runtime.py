@@ -86,6 +86,13 @@ class FilesystemIdentity:
 
 
 @dataclass(frozen=True)
+class CandidateRootHandle:
+    path: Path
+    descriptor: int
+    identity: FilesystemIdentity
+
+
+@dataclass(frozen=True)
 class TrustedDevIdentity:
     commit: str
     candidate_commit_tree: str
@@ -112,9 +119,14 @@ class CandidateRuntimeIdentity:
 
     def verify_against_live_config(self, live_config_path: Path) -> None:
         """Re-read and compare the exact live-config path and byte identity."""
+        if self.config_path != LIVE_SUPERVISOR_CONFIG_PATH:
+            raise ValueError(
+                "Captured config path is not the exact live supervisor config: "
+                f"{self.config_path}"
+            )
         snapshot = _capture_config_bytes(
             live_config_path,
-            expected_path=self.config_path,
+            expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
         )
         content, file_identity = snapshot
         if len(content) != self.config_byte_length:
@@ -137,56 +149,63 @@ class CandidateRuntimeIdentity:
 
     def verify_immutable_snapshot(self) -> None:
         """Revalidate every captured root, Git, and config identity value."""
-        resolved_root, root_identity = _capture_candidate_root(self.candidate_root)
-        if resolved_root != self.candidate_root:
-            raise ValueError("Candidate root path drift detected")
-        if (
-            root_identity.device != self.candidate_root_device
-            or root_identity.inode != self.candidate_root_inode
-        ):
-            raise ValueError("Candidate root file identity drift detected")
+        root_handle = _open_candidate_root_handle(self.candidate_root)
+        try:
+            if root_handle.path != self.candidate_root:
+                raise ValueError("Candidate root path drift detected")
+            if (
+                root_handle.identity.device != self.candidate_root_device
+                or root_handle.identity.inode != self.candidate_root_inode
+            ):
+                raise ValueError("Candidate root file identity drift detected")
 
-        remote_url = parse_origin_url(resolved_root)
-        remote = validate_remote_url(remote_url)
-        if (
-            remote_url != self.remote_url
-            or remote.slug != self.repository_slug
-            or f"github.com/{remote.slug}" != self.canonical_remote
-        ):
-            raise ValueError("Candidate remote identity drift detected")
+            remote_url = parse_origin_url(root_handle)
+            remote = validate_remote_url(remote_url)
+            if (
+                remote_url != self.remote_url
+                or remote.slug != self.repository_slug
+                or f"github.com/{remote.slug}" != self.canonical_remote
+            ):
+                raise ValueError("Candidate remote identity drift detected")
 
-        head, tree, accepted = _capture_git_identity(resolved_root, self.basename)
-        if head != self.head_commit:
-            raise ValueError(f"Candidate HEAD drift: {head} != {self.head_commit}")
-        if tree != self.tracked_tree_identity:
-            raise ValueError(
-                "Candidate tracked tree drift: "
-                f"{tree} != {self.tracked_tree_identity}"
+            head, tree, accepted = _capture_git_identity(
+                root_handle,
+                self.basename,
             )
-        if accepted.commit != self.accepted_dev_commit:
-            raise ValueError(
-                "Accepted origin/dev drift during immutable promotion snapshot: "
-                f"{accepted.commit} != {self.accepted_dev_commit}"
+            if head != self.head_commit:
+                raise ValueError(
+                    f"Candidate HEAD drift: {head} != {self.head_commit}"
+                )
+            if tree != self.tracked_tree_identity:
+                raise ValueError(
+                    "Candidate tracked tree drift: "
+                    f"{tree} != {self.tracked_tree_identity}"
+                )
+            if accepted.commit != self.accepted_dev_commit:
+                raise ValueError(
+                    "Accepted origin/dev drift during immutable promotion snapshot: "
+                    f"{accepted.commit} != {self.accepted_dev_commit}"
+                )
+            verify_working_tree_cleanliness(
+                root_handle,
+                expected_head=self.head_commit,
+                expected_tree=self.tracked_tree_identity,
             )
-        verify_working_tree_cleanliness(
-            resolved_root,
-            expected_head=self.head_commit,
-            expected_tree=self.tracked_tree_identity,
-        )
+            _assert_candidate_handle_path(root_handle)
+        finally:
+            os.close(root_handle.descriptor)
         self.verify_against_live_config(self.config_path)
 
 
 def _subprocess_environment() -> dict[str, str]:
-    env = dict(os.environ)
-    for name in (
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_COMMON_DIR",
-        "GIT_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_WORK_TREE",
-    ):
-        env.pop(name, None)
+    # Git exposes config, URL rewriting, object lookup, transport helpers and
+    # protocol policy through GIT_* variables.  A trusted-dev fetch must not
+    # inherit any of them from the invoking supervisor environment.
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("GIT_")
+    }
     env.update(
         {
             "GIT_CONFIG_GLOBAL": os.devnull,
@@ -197,14 +216,26 @@ def _subprocess_environment() -> dict[str, str]:
     return env
 
 
-def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_git(
+    cwd: Path | CandidateRootHandle,
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    if isinstance(cwd, CandidateRootHandle):
+        cwd_arg = Path(f"/dev/fd/{cwd.descriptor}")
+        pass_fds = (cwd.descriptor,)
+        display_cwd = cwd.path
+    else:
+        cwd_arg = cwd
+        pass_fds = ()
+        display_cwd = cwd
     try:
         return subprocess.run(
             ["git", *args],
-            cwd=cwd,
+            cwd=cwd_arg,
             capture_output=True,
             check=True,
             env=_subprocess_environment(),
+            pass_fds=pass_fds,
             text=True,
             timeout=60,
         )
@@ -212,66 +243,143 @@ def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         stderr = getattr(exc, "stderr", None)
         detail = str(stderr or exc).strip()
         raise ValueError(
-            f"git {' '.join(args)} failed in {cwd}: {detail}"
+            f"git {' '.join(args)} failed in {display_cwd}: {detail}"
         ) from exc
 
 
-def _git_output(cwd: Path, *args: str) -> str:
+def _git_output(cwd: Path | CandidateRootHandle, *args: str) -> str:
     return _run_git(cwd, *args).stdout.strip()
 
 
-def _require_no_symlink_components(path: Path, *, label: str) -> Path:
+def _validate_absolute_identity_path(path: Path, *, label: str) -> None:
     if not path.is_absolute():
         raise ValueError(f"{label} must be an absolute path: {path}")
     if ".." in path.parts:
         raise ValueError(f"{label} cannot contain '..': {path}")
 
-    current = Path(path.anchor)
-    for component in path.parts[1:]:
-        current = current / component
-        try:
-            current_stat = os.lstat(current)
-        except FileNotFoundError as exc:
-            raise FileNotFoundError(f"{label} does not exist: {current}") from exc
-        if stat.S_ISLNK(current_stat.st_mode):
-            raise ValueError(f"{label} contains a symlink component: {current}")
-    return path
 
-
-def _filesystem_identity(path: Path, *, require_directory: bool) -> FilesystemIdentity:
-    try:
-        path_stat = os.lstat(path)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(f"Path disappeared during identity capture: {path}") from exc
-    if stat.S_ISLNK(path_stat.st_mode):
-        raise ValueError(f"Identity path became a symlink: {path}")
-    if require_directory and not stat.S_ISDIR(path_stat.st_mode):
-        raise ValueError(f"Candidate root is not a directory: {path}")
-    if not require_directory and not stat.S_ISREG(path_stat.st_mode):
-        raise ValueError(f"Live config path is not a regular file: {path}")
-    return FilesystemIdentity(
-        device=path_stat.st_dev,
-        inode=path_stat.st_ino,
-        mode=path_stat.st_mode,
+def _open_directory_descriptor(path: Path, *, label: str) -> int:
+    """Open an absolute directory one no-follow component at a time."""
+    _validate_absolute_identity_path(path, label=label)
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
     )
+    descriptor = os.open(path.anchor, flags)
+    traversed = Path(path.anchor)
+    try:
+        for component in path.parts[1:]:
+            traversed = traversed / component
+            try:
+                next_descriptor = os.open(
+                    component,
+                    flags,
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    f"{label} does not exist: {traversed}"
+                ) from exc
+            except OSError as exc:
+                raise ValueError(
+                    f"{label} contains a symlink or non-directory component: "
+                    f"{traversed}: {exc}"
+                ) from exc
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
-def _assert_filesystem_identity(
+def _open_path_descriptor(
+    path: Path,
+    *,
+    label: str,
+    require_directory: bool,
+) -> int:
+    """Open a leaf relative to a descriptor-bound, symlink-free parent."""
+    _validate_absolute_identity_path(path, label=label)
+    if path == Path(path.anchor):
+        if not require_directory:
+            raise ValueError(f"{label} cannot use the filesystem root as a file")
+        return _open_directory_descriptor(path, label=label)
+
+    parent_descriptor = _open_directory_descriptor(path.parent, label=label)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    if require_directory:
+        flags |= os.O_DIRECTORY
+    try:
+        try:
+            descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"{label} does not exist: {path}") from exc
+        except OSError as exc:
+            raise ValueError(
+                f"{label} is a symlink or has the wrong file type: {path}: {exc}"
+            ) from exc
+
+        opened_stat = os.fstat(descriptor)
+        entry_stat = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if stat.S_ISLNK(entry_stat.st_mode):
+            raise ValueError(f"{label} is a symlink: {path}")
+        if (entry_stat.st_dev, entry_stat.st_ino) != (
+            opened_stat.st_dev,
+            opened_stat.st_ino,
+        ):
+            raise ValueError(f"{label} changed while it was opened: {path}")
+        if require_directory and not stat.S_ISDIR(opened_stat.st_mode):
+            raise ValueError(f"{label} is not a directory: {path}")
+        if not require_directory and not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError(f"{label} is not a regular file: {path}")
+        return descriptor
+    except BaseException:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise
+    finally:
+        os.close(parent_descriptor)
+
+
+def _assert_path_identity(
     path: Path,
     expected: FilesystemIdentity,
     *,
     label: str,
     require_directory: bool,
 ) -> None:
-    actual = _filesystem_identity(path, require_directory=require_directory)
-    if actual != expected:
-        raise ValueError(f"{label} changed during identity capture: {path}")
+    descriptor = _open_path_descriptor(
+        path,
+        label=label,
+        require_directory=require_directory,
+    )
+    try:
+        path_stat = os.fstat(descriptor)
+        actual = FilesystemIdentity(
+            device=path_stat.st_dev,
+            inode=path_stat.st_ino,
+            mode=path_stat.st_mode,
+        )
+        if actual != expected:
+            raise ValueError(f"{label} changed during identity capture: {path}")
+    finally:
+        os.close(descriptor)
 
 
-def _capture_candidate_root(candidate_path: Path) -> tuple[Path, FilesystemIdentity]:
+def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
     path = candidate_path if isinstance(candidate_path, Path) else Path(candidate_path)
     trusted_parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
-    _require_no_symlink_components(trusted_parent, label="Trusted command-runtimes root")
 
     if path.parent != trusted_parent:
         raise ValueError(
@@ -282,9 +390,45 @@ def _capture_candidate_root(candidate_path: Path) -> tuple[Path, FilesystemIdent
             "Candidate root basename is not a lowercase 40-hex commit: "
             f"{path.name}"
         )
-    _require_no_symlink_components(path, label="Candidate root")
-    root_identity = _filesystem_identity(path, require_directory=True)
-    return path, root_identity
+    descriptor = _open_path_descriptor(
+        path,
+        label="Candidate root",
+        require_directory=True,
+    )
+    root_stat = os.fstat(descriptor)
+    root_identity = FilesystemIdentity(
+        device=root_stat.st_dev,
+        inode=root_stat.st_ino,
+        mode=root_stat.st_mode,
+    )
+    handle = CandidateRootHandle(
+        path=path,
+        descriptor=descriptor,
+        identity=root_identity,
+    )
+    try:
+        _assert_candidate_handle_path(handle)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return handle
+
+
+def _assert_candidate_handle_path(handle: CandidateRootHandle) -> None:
+    _assert_path_identity(
+        handle.path,
+        handle.identity,
+        label="Candidate root",
+        require_directory=True,
+    )
+
+
+def _capture_candidate_root(candidate_path: Path) -> tuple[Path, FilesystemIdentity]:
+    handle = _open_candidate_root_handle(candidate_path)
+    try:
+        return handle.path, handle.identity
+    finally:
+        os.close(handle.descriptor)
 
 
 def resolve_candidate_root(candidate_path: Path) -> Path:
@@ -292,19 +436,32 @@ def resolve_candidate_root(candidate_path: Path) -> Path:
     return _capture_candidate_root(candidate_path)[0]
 
 
-def parse_origin_url(candidate_root: Path) -> str:
+def _candidate_handle(
+    candidate_root: Path | CandidateRootHandle,
+) -> tuple[CandidateRootHandle, bool]:
+    if isinstance(candidate_root, CandidateRootHandle):
+        return candidate_root, False
+    return _open_candidate_root_handle(candidate_root), True
+
+
+def parse_origin_url(candidate_root: Path | CandidateRootHandle) -> str:
     """Read the single raw local remote.origin.url without URL rewriting."""
-    raw = _run_git(
-        candidate_root,
-        "config",
-        "--local",
-        "--get-all",
-        "remote.origin.url",
-    ).stdout
-    urls = raw.splitlines()
-    if len(urls) != 1 or not urls[0]:
-        raise ValueError("Candidate must configure exactly one remote.origin.url")
-    return urls[0]
+    handle, close_handle = _candidate_handle(candidate_root)
+    try:
+        raw = _run_git(
+            handle,
+            "config",
+            "--local",
+            "--get-all",
+            "remote.origin.url",
+        ).stdout
+        urls = raw.splitlines()
+        if len(urls) != 1 or not urls[0]:
+            raise ValueError("Candidate must configure exactly one remote.origin.url")
+        return urls[0]
+    finally:
+        if close_handle:
+            os.close(handle.descriptor)
 
 
 def validate_remote_url(url: str) -> GitRemoteIdentity:
@@ -352,17 +509,42 @@ def validate_remote_url(url: str) -> GitRemoteIdentity:
     )
 
 
-def _read_head_tree(candidate_root: Path) -> tuple[str, str]:
-    top_level = Path(_git_output(candidate_root, "rev-parse", "--show-toplevel"))
-    if top_level != candidate_root:
-        raise ValueError(
-            f"Candidate root must be the Git top level: {top_level} != {candidate_root}"
-        )
-    head = _git_output(candidate_root, "rev-parse", "--verify", "HEAD^{commit}")
-    tree = _git_output(candidate_root, "rev-parse", "--verify", "HEAD^{tree}")
-    if not HEX_40_PATTERN.fullmatch(head) or not HEX_40_PATTERN.fullmatch(tree):
-        raise ValueError("Candidate HEAD/tree identity is not a full lowercase SHA-1")
-    return head, tree
+def _read_head_tree(
+    candidate_root: Path | CandidateRootHandle,
+) -> tuple[str, str]:
+    handle, close_handle = _candidate_handle(candidate_root)
+    try:
+        prefix = _git_output(handle, "rev-parse", "--show-prefix")
+        if prefix:
+            raise ValueError(
+                f"Candidate root must be the Git top level; prefix is {prefix!r}"
+            )
+        top_level = Path(_git_output(handle, "rev-parse", "--show-toplevel"))
+        try:
+            top_level_stat = os.stat(top_level)
+        except OSError as exc:
+            raise ValueError(
+                f"Cannot bind candidate Git top level {top_level}: {exc}"
+            ) from exc
+        root_stat = os.fstat(handle.descriptor)
+        if (top_level_stat.st_dev, top_level_stat.st_ino) != (
+            root_stat.st_dev,
+            root_stat.st_ino,
+        ):
+            raise ValueError(
+                "Candidate root must be the Git top level: "
+                f"{top_level} does not identify {handle.path}"
+            )
+        head = _git_output(handle, "rev-parse", "--verify", "HEAD^{commit}")
+        tree = _git_output(handle, "rev-parse", "--verify", "HEAD^{tree}")
+        if not HEX_40_PATTERN.fullmatch(head) or not HEX_40_PATTERN.fullmatch(tree):
+            raise ValueError(
+                "Candidate HEAD/tree identity is not a full lowercase SHA-1"
+            )
+        return head, tree
+    finally:
+        if close_handle:
+            os.close(handle.descriptor)
 
 
 def _fetch_trusted_dev_identity(candidate_head: str) -> TrustedDevIdentity:
@@ -411,27 +593,35 @@ def _fetch_trusted_dev_identity(candidate_head: str) -> TrustedDevIdentity:
 
 
 def _capture_git_identity(
-    candidate_root: Path,
+    candidate_root: Path | CandidateRootHandle,
     basename: str,
 ) -> tuple[str, str, TrustedDevIdentity]:
-    head_before, tree_before = _read_head_tree(candidate_root)
-    if head_before != basename:
-        raise ValueError(
-            f"Candidate basename {basename} does not match HEAD commit {head_before}"
-        )
-    trusted_dev = _fetch_trusted_dev_identity(head_before)
-    if trusted_dev.candidate_commit_tree != tree_before:
-        raise ValueError(
-            "Candidate tracked tree does not match the same commit from trusted dev: "
-            f"{tree_before} != {trusted_dev.candidate_commit_tree}"
-        )
-    head_after, tree_after = _read_head_tree(candidate_root)
-    if (head_after, tree_after) != (head_before, tree_before):
-        raise ValueError("Candidate HEAD/tree changed during trusted dev resolution")
-    return head_before, tree_before, trusted_dev
+    handle, close_handle = _candidate_handle(candidate_root)
+    try:
+        head_before, tree_before = _read_head_tree(handle)
+        if head_before != basename:
+            raise ValueError(
+                f"Candidate basename {basename} does not match HEAD commit {head_before}"
+            )
+        trusted_dev = _fetch_trusted_dev_identity(head_before)
+        if trusted_dev.candidate_commit_tree != tree_before:
+            raise ValueError(
+                "Candidate tracked tree does not match the same commit from trusted dev: "
+                f"{tree_before} != {trusted_dev.candidate_commit_tree}"
+            )
+        head_after, tree_after = _read_head_tree(handle)
+        if (head_after, tree_after) != (head_before, tree_before):
+            raise ValueError("Candidate HEAD/tree changed during trusted dev resolution")
+        return head_before, tree_before, trusted_dev
+    finally:
+        if close_handle:
+            os.close(handle.descriptor)
 
 
-def verify_git_head_and_dev_ancestry(candidate_root: Path, basename: str) -> str:
+def verify_git_head_and_dev_ancestry(
+    candidate_root: Path | CandidateRootHandle,
+    basename: str,
+) -> str:
     """Verify basename, HEAD/tree, and ancestry against freshly fetched dev."""
     head, _tree, _trusted_dev = _capture_git_identity(candidate_root, basename)
     return head
@@ -450,42 +640,70 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
 
 
 def verify_working_tree_cleanliness(
-    candidate_root: Path,
+    candidate_root: Path | CandidateRootHandle,
     *,
     expected_head: str | None = None,
     expected_tree: str | None = None,
 ) -> str:
     """Reject all tracked dirt and non-enumerated generated untracked files."""
-    status_output = _run_git(
-        candidate_root,
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-        "--ignored=no",
-    ).stdout
-    for record in status_output.split("\0"):
-        if not record:
-            continue
-        if len(record) < 4 or record[2] != " ":
-            raise ValueError(f"Malformed git status record: {record!r}")
-        status_code = record[:2]
-        relative_path = record[3:]
-        if status_code != "??":
-            raise ValueError(
-                f"Tracked git tree is dirty ({status_code}): {relative_path}"
-            )
-        if not _is_allowed_generated_untracked_path(relative_path):
-            raise ValueError(
-                f"Forbidden untracked file found in candidate root: {relative_path}"
-            )
+    handle, close_handle = _candidate_handle(candidate_root)
+    try:
+        index_flags = _run_git(handle, "ls-files", "-v", "-z").stdout
+        for record in index_flags.split("\0"):
+            if not record:
+                continue
+            if len(record) < 3 or record[1] != " ":
+                raise ValueError(f"Malformed git index flag record: {record!r}")
+            if record[0] != "H":
+                raise ValueError(
+                    "Forbidden tracked index flag "
+                    f"{record[0]!r}: {record[2:]}"
+                )
 
-    head, tree = _read_head_tree(candidate_root)
-    if expected_head is not None and head != expected_head:
-        raise ValueError(f"Candidate HEAD drift: {head} != {expected_head}")
-    if expected_tree is not None and tree != expected_tree:
-        raise ValueError(f"Candidate tree drift: {tree} != {expected_tree}")
-    return tree
+        status_output = _run_git(
+            handle,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ).stdout
+        for record in status_output.split("\0"):
+            if not record:
+                continue
+            if len(record) < 4 or record[2] != " ":
+                raise ValueError(f"Malformed git status record: {record!r}")
+            status_code = record[:2]
+            relative_path = record[3:]
+            if status_code not in {"??", "!!"}:
+                raise ValueError(
+                    f"Tracked git tree is dirty ({status_code}): {relative_path}"
+                )
+            if not _is_allowed_generated_untracked_path(relative_path):
+                kind = "ignored" if status_code == "!!" else "untracked"
+                raise ValueError(
+                    f"Forbidden {kind} file found in candidate root: {relative_path}"
+                )
+
+        try:
+            _run_git(handle, "diff-index", "--cached", "--quiet", "HEAD", "--")
+        except ValueError as exc:
+            raise ValueError("Candidate index differs from HEAD") from exc
+        try:
+            _run_git(handle, "diff-files", "--quiet", "--")
+        except ValueError as exc:
+            raise ValueError("Candidate tracked worktree differs from index") from exc
+
+        head, tree = _read_head_tree(handle)
+        if expected_head is not None and head != expected_head:
+            raise ValueError(f"Candidate HEAD drift: {head} != {expected_head}")
+        if expected_tree is not None and tree != expected_tree:
+            raise ValueError(f"Candidate tree drift: {tree} != {expected_tree}")
+        _assert_candidate_handle_path(handle)
+        return tree
+    finally:
+        if close_handle:
+            os.close(handle.descriptor)
 
 
 def _capture_config_bytes(
@@ -494,17 +712,16 @@ def _capture_config_bytes(
     expected_path: Path,
 ) -> tuple[bytes, FilesystemIdentity]:
     path = config_path if isinstance(config_path, Path) else Path(config_path)
-    _require_no_symlink_components(path, label="Live supervisor config path")
     if path != expected_path:
         raise ValueError(
             f"Config path {path} does not match exact live config path {expected_path}"
         )
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise ValueError(f"Cannot open exact live config path {path}: {exc}") from exc
+    descriptor = _open_path_descriptor(
+        path,
+        label="Live supervisor config path",
+        require_directory=False,
+    )
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
@@ -519,6 +736,7 @@ def _capture_config_bytes(
         before.st_dev,
         before.st_ino,
         before.st_size,
+        before.st_mode,
         before.st_mtime_ns,
         before.st_ctime_ns,
     )
@@ -526,6 +744,7 @@ def _capture_config_bytes(
         after.st_dev,
         after.st_ino,
         after.st_size,
+        after.st_mode,
         after.st_mtime_ns,
         after.st_ctime_ns,
     )
@@ -536,7 +755,7 @@ def _capture_config_bytes(
         inode=before.st_ino,
         mode=before.st_mode,
     )
-    _assert_filesystem_identity(
+    _assert_path_identity(
         path,
         file_identity,
         label="Live config",
@@ -550,70 +769,65 @@ def build_candidate_runtime_identity(
     config_path: Path | None = None,
 ) -> CandidateRuntimeIdentity:
     """Capture one immutable candidate root, Git tree, and live-config snapshot."""
-    resolved_root, root_identity = _capture_candidate_root(candidate_path)
-    basename = resolved_root.name
+    root_handle = _open_candidate_root_handle(candidate_path)
+    try:
+        resolved_root = root_handle.path
+        root_identity = root_handle.identity
+        basename = resolved_root.name
 
-    remote_url = parse_origin_url(resolved_root)
-    remote = validate_remote_url(remote_url)
-    head, tracked_tree, trusted_dev = _capture_git_identity(
-        resolved_root,
-        basename,
-    )
-    _assert_filesystem_identity(
-        resolved_root,
-        root_identity,
-        label="Candidate root",
-        require_directory=True,
-    )
-    verify_working_tree_cleanliness(
-        resolved_root,
-        expected_head=head,
-        expected_tree=tracked_tree,
-    )
+        remote_url = parse_origin_url(root_handle)
+        remote = validate_remote_url(remote_url)
+        head, tracked_tree, trusted_dev = _capture_git_identity(
+            root_handle,
+            basename,
+        )
+        _assert_candidate_handle_path(root_handle)
+        verify_working_tree_cleanliness(
+            root_handle,
+            expected_head=head,
+            expected_tree=tracked_tree,
+        )
 
-    selected_config_path = config_path or LIVE_SUPERVISOR_CONFIG_PATH
-    config_bytes, config_identity = _capture_config_bytes(
-        selected_config_path,
-        expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
-    )
+        selected_config_path = config_path or LIVE_SUPERVISOR_CONFIG_PATH
+        config_bytes, config_identity = _capture_config_bytes(
+            selected_config_path,
+            expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+        )
 
-    # Repeat the root/tree/status checks after reading the external config so a
-    # deleted/replaced root or a concurrent Git mutation cannot yield a mixed
-    # identity object.
-    _assert_filesystem_identity(
-        resolved_root,
-        root_identity,
-        label="Candidate root",
-        require_directory=True,
-    )
-    verify_working_tree_cleanliness(
-        resolved_root,
-        expected_head=head,
-        expected_tree=tracked_tree,
-    )
-    final_remote_url = parse_origin_url(resolved_root)
-    final_remote = validate_remote_url(final_remote_url)
-    if final_remote_url != remote_url or final_remote.slug != remote.slug:
-        raise ValueError("Candidate remote identity changed during capture")
+        # Repeat descriptor-bound root/tree/status checks after reading the
+        # external config so a deleted/replaced root or concurrent mutation
+        # cannot yield a mixed identity object.
+        _assert_candidate_handle_path(root_handle)
+        verify_working_tree_cleanliness(
+            root_handle,
+            expected_head=head,
+            expected_tree=tracked_tree,
+        )
+        final_remote_url = parse_origin_url(root_handle)
+        final_remote = validate_remote_url(final_remote_url)
+        if final_remote_url != remote_url or final_remote.slug != remote.slug:
+            raise ValueError("Candidate remote identity changed during capture")
 
-    return CandidateRuntimeIdentity(
-        candidate_root=resolved_root,
-        candidate_root_device=root_identity.device,
-        candidate_root_inode=root_identity.inode,
-        basename=basename,
-        head_commit=head,
-        tracked_tree_identity=tracked_tree,
-        accepted_dev_commit=trusted_dev.commit,
-        remote_url=remote_url,
-        canonical_remote=f"github.com/{remote.slug}",
-        repository_slug=remote.slug,
-        config_path=selected_config_path,
-        config_device=config_identity.device,
-        config_inode=config_identity.inode,
-        config_bytes=config_bytes,
-        config_byte_length=len(config_bytes),
-        config_sha256=hashlib.sha256(config_bytes).hexdigest(),
-    )
+        return CandidateRuntimeIdentity(
+            candidate_root=resolved_root,
+            candidate_root_device=root_identity.device,
+            candidate_root_inode=root_identity.inode,
+            basename=basename,
+            head_commit=head,
+            tracked_tree_identity=tracked_tree,
+            accepted_dev_commit=trusted_dev.commit,
+            remote_url=remote_url,
+            canonical_remote=f"github.com/{remote.slug}",
+            repository_slug=remote.slug,
+            config_path=selected_config_path,
+            config_device=config_identity.device,
+            config_inode=config_identity.inode,
+            config_bytes=config_bytes,
+            config_byte_length=len(config_bytes),
+            config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+        )
+    finally:
+        os.close(root_handle.descriptor)
 
 
 def load_json_strict(path: Path) -> dict[str, Any]:
@@ -627,6 +841,26 @@ def load_json_strict(path: Path) -> dict[str, Any]:
     return data
 
 
+def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str, Any]:
+    return {
+        "candidate_root": str(identity.candidate_root),
+        "candidate_root_device": identity.candidate_root_device,
+        "candidate_root_inode": identity.candidate_root_inode,
+        "basename": identity.basename,
+        "head_commit": identity.head_commit,
+        "tracked_tree_identity": identity.tracked_tree_identity,
+        "accepted_dev_commit": identity.accepted_dev_commit,
+        "remote_url": identity.remote_url,
+        "canonical_remote": identity.canonical_remote,
+        "repository_slug": identity.repository_slug,
+        "config_path": str(identity.config_path),
+        "config_device": identity.config_device,
+        "config_inode": identity.config_inode,
+        "config_byte_length": identity.config_byte_length,
+        "config_sha256": identity.config_sha256,
+    }
+
+
 def capture_promotion_snapshot(
     repo_root: Path,
     *,
@@ -636,6 +870,14 @@ def capture_promotion_snapshot(
     """Capture live-schema supervisor runtime state and evaluate promotion invariants."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     config_path_resolved = config_path_arg or (repo_root / ".orchestrator" / "config.json")
+
+    candidate_identity: CandidateRuntimeIdentity | None = None
+    identity_error: str | None = None
+    try:
+        candidate_identity = build_candidate_runtime_identity(repo_root)
+        candidate_identity.verify_immutable_snapshot()
+    except Exception as exc:
+        identity_error = str(exc)
 
     file_errors: list[dict[str, str]] = []
 
@@ -723,6 +965,21 @@ def capture_promotion_snapshot(
         now=now,
         config=config,
     )
+    invariants.insert(
+        0,
+        {
+            "name": "candidate_runtime_identity_immutable",
+            "ok": candidate_identity is not None and identity_error is None,
+            "details": {
+                "error": identity_error,
+                "identity": (
+                    _candidate_identity_summary(candidate_identity)
+                    if candidate_identity is not None
+                    else None
+                ),
+            },
+        },
+    )
 
     all_invariants_pass = all(inv["ok"] for inv in invariants)
 
@@ -730,6 +987,11 @@ def capture_promotion_snapshot(
         "timestamp": now.isoformat().replace("+00:00", "Z"),
         "repo_root": str(repo_root),
         "config_path": str(config_path_resolved),
+        "candidate_runtime_identity": (
+            _candidate_identity_summary(candidate_identity)
+            if candidate_identity is not None
+            else None
+        ),
         "health_report": health_report,
         "ai_status_summary": {
             "sprint": ai_status.get("sprint"),
