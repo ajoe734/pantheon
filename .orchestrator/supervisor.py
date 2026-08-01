@@ -12830,7 +12830,7 @@ def choose_helper_claim_agent(
 ) -> bool:
     if not helper_settings.get("enabled", True):
         return False
-    if not agent_can_take_task(config, idle_agent_name, task):
+    if not agent_can_take_task(config, idle_agent_name, task, state=state):
         return False
     task_status = str(task.get("status") or "").lower()
     allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
