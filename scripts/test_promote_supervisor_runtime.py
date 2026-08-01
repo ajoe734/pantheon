@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from unittest.mock import patch
 
 from promote_supervisor_runtime import (
+    CandidateRuntimeIdentity,
+    build_candidate_runtime_identity,
     capture_promotion_snapshot,
     evaluate_promotion_invariants,
+    parse_origin_url,
+    resolve_candidate_root,
+    validate_remote_url,
+    verify_git_head_and_dev_ancestry,
+    verify_working_tree_cleanliness,
 )
+import promote_supervisor_runtime as promotion
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -743,3 +756,404 @@ def test_evaluate_promotion_invariants_rejects_duplicate_canonical_run_id() -> N
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
     assert "duplicate_canonical_run_id:run_dup" in worker_inv["details"]["reasons"]
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _make_candidate_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, str, str, bytes]:
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "--initial-branch=dev")
+    _git(source, "config", "user.name", "Promotion Test")
+    _git(source, "config", "user.email", "promotion@example.test")
+    (source / "README.md").write_text("trusted candidate\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "trusted candidate")
+    commit = _git(source, "rev-parse", "HEAD")
+    tree = _git(source, "rev-parse", "HEAD^{tree}")
+
+    trusted_remote = tmp_path / "trusted-remote.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(source), str(trusted_remote)],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    runtime_parent = tmp_path / "command-runtimes"
+    runtime_parent.mkdir()
+    candidate = runtime_parent / commit
+    subprocess.run(
+        ["git", "clone", "--quiet", str(source), str(candidate)],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    _git(
+        candidate,
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+
+    config_bytes = b'{"runtime":"immutable","writes":false}\n'
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    live_config.parent.mkdir()
+    live_config.write_bytes(config_bytes)
+    return candidate, runtime_parent, trusted_remote, commit, tree, config_bytes
+
+
+def _identity_policy_patches(
+    runtime_parent: Path,
+    trusted_remote: Path,
+    live_config: Path,
+):
+    return (
+        patch(
+            "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+            runtime_parent,
+        ),
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            trusted_remote.as_uri(),
+        ),
+        patch(
+            "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+            live_config,
+        ),
+    )
+
+
+def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, commit, tree, config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+        assert isinstance(identity, CandidateRuntimeIdentity)
+        assert identity.candidate_root == candidate
+        assert identity.basename == commit
+        assert identity.head_commit == commit
+        assert identity.tracked_tree_identity == tree
+        assert identity.accepted_dev_commit == commit
+        assert identity.repository_slug == "ajoe734/pantheon"
+        assert identity.config_path == live_config
+        assert identity.config_bytes == config_bytes
+        assert identity.config_byte_length == len(config_bytes)
+        assert len(identity.config_sha256) == 64
+        identity.verify_against_live_config(live_config)
+        identity.verify_immutable_snapshot()
+        assert resolve_candidate_root(candidate) == candidate
+        assert parse_origin_url(candidate) == "https://github.com/ajoe734/pantheon.git"
+        assert verify_git_head_and_dev_ancestry(candidate, commit) == commit
+        assert verify_working_tree_cleanliness(candidate) == tree
+
+
+@pytest.mark.parametrize(
+    "remote_url",
+    [
+        "https://github.com/ajoe734/pantheon.git",
+        "https://github.com/ajoe734/pantheon",
+        "git@github.com:ajoe734/pantheon.git",
+        "git@github.com:ajoe734/pantheon",
+        "ssh://git@github.com/ajoe734/pantheon.git",
+    ],
+)
+def test_remote_identity_structural_parser_accepts_trusted_forms(
+    remote_url: str,
+) -> None:
+    identity = validate_remote_url(remote_url)
+    assert identity.host == "github.com"
+    assert identity.slug == "ajoe734/pantheon"
+
+
+@pytest.mark.parametrize(
+    "remote_url",
+    [
+        "http://github.com/ajoe734/pantheon.git",
+        "https://github.com/ajoe734/pantheon-shadow.git",
+        "https://github.com/evil/ajoe734/pantheon.git",
+        "https://github.com/ajoe734/pantheon.git/extra",
+        "https://user@github.com/ajoe734/pantheon.git",
+        "https://github.com:443/ajoe734/pantheon.git",
+        "https://github.com/ajoe734/pantheon.git?mirror=evil",
+        "git@example.invalid:evil/ajoe734/pantheon-shadow.git",
+        "git@github.com:ajoe734/pantheon.git.evil",
+        " git@github.com:ajoe734/pantheon.git",
+    ],
+)
+def test_remote_identity_structural_parser_rejects_spoofs(remote_url: str) -> None:
+    with pytest.raises(ValueError, match="Invalid/untrusted remote origin URL"):
+        validate_remote_url(remote_url)
+
+
+def test_candidate_root_deny_matrix(tmp_path: Path) -> None:
+    candidate, parent, remote, commit, _tree, _config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        with pytest.raises(FileNotFoundError):
+            resolve_candidate_root(parent / ("f" * 40))
+
+        nested = parent / "nested" / ("e" * 40)
+        nested.mkdir(parents=True)
+        with pytest.raises(ValueError, match="not a direct child"):
+            resolve_candidate_root(nested)
+
+        with pytest.raises(ValueError, match="not a direct child"):
+            resolve_candidate_root(parent / ".." / ("d" * 40))
+
+        wrong_basename = parent / ("b" * 40)
+        candidate.rename(wrong_basename)
+        with pytest.raises(ValueError, match="does not match HEAD commit"):
+            build_candidate_runtime_identity(wrong_basename)
+        wrong_basename.rename(candidate)
+
+        symlink_candidate = parent / ("c" * 40)
+        symlink_candidate.symlink_to(candidate, target_is_directory=True)
+        with pytest.raises(ValueError, match="symlink component"):
+            resolve_candidate_root(symlink_candidate)
+
+    parent_alias = tmp_path / "command-runtimes-alias"
+    parent_alias.symlink_to(parent, target_is_directory=True)
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        parent_alias,
+    ):
+        with pytest.raises(ValueError, match="symlink component"):
+            resolve_candidate_root(parent_alias / commit)
+
+
+def test_candidate_root_deleted_during_capture_is_rejected(tmp_path: Path) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    original_capture = promotion._capture_git_identity
+
+    def remove_after_git_capture(root: Path, basename: str):
+        result = original_capture(root, basename)
+        shutil.rmtree(root)
+        return result
+
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch, patch(
+        "promote_supervisor_runtime._capture_git_identity",
+        side_effect=remove_after_git_capture,
+    ):
+        with pytest.raises(FileNotFoundError, match="disappeared"):
+            build_candidate_runtime_identity(candidate)
+
+
+def test_git_identity_rejects_locally_forged_dev_and_unaccepted_commit(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    _git(candidate, "config", "user.name", "Promotion Test")
+    _git(candidate, "config", "user.email", "promotion@example.test")
+    (candidate / "README.md").write_text("unaccepted candidate\n", encoding="utf-8")
+    _git(candidate, "add", "README.md")
+    _git(candidate, "commit", "-m", "not on trusted dev")
+    unaccepted_commit = _git(candidate, "rev-parse", "HEAD")
+    _git(candidate, "update-ref", "refs/remotes/origin/dev", unaccepted_commit)
+    renamed_candidate = parent / unaccepted_commit
+    candidate.rename(renamed_candidate)
+
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        with pytest.raises(ValueError, match="cat-file"):
+            build_candidate_runtime_identity(renamed_candidate)
+
+
+def test_git_identity_rejects_candidate_tree_mismatch(tmp_path: Path) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    original_read = promotion._read_head_tree
+    read_count = 0
+
+    def forged_first_tree(root: Path) -> tuple[str, str]:
+        nonlocal read_count
+        read_count += 1
+        head, tree = original_read(root)
+        if read_count == 1:
+            return head, "f" * 40
+        return head, tree
+
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch, patch(
+        "promote_supervisor_runtime._read_head_tree",
+        side_effect=forged_first_tree,
+    ):
+        with pytest.raises(ValueError, match="does not match the same commit"):
+            build_candidate_runtime_identity(candidate)
+
+
+@pytest.mark.parametrize("dirty_kind", ["unstaged", "staged", "deleted"])
+def test_git_identity_rejects_every_tracked_dirty_state(
+    tmp_path: Path,
+    dirty_kind: str,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    readme = candidate / "README.md"
+    if dirty_kind == "deleted":
+        readme.unlink()
+    else:
+        readme.write_text(f"{dirty_kind} change\n", encoding="utf-8")
+        if dirty_kind == "staged":
+            _git(candidate, "add", "README.md")
+
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
+            build_candidate_runtime_identity(candidate)
+
+
+def test_git_identity_allows_only_enumerated_generated_untracked_paths(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, tree, _config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    orchestrator = candidate / ".orchestrator"
+    (orchestrator / "task-briefs").mkdir(parents=True)
+    (orchestrator / "supervisor.lock").write_bytes(b"")
+    (orchestrator / "status-derived-views.lock").write_bytes(b"")
+    (orchestrator / "task-briefs" / "sup_runtime_identity_001.md").write_text(
+        "generated task context\n",
+        encoding="utf-8",
+    )
+    assert verify_working_tree_cleanliness(candidate) == tree
+
+    forbidden_paths = [
+        orchestrator / "config.json",
+        orchestrator / "replacement.py",
+        orchestrator / "task-briefs" / "replacement.py",
+        candidate / "scripts" / "injected.py",
+    ]
+    for forbidden in forbidden_paths:
+        forbidden.parent.mkdir(parents=True, exist_ok=True)
+        forbidden.write_text("forbidden\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Forbidden untracked file"):
+            verify_working_tree_cleanliness(candidate)
+        forbidden.unlink()
+
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+        assert identity.tracked_tree_identity == tree
+
+
+def test_live_config_rejects_external_and_symlink_alias_paths(tmp_path: Path) -> None:
+    candidate, parent, remote, _commit, _tree, config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    external_config = tmp_path / "runtime" / "other-config.json"
+    external_config.write_bytes(config_bytes)
+    config_alias = tmp_path / "runtime" / "config-alias.json"
+    config_alias.symlink_to(live_config)
+
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        with pytest.raises(ValueError, match="does not match exact live config path"):
+            build_candidate_runtime_identity(candidate, config_path=external_config)
+        with pytest.raises(ValueError, match="symlink component"):
+            build_candidate_runtime_identity(candidate, config_path=config_alias)
+
+    runtime_alias = tmp_path / "runtime-alias"
+    runtime_alias.symlink_to(live_config.parent, target_is_directory=True)
+    aliased_expected = runtime_alias / live_config.name
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        aliased_expected,
+    ):
+        with pytest.raises(ValueError, match="symlink component"):
+            build_candidate_runtime_identity(candidate)
+
+
+def test_live_config_path_length_bytes_sha_and_inode_drift_are_independent(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, config_bytes = _make_candidate_fixture(
+        tmp_path
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+
+        other_path = tmp_path / "runtime" / "same-bytes.json"
+        other_path.write_bytes(config_bytes)
+        with pytest.raises(ValueError, match="does not match exact live config path"):
+            identity.verify_against_live_config(other_path)
+
+        live_config.write_bytes(config_bytes + b" ")
+        with pytest.raises(ValueError, match="byte length drift"):
+            identity.verify_against_live_config(live_config)
+
+        same_length_drift = bytes([config_bytes[0] ^ 1]) + config_bytes[1:]
+        live_config.write_bytes(same_length_drift)
+        with pytest.raises(ValueError, match="Config bytes drift"):
+            identity.verify_against_live_config(live_config)
+
+        live_config.write_bytes(config_bytes)
+        bad_sha_identity = replace(identity, config_sha256="0" * 64)
+        with pytest.raises(ValueError, match="Config SHA256 drift"):
+            bad_sha_identity.verify_against_live_config(live_config)
+
+        replacement = tmp_path / "runtime" / "replacement.json"
+        replacement.write_bytes(config_bytes)
+        os.replace(replacement, live_config)
+        with pytest.raises(ValueError, match="Config file identity drift"):
+            identity.verify_against_live_config(live_config)
