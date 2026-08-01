@@ -1,0 +1,99 @@
+{
+  "schema_version": "pantheon.lifecycle-projector-hotfix-review-evidence.v1",
+  "task_id": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+  "status": "in_progress",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "review_file": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801/evidence.json",
+  "review_target": {
+    "repository": "ajoe734/pantheon",
+    "pr": 4448,
+    "base": "dev",
+    "head_branch": "hotfix/lifecycle-projector-memory-guard-20260801",
+    "expected_head": "85e835448f7b86ce77ad9e4e0cc80961879b29c0",
+    "observed_head": "85e835448f7b86ce77ad9e4e0cc80961879b29c0",
+    "observed_at": "2026-08-01T14:41:22Z",
+    "head_match": true,
+    "state": "OPEN",
+    "mergeable": "MERGEABLE",
+    "merge_state_status": "BEHIND",
+    "auto_merge_request": null,
+    "review_decision": ""
+  },
+  "identity_boundary": {
+    "author_identity": "Codex",
+    "ineligible_independent_reviewers": [
+      "Codex",
+      "Codex2"
+    ],
+    "assigned_independent_reviewer": "Antigravity",
+    "independent_verdict": "pending"
+  },
+  "author_revalidation": {
+    "role": "supporting evidence only; not independent approval",
+    "verified_at": "2026-08-01T14:41:22Z",
+    "exact_head_detached_worktree": true,
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q --disable-warnings services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_lifecycle_projector_compose.py",
+        "exit_code": 0,
+        "result": "25 passed in 3.98s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q --disable-warnings services/control-plane/bff/test_lifecycle_projector_readiness.py",
+        "exit_code": 0,
+        "result": "3 passed, 7 warnings in 4.65s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q --disable-warnings services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py::test_v5_loop_runs_projector_wrapper_precedes_incidents services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py::test_tj_e2e_005_live_projector_store_can_report_formal services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py::test_tj_e2e_005_degraded_projector_cannot_reuse_historic_live_acceptance",
+        "exit_code": 0,
+        "result": "3 passed, 11 warnings in 8.49s"
+      },
+      {
+        "command": "docker compose -f docker-compose.yml config --quiet",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "exit_code": 0,
+        "result": "passed"
+      }
+    ],
+    "compose_expansion": {
+      "projector_restart": "no",
+      "projector_mem_limit_bytes": "17179869184",
+      "generation_retention": "4",
+      "operator_bff_projector_dependency": "service_started",
+      "shared_projection_volume": "bff-data:/data/bff",
+      "trade_journey_store": "/data/bff/lifecycle-projection/current/trade_journey_events.json",
+      "loop_run_store": "/data/bff/lifecycle-projection/current/loop_runs.json"
+    }
+  },
+  "operational_boundary": {
+    "projector_restart_performed": false,
+    "operator_bff_live_restart_performed": false,
+    "projection_state_deleted": false,
+    "generations_deleted": false,
+    "dev_rollout_performed": false,
+    "note": "No live action is authorized before independent review, merge, and governed rollout."
+  },
+  "merge_gate": {
+    "strict_base_up_to_date_required": true,
+    "head_must_not_change": true,
+    "ordinary_merge_currently_blocked": true,
+    "canonical_review_gate": "pending independent exact-head approval",
+    "root_merge_freeze_context": "pending Human/Ops",
+    "resolution_owner": "Human/Ops",
+    "note": "The PR is BEHIND while the task forbids changing the reviewed head; no bypass or head rewrite is authorized."
+  },
+  "reviewer_completion": {
+    "independent_commands_rerun": false,
+    "verdict": "pending",
+    "canonical_approval_recorded": false,
+    "hotfix_pr_merged": false,
+    "merge_commit": null,
+    "dev_rollout": "not_started",
+    "rollout_evidence": null
+  }
+}
