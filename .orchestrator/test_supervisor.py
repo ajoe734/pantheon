@@ -4527,6 +4527,19 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value={"providers": {}}):
             self.assertTrue(supervisor.agent_can_take_task(config, "Codex2", task))
 
+    def test_known_agent_display_names_filters_legacy_aliases(self) -> None:
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+            }
+        }
+        names = supervisor.known_agent_display_names(config)
+        self.assertIn("Codex", names)
+        self.assertIn("Copilot", names)
+        self.assertNotIn("Copilot (legacy alias)", names)
+
     def test_normalize_reassigns_todo_owned_by_auth_down_agent(self) -> None:
         config = {
             "schema": {
@@ -13001,6 +13014,230 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Antigravity")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertIn("Task returned to todo until Antigravity starts a fresh run.", kwargs["message"])
+
+    def test_reassign_after_worker_failure_never_assigns_legacy_alias(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                "reviewer_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        worker = {
+            "task_id": "GUARD-TASK-001",
+            "agent_id": "codex",
+            "provider": "codex",
+            "retry_count": 1,
+            "run_id": "codex-failed-run",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "GUARD-TASK-001",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Terminal error",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Copilot")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Copilot")
+        self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+    def test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_path = root / "ai-status.json"
+            original_status = {
+                "project": "pantheon",
+                "agents": [
+                    {"name": "Codex", "status": "idle", "current_task_ids": ["GUARD-TASK-REAL"]},
+                    {"name": "Copilot", "status": "idle", "current_task_ids": []},
+                    {"name": "Claude", "status": "idle", "current_task_ids": []},
+                ],
+                "tasks": [
+                    {
+                        "id": "GUARD-TASK-REAL",
+                        "status": "todo",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "next": "Initial next action",
+                    }
+                ],
+                "handoffs": [],
+                "blockers": [
+                    {
+                        "task_id": "GUARD-TASK-REAL",
+                        "owner": "Codex",
+                        "waiting_for": "Claude",
+                        "message": "Stuck waiting",
+                        "status": "open",
+                    }
+                ],
+            }
+            status_path.write_text(json.dumps(original_status), encoding="utf-8")
+
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(root / "ai-activity-log.jsonl"),
+                },
+                "worker_reassignment": {
+                    "enabled": True,
+                    "after_attempts": 1,
+                    "reassign_on_terminal_failure": True,
+                    "owner_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                    "reviewer_fallbacks": {"Codex": ["Copilot (legacy alias)", "Copilot"]},
+                    "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                },
+                "agents": {
+                    "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                    "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                    "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+                    "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                },
+            }
+            worker = {
+                "task_id": "GUARD-TASK-REAL",
+                "agent_id": "codex",
+                "provider": "codex",
+                "retry_count": 1,
+                "run_id": "codex-failed-run",
+            }
+
+            with (
+                mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T20:00:00Z"),
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                    config,
+                    worker,
+                    "Terminal error",
+                    terminal=True,
+                )
+
+            self.assertEqual(reassigned_to, "Copilot")
+
+            # Read back saved ai-status.json from temporary root
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+            task = saved["tasks"][0]
+            self.assertEqual(task["owner"], "Copilot")
+            self.assertEqual(task["reviewer"], "Claude")
+            self.assertNotEqual(task["owner"], "Copilot (legacy alias)")
+            self.assertNotEqual(task["reviewer"], "Copilot (legacy alias)")
+
+            # Clear outbox as sync_status_pipeline normally does
+            saved.pop("status_activity_outbox", None)
+            status_path.write_text(json.dumps(saved), encoding="utf-8")
+
+            # Execute explicit persist_task_reassignment with handoff_to to verify handoff creation with canonical identity
+            with (
+                mock.patch.object(supervisor, "utc_now", return_value="2026-07-31T20:01:00Z"),
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                applied = supervisor.persist_task_reassignment(
+                    config,
+                    task_id="GUARD-TASK-REAL",
+                    new_owner="Copilot",
+                    new_reviewer="Claude",
+                    message="Owner reassigned to Copilot with handoff",
+                    handoff_to="Copilot",
+                    handoff_from="Codex",
+                    resolve_open_blockers=True,
+                )
+            self.assertTrue(applied)
+
+            saved_with_handoff = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(saved_with_handoff["handoffs"]), 1)
+            handoff = saved_with_handoff["handoffs"][0]
+            self.assertEqual(handoff["from"], "Codex")
+            self.assertEqual(handoff["to"], "Copilot")
+            self.assertNotEqual(handoff["to"], "Copilot (legacy alias)")
+
+            # Verify blocker resolved
+            blocker = saved_with_handoff["blockers"][0]
+            self.assertEqual(blocker["status"], "resolved")
+
+            # Execute governed ai_status note & owner/reviewer transition via python module
+            import scripts.ai_status as ai_status_mod
+            env_override = {
+                "PANTHEON_STATUS_ROOT": str(root),
+                "AI_NAME": "Copilot",
+            }
+            with mock.patch.dict(os.environ, env_override):
+                ai_status_mod.configure_status_root_paths(root)
+                state_now = ai_status_mod.load_state()
+                ai_status_mod.command_progress(state_now, ["GUARD-TASK-REAL", "Progress update by new owner"])
+                ai_status_mod.save_state(state_now)
+
+            # Read back again to ensure governed ai-status command succeeds and keeps state canonical
+            saved_after_cmd = json.loads(status_path.read_text(encoding="utf-8"))
+            task_after_cmd = saved_after_cmd["tasks"][0]
+            self.assertEqual(task_after_cmd["owner"], "Copilot")
+            self.assertEqual(task_after_cmd["reviewer"], "Claude")
+            self.assertNotEqual(task_after_cmd["owner"], "Copilot (legacy alias)")
+
+    def test_normalize_mainline_task_assignment_never_assigns_legacy_alias(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Unregistered": ["Copilot (legacy alias)", "Copilot"]},
+                "reviewer_fallbacks": {},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "grok": {"id": "grok", "display_name": "Copilot (legacy alias)", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {"providers": {"codex": {"auth_ready": True}, "copilot": {"auth_ready": True}, "claude": {"auth_ready": True}}}
+        task = {"id": "GUARD-TASK-002", "status": "todo", "owner": "Unregistered", "reviewer": "Claude", "depends_on": []}
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "GUARD-TASK-002")
+        self.assertEqual(kwargs["new_owner"], "Copilot")
+        self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+
 
 
 class MissingHandoffBlockerTests(unittest.TestCase):
