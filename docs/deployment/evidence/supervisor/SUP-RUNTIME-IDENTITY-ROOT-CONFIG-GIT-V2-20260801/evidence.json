@@ -2,26 +2,28 @@
   "schema_version": 1,
   "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
   "title": "Build immutable runtime root, config, and Git identity guards",
-  "owner": "Codex2",
-  "reviewer": "Codex",
+  "owner": "Codex",
+  "reviewer": "Codex2",
   "review_decision": "review_pending",
-  "recorded_at": "2026-08-01T16:44:25Z",
+  "recorded_at": "2026-08-01T17:08:30Z",
   "repository": "ajoe734/pantheon",
   "branch": "task/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
   "base_branch": "dev",
   "base_commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
-  "pre_evidence_head": "82f20e4afe745869dc0be0513204613316da2aa3",
+  "pre_evidence_head": "4a788b6c5a9532fea03a5bc946b791355c5110cd",
   "pull_request": 4443,
   "implementation_commits": [
     "76baec723ab6ad11a6369c9c04a668b6badf2a6a",
-    "5fea646d4378da6325a73067d807dd414f4700d3"
+    "5fea646d4378da6325a73067d807dd414f4700d3",
+    "538ac62d1a670ca5fcf67c8ffff34f16dd222847",
+    "4a788b6c5a9532fea03a5bc946b791355c5110cd"
   ],
   "review_refresh": {
-    "previous_reviewed_head": "6b30e10af119351db78586f6f09339240500558f",
-    "previous_reviewer": "Antigravity",
-    "current_reviewer": "Codex",
-    "previous_approval_superseded": true,
-    "reason": "The previous Antigravity approval omitted REVIEW_PR/REVIEW_HEAD_SHA, origin/dev advanced before merge, and the governed task row subsequently reassigned review to Codex; the owner refreshed the evidence for a new independent exact-head review.",
+    "previous_reviewed_head": "50ec4d122aa1e334f3bd564f1fe13182cb013449",
+    "previous_reviewer": "Codex",
+    "previous_decision": "reopen",
+    "current_reviewer": "Codex2",
+    "reason": "The exact prior head allowed ignored injected files, skip-worktree or assume-unchanged drift, inherited Git URL rewriting, and descriptor-unbound parent swaps. The canonical row reassigned the replacement implementation to Codex and independent review to Codex2.",
     "required_binding": "REVIEW_PR=4443 and REVIEW_HEAD_SHA=<final PR head>"
   },
   "dependency": {
@@ -49,11 +51,13 @@
   ],
   "scope": {
     "owned": [
-      "symlink-free direct candidate-root identity and deletion/replacement detection",
+      "production-required candidate identity invariant with no omission bypass",
+      "descriptor-relative no-follow candidate-root and live-config traversal",
+      "candidate-root descriptor binding for all local Git operations",
       "structural GitHub origin parsing for ajoe734/pantheon",
-      "fresh accepted dev resolution in an isolated bare repository",
+      "fresh accepted dev resolution in an isolated bare repository with sanitized Git environment",
       "candidate commit ancestry and trusted tree equality",
-      "tracked/staged cleanliness and explicit generated-untracked allowlist",
+      "tracked/index/worktree cleanliness including special index flags and ignored paths",
       "exact live-config path, inode, bytes, byte length, and SHA-256 snapshot",
       "immutable root/Git/config revalidation primitive"
     ],
@@ -85,12 +89,16 @@
     "constrained_family": ".orchestrator/task-briefs/[a-z0-9][a-z0-9_-]*.md as a direct child only"
   },
   "acceptance": {
+    "production_identity_required": "passed",
     "direct_root_and_immutable_snapshot": "passed",
-    "nested_tmp_worker_and_symlink_escape_denial": "passed",
-    "missing_deleted_and_basename_mismatch_denial": "passed",
+    "nested_tmp_worker_symlink_deleted_and_swap_denial": "passed",
+    "basename_to_head_binding": "passed",
     "canonical_and_spoofed_remote_matrix": "passed",
+    "git_environment_rewrite_denial": "passed",
     "fresh_dev_commit_and_tree_binding": "passed",
-    "tracked_staged_and_untracked_deny_matrix": "passed",
+    "tracked_staged_index_flag_and_worktree_drift_denial": "passed",
+    "ordinary_ignored_allowed_and_forbidden_path_matrix": "passed",
+    "config_exact_leaf_parent_and_swap_denial": "passed",
     "config_path_length_bytes_sha_and_inode_drift": "passed",
     "production_identity_bypass_absent": "passed",
     "scope_boundary_no_live_mutation": "passed"
@@ -98,11 +106,15 @@
   "verification": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
-      "result": "51 passed in 5.84s"
+      "result": "91 passed in 12.45s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
       "result": "passed"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+      "result": "passed through pre-evidence head 4a788b6c5a9532fea03a5bc946b791355c5110cd"
     },
     {
       "command": "git diff --check origin/dev...HEAD",
@@ -116,15 +128,15 @@
   "artifacts": [
     {
       "path": "scripts/promote_supervisor_runtime.py",
-      "sha256": "e171ff9d9a2a1957eec4977945623438b1c3e3b467decf0ab49a085c5b83fc2b"
+      "sha256": "ea2bcc75934cbd8f825d33ecaf7d597369dfd9c30fb66c25528c4946436b6c14"
     },
     {
       "path": "scripts/test_promote_supervisor_runtime.py",
-      "sha256": "778553cac99c91f76aa89b1c79f4cf01b7fb7b9c01663170865687b7d2b1b5a2"
+      "sha256": "fb6768ea836c58f62acca6b2ddc71578b43592b10909470c0323a29664505236"
     }
   ],
   "rollout": "source merge only",
   "rollback": "revert the eventual task merge commit",
   "live_claims": [],
-  "next_gate": "Independent exact-head Codex review is required before merge."
+  "next_gate": "Independent exact-head Codex2 review is required before merge."
 }
