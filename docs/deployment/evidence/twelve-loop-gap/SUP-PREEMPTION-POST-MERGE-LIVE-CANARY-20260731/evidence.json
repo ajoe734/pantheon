@@ -1,0 +1,375 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731 closeout",
+    "note": "A read-only live scheduler canary, its governed handoff, and Antigravity's independent approval are bound in one task-scoped manifest.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "The owner may package the already approved runtime observations for closeout; changing an observation, gate result, or reviewer decision requires a new reviewed task record.",
+    "recording_mode": "task_scoped_approved_runtime_record",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-31T15:46:34Z",
+    "evidence_cut_semantics": "The cut follows a ten-sample 344-second audited window, exact-live-code eligibility readbacks, governed owner handoff, and Antigravity's governed approval. The later evidence PR merge and done transition are recorded by delivery metadata because this manifest cannot contain its own future merge commit.",
+    "id": "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731",
+    "overall_admission": "review_approved",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime Repair / Wave 0 Post-Merge Canary",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "Pantheon development supervisor runtime",
+    "target_maturity": "live_canary",
+    "task_branch": "task/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731",
+    "title": "Run five-minute live scheduler worker canary"
+  },
+  "authorities": {
+    "actual_state": [
+      "/home/lupin/pantheon/.orchestrator/worker-runtime/status/codex-20260731T153631Z-e3ad5e7a.json",
+      "/home/lupin/pantheon/.orchestrator/worker-runtime/heartbeats/codex-20260731T153631Z-e3ad5e7a.json",
+      "/home/lupin/pantheon/.orchestrator/logs/supervisor-preemption-894eb-live-20260731T151459Z.log lines 102-137",
+      "/home/lupin/pantheon-ci-deploy/dev-root-894eb813c7cb-live/.orchestrator/logs/20260731T153631640872Z-codex-codex2_1-9630b5.log",
+      "/home/lupin/pantheon-ci-deploy/dev-root-894eb813c7cb-live/.orchestrator/logs/20260731T154608248970Z-antigravity1-1-antigravity1_1-e40d1a.log"
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/sup_preemption_post_merge_live_canary_20260731.md",
+      "canonical task acceptance criteria",
+      "schemas/product-evidence.schema.json"
+    ],
+    "task_packet": ".orchestrator/task-briefs/sup_preemption_post_merge_live_canary_20260731.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 owns only this closeout evidence packet; Antigravity owns the independent review decision; the merged scheduler task owns implementation and live promotion.",
+    "composes_with": [
+      "PR #4399 merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+      "live supervisor PID 669007"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/sup_preemption_post_merge_live_canary_20260731.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.sha256"
+    ],
+    "implementation_changed_files": [],
+    "not_changing": ".orchestrator/config.json, scheduler code, supervisor policy, owner/reviewer assignment, provider credentials, frontend, BFF, deployment state, or live trading/capital authority.",
+    "owned_layer": "Task-scoped preservation of an already completed and independently approved read-only scheduler canary."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [],
+    "pull_request": {
+      "number": 4399,
+      "url": "https://github.com/ajoe734/pantheon/pull/4399",
+      "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+      "base": "dev",
+      "merged_at": "2026-07-31T15:05:06Z",
+      "merge_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 30640209890,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30640209890",
+        "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "git -C $PANTHEON_COMMAND_ROOT rev-parse HEAD HEAD^{tree}; inspect worker status_command_runtime",
+        "result": "command root HEAD 894eb813c7cb5609ae517103a727d93ba8cbd1ed, tree d1d55a322bee18df6d114403ece627bfb946f235, and worker source_sha all match",
+        "conclusion": "pass"
+      },
+      {
+        "command": "ten direct jq samples of the task heartbeat, canonical row, and supervisor PID during 2026-07-31T15:38:03Z..15:43:47Z",
+        "result": "10 samples; maximum adjacent observed_at gap 60 seconds; stable run/PIDs/supervisor/status; 344-second audited window and 436-second run age at final sample",
+        "conclusion": "pass"
+      },
+      {
+        "command": "exact-live-code higher_priority_ready_task_exists and per-candidate failure-loop/triage/cooldown classification at 2026-07-31T15:44:14Z",
+        "result": "higher_priority_ready_task_exists=false; four Codex2 priority-0/1 candidates were failure-loop_blocked=true and triage_blocked=true",
+        "conclusion": "pass"
+      },
+      {
+        "command": "exact-live-code fleet provider eligibility and unchanged-event cooldown classification at 2026-07-31T15:44:37Z",
+        "result": "three Claude2 candidates were provider_eligible=false; SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731 was cooldown_blocked=true; none preempted the canary",
+        "conclusion": "pass"
+      },
+      {
+        "command": "nl -ba supervisor-preemption-894eb-live-20260731T151459Z.log | inspect lines 102-137; inspect final immutable worker status",
+        "result": "scan repeatedly lists codex2_1 running through 15:43:45Z; final status records completed exit 0 at 15:45:32Z after 541 seconds",
+        "conclusion": "pass"
+      },
+      {
+        "command": "git status -sb; git diff -- .orchestrator/config.json at owner handoff",
+        "result": "only supervisor-materialized task brief was untracked; config diff was empty",
+        "conclusion": "pass"
+      },
+      {
+        "command": "Antigravity review run 20260731T154608248970Z and governed approve command",
+        "result": "reviewer confirmed exact merge, 344-second window, stable execution, no preemption churn, and read-only repo/config; canonical row transitioned to review_approved",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-07-31T15:46:34Z",
+    "validated_base_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+    "validated_head_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "Pantheon development supervisor runtime",
+    "public_bff_base_url": "not_applicable; supervisor runtime has no public HTTP surface",
+    "publish_cut": {
+      "status": "pass",
+      "source": "PR #4399",
+      "merge_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    "canonical_root_deploy": {
+      "status": "pass",
+      "source_root": "/home/lupin/pantheon-ci-deploy/dev-root-894eb813c7cb-live",
+      "source_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "source_tree": "d1d55a322bee18df6d114403ece627bfb946f235",
+      "supervisor_pid": 669007
+    },
+    "identity_admission": {
+      "status": "pass",
+      "proof": "Command root, worker status, git commit/tree, live config, and supervisor process identity agree."
+    },
+    "post_cut_runtime_observation": {
+      "status": "pass",
+      "run_id": "codex-20260731T153631Z-e3ad5e7a",
+      "runner_pid": 839609,
+      "provider_child_pid": 839667,
+      "supervisor_pid": 669007,
+      "run_started_at": "2026-07-31T15:36:31Z",
+      "accepted_window_start": "2026-07-31T15:38:03Z",
+      "accepted_window_end": "2026-07-31T15:43:47Z",
+      "accepted_window_seconds": 344,
+      "run_age_at_window_end_seconds": 436,
+      "finished_at": "2026-07-31T15:45:32Z",
+      "total_run_seconds": 541,
+      "final_exit_code": 0,
+      "samples": [
+        {"observed_at": "2026-07-31T15:38:17Z", "heartbeat_at": "2026-07-31T15:38:17Z"},
+        {"observed_at": "2026-07-31T15:39:09Z", "heartbeat_at": "2026-07-31T15:39:02Z"},
+        {"observed_at": "2026-07-31T15:40:05Z", "heartbeat_at": "2026-07-31T15:40:02Z"},
+        {"observed_at": "2026-07-31T15:40:33Z", "heartbeat_at": "2026-07-31T15:40:32Z"},
+        {"observed_at": "2026-07-31T15:40:50Z", "heartbeat_at": "2026-07-31T15:40:47Z"},
+        {"observed_at": "2026-07-31T15:41:17Z", "heartbeat_at": "2026-07-31T15:41:17Z"},
+        {"observed_at": "2026-07-31T15:41:59Z", "heartbeat_at": "2026-07-31T15:41:47Z"},
+        {"observed_at": "2026-07-31T15:42:54Z", "heartbeat_at": "2026-07-31T15:42:47Z"},
+        {"observed_at": "2026-07-31T15:43:14Z", "heartbeat_at": "2026-07-31T15:43:02Z"},
+        {"observed_at": "2026-07-31T15:43:47Z", "heartbeat_at": "2026-07-31T15:43:47Z"}
+      ],
+      "sample_invariants": {
+        "run_id": "codex-20260731T153631Z-e3ad5e7a",
+        "runner_pid": 839609,
+        "provider_child_pid": 839667,
+        "supervisor_pid": 669007,
+        "task_status": "in_progress",
+        "maximum_adjacent_observed_at_gap_seconds": 60
+      }
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "proof": "This auxiliary task deployed nothing; it observed the already promoted PR #4399 runtime."
+    },
+    "capture_time_hosted_readback": {
+      "status": "pass",
+      "observed_at": "2026-07-31T15:43:47Z",
+      "supervisor_pid": 669007,
+      "worker_run_id": "codex-20260731T153631Z-e3ad5e7a",
+      "worker_status": "in_progress",
+      "heartbeat_at": "2026-07-31T15:43:47Z"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": "All direct samples retained one run and one PID chain; supervisor scans showed one codex2_1 task instance."
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "At 15:44:14Z higher_priority_ready_task_exists=false and four priority-0/1 Codex2 candidates were both failure-loop and triage blocked.",
+        "At 15:44:37Z L12-VERIFY-KNOW-001, L12-VERIFY-RUNTIME-001, and L12-VERIFY-OBS-001 were provider-ineligible for Claude2.",
+        "At 15:44:37Z SUP-PREEMPTION-EXACT-HEAD-REVIEW-V3-20260731 was in unchanged-event cooldown for Antigravity.",
+        "None of these candidates preempted the canary."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": "Queue event evt-20260731T153614Z-91344e28 correlates codex2_1 to run codex-20260731T153631Z-e3ad5e7a and runner/provider-child PIDs 839609/839667."
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": "The exact merged live supervisor remained PID 669007 and running throughout; the canary completed normally with exit 0 after the accepted window."
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable",
+      "proof": "The canary was read-only and made no runtime or repository mutation to roll back."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Pantheon development supervisor runtime only."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend surface was involved."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No interactive identity flow changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Scheduler observation only; no broker or capital-affecting action."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Codex2 performed the canary and owner handoff; Antigravity independently reviewed and approved."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant data path was exercised."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Owner Codex2 and independent reviewer Antigravity remained distinct."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Confirm the live command root is exact merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed and supervisor lifecycle is running before sampling.",
+      "status": "pass",
+      "evidence_refs": ["validation.commands[0]", "deployment.canonical_root_deploy"]
+    },
+    {
+      "id": "AC2",
+      "statement": "Remain a live supervisor-dispatched auto worker for at least 330 seconds without self-completing early.",
+      "status": "pass",
+      "evidence_refs": ["deployment.post_cut_runtime_observation"]
+    },
+    {
+      "id": "AC3",
+      "statement": "Record UTC time, run ID, runner PID, provider child PID, heartbeat, supervisor PID, and task status at intervals no longer than 60 seconds.",
+      "status": "pass",
+      "evidence_refs": ["deployment.post_cut_runtime_observation.samples", "deployment.post_cut_runtime_observation.sample_invariants"]
+    },
+    {
+      "id": "AC4",
+      "statement": "Do not modify repository product files or .orchestrator/config.json.",
+      "status": "pass",
+      "evidence_refs": ["scope.not_changing", "validation.commands[5]"]
+    },
+    {
+      "id": "AC5",
+      "statement": "Confirm provider-ineligible, cooldown-blocked, and failure-loop-blocked candidates do not priority-preempt the worker.",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.failure_and_degraded_behavior", "validation.commands[2]", "validation.commands[3]"]
+    },
+    {
+      "id": "AC6",
+      "statement": "Handoff exact timestamps, elapsed time, PIDs, heartbeat samples, scan references, and any legitimate terminal event after at least 330 seconds.",
+      "status": "pass",
+      "evidence_refs": ["record_log[0]", "deployment.post_cut_runtime_observation", "integrity.source_artifact_sha256_by_epoch"]
+    }
+  ],
+  "residual_risks": {
+    "git_external_runtime_sources": {
+      "blocking_for_this_task": false,
+      "containment": "The manifest preserves the reviewed sample list, gate outcomes, and reviewer verdict; source file and line-range SHA-256 values bind the git-external runtime records.",
+      "description": "Worker, reviewer, heartbeat, and supervisor logs live outside Git and may be rotated after closeout.",
+      "expiry": "When the task evidence PR is merged and the governed done archive records its delivery metadata.",
+      "owner": "Supervisor runtime operations",
+      "recheck_trigger": "Any later dispute of a recorded sample, PID, gate result, or reviewer decision.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "task README and evidence manifest",
+      "completed canary worker log and immutable runner status/heartbeat records",
+      "independent reviewer output",
+      "supervisor scan lines 102-137",
+      "related merged scheduler evidence manifest"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "live_config": "99809368a6c040fba01700f3423e86561e261f928b9764b366d28c7fcaa87bc6",
+      "live_git_tree": "d1d55a322bee18df6d114403ece627bfb946f235",
+      "supervisor_log_lines_102_137": "edeee76b7c231a1bcb2f9ec252ad607edb68110258f9c10bfe20e2b5d79ffe63"
+    },
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.json",
+    "normalized_hosted_readback": {
+      "source_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "supervisor_pid": 669007,
+      "canary_run_id": "codex-20260731T153631Z-e3ad5e7a",
+      "accepted_window_end": "2026-07-31T15:43:47Z",
+      "reviewed_at": "2026-07-31T15:46:34Z"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The manifest is hashed by the companion checksum file rather than embedding a digest of its own bytes.",
+    "source_artifact_sha256_by_epoch": {
+      "894eb813c7cb5609ae517103a727d93ba8cbd1ed": {
+        "canary_worker_log": "b66bd1376122f424aa11aed5d6142c933c5d5a5e8aef08ab2cad1cb5d1181efc",
+        "independent_reviewer_log": "e17b8b278adf5fb12f3a5265e3ae0f2df6423b3723d756555e1098a74e56e16f",
+        "canary_runner_status": "4bf80fba934a84bb5ba22aa93df1fd2d9454d4cf01a25a984e5cb9bd157a110f",
+        "canary_final_heartbeat": "d5ea6f3380b8d0e041aec2e5bb0f7e562a01936dac0fa16f944bc5b752463a94",
+        "related_scheduler_evidence": "57b8f7a96cd088f06f53ab9bef8d4e9b25f87ca5d389ac2c8fedc9e7d02d2bfd"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-31T15:43:47Z",
+      "kind": "governed_owner_handoff",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "344-second audited window, ten direct samples, exact PID chain, gate readbacks, scan lines 102-137, and no legitimate terminal event",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-31T15:46:34Z",
+      "kind": "independent_review_approved",
+      "status": "approved",
+      "actor": "Antigravity",
+      "reference": "Reviewer confirmed exact live merge, 344-second window, continuous codex2_1 execution, no premature termination or preemption churn, and read-only code/config, then ran the governed approve command.",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-31T15:47:30Z",
+      "kind": "owner_finalize_dispatch",
+      "status": "review_approved",
+      "actor": "Supervisor",
+      "reference": "Supervisor resumed Codex2 as owner for task-closeout-finalization.",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    }
+  ]
+}
