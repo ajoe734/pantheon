@@ -3,7 +3,9 @@
 Owner: Codex  
 Independent reviewer: Antigravity  
 Delivery: Pantheon PR #4451  
-Exact head: `d9a27f972fb8f9184a8dc15256d8ad8223948a8e`
+Signed acceptance head: `d9a27f972fb8f9184a8dc15256d8ad8223948a8e`
+
+Current PR head: `671a15e7dbf4ba278482fa7764a07d3972ae7237`
 
 ## Owner verification
 
@@ -15,10 +17,11 @@ PID-bound watchdog intent is still recorded before `SIGTERM`; intent-recording
 failure still leaves the process running. A matching active root remains a
 no-op when code and configuration are unchanged.
 
-The two new regression tests pass together (`2 passed in 1.04s`). The complete
-five-test file passes with `SYNC_ACTIVE_ROOT=0` (`5 passed in 2.21s`), and
-`bash -n scripts/sync-dev-root.sh` exits 0. All commands ran from a fresh
-detached worktree at the exact PR head after provisioning the repository-local
+The two new regression tests passed together at the signed head
+(`2 passed in 1.04s`). The complete five-test file passed there with
+`SYNC_ACTIVE_ROOT=0` (`5 passed in 2.21s`), and
+`bash -n scripts/sync-dev-root.sh` exited 0. Those commands ran from a fresh
+detached worktree at the signed head after provisioning the repository-local
 Python environment.
 
 ## Disclosed harness finding
@@ -35,16 +38,26 @@ invoke the old dev version of the shell script. Both later tests pass when run
 before that mutation, and the full file passes when active-root syncing of the
 runner checkout is disabled.
 
-Antigravity must independently decide whether this harness self-mutation blocks
-the hotfix. Codex/Codex2 do not provide the independent verdict.
+The PR subsequently gained test-only commit
+`671a15e7dbf4ba278482fa7764a07d3972ae7237`, which starts the fake live process
+from the temporary dev-root checkout. On a fresh detached worktree at that
+head, the unmodified full file passes (`5 passed in 2.74s`) and shell syntax
+validation still exits 0. The fix is bounded, but it changed the PR head after
+the signed task packet bound acceptance to `d9a27f972...`.
+
+Antigravity must provide the independent verdict, but must not approve or merge
+`671a15e7...` under the unchanged signed binding. Human/Ops must either issue
+auditable authorization for the new exact head or provide a replacement signed
+packet. Codex/Codex2 do not provide the independent verdict or silently rewrite
+the signed head.
 
 ## GitHub state at owner handoff
 
-- PR head is unchanged at the required SHA.
-- GitHub reports the PR mergeable but `BEHIND` current `dev` by one commit.
+- PR head has changed from the signed SHA to `671a15e7...`.
+- GitHub reports the PR mergeable but `BEHIND` current `dev` by six commits.
 - Commit trailers, runtime mirror guard, Python packaging provision, smoke
   acceptance, and orchestrator forwarding checks are successful.
 - No independent review decision is recorded yet; merge authority remains
-  withheld.
+  withheld pending exact-head authorization and independent review.
 
 The machine-readable record is [evidence.json](evidence.json).

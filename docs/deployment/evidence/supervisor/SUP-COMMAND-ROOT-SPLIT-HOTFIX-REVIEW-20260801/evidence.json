@@ -1,6 +1,6 @@
 {
   "schema_version": "supervisor_hotfix_review_evidence.v1",
-  "recorded_at": "2026-08-01T14:41:36Z",
+  "recorded_at": "2026-08-01T14:49:06Z",
   "task": {
     "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-20260801",
     "title": "Independently review and merge supervisor command-root split hotfix",
@@ -18,15 +18,23 @@
     "base_branch": "dev",
     "head_branch": "hotfix/supervisor-command-root-split-20260801",
     "required_exact_head": "d9a27f972fb8f9184a8dc15256d8ad8223948a8e",
-    "observed_exact_head": "d9a27f972fb8f9184a8dc15256d8ad8223948a8e",
+    "observed_exact_head": "671a15e7dbf4ba278482fa7764a07d3972ae7237",
+    "signed_head_matches_observed_head": false,
+    "head_change": {
+      "commit": "671a15e7dbf4ba278482fa7764a07d3972ae7237",
+      "subject": "hotfix: isolate sync restart regression fixture",
+      "changed_file": "scripts/test_sync_dev_root.py",
+      "summary": "Starts the pre-existing PID-intent test process from its temporary dev-root checkout so the test cannot reset the surrounding exact-head review worktree after origin/dev advances."
+    },
     "changed_files": [
       "scripts/sync-dev-root.sh",
       "scripts/test_sync_dev_root.py"
     ]
   },
   "owner_review": {
-    "status": "ready_for_independent_review_with_disclosed_harness_finding",
+    "status": "blocked_on_signed_exact_head_mismatch",
     "identity_constraint": "Codex and Codex2 are the same review identity and do not supply the independent verdict.",
+    "authorization_gate": "The signed task acceptance remains bound to d9a27f972fb8f9184a8dc15256d8ad8223948a8e. The current PR head 671a15e7dbf4ba278482fa7764a07d3972ae7237 must not be approved or merged without auditable Human/Ops exact-head authorization or a replacement signed packet.",
     "semantic_findings": [
       {
         "acceptance": "A live active-root/dev-root mismatch is restart-worthy even when code and config are unchanged.",
@@ -73,14 +81,20 @@
       "result": "3 passed, 2 failed in 7.46s",
       "classification": "disclosed harness self-mutation; independent reviewer must decide whether it blocks",
       "detail": "test_sync_records_pid_bound_intent_before_stopping_live_supervisor starts its fake live process in the review worktree. Because PR #4451 is one base commit behind current dev, sync-dev-root.sh sees that worktree as a split active root and hard-resets it to origin/dev. The following two new tests are then collected from the exact-head module but invoke the reset dev version of the shell script. The two tests pass alone and the full suite passes when active-root syncing of the runner checkout is disabled."
+    },
+    {
+      "command": "bash -n scripts/sync-dev-root.sh && .venv-pantheon/bin/python3 -m pytest -q scripts/test_sync_dev_root.py",
+      "execution_root": "fresh detached worktree at 671a15e7dbf4ba278482fa7764a07d3972ae7237",
+      "result": "pass (shell exit 0; 5 passed in 2.74s)",
+      "classification": "owner verification of the changed PR head; not independent approval and not authorization to replace the signed exact head"
     }
   ],
   "github": {
-    "head_unchanged": true,
+    "head_unchanged": false,
     "state": "OPEN",
     "mergeable": "MERGEABLE",
     "merge_state_status": "BEHIND",
-    "commits_behind_current_dev": 1,
+    "commits_behind_current_dev": 6,
     "review_decision": "",
     "checks": {
       "Commit trailers": "success (push and pull_request runs)",
@@ -96,13 +110,13 @@
     "verdict": null,
     "reviewed_head": null,
     "reviewed_at": null,
-    "notes": "Reviewer must independently assess the disclosed harness finding, bind any verdict to PR #4451 exact head, and must not merge unless the accepted head and required checks remain valid."
+    "notes": "Reviewer must independently assess the current PR contents, but must not approve or merge 671a15e7dbf4ba278482fa7764a07d3972ae7237 under the unchanged signed acceptance for d9a27f972fb8f9184a8dc15256d8ad8223948a8e."
   },
   "delivery": {
     "pull_request": 4451,
-    "head_commit": "d9a27f972fb8f9184a8dc15256d8ad8223948a8e",
+    "head_commit": "671a15e7dbf4ba278482fa7764a07d3972ae7237",
     "merge_commit": null,
     "merged_at": null,
-    "status": "pending_independent_review_and_merge"
+    "status": "blocked_pending_exact_head_authorization_and_independent_review"
   }
 }
