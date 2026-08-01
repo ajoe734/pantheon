@@ -52,5 +52,6 @@ Not changed here:
 
 Machine-readable proof and the independent review decision belong in
 [`evidence.json`](evidence.json). Five focused regressions and the full 473-test
-supervisor suite pass on the composed branch; independent exact-head review,
-protected merge, and governed closeout remain pending.
+supervisor suite pass again after composing the latest `origin/dev` head;
+independent exact-head review, protected merge, and governed closeout remain
+pending.

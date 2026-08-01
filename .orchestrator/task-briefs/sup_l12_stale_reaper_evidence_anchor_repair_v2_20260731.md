@@ -28,7 +28,9 @@ Supersedes preempted immutable task SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-
 
 ## Verification
 - The checkout-scoped Python distribution was provisioned successfully.
-- Five focused stale-reaper regressions passed in 0.010 seconds.
-- The complete supervisor suite passed 473 tests in 13.747 seconds.
+- Five focused stale-reaper regressions passed again on the latest composed
+  head in 0.006 seconds.
+- The complete supervisor suite passed 473 tests again on the latest composed
+  head in 10.915 seconds.
 - Both evidence manifests, commit trailers, whitespace, anchor ancestry, and the `.orchestrator/config.json` boundary passed focused checks.
 - Independent exact-head review, protected merge, and governed owner closeout remain required.
