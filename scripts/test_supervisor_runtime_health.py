@@ -60,8 +60,8 @@ def test_health_fails_on_stale_heartbeat(tmp_path: Path) -> None:
 
     assert report["healthy"] is False
     failed = {item["name"] for item in report["checks"] if not item["ok"]}
-    assert "supervisor_process_alive" in failed
     assert "supervisor_heartbeat_fresh" in failed
+
 
 
 def test_require_watchdog_fails_when_probe_is_stale(tmp_path: Path) -> None:

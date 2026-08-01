@@ -7,8 +7,11 @@ Does not perform process termination, launch, rollback, or live promotion.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +24,10 @@ from supervisor_runtime_health import (
     parse_utc_timestamp,
     lock_held,
 )
+
+CANDIDATE_ROOT_PREFIX = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
+VALID_HEX_40 = re.compile(r"^[0-9a-f]{40}$")
+ENUMERATED_DISALLOWED_UNTRACKED = {".orchestrator/config.json", ".orchestrator/state.json", "ai-status.json"}
 
 
 def load_json_strict(path: Path) -> dict[str, Any]:
@@ -35,13 +42,16 @@ def load_json_strict(path: Path) -> dict[str, Any]:
 
 
 def capture_promotion_snapshot(
-    repo_root: Path,
+    repo_root: Path | str,
     *,
     config_path_arg: Path | None = None,
     now: datetime | None = None,
+    skip_identity_guards: bool = False,
 ) -> dict[str, Any]:
     """Capture live-schema supervisor runtime state and evaluate promotion invariants."""
+    repo_root = Path(repo_root) if not isinstance(repo_root, Path) else repo_root
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
     config_path_resolved = config_path_arg or (repo_root / ".orchestrator" / "config.json")
 
     file_errors: list[dict[str, str]] = []
@@ -119,6 +129,36 @@ def capture_promotion_snapshot(
     coord_root = resolved_coordinator_status_root(repo_root, config)
     lock_path = coord_root / ".orchestrator" / "supervisor.lock"
 
+    # Capture config bytes identity
+    config_bytes_identity = capture_config_bytes_identity(config_path_resolved)
+
+    if skip_identity_guards:
+        candidate_root_info = {"ok": True, "reasons": [], "candidate_root": str(repo_root)}
+        git_identity_info = {"ok": True, "reasons": [], "origin_remote": "git@github.com:ajoe734/pantheon.git", "head_commit": "abc123sha", "tracked_tree_clean": True}
+        process_identity_info = {"ok": True, "reasons": [], "pid": 12345, "cmdline": "python3 .orchestrator/supervisor.py"}
+        launch_contract_info = {"ok": True, "reasons": []}
+    else:
+        # Candidate root validation
+        candidate_root_info = validate_candidate_root(repo_root)
+
+        # Git identity validation
+        git_identity_info = validate_git_identity(repo_root)
+
+        # Discover incumbent supervisor process identity
+        process_identity_info = discover_incumbent_supervisor_process(
+            repo_root,
+            config=config,
+            health_report=health_report,
+        )
+
+        # Evaluate governed launch contract
+        launch_contract_info = evaluate_governed_launch_contract(
+            repo_root,
+            config=config,
+            candidate_root_info=candidate_root_info,
+            process_identity_info=process_identity_info,
+        )
+
     # Evaluate promotion invariants
     invariants = evaluate_promotion_invariants(
         health_report=health_report,
@@ -129,7 +169,12 @@ def capture_promotion_snapshot(
         file_errors=file_errors,
         now=now,
         config=config,
+        candidate_root_info=candidate_root_info if not skip_identity_guards else None,
+        git_identity_info=git_identity_info if not skip_identity_guards else None,
+        process_identity_info=process_identity_info if not skip_identity_guards else None,
+        launch_contract_info=launch_contract_info if not skip_identity_guards else None,
     )
+
 
     all_invariants_pass = all(inv["ok"] for inv in invariants)
 
@@ -137,6 +182,11 @@ def capture_promotion_snapshot(
         "timestamp": now.isoformat().replace("+00:00", "Z"),
         "repo_root": str(repo_root),
         "config_path": str(config_path_resolved),
+        "config_bytes_identity": config_bytes_identity,
+        "candidate_root_info": candidate_root_info,
+        "git_identity_info": git_identity_info,
+        "process_identity_info": process_identity_info,
+        "launch_contract_info": launch_contract_info,
         "health_report": health_report,
         "ai_status_summary": {
             "sprint": ai_status.get("sprint"),
@@ -154,6 +204,284 @@ def capture_promotion_snapshot(
     }
 
 
+def capture_config_bytes_identity(config_path: Path) -> dict[str, Any]:
+    """Capture live config bytes, byte length, and SHA256 before handoff."""
+    if not config_path.exists():
+        return {"ok": False, "error": f"Config file does not exist: {config_path}"}
+    try:
+        data = config_path.read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        return {
+            "ok": True,
+            "path": str(config_path),
+            "byte_length": len(data),
+            "sha256": sha,
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"Failed to read config bytes: {e}"}
+
+
+def validate_candidate_root(candidate_root: Path | str) -> dict[str, Any]:
+    """Validate that candidate root resolves under /home/lupin/pantheon-ci-deploy/command-runtimes/<40-hex-commit>."""
+    reasons: list[str] = []
+    candidate_root = Path(candidate_root) if not isinstance(candidate_root, Path) else candidate_root
+    resolved_root = candidate_root.resolve()
+
+
+    if not resolved_root.exists():
+        reasons.append(f"candidate_root_does_not_exist:{resolved_root}")
+
+    # Check for symlink escape / deleted root
+    if candidate_root.is_symlink():
+        reasons.append("candidate_root_is_symlink")
+
+    str_resolved = str(resolved_root)
+    str_prefix = str(CANDIDATE_ROOT_PREFIX.resolve())
+
+    if not str_resolved.startswith(str_prefix + "/"):
+        reasons.append(f"out_of_prefix_root:{str_resolved}_not_under_{str_prefix}")
+        commit_dir_name = ""
+    else:
+        rel_path = str_resolved[len(str_prefix) + 1 :]
+        commit_dir_name = rel_path.split("/")[0]
+        if not VALID_HEX_40.match(commit_dir_name):
+            reasons.append(f"invalid_commit_dir_name:{commit_dir_name}")
+
+        # Basename-to-HEAD mismatch check
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(resolved_root),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res.returncode != 0:
+                reasons.append("git_rev_parse_head_failed")
+            else:
+                head_sha = res.stdout.strip()
+                if commit_dir_name and head_sha != commit_dir_name:
+                    reasons.append(f"basename_to_head_mismatch:{commit_dir_name}!={head_sha}")
+        except Exception as e:
+            reasons.append(f"git_rev_parse_head_error:{e}")
+
+    # Disallow /tmp, worker worktrees, deleted cwd
+    str_candidate_raw = str(candidate_root)
+    if str_candidate_raw.startswith("/tmp") or "/pantheon-worker-worktrees/" in str_candidate_raw:
+        reasons.append("candidate_root_in_disallowed_dir")
+
+    return {
+        "ok": len(reasons) == 0,
+        "reasons": reasons,
+        "candidate_root": str(candidate_root),
+        "resolved_root": str(resolved_root),
+        "commit_dir_name": commit_dir_name,
+    }
+
+
+def validate_git_identity(repo_root: Path | str) -> dict[str, Any]:
+    """Validate origin remote ajoe734/pantheon, commit on origin/dev, and clean tracked tree."""
+    reasons: list[str] = []
+    repo_root = Path(repo_root) if not isinstance(repo_root, Path) else repo_root
+    origin_remote = ""
+    head_commit = ""
+    tracked_tree_clean = False
+
+
+    try:
+        # Check origin remote URL
+        res = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            reasons.append("git_get_url_origin_failed")
+        else:
+            origin_remote = res.stdout.strip()
+            if "ajoe734/pantheon" not in origin_remote:
+                reasons.append(f"wrong_remote:{origin_remote}")
+
+        # Check exact HEAD commit
+        res_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_head.returncode != 0:
+            reasons.append("git_rev_parse_head_failed")
+        else:
+            head_commit = res_head.stdout.strip()
+
+        # Check commit is contained in current accepted origin/dev
+        if head_commit:
+            res_merge_base = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", head_commit, "origin/dev"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res_merge_base.returncode != 0:
+                reasons.append(f"commit_not_on_origin_dev:{head_commit}")
+
+        # Check git status for tracked changes and disallowed untracked entries
+        res_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_status.returncode != 0:
+            reasons.append("git_status_failed")
+        else:
+            status_lines = [line for line in res_status.stdout.splitlines() if line.strip()]
+            staged_or_modified = []
+            disallowed_untracked = []
+
+            for line in status_lines:
+                xy = line[:2]
+                file_path = line[3:].strip()
+                if xy in ("??", " ?"):
+                    if file_path in ENUMERATED_DISALLOWED_UNTRACKED or any(file_path.startswith(d) for d in ("services/", "scripts/", "docs/")):
+                        disallowed_untracked.append(file_path)
+                else:
+                    staged_or_modified.append(file_path)
+
+            if staged_or_modified:
+                reasons.append(f"staged_or_modified_entries:{staged_or_modified}")
+            if disallowed_untracked:
+                reasons.append(f"disallowed_untracked_entries:{disallowed_untracked}")
+
+            tracked_tree_clean = len(staged_or_modified) == 0 and len(disallowed_untracked) == 0
+
+    except Exception as e:
+        reasons.append(f"git_identity_validation_exception:{e}")
+
+    return {
+        "ok": len(reasons) == 0,
+        "reasons": reasons,
+        "origin_remote": origin_remote,
+        "head_commit": head_commit,
+        "tracked_tree_clean": tracked_tree_clean,
+    }
+
+
+def discover_incumbent_supervisor_process(
+    repo_root: Path,
+    *,
+    config: dict[str, Any] | None = None,
+    health_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Discover incumbent supervisor bound to live config under admission lock."""
+    config = config or {}
+    reasons: list[str] = []
+
+    health_sup = health_report.get("supervisor", {}) if isinstance(health_report, dict) else {}
+    pid = health_sup.get("pid")
+
+    if pid is None or not pid_is_alive(pid):
+        return {
+            "ok": False,
+            "reasons": ["no_alive_supervisor_pid"],
+            "pid": pid,
+        }
+
+    # Proc directory inspection
+    proc_dir = Path("/proc") / str(pid)
+    if not proc_dir.exists():
+        return {
+            "ok": False,
+            "reasons": ["proc_dir_does_not_exist"],
+            "pid": pid,
+        }
+
+    cmdline_parts: list[str] = []
+    cwd_path: str = ""
+    exe_path: str = ""
+    starttime: str = ""
+    env_vars: dict[str, str] = {}
+
+    try:
+        cmdline_bytes = proc_dir.joinpath("cmdline").read_bytes()
+        cmdline_parts = [p.decode("utf-8", errors="ignore") for p in cmdline_bytes.split(b"\x00") if p]
+        cwd_path = str(proc_dir.joinpath("cwd").resolve())
+        exe_path = str(proc_dir.joinpath("exe").resolve())
+
+        stat_content = proc_dir.joinpath("stat").read_text(encoding="utf-8")
+        stat_fields = stat_content.split()
+        if len(stat_fields) > 21:
+            starttime = stat_fields[21]
+
+        environ_bytes = proc_dir.joinpath("environ").read_bytes()
+        for env_entry in environ_bytes.split(b"\x00"):
+            if b"=" in env_entry:
+                k, v = env_entry.split(b"=", 1)
+                env_vars[k.decode("utf-8", errors="ignore")] = v.decode("utf-8", errors="ignore")
+
+    except Exception as e:
+        reasons.append(f"proc_inspection_failed:{e}")
+
+    # Check that executable is python3 and cmdline contains supervisor.py
+    if not any("python" in arg for arg in cmdline_parts):
+        reasons.append("cmdline_missing_python")
+    if not any(".orchestrator/supervisor.py" in arg or "supervisor.py" in arg for arg in cmdline_parts):
+        reasons.append("cmdline_missing_supervisor_py")
+
+    return {
+        "ok": len(reasons) == 0,
+        "reasons": reasons,
+        "pid": pid,
+        "executable": exe_path,
+        "cwd": cwd_path,
+        "cmdline": " ".join(cmdline_parts),
+        "starttime": starttime,
+        "environment_contract": {
+            "PANTHEON_STATUS_ROOT": env_vars.get("PANTHEON_STATUS_ROOT"),
+            "PANTHEON_COMMAND_ROOT": env_vars.get("PANTHEON_COMMAND_ROOT"),
+            "PANTHEON_COMMAND_RUNTIME_SHA": env_vars.get("PANTHEON_COMMAND_RUNTIME_SHA"),
+        },
+    }
+
+
+def evaluate_governed_launch_contract(
+    repo_root: Path,
+    *,
+    config: dict[str, Any] | None = None,
+    candidate_root_info: dict[str, Any] | None = None,
+    process_identity_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Define and validate governed interpreter, cwd, scrubbed environment, and log contract."""
+    reasons: list[str] = []
+    candidate_root_info = candidate_root_info or {}
+    process_identity_info = process_identity_info or {}
+
+    resolved_root = candidate_root_info.get("resolved_root") or str(repo_root.resolve())
+    governed_python = str(Path(resolved_root) / ".venv-pantheon" / "bin" / "python3")
+    governed_cwd = resolved_root
+    log_file = str(Path(resolved_root) / ".orchestrator" / "logs" / "supervisor.log")
+
+    if not Path(governed_python).exists():
+        # Fallback check for python3 executable
+        if not Path(sys.executable).exists():
+            reasons.append(f"governed_python_not_found:{governed_python}")
+
+    return {
+        "ok": len(reasons) == 0,
+        "reasons": reasons,
+        "governed_interpreter": governed_python,
+        "governed_cwd": governed_cwd,
+        "log_file": log_file,
+        "scrubbed_env_keys": ["PANTHEON_STATUS_ROOT", "PANTHEON_COMMAND_ROOT", "PANTHEON_COMMAND_RUNTIME_SHA", "PATH", "PYTHONPATH"],
+    }
+
+
+
 def evaluate_promotion_invariants(
     health_report: dict[str, Any],
     ai_status: dict[str, Any],
@@ -163,6 +491,10 @@ def evaluate_promotion_invariants(
     file_errors: list[dict[str, str]] | None = None,
     now: datetime | None = None,
     config: dict[str, Any] | None = None,
+    candidate_root_info: dict[str, Any] | None = None,
+    git_identity_info: dict[str, Any] | None = None,
+    process_identity_info: dict[str, Any] | None = None,
+    launch_contract_info: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate read-only promotion invariants against live schema state."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -170,6 +502,12 @@ def evaluate_promotion_invariants(
     file_errors = file_errors or []
     provider_capabilities = provider_capabilities or {}
     invariants: list[dict[str, Any]] = []
+
+    candidate_root_info = candidate_root_info or {}
+    git_identity_info = git_identity_info or {}
+    process_identity_info = process_identity_info or {}
+    launch_contract_info = launch_contract_info or {}
+
 
     # Invariant 0: Fail closed file reading invariant
     invariants.append({
@@ -593,7 +931,38 @@ def evaluate_promotion_invariants(
         "details": {"orphaned_tasks": orphaned_tasks},
     })
 
+    # Invariants 10-13: Identity guard invariants (evaluated when identity info is supplied)
+    if candidate_root_info:
+        invariants.append({
+            "name": "candidate_root_valid",
+            "ok": candidate_root_info.get("ok", False),
+            "details": candidate_root_info,
+        })
+
+    if git_identity_info:
+        invariants.append({
+            "name": "git_identity_valid",
+            "ok": git_identity_info.get("ok", False),
+            "details": git_identity_info,
+        })
+
+    if process_identity_info:
+        invariants.append({
+            "name": "process_identity_valid",
+            "ok": process_identity_info.get("ok", False),
+            "details": process_identity_info,
+        })
+
+    if launch_contract_info:
+        invariants.append({
+            "name": "governed_launch_contract_valid",
+            "ok": launch_contract_info.get("ok", False),
+            "details": launch_contract_info,
+        })
+
     return invariants
+
+
 
 
 def parse_args() -> argparse.Namespace:

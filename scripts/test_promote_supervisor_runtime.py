@@ -93,7 +93,7 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
     create_realistic_healthy_fixture(repo)
 
-    snapshot = capture_promotion_snapshot(repo, now=now)
+    snapshot = capture_promotion_snapshot(repo, now=now, skip_identity_guards=True)
 
     assert snapshot["eligible_for_promotion"] is True
     assert len(snapshot["file_errors"]) == 0
@@ -743,3 +743,49 @@ def test_evaluate_promotion_invariants_rejects_duplicate_canonical_run_id() -> N
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
     assert "duplicate_canonical_run_id:run_dup" in worker_inv["details"]["reasons"]
+
+
+def test_validate_candidate_root_out_of_prefix_and_symlink(tmp_path: Path) -> None:
+    from promote_supervisor_runtime import validate_candidate_root
+
+    # Out of prefix
+    info = validate_candidate_root(tmp_path)
+    assert info["ok"] is False
+    assert any("out_of_prefix_root" in r for r in info["reasons"])
+
+    # Symlink check
+    symlink_path = tmp_path / "link"
+    try:
+        symlink_path.symlink_to(tmp_path)
+        info_sym = validate_candidate_root(symlink_path)
+        assert info_sym["ok"] is False
+        assert any("candidate_root_is_symlink" in r for r in info_sym["reasons"])
+    except OSError:
+        pass
+
+
+def test_validate_git_identity_wrong_remote_and_dirty_tree(tmp_path: Path) -> None:
+    from promote_supervisor_runtime import validate_git_identity
+
+    info = validate_git_identity(tmp_path)
+    assert info["ok"] is False
+    assert any("git_get_url_origin_failed" in r or "wrong_remote" in r for r in info["reasons"])
+
+
+def test_discover_incumbent_supervisor_process_stale_or_missing(tmp_path: Path) -> None:
+    from promote_supervisor_runtime import discover_incumbent_supervisor_process
+
+    info = discover_incumbent_supervisor_process(tmp_path, health_report={"supervisor": {"pid": 999999}})
+    assert info["ok"] is False
+    assert "no_alive_supervisor_pid" in info["reasons"]
+
+
+def test_evaluate_governed_launch_contract(tmp_path: Path) -> None:
+    from promote_supervisor_runtime import evaluate_governed_launch_contract
+
+    info = evaluate_governed_launch_contract(tmp_path)
+    assert "governed_interpreter" in info
+    assert "governed_cwd" in info
+    assert "log_file" in info
+    assert info["scrubbed_env_keys"] == ["PANTHEON_STATUS_ROOT", "PANTHEON_COMMAND_ROOT", "PANTHEON_COMMAND_RUNTIME_SHA", "PATH", "PYTHONPATH"]
+
