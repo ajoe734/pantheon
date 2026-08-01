@@ -1,0 +1,438 @@
+{
+  "schema_version": 1,
+  "audit_id": "L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801",
+  "observed_at": "2026-08-01T15:02:57Z",
+  "source_cut": {
+    "repository": "ajoe734/pantheon",
+    "branch": "origin/dev",
+    "sha": "76bbb04b569331a81916330d1cf713d068527c89",
+    "status_command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "status_command_runtime_sha": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+    "runtime_state": "/home/lupin/pantheon/.orchestrator/state.json",
+    "runtime_state_observed_at": "2026-08-01T15:02:57Z"
+  },
+  "verdict": {
+    "delta": "nonzero",
+    "product_complete": false,
+    "catalog_materialized": false,
+    "catalog_as_authored_valid": true,
+    "summary": "The guarded 28-task catalog remains structurally valid, but fresh evidence replay now accepts L12-BFF-001, so L12-EVIDENCE-REVALIDATE-BFF-20260731 is superseded. The effective plan is 27 tasks with a 24-task G1 frontier. Live dispatcher dry-run still fails closed on a current supervisor artifact overlap, so none of the catalog tasks is canonically materialized."
+  },
+  "three_pass_verdicts": [
+    {
+      "pass": 1,
+      "name": "specification_and_product_completeness",
+      "method": "Read the canonical loop registry independently of runtime and task-state; compare each desired/actual/controller/evidence contract with the target reconciled maturity.",
+      "verdict": "fail",
+      "facts": {
+        "canonical_loops": 12,
+        "controller_contracts_implemented": 3,
+        "controller_contracts_not_implemented": 9,
+        "desired_state_queries_planned": 12,
+        "actual_state_queries_planned": 12,
+        "loops_at_reconciled_maturity": 0,
+        "loops_with_current_proven_live_evidence": 0
+      }
+    },
+    {
+      "pass": 2,
+      "name": "implementation_test_deployment_hosted_verifier_and_evidence_completeness",
+      "method": "Inspect current controller bindings and tests; replay the current evidence validator and companion checksums; read the public deployment manifest and health endpoints; reconcile verifier and hosted task rows.",
+      "verdict": "fail",
+      "facts": {
+        "controller_binding_tests_passed": true,
+        "focused_tests": "85 passed, 6 skipped",
+        "archived_evidence_rows_replayed": 18,
+        "validator_pass": 3,
+        "checksum_pass": 18,
+        "validator_and_checksum_pass": 3,
+        "revalidation_required": 15,
+        "public_bff_health": "degraded_not_ready",
+        "authenticated_hosted_loop_readback": "unverified_no_valid_jwt",
+        "hosted_frontend_on_current_execute_plans_dev": false,
+        "all_four_verifiers_done": false
+      }
+    },
+    {
+      "pass": 3,
+      "name": "supervisor_task_pr_dispatch_dependency_conflict_and_parallelization_completeness",
+      "method": "Validate the guarded DAG, deduplicate all task IDs against canonical active/archive state, PRs, branches and worktrees, then run the live dispatcher in dry-run mode and sample the supervisor fleet.",
+      "verdict": "fail_closed",
+      "facts": {
+        "as_authored_tasks": 28,
+        "as_authored_g1": 25,
+        "as_authored_g2": 2,
+        "as_authored_g3": 1,
+        "effective_tasks_after_fresh_delta": 27,
+        "effective_g1": 24,
+        "canonical_catalog_tasks_present": 0,
+        "receipt_only_materialization_accepted": 0,
+        "live_dispatch_dry_run_exit": 2,
+        "sampled_running_workers": 9,
+        "sampled_quota_groups": 3
+      }
+    }
+  ],
+  "twelve_loop_matrix": [
+    {
+      "loop_id": "source_ingestion",
+      "name": "Source Ingestion",
+      "desired_contract": "Reconcile persona data requirements and connector policy into durable connector and schedule state; expose tenant/environment-scoped desired and actual queries, identity, heartbeat, terminal state and provenance.",
+      "current_source_controller_binding": {
+        "catalog_status": "implemented",
+        "controller": "source-ingestion-controller",
+        "module": "services/source_ingestion/controller_worker.py",
+        "compose_service": "source-ingest-scheduler",
+        "desired_query_status": "planned",
+        "actual_query_status": "planned"
+      },
+      "current_tests": [
+        "tests/test_loop_catalog_registry.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py"
+      ],
+      "current_accepted_evidence_checksum": {
+        "task_id": "L12-SRC-001",
+        "validator": "fail",
+        "checksum": "pass",
+        "accepted": false,
+        "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]
+      },
+      "hosted_runtime_readback": "No authenticated per-loop hosted readback was available; the public BFF health endpoint was degraded/not-ready.",
+      "missing_development": ["Finish durable desired/actual reconciliation and current hosted admission; the source controller binding alone is not reconciled product proof."],
+      "missing_validation": ["Revalidate current exact-head source evidence", "Run accepted hosted loop readback and product verifier sequence"],
+      "closing_tasks": ["L12-EVIDENCE-REVALIDATE-SRC-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "strategy_distillation",
+      "name": "Strategy Distillation",
+      "desired_contract": "Reconcile source records into durable distillation jobs with idempotent scheduling, restart-safe state, terminal readback and provenance.",
+      "current_source_controller_binding": {
+        "catalog_status": "implemented",
+        "controller": "strategy-distillation-controller",
+        "module": "services/source_ingestion/distillation_controller.py",
+        "compose_service": "strategy-distillation-worker",
+        "desired_query_status": "planned",
+        "actual_query_status": "planned"
+      },
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py", "services/control-plane/bff/test_loop_health_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {
+        "task_id": "L12-DIST-001",
+        "validator": "pass",
+        "checksum": "pass",
+        "accepted": true,
+        "rejection_rules": []
+      },
+      "hosted_runtime_readback": "No authenticated per-loop hosted readback was available; accepted repository evidence does not establish current hosted reconciliation.",
+      "missing_development": ["Complete shared catalog/BFF integration and current hosted reconciliation beyond the implemented controller."],
+      "missing_validation": ["Recheck accepted evidence at the release gate", "Run hosted and verifier acceptance"],
+      "closing_tasks": ["L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "alpha_replication",
+      "name": "Alpha Replication",
+      "desired_contract": "Reconcile approved alpha candidates through durable replication/revalidation with stable identity, restart recovery, terminal state and provenance.",
+      "current_source_controller_binding": {
+        "catalog_status": "implemented",
+        "controller": "alpha-replication-controller",
+        "module": "services/research/alpha_replication/replication_controller.py",
+        "compose_service": "alpha-replication-worker",
+        "desired_query_status": "planned",
+        "actual_query_status": "planned"
+      },
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py", "services/control-plane/bff/test_loop_health_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {
+        "task_id": "L12-ALPHA-001",
+        "validator": "fail",
+        "checksum": "pass",
+        "accepted": false,
+        "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]
+      },
+      "hosted_runtime_readback": "No authenticated per-loop hosted readback was available.",
+      "missing_development": ["Complete desired/actual reconciliation and shared current controller admission beyond the source binding."],
+      "missing_validation": ["Revalidate exact-head alpha evidence", "Run hosted and verifier acceptance"],
+      "closing_tasks": ["L12-EVIDENCE-REVALIDATE-ALPHA-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "persona_teaching",
+      "name": "Persona Teaching",
+      "desired_contract": "Durably reconcile teaching plans and sessions with scoped desired/actual queries, idempotent dispatch, heartbeat, restart recovery, terminal state and provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-TEACH-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
+      "hosted_runtime_readback": "No controller can be accepted by the BFF while the catalog contract is not implemented; hosted authenticated readback was unavailable.",
+      "missing_development": ["Implement the canonical teaching controller in services/training-session", "Integrate it into the shared catalog, Compose and BFF truth surfaces"],
+      "missing_validation": ["Controller duplicate/concurrency/restart/failure/auth tests", "Revalidate teaching evidence", "Run real learning verifier and hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-TEACH-20260731", "L12-EVIDENCE-REVALIDATE-TEACH-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-LEARN-REAL-VERIFIER-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "agora_interaction_evidence",
+      "name": "Agora Interaction Evidence",
+      "desired_contract": "Reconcile Agora interactions into durable evidence with scoped desired/actual queries, stable identity, restart/failure truth and provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-AGORA-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
+      "hosted_runtime_readback": "Catalog-not-implemented is a fail-closed BFF boundary; authenticated hosted readback was unavailable.",
+      "missing_development": ["Implement the canonical Agora controller in services/control-plane/specs/agora", "Integrate shared runtime and truth binding"],
+      "missing_validation": ["Controller recovery/security/terminal proof", "Revalidate Agora evidence", "Run learning verifier and hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-AGORA-20260731", "L12-EVIDENCE-REVALIDATE-AGORA-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-LEARN-REAL-VERIFIER-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "human_imitation_shadow_evaluation",
+      "name": "Human Imitation / Shadow Evaluation",
+      "desired_contract": "Reconcile policy-learning shadow evaluation without live-capital activation; expose durable desired/actual state, stable identity, restart and failure truth.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-IMIT-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding", "mutable_observation_binding"]},
+      "hosted_runtime_readback": "Catalog-not-implemented is a fail-closed BFF boundary; authenticated hosted readback was unavailable.",
+      "missing_development": ["Implement canonical shadow-evaluation controller in services/policy-learning", "Integrate shared runtime truth while preserving the no-live-capital boundary"],
+      "missing_validation": ["Duplicate/restart/failure and mutable-observation binding proof", "Revalidate imitation evidence", "Run learning verifier and hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-IMIT-20260731", "L12-EVIDENCE-REVALIDATE-IMIT-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-LEARN-REAL-VERIFIER-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "consultation",
+      "name": "Consultation",
+      "desired_contract": "Durably reconcile consultation requests and outcomes with scoped queries, stable identity, restart recovery, terminal state and provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-CONS-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
+      "hosted_runtime_readback": "Catalog-not-implemented is a fail-closed BFF boundary; authenticated hosted readback was unavailable.",
+      "missing_development": ["Implement canonical consultation controller in services/consultation", "Integrate shared runtime truth"],
+      "missing_validation": ["Controller recovery/security/terminal proof", "Revalidate consultation evidence", "Run learning verifier and hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-CONS-20260731", "L12-EVIDENCE-REVALIDATE-CONS-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-LEARN-REAL-VERIFIER-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "promotion_deployment",
+      "name": "Promotion / Deployment",
+      "desired_contract": "Reconcile governed promotion intent to deployed terminal state with approval identity, rollback, scoped queries and provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-DEP-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
+      "hosted_runtime_readback": "Catalog-not-implemented is a fail-closed BFF boundary; authenticated hosted readback was unavailable.",
+      "missing_development": ["Implement canonical promotion/deployment controller in services/control-plane/governance", "Integrate shared runtime and rollback truth"],
+      "missing_validation": ["Approval/duplicate/restart/failure/rollback proof", "Revalidate deployment evidence", "Run hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-DEP-20260731", "L12-EVIDENCE-REVALIDATE-DEP-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "capital_pool_execution",
+      "name": "Capital Pool Execution",
+      "desired_contract": "Reconcile approved capital-pool intent to safe execution truth with strict no-live-capital defaults, approvals, compensation and terminal provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-CAP-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
+      "hosted_runtime_readback": "Only historical proven-live metadata exists in the catalog; no current accepted or authenticated hosted readback was available.",
+      "missing_development": ["Implement canonical capital-pool controller in services/runtime-manager with no-live-capital default", "Integrate approval, compensation and shared truth"],
+      "missing_validation": ["Auth/two-person/no-live-capital/duplicate/restart/compensation proof", "Revalidate capital evidence", "Run hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-CAP-20260731", "L12-EVIDENCE-REVALIDATE-CAP-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "telemetry_reconciliation",
+      "name": "Telemetry / Reconciliation",
+      "desired_contract": "Reconcile telemetry, drift and incident state with ordered identity, restart/replay handling, terminal incident truth and downstream provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py", "services/control-plane/bff/test_loop_health_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_ids": ["L12-TEL-001", "L12-REC-001"], "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
+      "hosted_runtime_readback": "Public BFF health reported lifecycle-projector last-poll staleness and not-ready; authenticated per-loop readback was unavailable.",
+      "missing_development": ["Implement canonical telemetry/reconciliation controller in services/telemetry", "Integrate terminal incident and BFF truth"],
+      "missing_validation": ["Revalidate telemetry and reconciliation evidence", "Complete exact-head observability verifier review", "Run hosted degraded/recovery proof"],
+      "closing_tasks": ["L12-CONTROLLER-TELREC-20260731", "L12-EVIDENCE-REVALIDATE-TEL-20260731", "L12-EVIDENCE-REVALIDATE-REC-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "evolution",
+      "name": "Evolution",
+      "desired_contract": "Reconcile approved EvolutionDecision records to downstream terminal outcomes with durable identity, restart/retry/compensation and provenance.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py", "services/control-plane/bff/test_loop_health_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-EVO-001", "validator": "fail", "checksum": "pass", "accepted": false, "rejection_rules": ["head_binding"]},
+      "hosted_runtime_readback": "Catalog-not-implemented is a fail-closed BFF boundary; authenticated hosted readback was unavailable.",
+      "missing_development": ["Implement canonical evolution controller in services/evolution", "Integrate approved-action downstream terminal truth"],
+      "missing_validation": ["Revalidate evidence at current exact head", "Complete observability verifier exact-head review", "Run hosted proof"],
+      "closing_tasks": ["L12-CONTROLLER-EVO-20260731", "L12-EVIDENCE-REVALIDATE-EVO-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    },
+    {
+      "loop_id": "bff_health_monitoring",
+      "name": "BFF Health Monitoring",
+      "desired_contract": "Reconcile downstream and BFF health into current, tenant/environment-scoped health truth with restart, stale-state, failure and recovery semantics.",
+      "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
+      "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py", "services/control-plane/bff/test_loop_health_read_model_contract.py"],
+      "current_accepted_evidence_checksum": {"task_id": "L12-BFF-001", "validator": "pass", "checksum": "pass", "accepted": true, "rejection_rules": []},
+      "hosted_runtime_readback": "Public /healthz was degraded and not ready because lifecycle-projector last poll was stale; authenticated loop inventory/health returned 401 without a valid JWT.",
+      "missing_development": ["Implement canonical BFF health controller in services/control-plane/bff", "Integrate stale/failure/recovery terminal truth into the shared catalog"],
+      "missing_validation": ["Controller restart/stale/downstream recovery proof", "Complete observability verifier and current hosted authenticated readback"],
+      "closing_tasks": ["L12-CONTROLLER-BFF-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+    }
+  ],
+  "current_evidence_replay": {
+    "observed_at": "2026-08-01T14:50:00Z",
+    "validator": "scripts/validate_twelve_loop_gap_evidence.py",
+    "rows_checked": 18,
+    "checksum_resolution": "Each archive row's canonical review_file was used; checksum entries were resolved according to whether they were repository-relative or checksum-directory-relative.",
+    "validator_pass_task_ids": ["L12-DIST-001", "L12-BFF-001", "L12-MANIFEST-001"],
+    "checksum_pass_task_ids": ["L12-FLEET-001", "L12-CTRL-001", "L12-TEL-001", "L12-REC-001", "L12-SRC-001", "L12-ALPHA-001", "L12-AGORA-001", "L12-CONS-001", "L12-DEP-001", "L12-DIST-001", "L12-TEACH-001", "L12-IMIT-001", "L12-CAP-001", "L12-EVO-001", "L12-BFF-001", "L12-SIGNOFF-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
+    "accepted_task_ids": ["L12-DIST-001", "L12-BFF-001", "L12-MANIFEST-001"],
+    "revalidation_required_task_ids": ["L12-FLEET-001", "L12-CTRL-001", "L12-TEL-001", "L12-REC-001", "L12-SRC-001", "L12-ALPHA-001", "L12-AGORA-001", "L12-CONS-001", "L12-DEP-001", "L12-TEACH-001", "L12-IMIT-001", "L12-CAP-001", "L12-EVO-001", "L12-SIGNOFF-001", "L12-TRUTH-001"],
+    "historical_baseline": {
+      "path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json",
+      "accepted": 2,
+      "revalidation_required": 16
+    }
+  },
+  "catalog_validation": {
+    "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+    "program_id": "pantheon-twelve-loop-gap-current-proof-remediation-2026-07-31",
+    "catalog_file_sha256": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+    "catalog_semantic_sha256": "6adf2d2e987d8ebed96689e35db346e9f4eacb3d63a0b635bf8a51426f9ce02f",
+    "validator_command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --current",
+    "validator_result": "valid",
+    "source_pr": 4394,
+    "source_head": "fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+    "source_branch_ci_run": 30635898120,
+    "source_branch_ci_conclusion": "success",
+    "as_authored": {
+      "task_count": 28,
+      "waves": {"G1": 25, "G2": 2, "G3": 1},
+      "dependency_reachability": "pass",
+      "unique_sink": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "declared_artifact_conflicts": "pass",
+      "g1_artifact_prefix_disjoint": true,
+      "owner_reviewer_independence": "pass"
+    },
+    "legacy_lanes_not_counted_as_new": ["L12-FE-TRUTH-001", "L12-VERIFY-KNOW-001", "L12-VERIFY-RUNTIME-001", "L12-VERIFY-LEARN-001", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+  },
+  "catalog_delta": {
+    "verdict": "nonzero",
+    "missing_task_packets": [],
+    "additional_task_packets": [],
+    "superseded_task_packets": [
+      {
+        "task_id": "L12-EVIDENCE-REVALIDATE-BFF-20260731",
+        "reason": "Fresh replay accepts L12-BFF-001 under both the current ten-rule validator and its companion checksum.",
+        "required_catalog_operation": "Remove this G1 task and remove its dependency edge from L12-CURRENT-PROOF-RELEASE-GATE-20260731 before materialization; do not rewrite the immutable guarded catalog from this audit task."
+      }
+    ],
+    "effective_plan": {
+      "task_count": 27,
+      "waves": {"G1": 24, "G2": 2, "G3": 1},
+      "unique_sink": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "structural_frontier_note": "The original structural G1 frontier is 25. Applying the one proven supersession yields an effective structural frontier of 24; this is independent of provider capacity."
+    }
+  },
+  "deduplication": {
+    "observed_at": "2026-08-01T14:50:00Z",
+    "checked_surfaces": ["/home/lupin/pantheon/ai-status.json", "/home/lupin/pantheon/ai-task-archive/tasks", "GitHub open PRs", "local branches", "origin remote branches", "git worktrees"],
+    "catalog_task_ids_checked": 28,
+    "canonical_active_matches": [],
+    "canonical_archive_matches": [],
+    "open_pr_matches": [],
+    "branch_matches": [],
+    "worktree_matches": [],
+    "receipt_only_matches": [
+      {
+        "task_id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+        "receipts": ["pkt-l12-actionable-gap-execution-20260730T162646Z", "pkt-l12-actionable-gap-execution-20260730T163500Z"],
+        "accepted_as_materialized": false,
+        "reason": "The later receipt says processed/admitted, but authoritative active/archive task state has no row. Receipt text is not canonical materialization."
+      }
+    ]
+  },
+  "prerequisite_chain": [
+    {"step": 1, "subject": "PR #4397 / supervisor seen-event key repair", "state": "merged_and_live", "head_sha": "fd67904e2c1adb7256d4d9d9dc618105346be424", "merge_sha": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a", "verdict": "pass"},
+    {"step": 2, "subject": "PR #4399 / scheduler preemption repair", "state": "merged_technical_canary_pass_governed_canary_closeout_blocked", "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15", "merge_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed", "verdict": "partial"},
+    {"step": 3, "subject": "PR #4425 / held-close overlap guard", "state": "open_behind_checks_failing", "head_sha": "dfdcd07ffb244ce29182478654ffe7d6ec4178e9", "verdict": "blocker"},
+    {"step": 4, "subject": "PR #4443 / runtime identity root config git V2", "state": "open_behind_review_gate_failing", "head_sha": "4cd85c7a8087bebc38713131c45a52e703f06918", "verdict": "blocker"},
+    {"step": 5, "subject": "PRs #4445 and #4447 / failure-streak record wiring V3", "state": "duplicate_open_prs_same_task_code_and_evidence_not_composed", "heads": ["52cd790274b0daf9cf9e49b9ef3ac53dddf40e24", "c640b6faa92fb484a8638b22243bee2e840cc079"], "verdict": "blocker"},
+    {"step": 6, "subject": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801", "state": "todo_current_artifact_overlap", "verdict": "live_dispatch_blocker"},
+    {"step": 7, "subject": "guarded catalog materialization", "state": "not_started", "verdict": "blocked"}
+  ],
+  "live_dispatch": {
+    "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --dry-run --current --command-root $PANTHEON_COMMAND_ROOT --command-sha $PANTHEON_COMMAND_RUNTIME_SHA --runtime-state /home/lupin/pantheon/.orchestrator/state.json",
+    "exit_code": 2,
+    "result": "fail_closed",
+    "message": "live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+    "materialized_task_count": 0,
+    "admitted_task_count": 0
+  },
+  "fleet_capacity": {
+    "observed_at": "2026-08-01T15:02:57Z",
+    "structural_frontier_as_authored": 25,
+    "structural_frontier_effective": 24,
+    "running_workers": 9,
+    "quota_groups": ["codex1", "codex2", "antigravity"],
+    "provider_distribution": {"codex1": 4, "codex2": 4, "antigravity": 1, "claude": 0},
+    "worker_runs": [
+      {"provider": "codex2-1", "run_id": "codex-20260801T143851Z-ff435874", "task_id": "L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801"},
+      {"provider": "codex2-2", "run_id": "codex-20260801T144227Z-cb9fee63", "task_id": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731"},
+      {"provider": "codex2-3", "run_id": "codex-20260801T144227Z-1205ef88", "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801"},
+      {"provider": "codex1-3", "run_id": "codex-20260801T145555Z-f7e54309", "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731"},
+      {"provider": "codex1-2", "run_id": "codex-20260801T145808Z-d58e22be", "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2"},
+      {"provider": "codex2-4", "run_id": "codex-20260801T145820Z-8cc1b389", "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731"},
+      {"provider": "codex1-4", "run_id": "codex-20260801T145830Z-f07b6acd", "task_id": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801"},
+      {"provider": "codex1-1", "run_id": "codex-20260801T150036Z-d65918cc", "task_id": "LIFECYCLE-PROJ-PLAN-REVIEW-R3-20260801"},
+      {"provider": "antigravity1-1", "run_id": "antigravity1-1-20260801T150255Z-ff201743", "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731"}
+    ],
+    "interpretation": "Antigravity/Claude-first assignment remains catalog intent. At this sample only one Antigravity worker and no Claude worker were running. A disjoint task frontier states dependency/artifact independence, not a promise of simultaneous accounts or workers."
+  },
+  "hosted_and_verifier_state": {
+    "frontend_manifest": {
+      "url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+      "frontend_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+      "bff_commit": "be956c07aca889043ef301389412b6744452f20b",
+      "safe_read_only_profile": true,
+      "integration_gate_run": 30192097967,
+      "integration_gate_conclusion": "success",
+      "current_execute_plans_dev": "3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f",
+      "frontend_is_current": false
+    },
+    "public_bff_health": {"observed_at": "2026-08-01T14:43:02Z", "status": "degraded", "live": true, "ready": false, "stale_component": "lifecycle-projector", "last_poll": "2026-08-01T09:16:27Z"},
+    "loop_inventory_http_without_valid_jwt": 401,
+    "loop_health_http_without_valid_jwt": 401,
+    "vm_readback": "unavailable_gcloud_reauth_required_and_ssh_public_key_denied",
+    "legacy_lane_states": {
+      "L12-FE-TRUTH-001": "blocked",
+      "L12-VERIFY-KNOW-001": "todo",
+      "L12-VERIFY-RUNTIME-001": "todo",
+      "L12-VERIFY-LEARN-REAL-VERIFIER-001": "missing_from_canonical_state",
+      "L12-VERIFY-OBS-001": "review_pr_4364_open_behind_exact_head_stale_in_task_row",
+      "L12-HOSTED-001": "todo",
+      "L12-CLOSE-001": "todo"
+    }
+  },
+  "merge_order": [
+    "Finish and independently review the failure-streak/runtime-identity/held-close prerequisite chain, composing or retiring duplicate PRs #4445/#4447.",
+    "Repair and merge SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801; prove processed receipts agree with authoritative active/archive projection.",
+    "Apply the audited catalog delta before dispatch: supersede L12-EVIDENCE-REVALIDATE-BFF-20260731 and remove its release-gate dependency.",
+    "Materialize the effective 24-task G1 frontier only through a successful guarded dry-run and canonical readback.",
+    "Merge nine controller lanes and fifteen evidence revalidation lanes under independent exact-head review.",
+    "Run catalog integration, then the current-proof release gate.",
+    "Run the real learning verifier and resume the legacy FE, four-verifier, hosted and closeout lanes in dependency order.",
+    "Allow L12-CLOSE-001 only after all current hosted/controller/evidence/verifier truth is accepted."
+  ],
+  "rollout": {
+    "this_task": "Documentation and evidence merge only; no runtime or catalog materialization.",
+    "future_product_rollout": "Gate-before-dispatch, exact-head review, protected merge, current evidence validation, then staged hosted readback with safe write defaults."
+  },
+  "rollback": {
+    "this_task": "Revert the audit task merge commit.",
+    "runtime_action": "none_permitted_or_required",
+    "future_product_rollback": "Each controller/integration/hosted task must carry its own fail-closed rollback and compensation evidence."
+  },
+  "evidence_references": [
+    "docs/deployment/loop-catalog.registry.json",
+    "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+    "services/control-plane/bff/test_loop_health_read_model_contract.py",
+    "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+    "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+    "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json",
+    "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731/evidence.json",
+    "/home/lupin/pantheon/ai-task-archive/tasks/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2.json",
+    "/home/lupin/pantheon/ai-task-archive/tasks/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730.json",
+    "https://github.com/ajoe734/pantheon/pull/4397",
+    "https://github.com/ajoe734/pantheon/pull/4399",
+    "https://github.com/ajoe734/pantheon/pull/4425",
+    "https://github.com/ajoe734/pantheon/pull/4443",
+    "https://github.com/ajoe734/pantheon/pull/4445",
+    "https://github.com/ajoe734/pantheon/pull/4447",
+    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+    "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/healthz"
+  ]
+}
