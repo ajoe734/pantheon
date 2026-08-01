@@ -1,0 +1,77 @@
+{
+  "schema_version": "pantheon.lifecycle-projector-incident-evidence.v1",
+  "task_id": "LIFECYCLE-PROJ-INCIDENT-20260801",
+  "captured_at": "2026-08-01T09:27:35Z",
+  "environment": "target-dev",
+  "host": {
+    "name": "pantheon-lupin-dev",
+    "project": "pantheon-lupin-dev-20260719",
+    "external_ip": "35.201.204.12",
+    "memory_total_gib": 47,
+    "swap_bytes": 0
+  },
+  "projector_before_stop": {
+    "container": "pantheon-loop-run-projector-scheduler-1",
+    "rss_gib_approx": 11.2,
+    "cpu_percent_approx": 98.7,
+    "memory_limit_bytes": 0,
+    "restart_policy": "unless-stopped"
+  },
+  "temporary_live_repair": {
+    "action": "docker stop --time 30 pantheon-loop-run-projector-scheduler-1",
+    "scope": "stop the unbounded projector only",
+    "finished_at": "2026-08-01T09:17:32.002190814Z",
+    "exit_code": 137,
+    "oom_killed": false,
+    "data_deleted": false,
+    "projector_restarted": false
+  },
+  "post_stop": {
+    "observed_at": "2026-08-01T09:27:10Z",
+    "container_status": "exited",
+    "host_memory_used_gib": 5.7,
+    "host_memory_available_gib": 41,
+    "operator_bff_container_status": "healthy",
+    "operator_bff_health_http_status": 200,
+    "operator_bff_healthz_http_status": 200,
+    "operator_bff_healthz_status": "degraded",
+    "operator_bff_ready": false,
+    "projector_stale_reason": "last_poll_stale"
+  },
+  "storage": {
+    "observed_at": "2026-08-01T09:27:24Z",
+    "projection_directory_gib": 59,
+    "generations_directory_gib": 53,
+    "generation_directory_count": 32,
+    "controller_state_bytes": 4514024955,
+    "largest_state_temp_bytes": 1870938338,
+    "canonical_event_count_approx": 686028,
+    "loop_run_count_approx": 97181
+  },
+  "root_cause": {
+    "classification": "unbounded_full_history_projection_design",
+    "primary": [
+      "all canonical lifecycle events and full source payloads retained in process state",
+      "all identity chains retained in process state",
+      "full state deep-copied for each batch",
+      "all journeys and loop runs rebuilt and serialized on every semantic publish"
+    ],
+    "not_primary": [
+      "configured input batch size of 500",
+      "bounded cache leak"
+    ]
+  },
+  "permanent_containment": {
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4448",
+    "head_sha": "85e835448f7b86ce77ad9e4e0cc80961879b29c0",
+    "base": "dev",
+    "visible_checks": "passed",
+    "merge_state_at_capture": "blocked_pending_independent_review",
+    "supervisor_task": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801"
+  },
+  "redaction": {
+    "contains_secrets": false,
+    "contains_raw_event_payloads": false,
+    "contains_user_tokens": false
+  }
+}
