@@ -2708,12 +2708,15 @@ def start_worker_for_request(
     request.metadata["status_command_runtime"] = issued_command_runtime
     result = adapter.deliver(request)
     if not result.ok:
+        failure_run_id = (
+            f"{event_id_for_log or queue_event_id}-attempt-{max(1, int(attempt_count))}"
+        )
         failure_worker = {
             "provider": request.provider,
             "agent_id": request.agent_id,
             "task_id": request.task_id,
             "queue_event_id": event_id_for_log,
-            "run_id": None,
+            "run_id": failure_run_id,
             "log_path": result.log_path,
         }
         failure_summary = summarize_failure_reason(result.error or result.notes or "Worker delivery failed.", request.provider)
@@ -3110,13 +3113,23 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             event_id_for_log=event_id,
         )
         if not ok:
+            failure_run_id = (
+                f"{event_id}-attempt-{max(1, int(record.get('attempt_count', 0)))}"
+            )
             failure_worker = {
                 "provider": request.provider,
                 "agent_id": request.agent_id,
                 "task_id": request.task_id,
                 "queue_event_id": event_id,
-                "run_id": record.get("run_id"),
+                "run_id": failure_run_id,
                 "retry_count": max(0, int(record.get("attempt_count", 0)) - 1),
+                "request_snapshot": request_snapshot(request),
+                "work_progress_snapshot": worker_commit_progress_snapshot(
+                    {
+                        "workspace_mode": request.metadata.get("workspace_mode"),
+                        "workspace_path": request.metadata.get("workspace_path"),
+                    }
+                ),
             }
             failure_reason = str(outcome or "")
             failure = classify_worker_failure(config, failure_worker, failure_reason)
@@ -3132,6 +3145,9 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_worker,
                 failure_reason,
                 failure_kind=str(failure.get("kind") or ""),
+                reason_class=str(failure_summary.get("kind") or ""),
+                raw_ref=raw_ref,
+                rejected_head=worker_failure_rejected_head(failure_worker),
             )
             failure_kind = str(failure.get("kind") or "")
             rotation_outcome = maybe_rotate_provider_model(
@@ -6220,31 +6236,220 @@ def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
     )
 
 
+FAILURE_STREAK_RECORD_VERSION = "v3"
+FAILURE_STREAK_ABSENT_HEAD = "ABSENT"
+FAILURE_STREAK_GENERATION_PREFIX = "sha256:"
+_FAILURE_STREAK_CLASS_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_FAILURE_STREAK_TIMESTAMP_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z"
+)
+
+
+def _failure_streak_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or normalized != value or len(normalized) > 4096:
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+        return None
+    return normalized
+
+
+def _failure_streak_class(value: Any) -> str | None:
+    normalized = _failure_streak_text(value)
+    if normalized is None or _FAILURE_STREAK_CLASS_PATTERN.fullmatch(normalized) is None:
+        return None
+    return normalized
+
+
+def _failure_streak_reason(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())
+    return normalized if normalized else None
+
+
+def _failure_streak_task_identity(
+    worker: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    task_id = _failure_streak_text(worker.get("task_id"))
+    snapshot = worker.get("request_snapshot")
+    if task_id is None or not isinstance(snapshot, dict):
+        return None
+    metadata = snapshot.get("metadata")
+    task = metadata.get("task") if isinstance(metadata, dict) else None
+    if not isinstance(task, dict) or _failure_streak_text(task.get("id")) != task_id:
+        return None
+    owner = _failure_streak_text(task.get("owner"))
+    reviewer = _failure_streak_text(task.get("reviewer"))
+    if owner is None or reviewer is None or owner == reviewer:
+        return None
+    return task_id, owner, reviewer
+
+
+def worker_failure_rejected_head(worker: dict[str, Any]) -> str:
+    head = str(worker_delivery_head_commit(worker) or "").strip().lower()
+    return head if re.fullmatch(r"[0-9a-f]{40}", head) else FAILURE_STREAK_ABSENT_HEAD
+
+
+def _failure_streak_generation_id(fields: dict[str, Any]) -> str:
+    identity = {
+        "version": fields["version"],
+        "task_id": fields["task_id"],
+        "provider": fields["provider"],
+        "owner_at_failure": fields["owner_at_failure"],
+        "reviewer_at_failure": fields["reviewer_at_failure"],
+        "last_failure_kind": fields["last_failure_kind"],
+        "reason_class": fields["reason_class"],
+        "last_reason": fields["last_reason"],
+        "raw_ref": fields["raw_ref"],
+        "rejected_head": fields["rejected_head"],
+    }
+    encoded = json.dumps(
+        identity,
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return FAILURE_STREAK_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _failure_streak_timestamp() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def decode_task_failure_streak(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Decode one immutable V3 failure generation, rejecting every legacy alias."""
+    if not isinstance(record, dict) or record.get("version") != FAILURE_STREAK_RECORD_VERSION:
+        return None
+    task_id = _failure_streak_text(record.get("task_id"))
+    provider = _failure_streak_text(record.get("provider"))
+    owner = _failure_streak_text(record.get("owner_at_failure"))
+    reviewer = _failure_streak_text(record.get("reviewer_at_failure"))
+    failure_kind = _failure_streak_class(record.get("last_failure_kind"))
+    reason_class = _failure_streak_class(record.get("reason_class"))
+    reason = _failure_streak_reason(record.get("last_reason"))
+    raw_ref = _failure_streak_text(record.get("raw_ref"))
+    rejected_head = _failure_streak_text(record.get("rejected_head"))
+    failure_at = _failure_streak_text(record.get("last_failure_at"))
+    generation_id = _failure_streak_text(record.get("generation_id"))
+    count = record.get("count")
+    if (
+        task_id is None
+        or provider is None
+        or provider != normalize_agent_id(provider)
+        or owner is None
+        or reviewer is None
+        or owner == reviewer
+        or failure_kind is None
+        or reason_class is None
+        or reason is None
+        or raw_ref is None
+        or rejected_head is None
+        or failure_at is None
+        or generation_id is None
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+    ):
+        return None
+    if rejected_head != FAILURE_STREAK_ABSENT_HEAD and re.fullmatch(
+        r"[0-9a-f]{40}", rejected_head
+    ) is None:
+        return None
+    if _FAILURE_STREAK_TIMESTAMP_PATTERN.fullmatch(failure_at) is None:
+        return None
+    try:
+        datetime.strptime(failure_at, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        return None
+    expected_generation_id = _failure_streak_generation_id(
+        {
+            "version": FAILURE_STREAK_RECORD_VERSION,
+            "task_id": task_id,
+            "provider": provider,
+            "owner_at_failure": owner,
+            "reviewer_at_failure": reviewer,
+            "last_failure_kind": failure_kind,
+            "reason_class": reason_class,
+            "last_reason": reason,
+            "raw_ref": raw_ref,
+            "rejected_head": rejected_head,
+        }
+    )
+    if generation_id != expected_generation_id:
+        return None
+    return dict(record)
+
+
 def record_task_failure_streak(
     state: dict[str, Any],
     worker: dict[str, Any],
     reason: str,
     *,
     failure_kind: str | None = None,
+    reason_class: str | None = None,
+    raw_ref: str | None = None,
+    rejected_head: str | None = None,
 ) -> int:
-    task_id = str(worker.get("task_id") or "").strip()
+    identity = _failure_streak_task_identity(worker)
     provider_id = worker_failure_streak_provider_id(worker)
-    if not task_id or not provider_id:
+    normalized_kind = _failure_streak_class(failure_kind)
+    normalized_reason_class = _failure_streak_class(reason_class)
+    normalized_reason = _failure_streak_reason(reason)
+    normalized_raw_ref = _failure_streak_text(raw_ref)
+    normalized_head = _failure_streak_text(rejected_head)
+    if (
+        identity is None
+        or not provider_id
+        or provider_id != normalize_agent_id(provider_id)
+        or normalized_kind is None
+        or normalized_reason_class is None
+        or normalized_reason is None
+        or normalized_raw_ref is None
+        or normalized_head is None
+        or (
+            normalized_head != FAILURE_STREAK_ABSENT_HEAD
+            and re.fullmatch(r"[0-9a-f]{40}", normalized_head) is None
+        )
+    ):
         return 0
+    task_id, owner, reviewer = identity
     bucket = _task_failure_streak_bucket(state)
     key = _failure_streak_key(task_id, provider_id)
-    record = dict(bucket.get(key) or {})
-    count = int(record.get("count", 0)) + 1
-    record.update(
-        {
-            "task_id": task_id,
-            "provider": provider_id,
-            "count": count,
-            "last_reason": reason,
-            "last_failure_at": utc_now(),
-            "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
-        }
-    )
+    prior = bucket.get(key)
+    prior = prior if isinstance(prior, dict) else {}
+    prior_count = prior.get("count", 0)
+    if isinstance(prior_count, bool) or not isinstance(prior_count, int) or prior_count < 0:
+        return 0
+    immutable_fields = {
+        "version": FAILURE_STREAK_RECORD_VERSION,
+        "task_id": task_id,
+        "provider": provider_id,
+        "owner_at_failure": owner,
+        "reviewer_at_failure": reviewer,
+        "last_failure_kind": normalized_kind,
+        "reason_class": normalized_reason_class,
+        "last_reason": normalized_reason,
+        "raw_ref": normalized_raw_ref,
+        "rejected_head": normalized_head,
+    }
+    generation_id = _failure_streak_generation_id(immutable_fields)
+    decoded_prior = decode_task_failure_streak(prior)
+    if decoded_prior is not None and decoded_prior.get("generation_id") == generation_id:
+        return int(decoded_prior["count"])
+    count = prior_count + 1
+    record = {
+        **immutable_fields,
+        "count": count,
+        "last_failure_at": _failure_streak_timestamp(),
+        "generation_id": generation_id,
+    }
     bucket[key] = record
     return count
 
@@ -9810,6 +10015,9 @@ def poll_worker_failure_stage(
         worker,
         failure_reason,
         failure_kind=failure_kind,
+        reason_class=str(failure_summary.get("kind") or ""),
+        raw_ref=raw_ref,
+        rejected_head=worker_failure_rejected_head(worker),
     )
     console_log(
         f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
@@ -10052,11 +10260,24 @@ def poll_worker_completion_stage(
                     config, state, worker, "failed", MISSING_HANDOFF_EXIT_REASON
                 )
                 return {"changed": True, "stop": True}
+        generic_failure_summary = summarize_failure_reason(
+            GENERIC_WORKER_EXIT_REASON,
+            str(worker.get("provider") or worker.get("agent_id") or ""),
+        )
+        raw_ref = write_failure_evidence(
+            config,
+            worker=worker,
+            reason=GENERIC_WORKER_EXIT_REASON,
+            failure_kind="generic_exit",
+        )
         failure_count = record_task_failure_streak(
             state,
             worker,
             GENERIC_WORKER_EXIT_REASON,
             failure_kind="generic_exit",
+            reason_class=str(generic_failure_summary.get("kind") or ""),
+            raw_ref=raw_ref,
+            rejected_head=worker_failure_rejected_head(worker),
         )
         generic_threshold = max(
             1,
@@ -11544,12 +11765,15 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         failure_count: int | None = None
         failure_kind = ""
+        failure_reason_class = ""
+        raw_ref: str | None = None
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
                 detected_reason,
                 str(worker.get("provider") or worker.get("agent_id") or ""),
             )
+            failure_reason_class = str(failure_summary.get("kind") or "")
             raw_ref = write_failure_evidence(
                 config,
                 worker=worker,
@@ -11561,6 +11785,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 worker,
                 detected_reason,
                 failure_kind=str(failure.get("kind") or ""),
+                reason_class=failure_reason_class,
+                raw_ref=raw_ref,
+                rejected_head=worker_failure_rejected_head(worker),
             )
             failure_kind = str(failure.get("kind") or "")
             failure_response = decide_provider_failure_response(failure_kind)
@@ -11649,20 +11876,49 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             worker["last_error_raw_ref"] = raw_ref
         elif missing_process:
             failure_kind = "missing_process"
+            failure_summary = summarize_failure_reason(
+                reason,
+                str(worker.get("provider") or worker.get("agent_id") or ""),
+            )
+            failure_reason_class = str(failure_summary.get("kind") or "")
+            raw_ref = write_failure_evidence(
+                config,
+                worker=worker,
+                reason=reason,
+                failure_kind=failure_kind,
+            )
             failure_count = record_task_failure_streak(
                 state,
                 worker,
                 reason,
                 failure_kind=failure_kind,
+                reason_class=failure_reason_class,
+                raw_ref=raw_ref,
+                rejected_head=worker_failure_rejected_head(worker),
             )
 
         if missing_process:
             if failure_count is None:
+                fallback_kind = failure_kind or "missing_process"
+                fallback_summary = summarize_failure_reason(
+                    reason,
+                    str(worker.get("provider") or worker.get("agent_id") or ""),
+                )
+                failure_reason_class = str(fallback_summary.get("kind") or "")
+                raw_ref = raw_ref or write_failure_evidence(
+                    config,
+                    worker=worker,
+                    reason=reason,
+                    failure_kind=fallback_kind,
+                )
                 failure_count = record_task_failure_streak(
                     state,
                     worker,
                     reason,
-                    failure_kind=failure_kind or "missing_process",
+                    failure_kind=fallback_kind,
+                    reason_class=failure_reason_class,
+                    raw_ref=raw_ref,
+                    rejected_head=worker_failure_rejected_head(worker),
                 )
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
@@ -13280,6 +13536,8 @@ def build_dispatch_event(
 ) -> dict[str, Any]:
     task_payload = {
         "id": task.get("id"),
+        "owner": task.get("owner"),
+        "reviewer": task.get("reviewer"),
         "artifacts": list(task.get("artifacts", []) or []),
         "next": task.get("next"),
     }
