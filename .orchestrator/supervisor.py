@@ -6236,12 +6236,44 @@ def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
     )
 
 
-FAILURE_STREAK_RECORD_VERSION = "v3"
+FAILURE_STREAK_SCHEMA_VERSION = 3
 FAILURE_STREAK_ABSENT_HEAD = "ABSENT"
 FAILURE_STREAK_GENERATION_PREFIX = "sha256:"
 _FAILURE_STREAK_CLASS_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _FAILURE_STREAK_TIMESTAMP_PATTERN = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z"
+)
+_FAILURE_STREAK_GENERATION_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+_FAILURE_STREAK_GENERATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "generation_id",
+        "recorded_at",
+        "task_id",
+        "provider",
+        "owner_at_failure",
+        "reviewer_at_failure",
+        "worker_run_id",
+        "failure_kind",
+        "reason_class",
+        "reason",
+        "raw_ref",
+        "rejected_head",
+    }
+)
+_FAILURE_STREAK_RECORD_FIELDS = frozenset(
+    {
+        "schema_version",
+        "task_id",
+        "provider",
+        "count",
+        "last_reason",
+        "last_failure_at",
+        "last_failure_kind",
+        "last_raw_ref",
+        "last_worker_run_id",
+        "generations",
+    }
 )
 
 
@@ -6267,7 +6299,17 @@ def _failure_streak_reason(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = " ".join(value.split())
-    return normalized if normalized else None
+    return normalized if normalized and len(normalized) <= 4096 else None
+
+
+def _failure_streak_timestamp_valid(value: str) -> bool:
+    if _FAILURE_STREAK_TIMESTAMP_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        return False
+    return True
 
 
 def _failure_streak_task_identity(
@@ -6276,6 +6318,8 @@ def _failure_streak_task_identity(
     task_id = _failure_streak_text(worker.get("task_id"))
     snapshot = worker.get("request_snapshot")
     if task_id is None or not isinstance(snapshot, dict):
+        return None
+    if _failure_streak_text(snapshot.get("task_id")) != task_id:
         return None
     metadata = snapshot.get("metadata")
     task = metadata.get("task") if isinstance(metadata, dict) else None
@@ -6295,14 +6339,15 @@ def worker_failure_rejected_head(worker: dict[str, Any]) -> str:
 
 def _failure_streak_generation_id(fields: dict[str, Any]) -> str:
     identity = {
-        "version": fields["version"],
+        "schema_version": fields["schema_version"],
         "task_id": fields["task_id"],
         "provider": fields["provider"],
         "owner_at_failure": fields["owner_at_failure"],
         "reviewer_at_failure": fields["reviewer_at_failure"],
-        "last_failure_kind": fields["last_failure_kind"],
+        "worker_run_id": fields["worker_run_id"],
+        "failure_kind": fields["failure_kind"],
         "reason_class": fields["reason_class"],
-        "last_reason": fields["last_reason"],
+        "reason": fields["reason"],
         "raw_ref": fields["raw_ref"],
         "rejected_head": fields["rejected_head"],
     }
@@ -6323,22 +6368,26 @@ def _failure_streak_timestamp() -> str:
     )
 
 
-def decode_task_failure_streak(record: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Decode one immutable V3 failure generation, rejecting every legacy alias."""
-    if not isinstance(record, dict) or record.get("version") != FAILURE_STREAK_RECORD_VERSION:
+def decode_task_failure_generation(value: Any) -> dict[str, Any] | None:
+    """Decode one exact V3 generation without consulting legacy aliases."""
+    if (
+        not isinstance(value, dict)
+        or set(value) != _FAILURE_STREAK_GENERATION_FIELDS
+        or value.get("schema_version") != FAILURE_STREAK_SCHEMA_VERSION
+    ):
         return None
-    task_id = _failure_streak_text(record.get("task_id"))
-    provider = _failure_streak_text(record.get("provider"))
-    owner = _failure_streak_text(record.get("owner_at_failure"))
-    reviewer = _failure_streak_text(record.get("reviewer_at_failure"))
-    failure_kind = _failure_streak_class(record.get("last_failure_kind"))
-    reason_class = _failure_streak_class(record.get("reason_class"))
-    reason = _failure_streak_reason(record.get("last_reason"))
-    raw_ref = _failure_streak_text(record.get("raw_ref"))
-    rejected_head = _failure_streak_text(record.get("rejected_head"))
-    failure_at = _failure_streak_text(record.get("last_failure_at"))
-    generation_id = _failure_streak_text(record.get("generation_id"))
-    count = record.get("count")
+    task_id = _failure_streak_text(value.get("task_id"))
+    provider = _failure_streak_text(value.get("provider"))
+    owner = _failure_streak_text(value.get("owner_at_failure"))
+    reviewer = _failure_streak_text(value.get("reviewer_at_failure"))
+    worker_run_id = _failure_streak_text(value.get("worker_run_id"))
+    failure_kind = _failure_streak_class(value.get("failure_kind"))
+    reason_class = _failure_streak_class(value.get("reason_class"))
+    reason = _failure_streak_reason(value.get("reason"))
+    raw_ref = _failure_streak_text(value.get("raw_ref"))
+    rejected_head = _failure_streak_text(value.get("rejected_head"))
+    recorded_at = _failure_streak_text(value.get("recorded_at"))
+    generation_id = _failure_streak_text(value.get("generation_id"))
     if (
         task_id is None
         or provider is None
@@ -6346,43 +6395,100 @@ def decode_task_failure_streak(record: dict[str, Any] | None) -> dict[str, Any] 
         or owner is None
         or reviewer is None
         or owner == reviewer
+        or worker_run_id is None
         or failure_kind is None
         or reason_class is None
         or reason is None
+        or value.get("reason") != reason
         or raw_ref is None
         or rejected_head is None
-        or failure_at is None
+        or recorded_at is None
         or generation_id is None
-        or isinstance(count, bool)
-        or not isinstance(count, int)
-        or count < 1
     ):
         return None
     if rejected_head != FAILURE_STREAK_ABSENT_HEAD and re.fullmatch(
         r"[0-9a-f]{40}", rejected_head
     ) is None:
         return None
-    if _FAILURE_STREAK_TIMESTAMP_PATTERN.fullmatch(failure_at) is None:
+    if not _failure_streak_timestamp_valid(recorded_at):
         return None
-    try:
-        datetime.strptime(failure_at, "%Y-%m-%dT%H:%M:%S.%fZ")
-    except ValueError:
+    if _FAILURE_STREAK_GENERATION_PATTERN.fullmatch(generation_id) is None:
         return None
     expected_generation_id = _failure_streak_generation_id(
         {
-            "version": FAILURE_STREAK_RECORD_VERSION,
+            "schema_version": FAILURE_STREAK_SCHEMA_VERSION,
             "task_id": task_id,
             "provider": provider,
             "owner_at_failure": owner,
             "reviewer_at_failure": reviewer,
-            "last_failure_kind": failure_kind,
+            "worker_run_id": worker_run_id,
+            "failure_kind": failure_kind,
             "reason_class": reason_class,
-            "last_reason": reason,
+            "reason": reason,
             "raw_ref": raw_ref,
             "rejected_head": rejected_head,
         }
     )
     if generation_id != expected_generation_id:
+        return None
+    return dict(value)
+
+
+def decode_task_failure_streak(record: Any) -> dict[str, Any] | None:
+    """Decode one exact V3 streak and all of its immutable generations."""
+    if (
+        not isinstance(record, dict)
+        or set(record) != _FAILURE_STREAK_RECORD_FIELDS
+        or record.get("schema_version") != FAILURE_STREAK_SCHEMA_VERSION
+    ):
+        return None
+    task_id = _failure_streak_text(record.get("task_id"))
+    provider = _failure_streak_text(record.get("provider"))
+    last_reason = _failure_streak_reason(record.get("last_reason"))
+    last_failure_at = _failure_streak_text(record.get("last_failure_at"))
+    last_failure_kind = _failure_streak_class(record.get("last_failure_kind"))
+    last_raw_ref = _failure_streak_text(record.get("last_raw_ref"))
+    last_worker_run_id = _failure_streak_text(record.get("last_worker_run_id"))
+    count = record.get("count")
+    raw_generations = record.get("generations")
+    if (
+        task_id is None
+        or provider is None
+        or provider != normalize_agent_id(provider)
+        or last_reason is None
+        or record.get("last_reason") != last_reason
+        or last_failure_at is None
+        or not _failure_streak_timestamp_valid(last_failure_at)
+        or last_failure_kind is None
+        or last_raw_ref is None
+        or last_worker_run_id is None
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+        or not isinstance(raw_generations, list)
+        or len(raw_generations) != count
+    ):
+        return None
+    generations = [decode_task_failure_generation(item) for item in raw_generations]
+    if any(item is None for item in generations):
+        return None
+    decoded_generations = [item for item in generations if item is not None]
+    if (
+        len({item["generation_id"] for item in decoded_generations}) != count
+        or any(
+            item["task_id"] != task_id or item["provider"] != provider
+            for item in decoded_generations
+        )
+    ):
+        return None
+    last_generation = decoded_generations[-1]
+    if (
+        last_reason != last_generation["reason"]
+        or last_failure_at != last_generation["recorded_at"]
+        or last_failure_kind != last_generation["failure_kind"]
+        or last_raw_ref != last_generation["raw_ref"]
+        or last_worker_run_id != last_generation["worker_run_id"]
+    ):
         return None
     return dict(record)
 
@@ -6404,10 +6510,12 @@ def record_task_failure_streak(
     normalized_reason = _failure_streak_reason(reason)
     normalized_raw_ref = _failure_streak_text(raw_ref)
     normalized_head = _failure_streak_text(rejected_head)
+    worker_run_id = _failure_streak_text(worker.get("run_id"))
     if (
         identity is None
         or not provider_id
         or provider_id != normalize_agent_id(provider_id)
+        or worker_run_id is None
         or normalized_kind is None
         or normalized_reason_class is None
         or normalized_reason is None
@@ -6423,32 +6531,48 @@ def record_task_failure_streak(
     bucket = _task_failure_streak_bucket(state)
     key = _failure_streak_key(task_id, provider_id)
     prior = bucket.get(key)
-    prior = prior if isinstance(prior, dict) else {}
-    prior_count = prior.get("count", 0)
-    if isinstance(prior_count, bool) or not isinstance(prior_count, int) or prior_count < 0:
-        return 0
     immutable_fields = {
-        "version": FAILURE_STREAK_RECORD_VERSION,
+        "schema_version": FAILURE_STREAK_SCHEMA_VERSION,
         "task_id": task_id,
         "provider": provider_id,
         "owner_at_failure": owner,
         "reviewer_at_failure": reviewer,
-        "last_failure_kind": normalized_kind,
+        "worker_run_id": worker_run_id,
+        "failure_kind": normalized_kind,
         "reason_class": normalized_reason_class,
-        "last_reason": normalized_reason,
+        "reason": normalized_reason,
         "raw_ref": normalized_raw_ref,
         "rejected_head": normalized_head,
     }
     generation_id = _failure_streak_generation_id(immutable_fields)
-    decoded_prior = decode_task_failure_streak(prior)
-    if decoded_prior is not None and decoded_prior.get("generation_id") == generation_id:
-        return int(decoded_prior["count"])
-    count = prior_count + 1
-    record = {
+    if prior is None:
+        decoded_prior = None
+        prior_generations: list[dict[str, Any]] = []
+    else:
+        decoded_prior = decode_task_failure_streak(prior)
+        if decoded_prior is None:
+            return 0
+        prior_generations = list(decoded_prior["generations"])
+        if any(item.get("generation_id") == generation_id for item in prior_generations):
+            return int(decoded_prior["count"])
+    recorded_at = _failure_streak_timestamp()
+    generation = {
         **immutable_fields,
-        "count": count,
-        "last_failure_at": _failure_streak_timestamp(),
         "generation_id": generation_id,
+        "recorded_at": recorded_at,
+    }
+    count = len(prior_generations) + 1
+    record = {
+        "schema_version": FAILURE_STREAK_SCHEMA_VERSION,
+        "task_id": task_id,
+        "provider": provider_id,
+        "count": count,
+        "last_reason": normalized_reason,
+        "last_failure_at": recorded_at,
+        "last_failure_kind": normalized_kind,
+        "last_raw_ref": normalized_raw_ref,
+        "last_worker_run_id": worker_run_id,
+        "generations": [*prior_generations, generation],
     }
     bucket[key] = record
     return count
