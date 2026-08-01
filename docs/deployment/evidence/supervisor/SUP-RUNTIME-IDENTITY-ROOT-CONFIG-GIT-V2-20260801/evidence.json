@@ -5,25 +5,27 @@
   "owner": "Codex",
   "reviewer": "Codex2",
   "review_decision": "review_pending",
-  "recorded_at": "2026-08-01T17:08:30Z",
+  "recorded_at": "2026-08-01T17:36:06Z",
   "repository": "ajoe734/pantheon",
   "branch": "task/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
   "base_branch": "dev",
   "base_commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
-  "pre_evidence_head": "4a788b6c5a9532fea03a5bc946b791355c5110cd",
+  "pre_evidence_head": "2c751b122bbc28642d3ab09a3efb7edf760840d8",
   "pull_request": 4443,
   "implementation_commits": [
     "76baec723ab6ad11a6369c9c04a668b6badf2a6a",
     "5fea646d4378da6325a73067d807dd414f4700d3",
     "538ac62d1a670ca5fcf67c8ffff34f16dd222847",
-    "4a788b6c5a9532fea03a5bc946b791355c5110cd"
+    "4a788b6c5a9532fea03a5bc946b791355c5110cd",
+    "59a5845446f7367a98b868508b769c9c168b875c",
+    "2c751b122bbc28642d3ab09a3efb7edf760840d8"
   ],
   "review_refresh": {
-    "previous_reviewed_head": "50ec4d122aa1e334f3bd564f1fe13182cb013449",
-    "previous_reviewer": "Codex",
+    "previous_reviewed_head": "bcda6e10e9b41abc021cd443c5900e62d7d227a2",
+    "previous_reviewer": "Codex2",
     "previous_decision": "reopen",
     "current_reviewer": "Codex2",
-    "reason": "The exact prior head allowed ignored injected files, skip-worktree or assume-unchanged drift, inherited Git URL rewriting, and descriptor-unbound parent swaps. The canonical row reassigned the replacement implementation to Codex and independent review to Codex2.",
+    "reason": "The exact prior head accepted an external symlinked .git directory, a linked-worktree gitfile, and a same-leaf-inode live-config parent replacement. The replacement binds self-contained Git metadata to no-follow descriptors and compares the complete live-config component identity chain.",
     "required_binding": "REVIEW_PR=4443 and REVIEW_HEAD_SHA=<final PR head>"
   },
   "dependency": {
@@ -54,11 +56,14 @@
       "production-required candidate identity invariant with no omission bypass",
       "descriptor-relative no-follow candidate-root and live-config traversal",
       "candidate-root descriptor binding for all local Git operations",
+      "self-contained .git, objects, config, HEAD, and index descriptor identities",
+      "gitfile, commondir, alternates, config-include, metadata symlink, hardlink, and cross-filesystem denial",
       "structural GitHub origin parsing for ajoe734/pantheon",
       "fresh accepted dev resolution in an isolated bare repository with sanitized Git environment",
       "candidate commit ancestry and trusted tree equality",
       "tracked/index/worktree cleanliness including special index flags and ignored paths",
       "exact live-config path, inode, bytes, byte length, and SHA-256 snapshot",
+      "complete live-config path-component identity capture and comparison",
       "immutable root/Git/config revalidation primitive"
     ],
     "not_changed": [
@@ -99,6 +104,8 @@
     "tracked_staged_index_flag_and_worktree_drift_denial": "passed",
     "ordinary_ignored_allowed_and_forbidden_path_matrix": "passed",
     "config_exact_leaf_parent_and_swap_denial": "passed",
+    "config_same_leaf_inode_parent_replacement_denial": "passed",
+    "self_contained_git_metadata_denial_matrix": "passed",
     "config_path_length_bytes_sha_and_inode_drift": "passed",
     "production_identity_bypass_absent": "passed",
     "scope_boundary_no_live_mutation": "passed"
@@ -106,7 +113,7 @@
   "verification": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
-      "result": "91 passed in 12.45s"
+      "result": "103 passed in 21.41s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
@@ -114,7 +121,7 @@
     },
     {
       "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
-      "result": "passed through pre-evidence head 4a788b6c5a9532fea03a5bc946b791355c5110cd"
+      "result": "passed through pre-evidence head 2c751b122bbc28642d3ab09a3efb7edf760840d8"
     },
     {
       "command": "git diff --check origin/dev...HEAD",
@@ -128,11 +135,11 @@
   "artifacts": [
     {
       "path": "scripts/promote_supervisor_runtime.py",
-      "sha256": "ea2bcc75934cbd8f825d33ecaf7d597369dfd9c30fb66c25528c4946436b6c14"
+      "sha256": "854d710b16efd1f389d49b78d5cdcd66f29119ba2abd78333e6457c3ad59fff4"
     },
     {
       "path": "scripts/test_promote_supervisor_runtime.py",
-      "sha256": "fb6768ea836c58f62acca6b2ddc71578b43592b10909470c0323a29664505236"
+      "sha256": "718a7aeddd90c2bdbd9548c0bd0b82291cb47a1b95084efce1ef436d2ec8aaa0"
     }
   ],
   "rollout": "source merge only",
