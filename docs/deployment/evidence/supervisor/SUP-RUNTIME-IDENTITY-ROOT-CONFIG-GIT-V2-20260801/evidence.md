@@ -26,9 +26,10 @@ The candidate root must contain a direct `.git` directory, never a symlink or
 gitfile. Git commands receive descriptor-bound `GIT_DIR`, `GIT_WORK_TREE`,
 `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, and `GIT_INDEX_FILE` values. The guard
 also rejects commondir and alternates pointers, config includes, cross-filesystem
-metadata, hardlinked config/HEAD/index files, and symlinks in refs, info, or pack
-metadata. A linked worktree or external Git metadata alias cannot satisfy the
-candidate identity.
+metadata, hardlinked config/HEAD/index files, and symlinks anywhere in the full
+objects tree as well as refs or info metadata. Loose-object fanout directories
+are included rather than only `objects/pack`, so an external object alias cannot
+satisfy the candidate identity.
 
 Trusted `dev` is fetched into a fresh bare repository from the fixed Pantheon
 URL after all inherited `GIT_*` configuration, URL rewrite, object, protocol and
@@ -45,17 +46,22 @@ untracked entries. Every non-allowlisted ignored or untracked path is rejected.
 
 The finite allowlist remains the exact lock-file set recorded in
 `evidence.json` plus direct generated task briefs matching
-`.orchestrator/task-briefs/[a-z0-9][a-z0-9_-]*.md`. It does not allow
-`.orchestrator/config.json`, state JSON, Python, nested task-brief content,
-ignored injected files, or a blanket `.orchestrator/**` family.
+`.orchestrator/task-briefs/[a-z0-9][a-z0-9_-]*.md`. Path matching is necessary
+but not sufficient: every allowed entry is opened from the candidate descriptor
+one no-follow component at a time and its leaf must be a regular file on the
+candidate filesystem. Directory markers are rejected before normalization, so
+an ignored `evil.md/` directory or a directory/symlink substituted for an exact
+lock path fails closed. The allowlist does not admit `.orchestrator/config.json`,
+state JSON, Python, nested task-brief content, ignored injected files, or a
+blanket `.orchestrator/**` family.
 
 ## Verification
 
 | Command | Result |
 |---|---|
-| `.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py` | 103 passed in 21.41s |
+| `.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py` | 108 passed in 19.89s |
 | `.venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py` | passed |
-| `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge` | passed through pre-evidence head `2c751b122bbc28642d3ab09a3efb7edf760840d8` |
+| `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge` | passed through pre-evidence head `018b2193c907327a888aa6810fec4f5df28741ff` |
 | `git diff --check origin/dev...HEAD` | passed |
 | `git merge-base --is-ancestor <rejected-head> HEAD` | exit 1 for `07316c73`, `77af55015`, `853a1778e`, and `4cd85c7a8` |
 
@@ -67,17 +73,20 @@ and ignored paths, external `.git`, linked-worktree gitfiles, commondir,
 alternates, object/index/ref symlinks, external config includes, hardlinked Git
 config, Git metadata inode replacement, exact/symlinked/swapped config paths,
 same-leaf-inode parent replacement, and independent path, length, bytes, SHA-256
-and inode drift.
+and inode drift. The latest separate deny probes cover allowlisted lock and
+task-brief symlinks, ignored directories substituted for each allowed-file
+family, and an external symlinked loose-object fanout.
 
 The merged snapshot-invariant dependency `cd770e5dc` is an ancestor. The branch
 is based on `dev` commit `941c15a34208e54e96cdd148ba3a5bfcd339abab`
 without importing rejected implementation ancestry.
 
-PR head `bcda6e10e9b41abc021cd443c5900e62d7d227a2` was independently rejected by
-Codex2 because external `.git` metadata, linked-worktree gitfiles, and a
-same-leaf-inode live-config parent replacement remained fail-open. This
-refreshed evidence records the descriptor-bound replacement and remains
-review-pending for a new exact-head Codex2 decision.
+PR head `49d15673bd929d9f0f78386a05ef280976bea3c6` was independently rejected by
+Codex2 because allowlisted generated symlinks, ignored directories substituted
+for allowlisted file paths, and external loose-object fanout symlinks remained
+fail-open. This refreshed evidence records the descriptor-bound regular-file
+validation and complete objects-tree scan and remains review-pending for a new
+exact-head Codex2 decision.
 
 ## Deliberate non-scope
 
