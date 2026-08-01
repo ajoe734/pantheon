@@ -159,17 +159,22 @@
   "delivery": {
     "supersedes_pull_request": 4385,
     "implementation_anchor_commit": "5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e",
-    "pull_request": null,
-    "task_head_sha": null,
+    "pull_request": 4465,
+    "task_head_sha": "dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b",
     "merge_commit": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },
   "review": {
     "reviewer": "Codex2",
-    "status": "pending_independent_review",
-    "decision": null,
-    "reviewed_head_sha": null,
-    "reviewed_at": null,
-    "notes": []
+    "status": "approved_pending_governed_exact_head_binding",
+    "decision": "approve",
+    "reviewed_head_sha": "dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b",
+    "reviewed_at": "2026-08-01T16:01:33Z",
+    "notes": [
+      "The immutable runtime receipt at PANTHEON_STATUS_ROOT has SHA-256 eff646cefd8b16ab624fa3bd329913fb51f2996eba2d0fcf605c092be9857efc and records status=failed, retryable=false, admissionStatus=not_attempted, plus the exact prior packet, digest, and task-spec binding claimed by this manifest.",
+      "GitHub readback confirmed PR #4385 remains OPEN at f5e70e86e01bde005dae5fed94b151c9bc07f389 and PR #4395 remains OPEN at moved head edb1698aa6626d84039243d862dfdc33a8f87770; both f5e70e86 and corrected anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 are ancestors of the reviewed task head, while invalid object 9d53a94a265c55af4c8d15c50ab3751f1440ac0f is absent.",
+      "Independent exact-head verification passed: five focused stale-reaper regressions in 0.009 seconds, all 473 supervisor tests in 10.262 seconds, both evidence JSON parses, git diff --check, commit trailers, corrected-anchor ancestry, and the unchanged .orchestrator/config.json boundary.",
+      "PR #4465 was OPEN at reviewed owner head dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b with Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance all successful. The governed approve command will bind the final PR head after this reviewer-decision record is committed; the manifest records the reviewed owner head because it cannot contain the hash of the commit that contains itself."
+    ]
   }
 }
