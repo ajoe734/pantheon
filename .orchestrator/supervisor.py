@@ -12927,7 +12927,7 @@ def task_next_preferred_helper_lane(
             continue
         if not agent_can_take_task(config, lane, task, state=state):
             continue
-        if not owner_paused and state is not None:
+        if state is not None:
             capacity = agent_dispatch_capacity(config, lane, settings)
             if len(agent_loads.get(lane, [])) >= capacity:
                 continue
