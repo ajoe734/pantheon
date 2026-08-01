@@ -26,7 +26,8 @@ import sys
 from pathlib import Path
 
 url_path = Path(sys.argv[1])
-public_path = "/" + sys.argv[2].strip("/") + "/"
+public_path_value = sys.argv[2].strip("/")
+public_path = f"/{public_path_value}/" if public_path_value else "/"
 
 for line in sys.stdin:
     match = re.search(r"https://[-a-z0-9]+\.trycloudflare\.com", line)
