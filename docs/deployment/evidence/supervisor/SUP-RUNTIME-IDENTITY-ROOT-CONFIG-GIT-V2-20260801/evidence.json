@@ -5,17 +5,23 @@
   "owner": "Codex2",
   "reviewer": "Antigravity",
   "review_decision": "review_pending",
-  "recorded_at": "2026-08-01T15:00:34Z",
+  "recorded_at": "2026-08-01T16:22:17Z",
   "repository": "ajoe734/pantheon",
   "branch": "task/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
   "base_branch": "dev",
-  "base_commit": "76bbb04b569331a81916330d1cf713d068527c89",
-  "pre_evidence_head": "7e5478a988e1e4e99ff181bd50964e1a0466f78d",
+  "base_commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+  "pre_evidence_head": "8ac465cb6db3eb4f3ee28c19d82128a36fe56957",
   "pull_request": 4443,
   "implementation_commits": [
     "76baec723ab6ad11a6369c9c04a668b6badf2a6a",
     "5fea646d4378da6325a73067d807dd414f4700d3"
   ],
+  "review_refresh": {
+    "previous_reviewed_head": "6b30e10af119351db78586f6f09339240500558f",
+    "previous_approval_superseded": true,
+    "reason": "The previous approval omitted REVIEW_PR/REVIEW_HEAD_SHA and origin/dev advanced before merge; the owner refreshed the branch for a new exact-head review.",
+    "required_binding": "REVIEW_PR=4443 and REVIEW_HEAD_SHA=<final PR head>"
+  },
   "dependency": {
     "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
     "commit": "cd770e5dc",
@@ -90,7 +96,7 @@
   "verification": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
-      "result": "51 passed in 10.38s"
+      "result": "51 passed in 5.73s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
