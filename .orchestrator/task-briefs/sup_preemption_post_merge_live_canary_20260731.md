@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Antigravity
-- Next: Independently verified live canary evidence and supervisor logs. Live runtime SHA matches PR #4399 merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed. Supervisor log /home/lupin/pantheon/.orchestrator/logs/supervisor-preemption-894eb-live-20260731T151459Z.log (lines 102-137) confirms continuous worker execution for 344s observation window (15:38:03Z to 15:43:47Z) beyond 5-minute stability grace without preemption churn or premature termination. All acceptance criteria met.
+- Next: Re-review and merge the corrected Codex2 owner-closeout metadata head; the approved canary observations and reviewer verdict are unchanged.
 
 ## Summary
 A dedicated supervisor-dispatched Antigravity worker must remain alive beyond the new five-minute grace on the officially merged and live-promoted scheduler code. It records runtime evidence only and makes no code/config changes.
@@ -15,3 +15,14 @@ A dedicated supervisor-dispatched Antigravity worker must remain alive beyond th
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
+
+## Merged Delivery And Owner Closeout
+- Repository: `ajoe734/pantheon`
+- Reviewed PR head: `aea69bf9e9bf2a16ba550dda16e569acafdd9c85`
+- Delivery PR: `#4407`
+- Merged delivery commit: `d07dfd6202a1200cd864dfcb2e8903ff5e369359`
+- Merge time: `2026-07-31T16:13:08Z`
+- The merged evidence tree is byte-identical to the independently approved PR head. GitHub squash-merged the PR, so the reviewed head itself is not an ancestor of `origin/dev`.
+- The supervisor briefly reassigned owner finalization from Codex2 to Codex, then returned it to Codex2 after repeated Codex terminal failures. The reviewer remains Antigravity, and the approved evidence is unchanged.
+- Codex2 owner revalidation passed: JSON parse, `schemas/product-evidence.schema.json`, companion SHA-256 checks, all recorded source-artifact hashes, acceptance/reviewer assertions, merged-tree equality, command-root commit/tree identity, and `git diff --check`.
+- This closeout changes no canary observation, reviewer decision, scheduler code, supervisor policy, runtime configuration, deployment, or live-trading authority.
