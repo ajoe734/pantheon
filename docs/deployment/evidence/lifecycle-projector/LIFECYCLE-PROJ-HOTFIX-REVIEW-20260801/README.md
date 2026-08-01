@@ -53,71 +53,46 @@ Antigravity's exact-head verdict in `evidence.json`.
 
 ## Data and rollout boundary
 
-No live container was started or restarted during this review. No projection
-state, generation directory, or volume data was modified or deleted. The PR
-only changes Compose configuration and its regression test.
+No live container was started or restarted during this review or owner
+finalization. No projection state, generation directory, or volume data was
+modified or deleted. The PR only changes Compose configuration and its
+regression test.
 
 The retention default of four is intentionally only a configuration change in
 this hotfix. Existing projector maintenance code will prune generations beyond
-the configured retention when the projector next runs. Therefore the reviewer
-must not treat this packet as authorization to restart the stopped unbounded
-projector or to perform manual state cleanup. At the original review, dev
-rollout remained pending the independent verdict, merge, and a separately
-governed rollout decision.
+the configured retention when the projector next runs. Therefore this packet
+does not authorize restarting the stopped legacy projector or performing
+manual state cleanup. The source change is merged, but operational rollout
+remains a separately governed and currently blocked action.
 
-## Historical merge gate at original review
+## Merge and delivery disposition
 
-At 2026-08-01T14:41:22Z GitHub reported the PR `OPEN`, `MERGEABLE`, and
-`BEHIND`, with no review and no auto-merge request. The head is one commit
-ahead of its merge base, and current `origin/dev` is one non-conflicting task-
-brief commit ahead of the same merge base.
+Antigravity independently approved the original implementation head
+`85e835448f7b86ce77ad9e4e0cc80961879b29c0`. Strict up-to-date branch
+protection then required the merge-only composed head
+`c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa`, whose parents are that approved
+implementation and `dev` commit `76bbb04b569331a81916330d1cf713d068527c89`.
+The two implementation files are byte-identical between the approved head and
+the composed head.
 
-The `dev` protection rule had strict up-to-date checking enabled. The original
-task also required that PR #4448 be reviewed and merged without changing
-`85e835448f7b86ce77ad9e4e0cc80961879b29c0`. Updating the hotfix branch would
-change that head, so there was no ordinary policy-compliant merge
-operation satisfying both constraints. In addition to independent exact-head
-approval, Human/Ops had to resolve the strict-base/exact-head conflict and supply
-the required `Pantheon root merge freeze 2026-07-27` status. No bypass or head
-rewrite is authorized by this packet.
+After the composed-head gate passed, PR #4448 merged into `dev` at
+2026-08-01T15:16:58Z as
+`d2a9a6079789b6da1f15978ff7310c22a129f379`. The merge commit is an ancestor
+of the current `origin/dev`, and all reported PR checks, including `Pantheon
+canonical review gate` and `Pantheon root merge freeze 2026-07-27`, are
+successful.
 
-## Composed-head follow-up and merged delivery
+No `Pantheon Nonprod Deploy` run targets the hotfix merge commit. The latest
+recorded dev deployment attempts predate the merge and failed on 2026-07-31.
+Therefore source delivery is complete but live rollout is not claimed. The
+stopped legacy projector must remain stopped until a separately governed safe
+rollout; projection state and retained generations must not be deleted.
 
-The strict-base conflict was resolved with merge-only composed head
-`c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa`. Its parents are the independently
-approved implementation `85e835448f7b86ce77ad9e4e0cc80961879b29c0` and the
-then-current `dev` base `76bbb04b569331a81916330d1cf713d068527c89`.
+## Final owner verification
 
-Antigravity independently approved that exact composed head under task
-`LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801`. The canonical review
-gate and Human/Ops root-freeze status both passed, all GitHub check rollups
-reported success, and PR #4448 merged into `dev` as
-`d2a9a6079789b6da1f15978ff7310c22a129f379` at 2026-08-01T15:16:58Z.
-
-Owner closeout revalidation on the merged source passed 31 focused tests,
-`docker compose -f docker-compose.yml config --quiet`, merge-tree identity,
-implementation-file identity, and delta-path checks. The composed review and
-delivery identities are recorded in [`evidence.json`](./evidence.json), with
-the full closeout in
-[`composed-head-owner-closeout.md`](./composed-head-owner-closeout.md).
-
-This source merge did not start or restart the projector, restart the BFF,
-delete projection state, or delete retained generations. Runtime rollout and
-any data maintenance remain separately governed operations.
-
-## Original independent reviewer completion checklist
-
-1. Fetch PR #4448 and independently confirm the head is exactly
-   `85e835448f7b86ce77ad9e4e0cc80961879b29c0`.
-2. Independently rerun the focused tests and Compose validation; do not rely on
-   the author-side pass as the review decision.
-3. Record an explicit accept or reject verdict in `evidence.json` and commit
-   that reviewed manifest.
-4. If accepted, bind approval to PR #4448 and the exact head through the
-   governed status command. Do not enable auto-merge and do not update the
-   hotfix head.
-5. Request the Human/Ops root-freeze and strict-base disposition. Merge only
-   through the exact-head integrator after all gates permit it.
-6. Record the merge commit and dev rollout result, or the explicit rollout
-   blocker. Do not restart the stopped projector on the unbounded
-   implementation and do not delete state or generations.
+At 2026-08-01T16:34:21Z, `Codex2` reran the same focused owner checks on the
+merged task branch: 25 lifecycle projector/Compose tests, 3 BFF readiness
+tests, and 3 focused BFF read-model tests passed; `docker compose -f
+docker-compose.yml config --quiet` also passed. These checks are closeout
+verification and do not replace Antigravity's independent verdict in
+`evidence.json`.

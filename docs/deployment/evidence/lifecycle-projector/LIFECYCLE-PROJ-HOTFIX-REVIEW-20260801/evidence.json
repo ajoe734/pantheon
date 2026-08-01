@@ -17,37 +17,5 @@
     "pytest_suite": "services/trade_journey/",
     "pytest_results": "39 passed, 1 skipped",
     "docker_compose_config": "docker compose config --quiet (PASSED)"
-  },
-  "composed_head_review": {
-    "task_id": "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
-    "review_verdict": "APPROVED",
-    "reviewer": "Antigravity",
-    "canonical_review_status_observed_at": "2026-08-01T15:18:21Z",
-    "pr_number": 4448,
-    "exact_head_commit": "c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa",
-    "implementation_parent": "85e835448f7b86ce77ad9e4e0cc80961879b29c0",
-    "dev_parent": "76bbb04b569331a81916330d1cf713d068527c89",
-    "merge_commit": "d2a9a6079789b6da1f15978ff7310c22a129f379",
-    "merged_at": "2026-08-01T15:16:58Z",
-    "acceptance_checklist": {
-      "independent_exact_composed_head_review": true,
-      "clean_merge_tree_matches_both_parents": true,
-      "delta_remains_limited_to_two_reviewed_files": true,
-      "containment_invariants_preserved": true,
-      "github_checks_passed": true,
-      "focused_tests_and_compose_validation_passed": true,
-      "no_live_restart_or_data_deletion": true,
-      "no_broadening_into_incremental_redesign": true
-    },
-    "owner_closeout_verification": {
-      "pytest_results": "31 passed across three focused commands",
-      "docker_compose_config": "docker compose config --quiet (PASSED)",
-      "merge_tree_identity": "git merge-tree result equals c3bb0fe tree (PASSED)",
-      "implementation_file_identity": "85e835448..c3bb0fe5 is empty for both reviewed files (PASSED)",
-      "pr_delta": [
-        "docker-compose.yml",
-        "services/trade_journey/test_lifecycle_projector_compose.py"
-      ]
-    }
   }
 }
