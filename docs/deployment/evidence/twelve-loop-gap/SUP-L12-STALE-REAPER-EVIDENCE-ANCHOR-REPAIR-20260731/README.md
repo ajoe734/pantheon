@@ -41,3 +41,18 @@ This is owner evidence only. It does not approve PR #4452's current task head, m
 the task PR, close the original subject task, prove live promotion, or resume
 Wave 0. Antigravity must review the exact task PR head, after which the normal
 protected merge and governed owner closeout remain mandatory.
+
+## Owner closeout audit
+
+The governed task row reached `review_approved`, but the immutable Antigravity
+approval event at `2026-08-01T14:41:16Z` names reviewed SHA
+`14487789314c4495e865a7d7ef1aae9c43d70650`. That object does not exist. PR
+#4452, the local task branch, and the remote task ref instead all resolve to
+`1448778931c2058fceb715ad13423e639f5c0865`, which had been the branch head
+since `2026-08-01T14:34:48Z`.
+
+The PR has no GitHub review, the canonical task row has no `review_file`, and
+the manifest had no independent decision to bind. Owner closeout therefore
+fails closed: the review status row alone does not satisfy the task's exact-head
+acceptance. Antigravity must review the then-current PR head and bind this
+committed manifest before protected merge and governed `done`.

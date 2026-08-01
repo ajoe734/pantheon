@@ -3,9 +3,9 @@
   "task": {
     "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
     "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head",
-    "owner": "Codex2",
+    "owner": "Codex",
     "reviewer": "Antigravity",
-    "status": "owner_implementation_complete_review_pending",
+    "status": "review_approved_closeout_blocked_invalid_review_head",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -128,18 +128,27 @@
     "owner_evidence_head_before_pr_binding": "380f704dada325b112da6332a94a949ef2a14cf1",
     "auto_merge_enabled": false,
     "reviewed_head_sha": null,
+    "reviewed_head_claim": "14487789314c4495e865a7d7ef1aae9c43d70650",
+    "actual_pr_head_at_closeout_audit": "1448778931c2058fceb715ad13423e639f5c0865",
     "merge_commit": null,
     "protected_merge_complete": false,
     "governed_closeout_complete": false
   },
   "review": {
     "reviewer": "Antigravity",
-    "status": "pending_independent_review",
+    "status": "approval_record_requires_exact_head_correction",
     "decision": null,
     "reviewed_task_pr": 4452,
     "reviewed_head_sha": null,
-    "reviewed_at": null,
-    "notes": []
+    "reviewed_head_claim": "14487789314c4495e865a7d7ef1aae9c43d70650",
+    "reviewed_at": "2026-08-01T14:41:16Z",
+    "approval_event_id": "ai-status-event-b096995d1461ef4a03d90e4e5ec9c4f4873504963535a1f8e6daaf56d5ef91bc",
+    "notes": [
+      "The approval event claims a SHA that does not resolve as a commit.",
+      "PR #4452, the local task branch, and the remote task ref all resolved to 1448778931c2058fceb715ad13423e639f5c0865 during owner closeout.",
+      "PR #4452 has no GitHub review and the canonical task row has no review_file.",
+      "A corrected independent review of the then-current PR head must bind this committed manifest before protected merge and done."
+    ]
   },
   "admission": {
     "owner_implementation_complete": true,
@@ -147,5 +156,45 @@
     "protected_merge_complete": false,
     "governed_closeout_complete": false,
     "wave0_dependency_satisfied": false
+  },
+  "owner_closeout_audit": {
+    "audited_at": "2026-08-01T15:01:23Z",
+    "owner": "Codex",
+    "governed_status_before_audit": "review_approved",
+    "canonical_review_file": null,
+    "pull_request_state": "OPEN",
+    "pull_request_merge_state": "BEHIND",
+    "pull_request_github_reviews": 0,
+    "claimed_review_head_is_commit": false,
+    "actual_pr_head_is_commit": true,
+    "actual_pr_head_matches_local_and_remote_task_ref": true,
+    "closeout_decision": "fail_closed_pending_corrected_exact_head_review_and_manifest_binding",
+    "verification": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Provisioned and verified the checkout-scoped Python interpreter."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest <five focused stale-reaper tests>",
+        "result": "pass",
+        "conclusion": "Ran 5 focused stale-reaper regressions in 0.006 seconds."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "Ran 473 supervisor tests in 12.915 seconds."
+      },
+      {
+        "command": "jq empty <subject evidence.json> <repair evidence.json>; git diff --check",
+        "result": "pass",
+        "conclusion": "Both manifests parse and the closeout audit diff has no whitespace errors."
+      },
+      {
+        "command": "git diff --quiet origin/dev HEAD -- .orchestrator/config.json; git cat-file and merge-base anchor checks",
+        "result": "pass",
+        "conclusion": "Config remains unchanged; the corrected anchor and subject head exist in ancestry while both invalid SHA claims fail object lookup."
+      }
+    ]
   }
 }
