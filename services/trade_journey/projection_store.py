@@ -193,6 +193,7 @@ class ProjectionStore:
         *,
         schema: str = "trade_journey_projection",
         connect: Optional[Callable[..., Any]] = None,
+        bootstrap: bool = False,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for ProjectionStore")
@@ -204,7 +205,8 @@ class ProjectionStore:
             import psycopg  # type: ignore[import]
             connect = psycopg.connect
         self._connect = connect
-        self.bootstrap_schema()
+        if bootstrap:
+            self.bootstrap_schema()
 
     def bootstrap_schema(self) -> None:
         """Applies initial schema and tables idempotently."""
@@ -261,7 +263,10 @@ class ProjectionStore:
         CREATE TABLE IF NOT EXISTS {self.schema}.identity_links (
             tenant_id TEXT NOT NULL,
             environment TEXT NOT NULL,
-            identifier_type TEXT NOT NULL,
+            identifier_type TEXT NOT NULL CHECK (identifier_type IN (
+                'journey_id', 'trade_id', 'order_id', 'fill_id', 'position_id',
+                'signal_id', 'proposal_id', 'allocation_id', 'intent_id', 'loop_run_id'
+            )),
             identifier_value TEXT NOT NULL,
             journey_id TEXT NOT NULL,
             first_ingested_seq BIGINT NOT NULL,
@@ -433,17 +438,26 @@ class ProjectionStore:
     ) -> ControllerStateRow:
         """
         Executes a single atomic batch transaction:
-        1. Takes Postgres advisory lock for controller.
+        1. Takes non-blocking Postgres advisory lock for controller (fails fast if locked).
         2. Locks controller row FOR UPDATE (creates default row if missing).
-        3. Verifies event receipts & detects fingerprint conflicts.
+        3. Verifies event receipts & detects fingerprint conflicts / exact duplicates.
         4. Upserts identity links & checks for identity conflicts.
         5. Upserts journey stages, journeys, loop runs, receipts, quarantines.
-        6. Advances controller revision and checkpoint atomically.
+        6. Advances controller revision and contiguous checkpoint atomically.
         """
+        # Derive controller-scoped lock ID from controller_id, tenant_scope, environment_scope
+        lock_str = f"{controller_id}:{tenant_scope}:{environment_scope}"
+        lock_id = (hash(lock_str) & 0x7FFFFFFF) or PROJECTION_CONTROLLER_ADVISORY_LOCK_ID
+
         with self._connect(self.dsn) as conn:
             with conn.cursor() as cur:
-                # 1. Take advisory lock to prevent dual workers
-                cur.execute("SELECT pg_advisory_xact_lock(%s)", (PROJECTION_CONTROLLER_ADVISORY_LOCK_ID,))
+                # 1. Non-blocking advisory lock
+                cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (lock_id,))
+                lock_acquired = cur.fetchone()[0]
+                if not lock_acquired:
+                    raise ProjectionStoreException(
+                        f"Could not acquire advisory lock for controller {controller_id} ({tenant_scope}/{environment_scope})"
+                    )
 
                 # 2. Lock controller row FOR UPDATE
                 cur.execute(
@@ -479,16 +493,17 @@ class ProjectionStore:
                             mutation.accepted_live,
                         ),
                     )
+                    curr_checkpoint_seq = 0
                     curr_revision = 0
-                    curr_quarantine_count = 0
                 else:
+                    curr_checkpoint_seq = ctrl_row[3]
                     curr_revision = ctrl_row[6]
-                    curr_quarantine_count = ctrl_row[19]
 
-                next_revision = curr_revision + 1
                 now = datetime.now(timezone.utc)
 
-                # 3. Check for conflicting duplicate event receipts
+                # 3. Check receipts: filter out exact duplicates & raise on fingerprint conflict
+                new_receipts: list[EventReceiptRow] = []
+                exact_duplicate_receipts: list[EventReceiptRow] = []
                 for receipt in mutation.receipts:
                     cur.execute(
                         f"SELECT fingerprint, disposition FROM {self.schema}.event_receipts WHERE event_id=%s",
@@ -501,6 +516,39 @@ class ProjectionStore:
                             raise ConflictingDuplicateException(
                                 f"Event {receipt.event_id} reused with conflicting fingerprint {receipt.fingerprint} vs {existing_fp}"
                             )
+                        # Exact duplicate
+                        exact_duplicate_receipts.append(receipt)
+                    else:
+                        new_receipts.append(receipt)
+
+                # If all receipts in mutation are exact duplicates and no new non-receipt mutations exist:
+                is_pure_exact_duplicate = (
+                    len(mutation.receipts) > 0
+                    and len(exact_duplicate_receipts) == len(mutation.receipts)
+                    and len(mutation.identity_links) == 0
+                    and len(mutation.stages) == 0
+                    and len(mutation.journeys) == 0
+                    and len(mutation.loop_runs) == 0
+                    and len(mutation.quarantines) == 0
+                )
+
+                if is_pure_exact_duplicate:
+                    # Pure exact duplicate: do NOT increment revision, do NOT rewrite stage/aggregate rows
+                    cur.execute(
+                        f"""
+                        SELECT controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark,
+                               backlog_count, projection_revision, deployment_sha, mode, status, accepted_live,
+                               last_poll_at, last_success_at, last_live_success_at, last_recovery_at,
+                               last_backfill_at, last_replay_at, last_failure_at, last_error_message,
+                               unresolved_quarantine_count, updated_at
+                        FROM {self.schema}.controller
+                        WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                        """,
+                        (controller_id, tenant_scope, environment_scope),
+                    )
+                    return ControllerStateRow(*cur.fetchone())
+
+                next_revision = curr_revision + 1
 
                 # 4. Process identity links & check for identity conflicts
                 for link in mutation.identity_links:
@@ -525,6 +573,7 @@ class ProjectionStore:
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (tenant_id, environment, identifier_type, identifier_value)
                         DO UPDATE SET
+                            first_ingested_seq = LEAST({self.schema}.identity_links.first_ingested_seq, EXCLUDED.first_ingested_seq),
                             last_ingested_seq = GREATEST({self.schema}.identity_links.last_ingested_seq, EXCLUDED.last_ingested_seq),
                             updated_at = EXCLUDED.updated_at
                         """,
@@ -593,7 +642,9 @@ class ProjectionStore:
                             status = EXCLUDED.status,
                             stage_coverage = EXCLUDED.stage_coverage,
                             is_terminal = EXCLUDED.is_terminal,
+                            first_occurred_at = LEAST({self.schema}.journeys.first_occurred_at, EXCLUDED.first_occurred_at),
                             last_occurred_at = GREATEST({self.schema}.journeys.last_occurred_at, EXCLUDED.last_occurred_at),
+                            first_ingested_seq = LEAST({self.schema}.journeys.first_ingested_seq, EXCLUDED.first_ingested_seq),
                             last_ingested_seq = GREATEST({self.schema}.journeys.last_ingested_seq, EXCLUDED.last_ingested_seq),
                             current_identity_summary = EXCLUDED.current_identity_summary,
                             evidence_summary = EXCLUDED.evidence_summary,
@@ -658,7 +709,6 @@ class ProjectionStore:
                     )
 
                 # 8. Upsert Quarantine records
-                added_quarantines = 0
                 for q in mutation.quarantines:
                     cur.execute(
                         f"""
@@ -689,10 +739,9 @@ class ProjectionStore:
                             q.resolution_audit_ref,
                         ),
                     )
-                    added_quarantines += 1
 
-                # 9. Insert Event Receipts
-                for receipt in mutation.receipts:
+                # 9. Insert new Event Receipts
+                for receipt in new_receipts:
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.event_receipts (
@@ -718,8 +767,38 @@ class ProjectionStore:
                         ),
                     )
 
-                # 10. Update Controller state
-                new_quarantine_total = curr_quarantine_count + added_quarantines
+                # Calculate contiguous checkpoint advancement from durable event receipts
+                if mutation.receipts:
+                    durable_seqs = sorted(r.ingested_seq for r in mutation.receipts)
+                    expected_seq = curr_checkpoint_seq + 1
+                    calculated_checkpoint = curr_checkpoint_seq
+                    for seq in durable_seqs:
+                        if seq == expected_seq:
+                            calculated_checkpoint = seq
+                            expected_seq += 1
+                        elif seq <= curr_checkpoint_seq:
+                            continue
+                        else:
+                            break
+                    target_checkpoint_seq = calculated_checkpoint
+                else:
+                    target_checkpoint_seq = curr_checkpoint_seq
+
+                # Compute actual unresolved quarantine count from database
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {self.schema}.quarantine WHERE resolution_status='unresolved'"
+                )
+                actual_unresolved_quarantine_count = cur.fetchone()[0]
+
+                # Mode-dependent timestamp updates
+                mode = mutation.mode.lower()
+                is_live_mode = (mode == "live")
+                update_last_live = is_live_mode and mutation.accepted_live
+
+                last_backfill_ts = now if mode == "backfill" else None
+                last_recovery_ts = now if mode == "recovery" else None
+                last_replay_ts = now if mode == "replay" else None
+
                 cur.execute(
                     f"""
                     UPDATE {self.schema}.controller
@@ -734,6 +813,9 @@ class ProjectionStore:
                         last_poll_at = %s,
                         last_success_at = %s,
                         last_live_success_at = CASE WHEN %s THEN %s ELSE last_live_success_at END,
+                        last_backfill_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_backfill_at END,
+                        last_recovery_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_recovery_at END,
+                        last_replay_at = CASE WHEN %s::timestamptz IS NOT NULL THEN %s::timestamptz ELSE last_replay_at END,
                         last_error_message = %s,
                         unresolved_quarantine_count = %s,
                         updated_at = %s
@@ -745,7 +827,7 @@ class ProjectionStore:
                               unresolved_quarantine_count, updated_at
                     """,
                     (
-                        mutation.new_checkpoint_seq,
+                        target_checkpoint_seq,
                         mutation.source_high_watermark,
                         mutation.backlog_count,
                         next_revision,
@@ -755,10 +837,16 @@ class ProjectionStore:
                         mutation.accepted_live,
                         now,
                         now,
-                        mutation.accepted_live,
+                        update_last_live,
                         now,
+                        last_backfill_ts,
+                        last_backfill_ts,
+                        last_recovery_ts,
+                        last_recovery_ts,
+                        last_replay_ts,
+                        last_replay_ts,
                         mutation.error_message,
-                        new_quarantine_total,
+                        actual_unresolved_quarantine_count,
                         now,
                         controller_id,
                         tenant_scope,

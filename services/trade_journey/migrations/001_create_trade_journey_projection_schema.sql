@@ -57,7 +57,10 @@ CREATE INDEX IF NOT EXISTS idx_event_receipts_tenant_env_journey
 CREATE TABLE IF NOT EXISTS trade_journey_projection.identity_links (
     tenant_id TEXT NOT NULL,
     environment TEXT NOT NULL,
-    identifier_type TEXT NOT NULL,
+    identifier_type TEXT NOT NULL CHECK (identifier_type IN (
+        'journey_id', 'trade_id', 'order_id', 'fill_id', 'position_id',
+        'signal_id', 'proposal_id', 'allocation_id', 'intent_id', 'loop_run_id'
+    )),
     identifier_value TEXT NOT NULL,
     journey_id TEXT NOT NULL,
     first_ingested_seq BIGINT NOT NULL,
