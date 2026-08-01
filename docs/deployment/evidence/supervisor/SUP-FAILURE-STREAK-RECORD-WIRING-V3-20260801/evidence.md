@@ -40,8 +40,10 @@ extraction, configuration, product tasks, or live services.
 - `git diff --check`: passed.
 - Static production call-site proof: exactly six calls, each carrying
   `failure_kind`, `reason_class`, `raw_ref`, and `rejected_head`.
-- Rejected PR head `52cd790274b0daf9cf9e49b9ef3ac53dddf40e24` is not in the
-  candidate ancestry.
+- Rejected PR #4442 heads `e89d09ea`, `67e8ce11`, `1041551b`, `85b4d860`,
+  `5b2c309e`, and `69e69ffa`, plus rejected PR #4445 head `52cd7902`, are
+  all absent from the candidate ancestry (full SHAs are recorded in
+  `evidence.json`).
 
 ## Review boundary
 

@@ -64,7 +64,15 @@
     "distinct_evidence_uniqueness": "proven for same-raw-ref failures with different kind, reason, or head",
     "unrelated_streak_non_interference": "proven through replay and targeted clear",
     "canonical_owner_reviewer_capture": "proven through dispatch-event to request-snapshot preservation and real boot-reconciliation records",
-    "rejected_ancestry": "52cd790274b0daf9cf9e49b9ef3ac53dddf40e24 is not an ancestor of implementation anchor 4f153990d19c2fa76dec75dfbb352695263e8498"
+    "rejected_ancestry_absent": [
+      "e89d09ea94847e401d8795856b4a66d82983aaea",
+      "67e8ce1164923ad061f9b39999eeb52fab4ad8f3",
+      "1041551bbfe9ac91cc174b2982947c3572cabb3b",
+      "85b4d8607c54738a9af171ed08734881cf1df623",
+      "5b2c309e20d46267007ee2547d6b304cc759a8a0",
+      "69e69ffacfad945eaf53992e8d3207dae5a03151",
+      "52cd790274b0daf9cf9e49b9ef3ac53dddf40e24"
+    ]
   },
   "verification": [
     {
