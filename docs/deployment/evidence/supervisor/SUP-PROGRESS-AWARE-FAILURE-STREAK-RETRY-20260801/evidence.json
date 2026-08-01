@@ -1,0 +1,14 @@
+{
+  "task_id": "SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801",
+  "title": "Make same-owner reviewer retries progress-aware and bounded",
+  "timestamp": "2026-08-01T01:58:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Human/Ops",
+  "review_decision": "review_approved",
+  "summary": "Implemented progress-generation bounded eligibility for same-owner reviewer retries without clearing failure streaks un-bounded or bypassing auth/quota/lease guardrails.",
+  "verification": {
+    "test_command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+    "passed_count": 470,
+    "failed_count": 0
+  }
+}

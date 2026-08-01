@@ -2582,6 +2582,8 @@ def worker_commit_progress_snapshot(worker: dict[str, Any]) -> dict[str, Any]:
 def update_worker_commit_progress(
     worker: dict[str, Any],
     now: datetime,
+    *,
+    state: dict[str, Any] | None = None,
 ) -> tuple[bool, bool]:
     """Observe an isolated worker's HEAD and record newly committed work.
 
@@ -2607,6 +2609,8 @@ def update_worker_commit_progress(
         worker["last_commit_progress_at"] = observed_at
         worker["last_work_progress_at"] = observed_at
         worker["commit_progress_count"] = int(worker.get("commit_progress_count", 0)) + 1
+        if state is not None:
+            clear_task_failure_streak(state, worker=worker)
     return True, advanced
 
 
@@ -4804,9 +4808,13 @@ def chair_reassignment_triage_needed_for_task(
     state: dict[str, Any],
     task_id: str,
     agent_name: str,
+    *,
+    task: dict[str, Any] | None = None,
 ) -> bool:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
+        return False
+    if task is not None and same_owner_reviewer_retry_allowed(config, state, task_id, agent_name, task):
         return False
     threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
     provider_id = normalize_agent_id(agent_name)
@@ -4853,6 +4861,8 @@ def failure_loop_task_agents_for_task_map(
             continue
         agent_name = display_name_for(config, provider)
         task_status = str(task.get("status") or "").lower()
+        if same_owner_reviewer_retry_allowed(config, state, task_id, agent_name, task):
+            continue
         if task_status in review_statuses and str(task.get("reviewer") or "").strip() == agent_name:
             task_agents.add((task_id, agent_name))
         elif task_status in owned_statuses | finalize_statuses and str(task.get("owner") or "").strip() == agent_name:
@@ -6243,6 +6253,7 @@ def record_task_failure_streak(
             "last_reason": reason,
             "last_failure_at": utc_now(),
             "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
+            "last_progress_generation": int(record.get("last_progress_generation", 0)),
         }
     )
     bucket[key] = record
@@ -6255,6 +6266,7 @@ def clear_task_failure_streak(
     task_id: str | None = None,
     provider: str | None = None,
     worker: dict[str, Any] | None = None,
+    progress_generation: int | None = None,
 ) -> None:
     if worker is not None:
         task_id = str(worker.get("task_id") or task_id or "")
@@ -6263,7 +6275,18 @@ def clear_task_failure_streak(
     provider_id = normalize_agent_id(provider or "")
     if not task_id or not provider_id:
         return
-    _task_failure_streak_bucket(state).pop(_failure_streak_key(task_id, provider_id), None)
+    key = _failure_streak_key(task_id, provider_id)
+    bucket = _task_failure_streak_bucket(state)
+    if progress_generation is not None:
+        record = bucket.get(key)
+        if isinstance(record, dict):
+            record["last_progress_generation"] = max(
+                int(record.get("last_progress_generation", 0)),
+                int(progress_generation),
+            )
+            record["count"] = 0
+            return
+    bucket.pop(key, None)
 
 
 def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | None) -> None:
@@ -6273,6 +6296,75 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
     bucket = _task_failure_streak_bucket(state)
     for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
         bucket.pop(key, None)
+
+
+def same_owner_reviewer_retry_allowed(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_id: str,
+    target_agent: str,
+    task: dict[str, Any],
+) -> bool:
+    """Check if a same-owner reviewer retry is eligible bounded by progress generation."""
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    if owner != reviewer or target_agent != owner:
+        return False
+
+    provider_id = normalize_agent_id(target_agent)
+    if not task_id or not provider_id:
+        return False
+
+    # 1. Non-terminal failure kind allowlist
+    record = ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).get(
+        _failure_streak_key(task_id, provider_id)
+    )
+    if not isinstance(record, dict):
+        return False
+
+    last_kind = str(record.get("last_failure_kind") or "").strip().lower()
+    allowed_kinds = {"generic_exit", "missing_process", "timeout", "parse_error", "exit_code"}
+    if last_kind and last_kind not in allowed_kinds:
+        return False
+
+    # 2. Must not be in auth pause or quota pause
+    if agent_auto_dispatch_block_reason(config, state, provider_id, None):
+        return False
+
+    # 3. Must have no active/pending worker or lease
+    dispatch_settings = ready_dispatch_settings(config)
+    active_statuses = {str(v) for v in dispatch_settings.get("active_worker_statuses", [])}
+    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
+    active_task_ids = {tid for tid, _aid in active_task_agents if tid}
+    pending_task_ids = {tid for tid, _aid in pending_task_agents if tid}
+    if task_id in active_task_ids or task_id in pending_task_ids:
+        return False
+
+    # 4. Progress generation check: last_progress_generation < current task progress generation
+    # Compute current task progress generation from activity log / handoff timestamp
+    last_prog_gen = int(record.get("last_progress_generation", 0))
+    current_gen = task_progress_generation(config, state, task)
+    if current_gen <= last_prog_gen:
+        return False
+
+    return True
+
+
+def task_progress_generation(config: dict[str, Any], state: dict[str, Any], task: dict[str, Any]) -> int:
+    """Compute task progress generation based on task last_update / activity log events."""
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return 0
+    # Use last_update or handoff timestamp hash / count as generation integer
+    last_update = str(task.get("last_update") or "").strip()
+    if not last_update:
+        return 0
+    dt = _parse_iso_utc(last_update)
+    if dt is None:
+        return 0
+    return int(dt.timestamp())
+
 
 
 def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
@@ -9418,6 +9510,7 @@ def poll_worker_observation_stage(
         commit_state_changed, commit_progress_advanced = update_worker_commit_progress(
             worker,
             now,
+            state=state,
         )
         if commit_state_changed:
             changed = True
@@ -13527,7 +13620,7 @@ def dispatch_ready_tasks(
                 continue
             if reason is not None and (task_id, target_agent) in failure_loop_task_agents:
                 continue
-            if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
+            if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent, task=task):
                 continue
 
             sidecar_claim_allowed = (

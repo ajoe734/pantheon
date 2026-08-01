@@ -12828,6 +12828,116 @@ class WorkerReassignmentTests(unittest.TestCase):
         supervisor.clear_task_failure_streak(state, worker=worker_two)
         self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
+    def test_progress_advancement_clears_task_failure_streak(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "PROG-001:codex": {
+                        "task_id": "PROG-001",
+                        "provider": "codex",
+                        "count": 2,
+                        "last_reason": "generic_exit",
+                    }
+                }
+            }
+        }
+        worker = {
+            "task_id": "PROG-001",
+            "provider": "codex",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/task-worktree",
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "commit_progress_count": 0,
+        }
+        with mock.patch.object(
+            supervisor,
+            "isolated_workspace_commit_sha",
+            return_value="b" * 40,
+        ):
+            state_changed, progress_advanced = supervisor.update_worker_commit_progress(
+                worker,
+                datetime.now(timezone.utc),
+                state=state,
+            )
+
+        self.assertTrue(state_changed)
+        self.assertTrue(progress_advanced)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_same_owner_reviewer_retry_allowed_negative_matrix_and_positive(self) -> None:
+        config = supervisor.load_config()
+        task = {
+            "id": "RETRY-001",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity",
+            "status": "review",
+            "last_update": "2026-08-01T01:00:00Z",
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "RETRY-001:antigravity": {
+                        "task_id": "RETRY-001",
+                        "provider": "antigravity",
+                        "count": 2,
+                        "last_reason": "generic_exit",
+                        "last_failure_kind": "generic_exit",
+                        "last_progress_generation": int(datetime.fromisoformat("2026-08-01T00:30:00+00:00").timestamp()),
+                    }
+                }
+            }
+        }
+
+        # 1. Positive case: progress generation advanced, non-terminal failure kind, same owner/reviewer
+        self.assertTrue(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, state, "RETRY-001", "Antigravity", task
+            )
+        )
+
+        # 2. Negative: owner != reviewer
+        diff_reviewer_task = dict(task, reviewer="Claude")
+        self.assertFalse(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, state, "RETRY-001", "Antigravity", diff_reviewer_task
+            )
+        )
+
+        # 3. Negative: terminal failure kind (e.g. auth)
+        auth_state = json.loads(json.dumps(state))
+        auth_state["provider_guardrails"]["task_failure_streaks"]["RETRY-001:antigravity"]["last_failure_kind"] = "auth"
+        self.assertFalse(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, auth_state, "RETRY-001", "Antigravity", task
+            )
+        )
+
+        # 4. Negative: progress generation NOT advanced (same timestamp or older)
+        old_task = dict(task, last_update="2026-08-01T00:20:00Z")
+        self.assertFalse(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, state, "RETRY-001", "Antigravity", old_task
+            )
+        )
+
+        # 5. Negative: active worker lease running
+        active_state = json.loads(json.dumps(state))
+        active_state["workers"] = {
+            "w1": {
+                "run_id": "w1",
+                "task_id": "RETRY-001",
+                "provider": "antigravity",
+                "status": "running",
+                "pid": 99999,
+            }
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertFalse(
+                supervisor.same_owner_reviewer_retry_allowed(
+                    config, active_state, "RETRY-001", "Antigravity", task
+                )
+            )
+
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
             "task_id": "LP-003",
