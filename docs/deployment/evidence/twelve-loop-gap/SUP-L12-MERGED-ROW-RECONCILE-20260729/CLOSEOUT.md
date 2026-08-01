@@ -42,20 +42,21 @@ review/closeout routes and were not reconciled by this task.
 
 ## Owner finalization
 
-The supervisor reassigned task ownership from unavailable lane `Claude2` to
-`Codex` at `2026-07-29T15:03:58Z`; reviewer `Antigravity` was not changed.
-This receipt provides the task-scoped Codex closeout commit required by the
-current owner identity. It does not rewrite the prior reviewed evidence or
-infer a different reviewer decision.
+The supervisor first reassigned task ownership from unavailable lane `Claude2`
+to `Codex` at `2026-07-29T15:03:58Z`, then reassigned the still-open closeout
+to `Codex2`; reviewer `Antigravity` was not changed. The governed task row now
+names `Codex2` as owner. This update provides the task-scoped `Codex2` closeout
+commit required by the current owner identity. It does not rewrite the prior
+reviewed evidence or infer a different reviewer decision.
 
 ## Final verification
 
 The owner reran these focused checks:
 
 ```bash
-AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show \
+AI_NAME=Codex2 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show \
   SUP-L12-MERGED-ROW-RECONCILE-20260729
-AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show \
+AI_NAME=Codex2 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show \
   L12-MANIFEST-REVIEW-GAP-TASKS-20260729
 gh pr view 4379 --repo ajoe734/pantheon \
   --json state,mergedAt,mergeCommit,headRefOid,statusCheckRollup
