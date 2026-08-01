@@ -6226,6 +6226,8 @@ def record_task_failure_streak(
     reason: str,
     *,
     failure_kind: str | None = None,
+    raw_ref: str | None = None,
+    owner_at_failure: str | None = None,
 ) -> int:
     task_id = str(worker.get("task_id") or "").strip()
     provider_id = worker_failure_streak_provider_id(worker)
@@ -6235,18 +6237,196 @@ def record_task_failure_streak(
     key = _failure_streak_key(task_id, provider_id)
     record = dict(bucket.get(key) or {})
     count = int(record.get("count", 0)) + 1
+    now = utc_now()
+    request_snap = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+    task_metadata = request_snap.get("metadata", {}).get("task", {}) if isinstance(request_snap.get("metadata"), dict) else {}
+    resolved_owner = str(
+        owner_at_failure
+        or worker.get("owner")
+        or request_snap.get("owner")
+        or task_metadata.get("owner")
+        or record.get("owner_at_failure")
+        or ""
+    ).strip()
+    resolved_reviewer = str(
+        worker.get("reviewer")
+        or request_snap.get("reviewer")
+        or task_metadata.get("reviewer")
+        or record.get("reviewer_at_failure")
+        or ""
+    ).strip()
+    extracted_raw_ref = str(
+        raw_ref
+        or worker.get("last_error_raw_ref")
+        or (worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}).get("raw_ref")
+        or record.get("raw_ref")
+        or ""
+    ).strip()
+    extracted_progress_evidence = str(
+        worker.get("last_progress_evidence")
+        or (worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}).get("last_progress_evidence")
+        or record.get("last_progress_evidence")
+        or ""
+    ).strip()
+
+    parsed_dt = _parse_iso_utc(now)
+    ts_seconds = int(parsed_dt.timestamp()) if parsed_dt is not None else int(time.time())
+    generation_id = f"gen-{task_id}-{provider_id}-{count}-{ts_seconds}"
+
     record.update(
         {
+            "version": "v2",
             "task_id": task_id,
             "provider": provider_id,
             "count": count,
             "last_reason": reason,
-            "last_failure_at": utc_now(),
+            "last_failure_at": now,
             "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
+            "reason_class": failure_kind or str(record.get("last_failure_kind") or ""),
+            "owner_at_failure": resolved_owner,
+            "generation_id": generation_id,
         }
     )
+    if resolved_reviewer:
+        record["reviewer_at_failure"] = resolved_reviewer
+    if extracted_raw_ref:
+        record["raw_ref"] = extracted_raw_ref
+    if extracted_progress_evidence:
+        record["last_progress_evidence"] = extracted_progress_evidence
     bucket[key] = record
     return count
+
+
+def decode_task_failure_streak(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fail-closed decoding for task failure streak records."""
+    if not isinstance(record, dict):
+        return None
+    task_id = str(record.get("task_id") or "").strip()
+    provider = str(record.get("provider") or "").strip()
+    if not task_id or not provider:
+        return None
+    count = record.get("count")
+    if not isinstance(count, int) or count < 1:
+        return None
+    last_failure_at = str(record.get("last_failure_at") or "").strip()
+    if not last_failure_at:
+        return None
+    version = str(record.get("version") or "").strip()
+    owner_at_failure = str(record.get("owner_at_failure") or "").strip()
+    generation_id = str(record.get("generation_id") or "").strip()
+    reason_class = str(record.get("reason_class") or "").strip()
+    if not version or not owner_at_failure or not generation_id or not reason_class:
+        return None
+    return dict(record)
+
+
+def extract_authoritative_progress_evidence(
+    record: dict[str, Any] | None,
+    events: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Extract authoritative progress evidence from governed events occurring after failure."""
+    decoded = decode_task_failure_streak(record)
+    if not decoded:
+        return None
+    if not events or not isinstance(events, list):
+        return None
+
+    task_id = decoded["task_id"]
+    provider = decoded["provider"]
+    failure_ts = decoded["last_failure_at"]
+    failure_dt = _parse_iso_utc(failure_ts)
+    if failure_dt is None:
+        return None
+
+    owner_at_failure = str(decoded.get("owner_at_failure") or "").strip()
+    reviewer_at_failure = str(decoded.get("reviewer_at_failure") or "").strip()
+    last_head = str(decoded.get("last_head_sha") or decoded.get("head_sha") or "").strip()
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("id") or event.get("event_id") or "").strip()
+        if not event_id:
+            continue
+
+        event_task_id = str(event.get("task_id") or "").strip()
+        if event_task_id and event_task_id != task_id:
+            continue
+
+        event_ts = str(event.get("timestamp") or event.get("created_at") or event.get("ts") or "").strip()
+        event_dt = _parse_iso_utc(event_ts)
+        if event_dt is None or event_dt <= failure_dt:
+            continue
+
+        event_type = str(event.get("type") or event.get("event") or "").strip().lower()
+        if not event_type:
+            continue
+
+        # Check provider if present in event
+        event_provider = str(event.get("provider") or event.get("provider_id") or "").strip()
+        if event_provider and normalize_agent_id(event_provider) != normalize_agent_id(provider):
+            continue
+
+        # 1. Reviewer reopen
+        if event_type in {"task_reopened", "reopen"}:
+            agent_actor = str(event.get("agent") or event.get("actor") or event.get("reviewer") or event.get("from_reviewer") or "").strip()
+            owner = str(event.get("owner") or event.get("to_owner") or owner_at_failure or "").strip()
+            reviewer = agent_actor or reviewer_at_failure
+            if reviewer and owner and reviewer != owner:
+                if not owner_at_failure or owner == owner_at_failure:
+                    return {
+                        "kind": "reviewer_reopen",
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "timestamp": event_ts,
+                        "reviewer": reviewer,
+                        "owner": owner,
+                        "task_id": task_id,
+                    }
+
+        # 2. Reviewer handoff
+        elif event_type in {"task_handoff", "handoff"}:
+            from_agent = str(event.get("from") or event.get("from_agent") or event.get("actor") or event.get("agent") or "").strip()
+            to_agent = str(event.get("to") or event.get("to_agent") or "").strip()
+            reviewer = str(event.get("reviewer") or "").strip()
+            owner = str(event.get("owner") or "").strip()
+
+            # For reviewer handoff, from_agent must be an independent reviewer, not the owner_at_failure
+            if from_agent and to_agent and from_agent != to_agent:
+                check_reviewer = reviewer or from_agent
+                check_owner = owner or to_agent
+                if check_reviewer != check_owner and from_agent != owner_at_failure:
+                    if not owner_at_failure or check_owner == owner_at_failure:
+                        return {
+                            "kind": "reviewer_handoff",
+                            "event_id": event_id,
+                            "event_type": event_type,
+                            "timestamp": event_ts,
+                            "from_agent": from_agent,
+                            "to_agent": to_agent,
+                            "task_id": task_id,
+                        }
+
+        # 3. Verified commit/head event or worker_commit
+        elif event_type in {"commit", "head_verified", "verified_commit", "task_committed", "worker_commit"}:
+            new_head = str(event.get("head_sha") or event.get("commit") or event.get("sha") or "").strip()
+            commit_agent = str(event.get("agent") or event.get("actor") or event.get("owner") or "").strip()
+            # Must explicitly be verified=True, OR be a governed worker_commit event from current owner
+            is_worker_commit = event_type == "worker_commit" and (not commit_agent or not owner_at_failure or commit_agent == owner_at_failure)
+            verified = (event.get("verified") is True) or is_worker_commit
+            # Require 40-hex commit SHA
+            is_valid_sha = len(new_head) == 40 and all(c in "0123456789abcdefABCDEF" for c in new_head)
+            if new_head and verified and is_valid_sha and new_head != last_head:
+                return {
+                    "kind": "verified_new_head",
+                    "event_id": event_id,
+                    "event_type": event_type,
+                    "timestamp": event_ts,
+                    "head_sha": new_head,
+                    "task_id": task_id,
+                }
+
+    return None
 
 
 def clear_task_failure_streak(

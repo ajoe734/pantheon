@@ -16876,3 +16876,232 @@ class WorkerDeliveryIdentityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class FailureStreakV2Tests(unittest.TestCase):
+    """Test Failure Streak v2 recording, fail-closed decoding, and negative progress extraction probes."""
+
+    def test_record_task_failure_streak_v2_creates_valid_generation_and_fields(self) -> None:
+        state = {}
+        worker = {
+            "task_id": "SUP-TEST-001",
+            "provider": "codex",
+            "owner": "Antigravity",
+            "last_error_raw_ref": "err-ref-123",
+            "last_progress_evidence": "prog-ev-456",
+        }
+        count = supervisor.record_task_failure_streak(
+            state, worker, "quota exhausted", failure_kind="quota"
+        )
+        self.assertEqual(count, 1)
+
+        guardrails = state.get("provider_guardrails", {})
+        streak_bucket = guardrails.get("task_failure_streaks", {})
+        key = "T1:codex" if False else "SUP-TEST-001:codex"
+        self.assertIn(key, streak_bucket)
+        record = streak_bucket[key]
+
+        self.assertEqual(record["version"], "v2")
+        self.assertEqual(record["task_id"], "SUP-TEST-001")
+        self.assertEqual(record["provider"], "codex")
+        self.assertEqual(record["count"], 1)
+        self.assertEqual(record["last_reason"], "quota exhausted")
+        self.assertEqual(record["last_failure_kind"], "quota")
+        self.assertEqual(record["reason_class"], "quota")
+        self.assertEqual(record["owner_at_failure"], "Antigravity")
+        self.assertEqual(record["raw_ref"], "err-ref-123")
+        self.assertEqual(record["last_progress_evidence"], "prog-ev-456")
+        self.assertTrue(record["generation_id"].startswith("gen-SUP-TEST-001-codex-1-"))
+
+        # Subsequent failure generates new generation_id even if timestamps match
+        with mock.patch.object(supervisor, "utc_now", return_value=record["last_failure_at"]):
+            count2 = supervisor.record_task_failure_streak(
+                state, worker, "rate limit", failure_kind="capacity"
+            )
+            self.assertEqual(count2, 2)
+            record2 = streak_bucket[key]
+            self.assertEqual(record2["count"], 2)
+            self.assertEqual(record2["reason_class"], "capacity")
+            self.assertNotEqual(record["generation_id"], record2["generation_id"])
+
+    def test_decode_task_failure_streak_fail_closed_checks(self) -> None:
+        valid_record = {
+            "version": "v2",
+            "task_id": "SUP-TEST-001",
+            "provider": "codex",
+            "count": 1,
+            "last_failure_at": "2026-08-01T00:00:00Z",
+            "owner_at_failure": "Antigravity",
+            "generation_id": "gen-1",
+            "reason_class": "quota",
+        }
+        self.assertIsNotNone(supervisor.decode_task_failure_streak(valid_record))
+
+        # Test missing fields
+        for field in ["version", "owner_at_failure", "generation_id", "reason_class", "task_id", "provider", "last_failure_at"]:
+            bad_record = dict(valid_record)
+            bad_record.pop(field)
+            self.assertIsNone(supervisor.decode_task_failure_streak(bad_record))
+
+    def test_extract_authoritative_progress_evidence_negative_probes(self) -> None:
+        streak_record = {
+            "version": "v2",
+            "task_id": "SUP-TEST-001",
+            "provider": "codex",
+            "count": 1,
+            "last_failure_at": "2026-08-01T00:00:00Z",
+            "owner_at_failure": "Antigravity",
+            "generation_id": "gen-1",
+            "reason_class": "quota",
+            "last_head_sha": "a" * 40,
+        }
+
+        # Probe 1: Empty event ID rejected
+        events_empty_id = [
+            {
+                "id": "",
+                "task_id": "SUP-TEST-001",
+                "ts": "2026-08-01T00:01:00Z",
+                "type": "commit",
+                "head_sha": "b" * 40,
+                "verified": True,
+            }
+        ]
+        self.assertIsNone(supervisor.extract_authoritative_progress_evidence(streak_record, events_empty_id))
+
+        # Probe 2: Missing verified defaults to accepted? No, must fail closed
+        events_unverified = [
+            {
+                "id": "evt-1",
+                "task_id": "SUP-TEST-001",
+                "ts": "2026-08-01T00:01:00Z",
+                "type": "commit",
+                "head_sha": "b" * 40,
+            }
+        ]
+        self.assertIsNone(supervisor.extract_authoritative_progress_evidence(streak_record, events_unverified))
+
+        # Probe 3: Invalid commit SHA length/hex rejected
+        events_short_sha = [
+            {
+                "id": "evt-1",
+                "task_id": "SUP-TEST-001",
+                "ts": "2026-08-01T00:01:00Z",
+                "type": "commit",
+                "head_sha": "67e8ce116",
+                "verified": True,
+            }
+        ]
+        self.assertIsNone(supervisor.extract_authoritative_progress_evidence(streak_record, events_short_sha))
+
+        # Probe 4: Cross-provider progress event rejected if provider mismatch
+        events_other_provider = [
+            {
+                "id": "evt-1",
+                "task_id": "SUP-TEST-001",
+                "ts": "2026-08-01T00:01:00Z",
+                "type": "commit",
+                "provider": "claude",
+                "head_sha": "b" * 40,
+                "verified": True,
+            }
+        ]
+        self.assertIsNone(supervisor.extract_authoritative_progress_evidence(streak_record, events_other_provider))
+
+        # Probe 5: Owner-originated handoff rejected as reviewer handoff
+        events_owner_handoff = [
+            {
+                "id": "evt-1",
+                "task_id": "SUP-TEST-001",
+                "ts": "2026-08-01T00:01:00Z",
+                "type": "handoff",
+                "from": "Antigravity", # same as owner_at_failure!
+                "to": "Claude",
+            }
+        ]
+        self.assertIsNone(supervisor.extract_authoritative_progress_evidence(streak_record, events_owner_handoff))
+
+        # Valid verified new head passes
+        events_valid_head = [
+            {
+                "id": "evt-1",
+                "task_id": "SUP-TEST-001",
+                "ts": "2026-08-01T00:01:00Z",
+                "type": "commit",
+                "head_sha": "b" * 40,
+                "verified": True,
+            }
+        ]
+        evidence = supervisor.extract_authoritative_progress_evidence(streak_record, events_valid_head)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["kind"], "verified_new_head")
+        self.assertEqual(evidence["head_sha"], "b" * 40)
+
+    def test_record_task_failure_streak_real_runtime_request_snapshot(self) -> None:
+        state = {"provider_guardrails": {"task_failure_streaks": {}}}
+        worker = {
+            "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+            "provider": "codex",
+            "request_snapshot": {
+                "metadata": {
+                    "task": {
+                        "owner": "Antigravity",
+                        "reviewer": "Human/Ops",
+                    }
+                }
+            },
+        }
+        supervisor.record_task_failure_streak(
+            state, worker, "test failure", failure_kind="capacity"
+        )
+        record = state["provider_guardrails"]["task_failure_streaks"]["SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801:codex"]
+        self.assertEqual(record["owner_at_failure"], "Antigravity")
+        self.assertEqual(record["reviewer_at_failure"], "Human/Ops")
+        self.assertIsNotNone(supervisor.decode_task_failure_streak(record))
+
+    def test_extract_authoritative_progress_evidence_real_ai_activity_shapes(self) -> None:
+        streak_record = {
+            "version": "v2",
+            "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+            "provider": "codex",
+            "count": 1,
+            "last_failure_at": "2026-08-01T00:00:00Z",
+            "owner_at_failure": "Antigravity",
+            "reviewer_at_failure": "Human/Ops",
+            "generation_id": "gen-1",
+            "reason_class": "capacity",
+        }
+
+        # Real ai-activity shape 1: reopen event {type: "reopen", agent: "Human/Ops", id: "evt-1", ts: "..."}
+        reopen_events = [
+            {
+                "id": "evt-reopen-1",
+                "ts": "2026-08-01T00:05:00Z",
+                "type": "reopen",
+                "agent": "Human/Ops",
+            }
+        ]
+        ev_reopen = supervisor.extract_authoritative_progress_evidence(streak_record, reopen_events)
+        self.assertIsNotNone(ev_reopen)
+        self.assertEqual(ev_reopen["kind"], "reviewer_reopen")
+        self.assertEqual(ev_reopen["reviewer"], "Human/Ops")
+
+        # Real ai-activity shape 2: worker_commit event {type: "worker_commit", agent: "Antigravity", commit: "40-hex", id: "evt-2", ts: "..."}
+        commit_sha = "c" * 40
+        commit_events = [
+            {
+                "id": "evt-commit-1",
+                "ts": "2026-08-01T00:06:00Z",
+                "type": "worker_commit",
+                "agent": "Antigravity",
+                "commit": commit_sha,
+            }
+        ]
+        ev_commit = supervisor.extract_authoritative_progress_evidence(streak_record, commit_events)
+        self.assertIsNotNone(ev_commit)
+        self.assertEqual(ev_commit["kind"], "verified_new_head")
+        self.assertEqual(ev_commit["head_sha"], commit_sha)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
