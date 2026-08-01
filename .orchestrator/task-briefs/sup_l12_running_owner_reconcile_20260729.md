@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Reconcile running workers with authoritative row owners
 - Status: review_approved
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Antigravity
-- Next: Reviewed implementation diff, unit test coverage (464 passed), evidence manifest, and PR #4386 head 665e4bdbd. Reconcile mechanisms for worker owner drift, duplicate active worker suppression, and optimistic stale-failure reassignment writes are verified.
+- Next: Auto-reassigned SUP-L12-RUNNING-OWNER-RECONCILE-20260729 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.
 
 ## Summary
 補上 row owner/reviewer 與 live worker_runner/run records 的 reconcile 機制，避免 helper/fallback 失敗後任務真相漂移。
