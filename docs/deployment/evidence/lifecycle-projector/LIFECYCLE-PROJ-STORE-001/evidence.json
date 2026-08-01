@@ -1,31 +1,139 @@
 {
-  "task_id": "LIFECYCLE-PROJ-STORE-001",
-  "program_id": "lifecycle-projector-incremental-redesign-2026-08-01",
-  "generated_at": "2026-08-01T16:00:00Z",
-  "owner": "Antigravity",
-  "reviewer": "Codex2",
-  "status": "review",
-  "artifacts": [
-    "services/trade_journey/projection_store.py",
-    "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql",
-    "services/trade_journey/test_projection_store.py",
-    "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/evidence.json"
-  ],
-  "verification": {
-    "test_command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@localhost:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest services/trade_journey/test_projection_store.py",
-    "passed": true,
-    "tests_total": 5,
-    "tests_passed": 5,
-    "explain_plans": {
-      "identity_link_lookup": "Index Scan using idx_identity_links_tenant_env_journey on identity_links",
-      "journeys_list": "Index Scan using idx_journeys_tenant_env_updated_journey on journeys"
+  "schema_version": "pantheon.lifecycle-projection-store-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-STORE-001",
+    "title": "Build the lifecycle projection relational store",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "review",
+    "base_branch": "dev",
+    "base_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+    "task_branch": "task/LIFECYCLE-PROJ-STORE-001",
+    "evidence_cut_at": "2026-08-01T23:13:57Z",
+    "evidence_cut_semantics": "Owner verification before independent exact-head review. The protected PR merge is future state and must be recorded by governed delivery metadata because this manifest cannot contain its own future merge commit."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql",
+      "services/trade_journey/test_projection_store.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/"
+    ],
+    "not_changing": [
+      "telemetry_events canonical source schema or retention",
+      "lifecycle reducer behavior",
+      "BFF routes or read selection",
+      "Docker Compose, deployment, or cutover"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-REDUCER-001",
+      "LIFECYCLE-PROJ-BFF-001"
+    ]
+  },
+  "implementation": {
+    "anchor_commits": [
+      "8a39601e5659d0c83834e4fe0bbfba9e98a7df4f",
+      "85b8c8f75bf5d107318c79216d9d30fb5f874da0",
+      "e46308f432bc38ac8e3d65c8f8405a1882aea544"
+    ],
+    "pull_request": {
+      "status": "pending",
+      "number": null,
+      "url": null,
+      "review_head": "bound by the canonical exact-head review command"
+    },
+    "protected_merge": {
+      "status": "pending independent review and required checks",
+      "merge_sha": null
     }
   },
-  "acceptance_summary": [
-    "Added expand-only idempotent migration DDL for controller, event receipts, identity links, journeys, journey stages, loop runs, and quarantine with all plan-required keys and indexes.",
-    "Provided a least-privilege typed ProjectionStore Python API that never copies raw telemetry payloads into projection tables.",
-    "Provided execute_batch_transaction API that atomically updates receipts, identity links, journeys, stages, loop runs, quarantine, revision, and checkpoint with PostgreSQL advisory locking.",
-    "Proven schema creation idempotency, atomic batch transaction, duplicate event handling, conflicting duplicate detection, identity conflict handling, and quarantine recording against real PostgreSQL.",
-    "Captured query EXPLAIN plans verifying index scans for key query paths."
-  ]
+  "contract_proof": {
+    "authority": "telemetry_events remains unchanged and authoritative; projection rows retain event_id and ingested_seq lineage without raw payload copies",
+    "atomicity": "receipt disposition, identity/stage/aggregate mutations, revision, scoped quarantine truth, and contiguous checkpoint commit in one PostgreSQL transaction",
+    "idempotency": "an all-exact-duplicate batch short-circuits before every derived mutation and before revision/freshness changes; conflicting fingerprints fail closed",
+    "checkpoint": "a recursive indexed query derives the highest contiguous receipt sequence from durable database truth and crosses a previously persisted gap tail only after the missing receipt arrives",
+    "freshness": "accepted_live and last_live_success_at can advance only in live mode; backfill, recovery, and replay own separate timestamps",
+    "writer_exclusion": "a stable SHA-256-derived signed bigint scopes pg_try_advisory_xact_lock across independent Python processes; a second same-controller writer fails readiness without blocking",
+    "identity": "the CHECK registry covers the existing materializer resolve identifiers and lifecycle stable identities; first/last source time and sequence bounds converge with LEAST/GREATEST",
+    "least_privilege": "bootstrap is explicit and reads the versioned migration file; the runtime constructor defaults to no DDL and was exercised with a DML-only PostgreSQL login that could not create a schema",
+    "quarantine": "unresolved counts are recomputed from controller-scoped unresolved rows, and an exact retry cannot increment occurrence or controller count"
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "pass; checkout-scoped .venv-pantheon provisioned and foreign-cwd imports verified"
+    },
+    {
+      "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py",
+      "result": "pass; 17 passed in 6.08s against PostgreSQL 16.14, including a real DML-only runtime login"
+    },
+    {
+      "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
+      "result": "pass; 136 passed in 28.53s"
+    },
+    {
+      "command": "apply 001_create_trade_journey_projection_schema.sql twice to an isolated schema; seed and ANALYZE 5,000 rows per indexed relation; run the five bounded EXPLAIN queries in explain-plans.txt",
+      "result": "pass; the second migration application was a no-op and all five plans used their intended indexes"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/projection_store.py services/trade_journey/test_projection_store.py && git diff --check",
+      "result": "pass"
+    }
+  ],
+  "acceptance": [
+    {
+      "criterion": "Expand-only idempotent controller, receipt, identity, journey, stage, loop-run, and quarantine schema with required keys, constraints, and indexes",
+      "status": "passed"
+    },
+    {
+      "criterion": "One atomic event-to-checkpoint API with exact duplicate, conflict, quarantine, rollback/retry, gap, freshness, and two-writer behavior",
+      "status": "passed"
+    },
+    {
+      "criterion": "Migration file applies twice, prior controller SELECT remains compatible, runtime credentials require DML but not DDL, and five common reads use intended indexes",
+      "status": "passed"
+    },
+    {
+      "criterion": "Reviewed PR, required checks, merge SHA, and independent review",
+      "status": "pending"
+    }
+  ],
+  "security_and_safety": {
+    "raw_payload_copied": false,
+    "telemetry_events_mutated": false,
+    "runtime_role_has_schema_create": false,
+    "deployment_or_consumer_enabled": false,
+    "live_capital_or_broker_action": false
+  },
+  "review": {
+    "status": "pending",
+    "reviewer": "Antigravity",
+    "required_scope": [
+      "reproduce duplicate-with-mutations immutability and revision stability",
+      "reproduce durable checkpoint gap closure and rollback/retry",
+      "verify mode-owned accepted_live/freshness and scoped quarantine truth",
+      "verify cross-process advisory lock identity and same-controller nonblocking failure",
+      "verify the exact migration file twice, DML-only runtime role, prior-reader query, and all five exact EXPLAIN index names",
+      "record PR required checks and bind the exact reviewed head before approval"
+    ],
+    "decision": null
+  },
+  "residual_risks": [
+    {
+      "severity": "low",
+      "blocking": false,
+      "description": "This first expand-only migration is additive and intentionally has no destructive down migration; rollback leaves the unused schema in place."
+    },
+    {
+      "severity": "low",
+      "blocking": false,
+      "description": "No consumer is enabled by this task; reducer, BFF integration, scale, and hosted cutover remain owned by downstream tasks."
+    }
+  ],
+  "integrity": {
+    "algorithm": "sha256",
+    "companion_checksum_path": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/checksums.txt",
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file hashes this manifest; the checksum file cannot hash itself."
+  }
 }

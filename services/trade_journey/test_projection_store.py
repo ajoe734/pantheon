@@ -1012,29 +1012,95 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
 
     import psycopg
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
-        # Index 1: event_receipts (ingested_seq)
-        cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.event_receipts WHERE ingested_seq > 10 ORDER BY ingested_seq LIMIT 10")
-        plan1 = "\n".join(r[0] for r in cur.fetchall())
-        assert "Index Scan" in plan1 or "Index Only Scan" in plan1 or "Bitmap Index Scan" in plan1
+        # Give the planner realistic cardinality; empty-table plans can choose
+        # an arbitrary small-table index and hide an unbounded query shape.
+        cur.execute(
+            f"""
+            INSERT INTO {schema_name}.event_receipts (
+                event_id, ingested_seq, fingerprint, tenant_id, environment,
+                journey_id, source_event_type, created_at, disposition
+            )
+            SELECT 'evt-' || value, value, repeat('a', 64), 't-1', 'paper',
+                   'j-' || value, 'opened', clock_timestamp(), 'applied'
+            FROM generate_series(1, 1000) AS value;
 
-        # Index 2: identity_links (tenant_id, environment, journey_id)
-        cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.identity_links WHERE tenant_id='t-1' AND environment='paper' AND journey_id='j-1'")
+            INSERT INTO {schema_name}.identity_links (
+                tenant_id, environment, identifier_type, identifier_value,
+                journey_id, first_ingested_seq, last_ingested_seq,
+                first_occurred_at, last_occurred_at
+            )
+            SELECT 't-1', 'paper', 'signal_id', 'sig-' || value,
+                   'j-' || value, value, value,
+                   clock_timestamp(), clock_timestamp()
+            FROM generate_series(1, 1000) AS value;
+
+            INSERT INTO {schema_name}.journeys (
+                tenant_id, environment, journey_id, first_occurred_at,
+                last_occurred_at, first_ingested_seq, last_ingested_seq
+            )
+            SELECT 't-1', 'paper', 'j-' || value,
+                   clock_timestamp(), clock_timestamp(), value, value
+            FROM generate_series(1, 1000) AS value;
+
+            INSERT INTO {schema_name}.journey_stages (
+                tenant_id, environment, journey_id, source_event_id,
+                stage_name, stage_ordinal, source_ingested_seq, occurred_at
+            )
+            SELECT 't-1', 'paper', 'j-' || (value % 10), 'evt-' || value,
+                   'opened', 1, value, clock_timestamp()
+            FROM generate_series(1, 1000) AS value;
+
+            INSERT INTO {schema_name}.loop_runs (
+                tenant_id, environment, loop_run_id, journey_id
+            )
+            SELECT 't-1', 'paper', 'lr-' || value, 'j-' || value
+            FROM generate_series(1, 1000) AS value;
+
+            ANALYZE {schema_name}.event_receipts;
+            ANALYZE {schema_name}.identity_links;
+            ANALYZE {schema_name}.journeys;
+            ANALYZE {schema_name}.journey_stages;
+            ANALYZE {schema_name}.loop_runs;
+            """
+        )
+
+        # Index 1: event_receipts (ingested_seq)
+        cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.event_receipts WHERE ingested_seq > 990 ORDER BY ingested_seq LIMIT 10")
+        plan1 = "\n".join(r[0] for r in cur.fetchall())
+        assert "idx_event_receipts_ingested_seq" in plan1
+
+        # Index 2: identity resolution through the scoped primary key.
+        cur.execute(
+            f"""
+            EXPLAIN SELECT journey_id FROM {schema_name}.identity_links
+            WHERE tenant_id='t-1' AND environment='paper'
+              AND identifier_type='signal_id' AND identifier_value='sig-1'
+            """
+        )
         plan2 = "\n".join(r[0] for r in cur.fetchall())
-        assert "Index Scan" in plan2 or "Bitmap Index Scan" in plan2
+        assert "identity_links_pkey" in plan2
 
         # Index 3: journeys (tenant_id, environment, updated_at DESC, journey_id DESC)
         cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.journeys WHERE tenant_id='t-1' AND environment='paper' ORDER BY updated_at DESC, journey_id DESC LIMIT 10")
         plan3 = "\n".join(r[0] for r in cur.fetchall())
-        assert "Index Scan" in plan3 or "Bitmap Index Scan" in plan3
+        assert "idx_journeys_tenant_env_updated_journey" in plan3
 
         # Index 4: journey_stages (timeline)
-        cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.journey_stages WHERE tenant_id='t-1' AND environment='paper' AND journey_id='j-1' ORDER BY stage_ordinal, event_sequence, occurred_at")
+        cur.execute(
+            f"""
+            EXPLAIN SELECT * FROM {schema_name}.journey_stages
+            WHERE tenant_id='t-1' AND environment='paper' AND journey_id='j-1'
+            ORDER BY stage_ordinal, event_sequence, occurred_at,
+                     source_ingested_seq, source_event_id
+            LIMIT 50
+            """
+        )
         plan4 = "\n".join(r[0] for r in cur.fetchall())
-        assert "Index Scan" in plan4 or "Bitmap Index Scan" in plan4
+        assert "idx_journey_stages_timeline" in plan4
 
         # Index 5: loop_runs (tenant_id, environment, updated_at DESC, loop_run_id DESC)
         cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.loop_runs WHERE tenant_id='t-1' AND environment='paper' ORDER BY updated_at DESC, loop_run_id DESC LIMIT 10")
         plan5 = "\n".join(r[0] for r in cur.fetchall())
-        assert "Index Scan" in plan5 or "Bitmap Index Scan" in plan5
+        assert "idx_loop_runs_tenant_env_updated_loop" in plan5
 
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")

@@ -1,38 +1,91 @@
-# Verification Evidence — LIFECYCLE-PROJ-STORE-001
+# LIFECYCLE-PROJ-STORE-001 verification evidence
 
-## Task
-- **ID:** LIFECYCLE-PROJ-STORE-001
-- **Title:** Build the lifecycle projection relational store
-- **Owner:** Antigravity
-- **Reviewer:** Codex2
+Status: owner verification complete; independent exact-head review pending
 
-## Executed Verification Commands & Results
+Owner: Codex
 
-### 1. Test Environment Provisioning
+Reviewer: Antigravity
+
+Base: `dev@941c15a34208e54e96cdd148ba3a5bfcd339abab`
+
+Review manifest: `evidence.json`
+
+## Delivered boundary
+
+The task adds only the relational projection schema, typed PostgreSQL store,
+transaction invariants, real-PostgreSQL tests, and task evidence. It does not
+change `telemetry_events`, the reducer, BFF routes, Compose, deployment, or
+cutover. No consumer has been enabled.
+
+The owner repair is anchored at
+`e46308f432bc38ac8e3d65c8f8405a1882aea544`. Exact-head review must cover all
+later evidence/test commits on the task PR.
+
+## Exact verification commands
+
+The local connection values were supplied through secret-bearing environment
+variables and are intentionally not copied into repository evidence.
+
 ```bash
 python3 scripts/dev/provision_python_distribution.py
+
+TEST_DATABASE_URL="$LOCAL_TEST_DATABASE_URL" \
+TEST_DATABASE_ADMIN_URL="$LOCAL_TEST_DATABASE_ADMIN_URL" \
+.venv-pantheon/bin/python3 -m pytest -q \
+  services/trade_journey/test_projection_store.py
+
+TEST_DATABASE_URL="$LOCAL_TEST_DATABASE_URL" \
+TEST_DATABASE_ADMIN_URL="$LOCAL_TEST_DATABASE_ADMIN_URL" \
+.venv-pantheon/bin/python3 -m pytest -q services/trade_journey
+
+python3 -m py_compile \
+  services/trade_journey/projection_store.py \
+  services/trade_journey/test_projection_store.py
+
+git diff --check
 ```
-*Result:* Success (`.venv-pantheon` provisioned with pytest and local imports).
 
-### 2. Full Real-PostgreSQL Test Suite Execution (15 tests)
-```bash
-TEST_DATABASE_URL="postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon" \
-  .venv-pantheon/bin/python3 -m pytest -v services/trade_journey/test_projection_store.py
-```
-*Result:* 15 passed in 4.66s.
+Results:
 
-### Summary of Requirements Tested & Verified
-1. **True Idempotent Exact Duplicate Processing:** An existing same-fingerprint receipt short-circuits without rewriting stage/aggregate rows or incrementing `projection_revision`.
-2. **Contiguous Checkpoint Advancement:** Derived exclusively from durable event receipts; receiptless or gap-filled mutations do not jump checkpoint sequence.
-3. **Mode-Owned Freshness Timestamps:** `last_live_success_at` updates only when `mode == 'live'` and `accepted_live` is true. `last_backfill_at`, `last_recovery_at`, and `last_replay_at` update independently based on mode.
-4. **Derived Unresolved Quarantine Count:** Computed dynamically via `SELECT COUNT(*) FROM quarantine WHERE resolution_status = 'unresolved'`.
-5. **Deterministic Out-of-Order Source Bounds:** First and last source sequence/timestamps use `LEAST` and `GREATEST` DB updates for idempotent convergence.
-6. **Controller-Scoped Non-Blocking Advisory Lock:** Uses `pg_try_advisory_xact_lock` with a controller-derived hash lock ID, instantly failing second concurrent writers with `ProjectionStoreException`.
-7. **Identifier Type Check Constraint & Least-Privilege Runtime Constructor:** `identifier_type` enforced via `CHECK` constraint in SQL and `ProjectionStore(..., bootstrap=False)` allows DDL-less runtime initialization.
-8. **Rollback/Retry, Two Writers, Migration Applied Twice, Prior-Reader Compatibility, Exact Duplicate with Mutations, Checkpoint Gaps, Mode Freshness, and 5 Indexed EXPLAIN Paths:** All 15 real-Postgres test cases pass cleanly.
+- focused real-PostgreSQL suite: `17 passed in 6.08s`;
+- adjacent Trade Journey regression: `136 passed in 28.53s`;
+- Python compilation and whitespace validation: exit 0;
+- PostgreSQL server: `16.14` on x86_64 Alpine;
+- least privilege: a temporary DML-only login processed a receipt and
+  checkpoint, while schema bootstrap failed with `InsufficientPrivilege`;
+- migration: the exact SQL file applied twice to an isolated schema; the second
+  application emitted only already-exists notices;
+- indexed reads: five 5,000-row `ANALYZE`d query plans used the exact indexes
+  recorded in `explain-plans.txt`.
 
-## Files Modified
-- `services/trade_journey/projection_store.py`
-- `services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql`
-- `services/trade_journey/test_projection_store.py`
-- `docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/evidence.md`
+`ruff` was not available in the provisioned environment, so no ruff result is
+claimed. Repository CI remains responsible for its configured static gates.
+
+## Review checklist
+
+Antigravity must independently reproduce or inspect:
+
+1. exact duplicate input carrying mutated stage and journey rows leaves both
+   rows unchanged and does not increment the revision;
+2. receiptless row mutations fail closed, receiptless checkpoint claims do not
+   advance, and filling sequence 4 crosses a previously durable sequence 5;
+3. rollback leaves no receipt/controller and a corrected retry commits once;
+4. backfill, recovery, and replay force `accepted_live=false`, retain the prior
+   live timestamp, and update only their owned timestamp;
+5. quarantine retry/count truth remains idempotent and controller-scoped;
+6. lock IDs match across distinct `PYTHONHASHSEED` processes, same-controller
+   contention fails immediately, and another controller remains ready;
+7. the canonical identifier registry and first/last identity bounds are
+   enforced by PostgreSQL;
+8. the exact migration file applies twice, the prior controller query remains
+   valid, the runtime role has DML without DDL, and all five `EXPLAIN` plans use
+   the intended index names;
+9. PR checks are green and the canonical approval binds the exact reviewed
+   head. The eventual protected merge SHA belongs in governed delivery metadata
+   because the reviewed manifest cannot contain its own future merge commit.
+
+## Rollout and rollback
+
+Rollout is additive schema application only, with no worker or BFF reader
+enabled. Rollback stops/does not start consumers and leaves the unused schema
+intact. A destructive down migration is prohibited.

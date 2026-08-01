@@ -1,0 +1,58 @@
+LIFECYCLE-PROJ-STORE-001 indexed query evidence
+Captured: 2026-08-01T23:13:57Z
+PostgreSQL: 16.14 on x86_64 Alpine
+Fixture: isolated schema; migration applied twice; 5,000 rows per indexed relation; ANALYZE completed
+
+1. Source checkpoint receipt scan
+EXPLAIN (COSTS OFF)
+SELECT * FROM event_receipts
+WHERE ingested_seq > 4990
+ORDER BY ingested_seq
+LIMIT 10;
+
+Limit
+  -> Index Scan using idx_event_receipts_ingested_seq on event_receipts
+       Index Cond: (ingested_seq > 4990)
+
+2. Scoped identity resolution
+EXPLAIN (COSTS OFF)
+SELECT journey_id FROM identity_links
+WHERE tenant_id='t-1' AND environment='paper'
+  AND identifier_type='signal_id' AND identifier_value='sig-4999';
+
+Index Scan using identity_links_pkey on identity_links
+  Index Cond: ((tenant_id = 't-1'::text) AND (environment = 'paper'::text) AND (identifier_type = 'signal_id'::text) AND (identifier_value = 'sig-4999'::text))
+
+3. Journey keyset list
+EXPLAIN (COSTS OFF)
+SELECT * FROM journeys
+WHERE tenant_id='t-1' AND environment='paper'
+ORDER BY updated_at DESC, journey_id DESC
+LIMIT 10;
+
+Limit
+  -> Index Scan using idx_journeys_tenant_env_updated_journey on journeys
+       Index Cond: ((tenant_id = 't-1'::text) AND (environment = 'paper'::text))
+
+4. Bounded journey timeline
+EXPLAIN (COSTS OFF)
+SELECT * FROM journey_stages
+WHERE tenant_id='t-1' AND environment='paper' AND journey_id='j-1'
+ORDER BY stage_ordinal, event_sequence, occurred_at,
+         source_ingested_seq, source_event_id
+LIMIT 50;
+
+Limit
+  -> Index Scan using idx_journey_stages_timeline on journey_stages
+       Index Cond: ((tenant_id = 't-1'::text) AND (environment = 'paper'::text) AND (journey_id = 'j-1'::text))
+
+5. Loop-run keyset list
+EXPLAIN (COSTS OFF)
+SELECT * FROM loop_runs
+WHERE tenant_id='t-1' AND environment='paper'
+ORDER BY updated_at DESC, loop_run_id DESC
+LIMIT 10;
+
+Limit
+  -> Index Scan using idx_loop_runs_tenant_env_updated_loop on loop_runs
+       Index Cond: ((tenant_id = 't-1'::text) AND (environment = 'paper'::text))
