@@ -17,7 +17,7 @@ head. Keeping #4385 as the second parent preserves the actual implementation
 anchor in the delivered ancestry. The merge also changes the subject README
 and both subject manifest anchor fields to the same real full SHA.
 
-The new task branch and PR supersede #4385 as the governed delivery path. This
+The new task branch and PR #4452 supersede #4385 as the governed delivery path. This
 avoids treating the original task's stale `review_approved` row as authority
 for an unreviewed head while retaining the exact implementation history that
 PR #4395 inspected.
@@ -37,7 +37,7 @@ The full commands and results are in [`evidence.json`](evidence.json).
 
 ## Admission boundary
 
-This is owner evidence only. It does not approve the current task head, merge
+This is owner evidence only. It does not approve PR #4452's current task head, merge
 the task PR, close the original subject task, prove live promotion, or resume
 Wave 0. Antigravity must review the exact task PR head, after which the normal
 protected merge and governed owner closeout remain mandatory.

@@ -123,7 +123,10 @@
   },
   "delivery": {
     "supersedes_pull_request": 4385,
-    "task_pull_request": null,
+    "task_pull_request": 4452,
+    "task_pull_request_url": "https://github.com/ajoe734/pantheon/pull/4452",
+    "owner_evidence_head_before_pr_binding": "380f704dada325b112da6332a94a949ef2a14cf1",
+    "auto_merge_enabled": false,
     "reviewed_head_sha": null,
     "merge_commit": null,
     "protected_merge_complete": false,
@@ -133,7 +136,7 @@
     "reviewer": "Antigravity",
     "status": "pending_independent_review",
     "decision": null,
-    "reviewed_task_pr": null,
+    "reviewed_task_pr": 4452,
     "reviewed_head_sha": null,
     "reviewed_at": null,
     "notes": []
