@@ -12801,23 +12801,48 @@ class WorkerReassignmentTests(unittest.TestCase):
 
     def test_failure_streaks_aggregate_dispatch_slots_by_logical_agent(self) -> None:
         state: dict = {}
+        task = {
+            "id": "OPS-CHURN-001",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+        }
         worker_one = {
             "task_id": "OPS-CHURN-001",
             "provider": "codex1-1",
-            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+            "request_snapshot": {
+                "metadata": {"logical_agent_id": "codex", "task": task}
+            },
         }
         worker_two = {
             "task_id": "OPS-CHURN-001",
             "provider": "codex1-2",
-            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+            "request_snapshot": {
+                "metadata": {"logical_agent_id": "codex", "task": task}
+            },
         }
 
         self.assertEqual(
-            supervisor.record_task_failure_streak(state, worker_one, "no progress", failure_kind="generic_exit"),
+            supervisor.record_task_failure_streak(
+                state,
+                worker_one,
+                "no progress",
+                failure_kind="generic_exit",
+                reason_class="terminal",
+                raw_ref=".orchestrator/evidence/churn-one.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
             1,
         )
         self.assertEqual(
-            supervisor.record_task_failure_streak(state, worker_two, "no progress", failure_kind="generic_exit"),
+            supervisor.record_task_failure_streak(
+                state,
+                worker_two,
+                "no progress",
+                failure_kind="generic_exit",
+                reason_class="terminal",
+                raw_ref=".orchestrator/evidence/churn-two.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
             2,
         )
         self.assertEqual(
