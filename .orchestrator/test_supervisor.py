@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import contextlib
 import copy
 import inspect
@@ -13057,6 +13058,30 @@ class FailureStreakV3Tests(unittest.TestCase):
         self.assertEqual(snapshot["task_id"], task["id"])
         self.assertEqual(snapshot["metadata"]["task"]["owner"], "Codex")
         self.assertEqual(snapshot["metadata"]["task"]["reviewer"], "Codex2")
+
+    def test_all_six_production_record_call_sites_supply_v3_evidence(self) -> None:
+        tree = ast.parse(Path(supervisor.__file__).read_text(encoding="utf-8"))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "record_task_failure_streak"
+        ]
+        self.assertEqual(len(calls), 6)
+        required_keywords = {
+            "failure_kind",
+            "reason_class",
+            "raw_ref",
+            "rejected_head",
+        }
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                self.assertTrue(
+                    required_keywords.issubset(
+                        {keyword.arg for keyword in call.keywords}
+                    )
+                )
 
 
 class WorkerReassignmentTests(unittest.TestCase):
