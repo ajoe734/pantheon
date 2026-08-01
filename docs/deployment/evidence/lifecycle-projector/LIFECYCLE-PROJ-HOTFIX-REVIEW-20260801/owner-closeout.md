@@ -2,8 +2,9 @@
 
 Task: `LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801`
 
-Recorded by `Codex` at 2026-08-01T15:06:48Z after the independent reviewer
-approved the original exact implementation head.
+Initially recorded by `Codex` at 2026-08-01T15:06:48Z after the independent
+reviewer approved the original exact implementation head. Final merge and
+rollout disposition recorded by `Codex2` at 2026-08-01T16:34:21Z.
 
 ## Approved implementation review
 
@@ -20,7 +21,7 @@ generations by default, and no longer gates operator-bff health before the BFF
 can serve the last atomic projection. The review did not authorize a projector
 restart, projection-state deletion, or generation deletion.
 
-## Post-approval head change
+## Post-approval composition and merge
 
 After those exact-head gates passed, the hotfix branch was updated to satisfy
 strict up-to-date branch protection. PR #4448 now points to merge-only composed
@@ -30,11 +31,13 @@ implementation `85e835448f7b86ce77ad9e4e0cc80961879b29c0` and then-current `dev`
 delta between the approved implementation commit and the composed head, but
 exact-head authority does not transfer across commit IDs.
 
-Consequently, PR #4448 remains open and blocked. The follow-up task
-`LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801` owns independent review,
-canonical review binding, Human/Ops root-freeze binding, and merge of the
-composed head. This original task does not claim that composed head as reviewed
-or merged.
+The follow-up task
+`LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801` subsequently reached
+`review_approved`, and the canonical review and Human/Ops root-freeze contexts
+both passed on the composed head. GitHub merged PR #4448 into `dev` at
+2026-08-01T15:16:58Z as
+`d2a9a6079789b6da1f15978ff7310c22a129f379`. That merge commit is an ancestor
+of current `origin/dev`; every reported PR check is successful.
 
 ## Owner closeout verification
 
@@ -54,10 +57,24 @@ starting or stopping services and without modifying live state:
 The owner-side revalidation supports closeout only; it is not an independent
 review verdict for `c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa`.
 
+Codex2 repeated the focused verification on the merged task branch at
+2026-08-01T16:34:21Z without starting or stopping services or modifying live
+state:
+
+- lifecycle projector and Compose suite: 25 passed
+- BFF projector-readiness suite: 3 passed
+- focused BFF read-model suite: 3 passed
+- `docker compose -f docker-compose.yml config --quiet`: passed
+- approved-to-composed implementation-file equality: passed
+- hotfix merge commit ancestry on current `origin/dev`: passed
+
 ## Rollout disposition
 
-Dev rollout is explicitly blocked until the follow-up task approves and merges
-the exact composed PR #4448 head. No projector restart or data cleanup was
-performed during owner closeout. The stopped unbounded implementation must not
-be restarted, and projection state or retained generations must not be deleted
-under this task.
+Source delivery is complete at merge commit
+`d2a9a6079789b6da1f15978ff7310c22a129f379`, but operational dev rollout is
+explicitly not claimed. GitHub has no `Pantheon Nonprod Deploy` run targeting
+that merge; the latest recorded dev deployment attempts predate it and failed
+on 2026-07-31. No projector restart or data cleanup was performed during owner
+closeout. The stopped legacy implementation must remain stopped until a
+separately governed safe rollout, and projection state or retained generations
+must not be deleted under this task.
