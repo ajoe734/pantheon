@@ -51,6 +51,10 @@ class ConflictingDuplicateException(ProjectionStoreException):
     """Raised when an event ID is reused with a different canonical fingerprint."""
 
 
+class ConcurrentReceiptClaimException(ProjectionStoreException):
+    """Raised when another transaction wins a previously absent event receipt."""
+
+
 class QuarantineEventException(ProjectionStoreException):
     """Raised or recorded when an event is quarantined."""
 
@@ -297,7 +301,7 @@ class ProjectionStore:
         Executes a single atomic batch transaction:
         1. Takes non-blocking Postgres advisory lock for controller (fails fast if locked).
         2. Locks controller row FOR UPDATE (creates default row if missing).
-        3. Verifies event receipts & detects fingerprint conflicts / exact duplicates.
+        3. Atomically claims event receipts & detects conflicts / exact duplicates.
         4. Upserts identity links & checks for identity conflicts.
         5. Upserts journey stages, journeys, loop runs, receipts, quarantines.
         6. Advances controller revision and contiguous checkpoint atomically.
@@ -354,9 +358,48 @@ class ProjectionStore:
             (receipt.event_id, receipt.ingested_seq) for receipt in mutation.receipts
         }
         receipt_event_ids = {event_id for event_id, _ in receipt_keys}
+        receipt_journey_keys = {
+            (receipt.tenant_id, receipt.environment, receipt.journey_id)
+            for receipt in mutation.receipts
+            if receipt.journey_id
+        }
+        receipt_loop_keys = {
+            (receipt.tenant_id, receipt.environment, receipt.loop_run_id)
+            for receipt in mutation.receipts
+            if receipt.loop_run_id
+        }
+        if any(
+            (link.tenant_id, link.environment, link.journey_id)
+            not in receipt_journey_keys
+            for link in mutation.identity_links
+        ):
+            raise ProjectionStoreException(
+                "Every identity link mutation must be owned by a journey receipt in the same batch"
+            )
+        if any(
+            (journey.tenant_id, journey.environment, journey.journey_id)
+            not in receipt_journey_keys
+            for journey in mutation.journeys
+        ):
+            raise ProjectionStoreException(
+                "Every journey mutation must be owned by a journey receipt in the same batch"
+            )
         if any(stage.source_event_id not in receipt_event_ids for stage in mutation.stages):
             raise ProjectionStoreException(
                 "Every stage mutation must reference an event receipt in the same batch"
+            )
+        if any(
+            (loop_run.tenant_id, loop_run.environment, loop_run.loop_run_id)
+            not in receipt_loop_keys
+            and (
+                not loop_run.journey_id
+                or (loop_run.tenant_id, loop_run.environment, loop_run.journey_id)
+                not in receipt_journey_keys
+            )
+            for loop_run in mutation.loop_runs
+        ):
+            raise ProjectionStoreException(
+                "Every loop run mutation must be owned by a loop or journey receipt in the same batch"
             )
         if any(
             (quarantine.event_id, quarantine.ingested_seq) not in receipt_keys
@@ -423,20 +466,28 @@ class ProjectionStore:
 
                 now = datetime.now(timezone.utc)
 
-                # 3. Check receipts: filter out exact duplicates & raise on fingerprint conflict
+                # 3. Claim receipts before any derived mutation. The initial read
+                # distinguishes an already-durable exact retry from a concurrent
+                # transaction that wins the global event_id claim after our read.
+                # The latter fails this whole transaction rather than letting two
+                # controller locks commit derived rows for one receipt.
                 new_receipts: list[EventReceiptRow] = []
                 exact_duplicate_receipts: list[EventReceiptRow] = []
-                batch_fingerprints: dict[str, str] = {}
+                unique_receipts: dict[str, EventReceiptRow] = {}
                 for receipt in mutation.receipts:
-                    prior_fingerprint = batch_fingerprints.get(receipt.event_id)
-                    if prior_fingerprint is not None:
-                        if prior_fingerprint != receipt.fingerprint:
+                    prior_receipt = unique_receipts.get(receipt.event_id)
+                    if prior_receipt is not None:
+                        if prior_receipt.fingerprint != receipt.fingerprint:
                             raise ConflictingDuplicateException(
                                 f"Event {receipt.event_id} has conflicting fingerprints within one batch"
                             )
-                        exact_duplicate_receipts.append(receipt)
                         continue
-                    batch_fingerprints[receipt.event_id] = receipt.fingerprint
+                    unique_receipts[receipt.event_id] = receipt
+
+                claimed_revision = curr_revision + 1
+                for receipt in sorted(
+                    unique_receipts.values(), key=lambda item: item.event_id
+                ):
                     cur.execute(
                         f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
                         (receipt.event_id,),
@@ -450,8 +501,59 @@ class ProjectionStore:
                             )
                         # Exact duplicate
                         exact_duplicate_receipts.append(receipt)
-                    else:
+                        continue
+
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.schema}.event_receipts (
+                            event_id, ingested_seq, fingerprint, tenant_id, environment,
+                            journey_id, loop_run_id, source_event_type, created_at, disposition,
+                            projection_revision, projected_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                        RETURNING fingerprint
+                        """,
+                        (
+                            receipt.event_id,
+                            receipt.ingested_seq,
+                            receipt.fingerprint,
+                            receipt.tenant_id,
+                            receipt.environment,
+                            receipt.journey_id,
+                            receipt.loop_run_id,
+                            receipt.source_event_type,
+                            receipt.created_at,
+                            receipt.disposition,
+                            claimed_revision,
+                            now,
+                        ),
+                    )
+                    claimed = cur.fetchone()
+                    if claimed is not None:
                         new_receipts.append(receipt)
+                        continue
+
+                    cur.execute(
+                        f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
+                        (receipt.event_id,),
+                    )
+                    concurrent_receipt = cur.fetchone()
+                    if (
+                        concurrent_receipt is None
+                        or concurrent_receipt[0] != receipt.fingerprint
+                    ):
+                        existing_fingerprint = (
+                            concurrent_receipt[0]
+                            if concurrent_receipt is not None
+                            else "<missing>"
+                        )
+                        raise ConflictingDuplicateException(
+                            f"Event {receipt.event_id} lost its receipt claim with fingerprint "
+                            f"{receipt.fingerprint} vs {existing_fingerprint}"
+                        )
+                    raise ConcurrentReceiptClaimException(
+                        f"Event {receipt.event_id} was claimed concurrently by another projection transaction"
+                    )
 
                 if mutation.receipts and not new_receipts:
                     # Every event is already durable with the same fingerprint. Ignore
@@ -471,10 +573,97 @@ class ProjectionStore:
                     )
                     return ControllerStateRow(*cur.fetchone())
 
-                next_revision = curr_revision + (1 if new_receipts else 0)
+                next_revision = claimed_revision if new_receipts else curr_revision
+                new_event_ids = {receipt.event_id for receipt in new_receipts}
+                new_receipt_keys = {
+                    (receipt.event_id, receipt.ingested_seq)
+                    for receipt in new_receipts
+                }
+                new_journey_keys = {
+                    (receipt.tenant_id, receipt.environment, receipt.journey_id)
+                    for receipt in new_receipts
+                    if receipt.journey_id
+                }
+                duplicate_journey_keys = {
+                    (receipt.tenant_id, receipt.environment, receipt.journey_id)
+                    for receipt in exact_duplicate_receipts
+                    if receipt.journey_id
+                }
+                new_loop_keys = {
+                    (receipt.tenant_id, receipt.environment, receipt.loop_run_id)
+                    for receipt in new_receipts
+                    if receipt.loop_run_id
+                }
+                duplicate_loop_keys = {
+                    (receipt.tenant_id, receipt.environment, receipt.loop_run_id)
+                    for receipt in exact_duplicate_receipts
+                    if receipt.loop_run_id
+                }
+
+                ambiguous_journey_keys = new_journey_keys & duplicate_journey_keys
+                if any(
+                    (row.tenant_id, row.environment, row.journey_id)
+                    in ambiguous_journey_keys
+                    for row in (*mutation.identity_links, *mutation.journeys)
+                ):
+                    raise ProjectionStoreException(
+                        "Mixed duplicate/new batch has ambiguous journey-derived mutations; retry new receipts separately"
+                    )
+                ambiguous_loop_keys = new_loop_keys & duplicate_loop_keys
+                if any(
+                    (row.tenant_id, row.environment, row.loop_run_id)
+                    in ambiguous_loop_keys
+                    for row in mutation.loop_runs
+                ):
+                    raise ProjectionStoreException(
+                        "Mixed duplicate/new batch has ambiguous loop-derived mutations; retry new receipts separately"
+                    )
+
+                effective_identity_links = [
+                    link
+                    for link in mutation.identity_links
+                    if (link.tenant_id, link.environment, link.journey_id)
+                    in new_journey_keys
+                ]
+                effective_journeys = [
+                    journey
+                    for journey in mutation.journeys
+                    if (journey.tenant_id, journey.environment, journey.journey_id)
+                    in new_journey_keys
+                ]
+                effective_stages = [
+                    stage
+                    for stage in mutation.stages
+                    if stage.source_event_id in new_event_ids
+                ]
+                effective_loop_runs = [
+                    loop_run
+                    for loop_run in mutation.loop_runs
+                    if (
+                        loop_run.tenant_id,
+                        loop_run.environment,
+                        loop_run.loop_run_id,
+                    )
+                    in new_loop_keys
+                    or (
+                        bool(loop_run.journey_id)
+                        and (
+                            loop_run.tenant_id,
+                            loop_run.environment,
+                            loop_run.journey_id,
+                        )
+                        in new_journey_keys
+                    )
+                ]
+                effective_quarantines = [
+                    quarantine
+                    for quarantine in mutation.quarantines
+                    if (quarantine.event_id, quarantine.ingested_seq)
+                    in new_receipt_keys
+                ]
 
                 # 4. Process identity links & check for identity conflicts
-                for link in mutation.identity_links:
+                for link in effective_identity_links:
                     cur.execute(
                         f"""
                         SELECT journey_id FROM {self.schema}.identity_links
@@ -519,7 +708,7 @@ class ProjectionStore:
                     )
 
                 # 5. Insert journey stages idempotently
-                for stage in mutation.stages:
+                for stage in effective_stages:
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.journey_stages (
@@ -572,7 +761,7 @@ class ProjectionStore:
                             )
 
                 # 6. Upsert Journeys
-                for journey in mutation.journeys:
+                for journey in effective_journeys:
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.journeys (
@@ -619,7 +808,7 @@ class ProjectionStore:
                     )
 
                 # 7. Upsert Loop Runs
-                for loop_run in mutation.loop_runs:
+                for loop_run in effective_loop_runs:
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.loop_runs (
@@ -653,7 +842,7 @@ class ProjectionStore:
                     )
 
                 # 8. Upsert Quarantine records
-                for q in mutation.quarantines:
+                for q in effective_quarantines:
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.quarantine (
@@ -681,33 +870,6 @@ class ProjectionStore:
                             q.occurrence_count,
                             q.resolution_status,
                             q.resolution_audit_ref,
-                        ),
-                    )
-
-                # 9. Insert new Event Receipts
-                for receipt in new_receipts:
-                    cur.execute(
-                        f"""
-                        INSERT INTO {self.schema}.event_receipts (
-                            event_id, ingested_seq, fingerprint, tenant_id, environment,
-                            journey_id, loop_run_id, source_event_type, created_at, disposition,
-                            projection_revision, projected_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (event_id) DO NOTHING
-                        """,
-                        (
-                            receipt.event_id,
-                            receipt.ingested_seq,
-                            receipt.fingerprint,
-                            receipt.tenant_id,
-                            receipt.environment,
-                            receipt.journey_id,
-                            receipt.loop_run_id,
-                            receipt.source_event_type,
-                            receipt.created_at,
-                            receipt.disposition,
-                            next_revision,
-                            now,
                         ),
                     )
 

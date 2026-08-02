@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -20,6 +22,7 @@ from services.trade_journey.materializer import IDENTIFIER_FIELDS
 from services.trade_journey.projection_store import (
     BatchProjectionMutation,
     ConflictingDuplicateException,
+    ConcurrentReceiptClaimException,
     ControllerStateRow,
     EventReceiptRow,
     IdentityConflictException,
@@ -466,6 +469,155 @@ def test_projection_store_exact_duplicate_does_not_mutate_stage_or_increment_rev
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
 
+def test_projection_store_mixed_batch_filters_duplicate_owned_mutations(
+    postgres_dsn: str,
+) -> None:
+    """A durable duplicate cannot smuggle derived rewrites beside a new event."""
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    now = datetime.now(timezone.utc)
+    old_receipt = EventReceiptRow(
+        "evt-old", 1, "fp-old", "t-1", "paper", "j-old", "", "opened",
+        now, "applied", 1,
+    )
+    old_stage = JourneyStageRow(
+        "t-1", "paper", "j-old", "evt-old", "opened", "completed", 1, 1,
+        1, now, fingerprint="fp-old",
+    )
+    old_journey = JourneyRow(
+        "t-1", "paper", "j-old", "open", {"opened": True}, False,
+        now, now, 1, 1,
+    )
+    old_quarantine = QuarantineRow(
+        "evt-old", 1, "REVIEW", "original", "opened", "t-1", "paper",
+        "j-old", "fp-old",
+    )
+    first = store.execute_batch_transaction(
+        "ctrl-1",
+        "t-1",
+        "paper",
+        BatchProjectionMutation(
+            receipts=[old_receipt],
+            journeys=[old_journey],
+            stages=[old_stage],
+            quarantines=[old_quarantine],
+            source_high_watermark=1,
+        ),
+    )
+    assert first.projection_revision == 1
+
+    import psycopg
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT status, stage_coverage, is_terminal, projection_revision,
+                   first_ingested_seq, last_ingested_seq, updated_at
+            FROM {schema_name}.journeys WHERE journey_id='j-old'
+            """
+        )
+        old_journey_truth = cur.fetchone()
+        cur.execute(
+            f"""
+            SELECT stage_status, projection_revision, fingerprint, recorded_at
+            FROM {schema_name}.journey_stages WHERE source_event_id='evt-old'
+            """
+        )
+        old_stage_truth = cur.fetchone()
+        cur.execute(
+            f"""
+            SELECT reason_code, reason_detail, occurrence_count, resolution_status,
+                   first_seen_at, last_seen_at
+            FROM {schema_name}.quarantine WHERE event_id='evt-old'
+            """
+        )
+        old_quarantine_truth = cur.fetchone()
+
+    new_receipt = EventReceiptRow(
+        "evt-new", 2, "fp-new", "t-1", "paper", "j-new", "", "opened",
+        now, "applied", 2,
+    )
+    mixed = store.execute_batch_transaction(
+        "ctrl-1",
+        "t-1",
+        "paper",
+        BatchProjectionMutation(
+            receipts=[old_receipt, new_receipt],
+            journeys=[
+                JourneyRow(
+                    "t-1", "paper", "j-old", "tampered", {"opened": False},
+                    True, now, now, 1, 999,
+                ),
+                JourneyRow(
+                    "t-1", "paper", "j-new", "open", {"opened": True},
+                    False, now, now, 2, 2,
+                ),
+            ],
+            stages=[
+                JourneyStageRow(
+                    "t-1", "paper", "j-old", "evt-old", "opened", "tampered",
+                    1, 1, 1, now, fingerprint="fp-old",
+                ),
+                JourneyStageRow(
+                    "t-1", "paper", "j-new", "evt-new", "opened", "completed",
+                    1, 2, 1, now, fingerprint="fp-new",
+                ),
+            ],
+            quarantines=[
+                QuarantineRow(
+                    "evt-old", 1, "TAMPERED", "tampered", "opened", "t-1",
+                    "paper", "j-old", "fp-old",
+                )
+            ],
+            source_high_watermark=2,
+        ),
+    )
+    assert mixed.projection_revision == 2
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT status, stage_coverage, is_terminal, projection_revision,
+                   first_ingested_seq, last_ingested_seq, updated_at
+            FROM {schema_name}.journeys WHERE journey_id='j-old'
+            """
+        )
+        assert cur.fetchone() == old_journey_truth
+        cur.execute(
+            f"""
+            SELECT stage_status, projection_revision, fingerprint, recorded_at
+            FROM {schema_name}.journey_stages WHERE source_event_id='evt-old'
+            """
+        )
+        assert cur.fetchone() == old_stage_truth
+        cur.execute(
+            f"""
+            SELECT reason_code, reason_detail, occurrence_count, resolution_status,
+                   first_seen_at, last_seen_at
+            FROM {schema_name}.quarantine WHERE event_id='evt-old'
+            """
+        )
+        assert cur.fetchone() == old_quarantine_truth
+        cur.execute(
+            f"""
+            SELECT journey_id, projection_revision
+            FROM {schema_name}.journeys WHERE journey_id='j-new'
+            """
+        )
+        assert cur.fetchone() == ("j-new", 2)
+        cur.execute(
+            f"""
+            SELECT source_event_id, projection_revision
+            FROM {schema_name}.journey_stages WHERE source_event_id='evt-new'
+            """
+        )
+        assert cur.fetchone() == ("evt-new", 2)
+        cur.execute(f"SELECT COUNT(*) FROM {schema_name}.event_receipts")
+        assert cur.fetchone()[0] == 2
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
 def test_projection_store_contiguous_checkpoint_advancement(postgres_dsn: str) -> None:
     """Requirement 2: Enforce contiguous checkpoint advancement from durable dispositions."""
     schema_name = f"test_proj_{uuid4().hex[:8]}"
@@ -491,6 +643,7 @@ def test_projection_store_contiguous_checkpoint_advancement(postgres_dsn: str) -
     ctrl2 = store.execute_batch_transaction("ctrl-1", "t-1", "paper", mutation_gap)
     # Checkpoint must remain 3
     assert ctrl2.checkpoint_seq == 3
+    assert ctrl2.projection_revision == 1
 
     with pytest.raises(
         ProjectionStoreException,
@@ -767,6 +920,104 @@ def test_projection_store_two_writers_and_nonblocking_lock(postgres_dsn: str) ->
             assert other.controller_id == "ctrl-2"
 
     with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_overlapping_controllers_commit_shared_event_once(
+    postgres_dsn: str,
+) -> None:
+    """Two controller locks cannot both derive rows from one global event claim."""
+
+    import psycopg
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    receipt_read_barrier = threading.Barrier(2)
+    barrier_threads: set[int] = set()
+    barrier_threads_lock = threading.Lock()
+
+    class ReceiptReadBarrierCursor(psycopg.Cursor):
+        def execute(self, query, params=None, *, prepare=None, binary=None):
+            result = super().execute(
+                query, params, prepare=prepare, binary=binary
+            )
+            query_text = query if isinstance(query, str) else query.as_string(self)
+            if (
+                "SELECT fingerprint FROM" in query_text
+                and ".event_receipts WHERE event_id=%s" in query_text
+            ):
+                thread_id = threading.get_ident()
+                with barrier_threads_lock:
+                    first_receipt_read = thread_id not in barrier_threads
+                    barrier_threads.add(thread_id)
+                if first_receipt_read:
+                    receipt_read_barrier.wait(timeout=10)
+            return result
+
+    def barrier_connect(dsn):
+        return psycopg.connect(dsn, cursor_factory=ReceiptReadBarrierCursor)
+
+    stores = [
+        ProjectionStore(
+            postgres_dsn,
+            schema=schema_name,
+            connect=barrier_connect,
+            bootstrap=False,
+        )
+        for _ in range(2)
+    ]
+    now = datetime.now(timezone.utc)
+
+    def mutation_for(journey_id: str) -> BatchProjectionMutation:
+        return BatchProjectionMutation(
+            receipts=[
+                EventReceiptRow(
+                    "evt-shared", 1, "fp-shared", "t-1", "paper", journey_id,
+                    "", "opened", now, "applied", 1,
+                )
+            ],
+            journeys=[
+                JourneyRow(
+                    "t-1", "paper", journey_id, "open", {"opened": True},
+                    False, now, now, 1, 1,
+                )
+            ],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                stores[index].execute_batch_transaction,
+                f"ctrl-{index + 1}",
+                "t-1",
+                "paper",
+                mutation_for(f"j-{index + 1}"),
+            )
+            for index in range(2)
+        ]
+
+    successes = []
+    failures = []
+    for future in futures:
+        try:
+            successes.append(future.result())
+        except ConcurrentReceiptClaimException as exc:
+            failures.append(exc)
+
+    assert len(successes) == 1
+    assert successes[0].projection_revision == 1
+    assert len(failures) == 1
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT journey_id FROM {schema_name}.event_receipts WHERE event_id='evt-shared'"
+        )
+        receipt_journey_id = cur.fetchone()[0]
+        cur.execute(f"SELECT journey_id FROM {schema_name}.journeys")
+        journeys = [row[0] for row in cur.fetchall()]
+        assert journeys == [receipt_journey_id]
+        cur.execute(f"SELECT COUNT(*) FROM {schema_name}.controller")
+        assert cur.fetchone()[0] == 1
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
 
