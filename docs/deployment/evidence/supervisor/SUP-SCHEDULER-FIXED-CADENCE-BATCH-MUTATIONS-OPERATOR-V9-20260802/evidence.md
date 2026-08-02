@@ -26,7 +26,9 @@ Slow provider/auth work, assistant-bridge subprocesses, GitHub reads, merged-PR 
 
 Worker marker/process/git observation, `process_queue` worktree preparation and adapter launch, and inactive/orphan/chair-review pruning now run in tokenized reservation phases. Each phase reserves in one short transaction, performs slow I/O against a detached snapshot with audit/status effects deferred, then commits in a second short whole-state CAS. If another runtime writer changes the state, that writer wins; the reserved snapshot is discarded and any process generation launched by the losing phase is terminated fail-closed.
 
-Before an adapter may launch a process, the exact phase token now publishes a durable launch intent containing the task, queue event, provider/agent, attempt, and request snapshot. A successful adapter result publishes the complete worker launch receipt before whole-state CAS. After supervisor death, a receipt is adopted directly; if death occurred after the external launch but before the receipt, the next phase adopts the one post-intent worker-runner marker and its exact PID start generation. An unresolved or ambiguous intent remains reserved and cannot redispatch.
+Before an adapter may launch a process, the exact phase token now publishes a durable launch intent containing the task, queue event, provider/agent, attempt, and request snapshot. A successful adapter result publishes the complete worker launch receipt before whole-state CAS. After supervisor death, a receipt is adopted directly; if death occurred after the external launch but before the receipt, recovery combines post-intent markers with exact live worker-runner identity from `ORCH_TASK_ID`, `ORCH_AGENT_ID`/`ORCH_PROVIDER`, `ORCH_RUN_ID`, PID, and Linux PID start ticks. One live generation is adopted. After a finite 30-second grace (hard-capped at 300 seconds), a conclusive zero-process scan clears an unchanged stale intent and retries the phase in the same entry; multiple live generations remain fail-closed.
+
+The one-shot `claim_next_task_for_agent` entry point now uses the same reservation/CAS boundary. Provider capability cache reads, the failure-recovery activity snapshot, and planning-state input are prefetched before reservation. Queue/worktree/adapter work mutates the detached snapshot, and dashboard rendering runs only after the final CAS. The entry-point regression records `load_provider_report`, `process_queue`, and `refresh_dashboard_runtime_artifacts` at runtime-admission lock depth zero.
 
 Dispatch never performs a recovery network fetch under runtime admission. If a ref was not recorded by the pre-admission fetch, an already-resolving local ref is safe to reuse; an unresolved ref fails closed until a later pre-admission fetch succeeds.
 
@@ -38,11 +40,11 @@ The bounded sample is persisted only after reserved process/poll/prune phases, d
 
 ## Rejected-head remediation
 
-Human/Ops rejected PR #4520 head `015d02d32239d03ebdf77b7fc888164ff893a775`. This repaired head addresses all three blocking findings:
+Human/Ops rejected PR #4520 head `ab0d79e33bb1dfff452c93c32a96721168222ad9`. This repaired head addresses all three blocking findings:
 
-1. A forked hard-crash injection exits the supervisor with code 77 after an external process is alive and before the reserved phase can publish a worker row or CAS. The persisted launch intent is then adopted into one worker and queue lease before the redispatch callback can run. A separate exception injection proves the post-launch receipt path.
-2. Deferred worker termination confirmation is flushed after runtime admission releases even when the locked operation raises; the original operation error is re-raised only after cleanup.
-3. A deterministic clock injects 12 seconds of acquisition wait and 0.25 seconds of exclusive ownership; `runtime_lock_hold_seconds` reports only 0.25 seconds.
+1. Stale launch recovery no longer conflates zero and multiple marker candidates forever. No-launch and ambiguous dead-marker cases clear only after a conclusive exact-process scan, while two live exact generations preserve the reservation fail-closed. The pre-existing forked hard-crash and durable-receipt tests continue to prove adoption before redispatch.
+2. Self-claim no longer wraps provider report loading, `process_queue` worktree/adapter launch, and dashboard rendering in the outer exclusive runtime lock. Its public entry-point regression proves those three slow calls execute at lock depth zero around short reservation/CAS transactions.
+3. A failed `_run_with_deferred_dispatch_status_syncs` operation now discards deferred canonical dispatch, archive, and activity effects. Only exact PID-start-bound termination cleanup runs before the original error is re-raised.
 
 ## Governance
 
@@ -52,7 +54,7 @@ No live service was restarted or deployed. Live promotion belongs to the depende
 
 ## Validation
 
-- Supervisor: 565 tests and 158 subtests passed.
+- Supervisor: 570 tests and 158 subtests passed.
 - ai-status: 165 tests and 31 subtests passed.
 - `py_compile`: passed.
 - JSON validation and `git diff --check`: passed.

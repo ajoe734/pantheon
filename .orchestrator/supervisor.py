@@ -178,6 +178,8 @@ _RUNTIME_PHASE_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
 
 CYCLE_PHASE_METRICS_MAX = 64
 CYCLE_BATCH_COUNT_MAX = 16
+RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
+RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -10500,11 +10502,11 @@ def _persist_runtime_phase_launch_receipt(
     scratch_reservation["launch_receipt"] = deepcopy(receipt)
 
 
-def _runtime_launch_marker_candidate(
+def _runtime_launch_marker_candidates(
     config: dict[str, Any],
     intent: Mapping[str, Any],
-) -> tuple[dict[str, Any], Path] | None:
-    """Find the one runner marker created after a durable launch intent."""
+) -> list[tuple[dict[str, Any], Path]]:
+    """Find every runner marker created after a durable launch intent."""
 
     task_id = str(intent.get("task_id") or "")
     agent_ids = {
@@ -10521,7 +10523,7 @@ def _runtime_launch_marker_candidate(
         "status_path"
     ].parent
     if not status_dir.is_dir():
-        return None
+        return []
 
     candidates: list[tuple[dict[str, Any], Path]] = []
     for path in sorted(status_dir.glob("*.json")):
@@ -10542,9 +10544,189 @@ def _runtime_launch_marker_candidate(
             continue
         candidates.append((marker, path))
 
-    # More than one post-intent marker is ambiguous evidence. Retaining the
-    # reservation is safer than adopting one and redispatching the other.
+    return candidates
+
+
+def _runtime_launch_marker_candidate(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+) -> tuple[dict[str, Any], Path] | None:
+    """Compatibility helper returning only unambiguous marker evidence."""
+
+    candidates = _runtime_launch_marker_candidates(config, intent)
     return candidates[0] if len(candidates) == 1 else None
+
+
+def _runtime_launch_intent_stale_seconds(config: Mapping[str, Any]) -> float:
+    supervisor_settings = config.get("supervisor")
+    settings = supervisor_settings if isinstance(supervisor_settings, Mapping) else {}
+    raw = settings.get(
+        "runtime_phase_launch_intent_stale_seconds",
+        RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS,
+    )
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        seconds = RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS
+    if not math.isfinite(seconds):
+        seconds = RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS
+    return min(
+        RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS,
+        max(1.0, seconds),
+    )
+
+
+def _runtime_launch_intent_is_stale(
+    config: Mapping[str, Any],
+    intent: Mapping[str, Any],
+) -> bool:
+    try:
+        prepared_epoch = float(intent.get("prepared_epoch_seconds") or 0.0)
+    except (TypeError, ValueError):
+        prepared_epoch = 0.0
+    if prepared_epoch <= 0 or not math.isfinite(prepared_epoch):
+        prepared_at = _parse_iso_utc(str(intent.get("prepared_at") or ""))
+        if prepared_at is None:
+            return True
+        prepared_epoch = prepared_at.timestamp()
+    return max(0.0, time.time() - prepared_epoch) >= _runtime_launch_intent_stale_seconds(config)
+
+
+def _proc_worker_runner_launch_marker(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+    entry: Path,
+) -> tuple[dict[str, Any], Path] | None:
+    """Return exact task/agent launch evidence for one live worker wrapper.
+
+    Worker prompts are not an identity boundary.  The adapter binds the exact
+    task, logical agent/provider, and run id in the wrapper environment before
+    ``Popen``.  Reading those fields together with Linux PID start ticks gives
+    recovery process-generation evidence even when the runner has not yet
+    published its first atomic JSON marker.
+    """
+
+    raw_cmdline = (entry / "cmdline").read_bytes()
+    if not raw_cmdline or b"worker_runner.py" not in raw_cmdline:
+        return None
+    raw_environ = (entry / "environ").read_bytes()
+    env: dict[str, str] = {}
+    for item in raw_environ.split(b"\0"):
+        if b"=" not in item:
+            continue
+        key, value = item.split(b"=", 1)
+        env[key.decode("utf-8", errors="ignore")] = value.decode(
+            "utf-8",
+            errors="ignore",
+        )
+
+    task_id = str(intent.get("task_id") or "")
+    if not task_id or env.get("ORCH_TASK_ID") != task_id:
+        return None
+    intent_agents = {
+        normalize_agent_id(str(intent.get("agent_id") or "")),
+        normalize_agent_id(str(intent.get("provider") or "")),
+    }
+    intent_agents.discard("")
+    process_agents = {
+        normalize_agent_id(env.get("ORCH_AGENT_ID", "")),
+        normalize_agent_id(env.get("ORCH_PROVIDER", "")),
+    }
+    process_agents.discard("")
+    if not process_agents or (
+        intent_agents and intent_agents.isdisjoint(process_agents)
+    ):
+        return None
+
+    try:
+        pid = int(entry.name)
+    except ValueError:
+        return None
+    pid_start_ticks = worker_pid_start_ticks(pid, proc_root=entry.parent)
+    if pid_start_ticks is None:
+        raise RuntimeError("exact worker-runner PID generation is unreadable")
+    argv = [
+        value.decode("utf-8", errors="ignore")
+        for value in raw_cmdline.split(b"\0")
+        if value
+    ]
+    run_id = str(env.get("ORCH_RUN_ID") or "")
+    if not run_id and "--run-id" in argv:
+        index = argv.index("--run-id") + 1
+        if index < len(argv):
+            run_id = argv[index]
+    if not run_id:
+        raise RuntimeError("exact worker-runner run id is unreadable")
+    status_path = worker_runtime_paths(config, run_id)["status_path"]
+    return (
+        {
+            "run_id": run_id,
+            "agent": env.get("ORCH_AGENT_ID") or env.get("ORCH_PROVIDER"),
+            "task_id": task_id,
+            "status": "running",
+            "pid": pid,
+            "pid_start_ticks": pid_start_ticks,
+            "started_at": intent.get("prepared_at") or utc_now(),
+            "command": [],
+            "launch_recovered_from": "proc_environ",
+        },
+        status_path,
+    )
+
+
+def _runtime_launch_process_candidates(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+    *,
+    proc_root: Path | None = None,
+) -> tuple[list[tuple[dict[str, Any], Path]], bool]:
+    """Return exact live launch processes and whether the scan was conclusive."""
+
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return [], False
+    candidates: list[tuple[dict[str, Any], Path]] = []
+    conclusive = True
+    for entry in entries:
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            candidate = _proc_worker_runner_launch_marker(config, intent, entry)
+        except PermissionError:
+            # Workers are spawned under the supervisor uid. An unreadable
+            # same-uid process might therefore be the missing wrapper; a
+            # different-uid process cannot be this launch generation.
+            try:
+                same_uid = entry.stat().st_uid == os.geteuid()
+            except OSError:
+                same_uid = False
+            if same_uid:
+                conclusive = False
+            continue
+        except RuntimeError:
+            conclusive = False
+            continue
+        except OSError:
+            # A disappearing PID is proof that it is no longer live. Other
+            # unreadable same-uid processes fail closed.
+            try:
+                same_uid = entry.exists() and entry.stat().st_uid == os.geteuid()
+            except OSError:
+                same_uid = False
+            if same_uid:
+                conclusive = False
+            continue
+        if candidate is not None:
+            candidates.append(candidate)
+    unique: dict[tuple[str, int], tuple[dict[str, Any], Path]] = {}
+    for marker, path in candidates:
+        unique[(str(marker.get("run_id") or ""), int(marker.get("pid") or 0))] = (
+            marker,
+            path,
+        )
+    return list(unique.values()), conclusive
 
 
 def _worker_record_from_runtime_launch_marker(
@@ -10652,6 +10834,59 @@ def _worker_record_from_runtime_launch_marker(
     }
 
 
+def _clear_stale_runtime_phase_launch_intent(
+    config: dict[str, Any],
+    *,
+    phase_name: str,
+    reservation_token: str,
+    intent: Mapping[str, Any],
+    marker_count: int,
+) -> bool:
+    """Clear an unchanged stale intent after a conclusive zero-process scan."""
+
+    cleared = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if (
+            reservation is None
+            or isinstance(reservation.get("launch_receipt"), Mapping)
+            or reservation.get("launch_intent") != dict(intent)
+        ):
+            return False
+        reservations = current.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservations.pop(phase_name, None)
+        if not reservations:
+            current["supervisor"].pop("runtime_phase_reservations", None)
+        save_runtime_state(config, current)
+        cleared = True
+
+    if cleared:
+        write_activity_log(
+            config,
+            {
+                "type": "runtime_phase_launch_intent_expired",
+                "phase": phase_name,
+                "task_id": intent.get("task_id"),
+                "queue_event_id": intent.get("queue_event_id"),
+                "marker_count": max(0, int(marker_count)),
+                "message": (
+                    "Cleared a stale reserved-phase launch intent after an exact "
+                    "task/agent /proc scan proved that no worker-runner process "
+                    "remained live."
+                ),
+            },
+        )
+    return cleared
+
+
 def _recover_runtime_phase_reservation(
     config: dict[str, Any],
     phase_name: str,
@@ -10691,12 +10926,55 @@ def _recover_runtime_phase_reservation(
     receipt_worker = receipt.get("worker") if isinstance(receipt, Mapping) else None
     worker = deepcopy(receipt_worker) if isinstance(receipt_worker, Mapping) else None
     if worker is None:
-        marker_candidate = _runtime_launch_marker_candidate(config, intent)
-        if marker_candidate is None:
-            # The worker runner may not have written its first atomic marker
-            # yet. Keeping the token prevents a second launch on every cadence.
+        marker_candidates = _runtime_launch_marker_candidates(config, intent)
+        process_candidates, process_scan_conclusive = (
+            _runtime_launch_process_candidates(config, intent)
+        )
+        if not process_scan_conclusive:
             return False
-        marker, status_path = marker_candidate
+
+        candidate: tuple[dict[str, Any], Path] | None = None
+        if len(process_candidates) == 1:
+            process_marker, process_status_path = process_candidates[0]
+            process_run_id = str(process_marker.get("run_id") or "")
+            matching_markers = [
+                item
+                for item in marker_candidates
+                if str(item[0].get("run_id") or "") == process_run_id
+            ]
+            candidate = (
+                matching_markers[0]
+                if len(matching_markers) == 1
+                else (process_marker, process_status_path)
+            )
+        elif len(process_candidates) > 1:
+            # More than one exact task/agent worker wrapper is real ambiguity,
+            # not merely stale marker debris. Preserve the reservation until
+            # operators or process exit reduce it to one generation.
+            return False
+        elif len(marker_candidates) == 1:
+            # A unique terminal/dead marker is still exact evidence. Adopt it
+            # as a failed/completed worker so normal queue fallback can run.
+            candidate = marker_candidates[0]
+        elif not _runtime_launch_intent_is_stale(config, intent):
+            # The runner may not have written its first marker yet. The bounded
+            # grace avoids a duplicate launch during ordinary spawn latency.
+            return False
+        else:
+            reservation_token = str(reservation_snapshot.get("token") or "")
+            if not _clear_stale_runtime_phase_launch_intent(
+                config,
+                phase_name=phase_name,
+                reservation_token=reservation_token,
+                intent=intent,
+                marker_count=len(marker_candidates),
+            ):
+                return False
+            return None
+
+        if candidate is None:
+            return False
+        marker, status_path = candidate
         worker = _worker_record_from_runtime_launch_marker(
             config,
             intent,
@@ -10861,7 +11139,12 @@ def _run_reserved_runtime_phase(
             save_runtime_state(config, reserved)
     if existing_reservation:
         recovery_result = _recover_runtime_phase_reservation(config, phase_name)
-        return bool(recovery_result)
+        if recovery_result is not None:
+            return recovery_result
+        # Recovery proved that the previous token had no external launch to
+        # adopt. Reserve and run a fresh phase now so quota/auth fallback or
+        # reassignment is not delayed for another supervisor cadence.
+        return _run_reserved_runtime_phase(config, phase_name, operation)
 
     reserved_digest = _runtime_state_cas_digest(reserved)
     scratch = deepcopy(reserved)
@@ -10992,6 +11275,15 @@ def _run_with_deferred_dispatch_status_syncs(
         _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
         _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
 
+    if operation_error is not None:
+        # The mutation did not return successfully, so this wrapper has no
+        # proof that its canonical/status, archive, or activity intents match a
+        # committed runtime transition.  Exact process-generation termination
+        # is the sole exception: it is compensating cleanup that must not be
+        # skipped just because the mutation raised after scheduling it.
+        _confirm_deferred_worker_terminations(deferred_terminations)
+        raise operation_error
+
     side_effect_changed = _flush_deferred_runtime_side_effects(
         config,
         dispatch_status_syncs=deferred,
@@ -10999,8 +11291,6 @@ def _run_with_deferred_dispatch_status_syncs(
         auto_commit_archives=deferred_archives,
         activity_events=deferred_activity_events,
     )
-    if operation_error is not None:
-        raise operation_error
     return changed or side_effect_changed
 
 
@@ -19654,38 +19944,6 @@ def claim_next_task_for_agent(
     release_task_id: str | None = None,
     quiet: bool = False,
 ) -> bool:
-    recovery_activity_events: list[dict[str, Any]] | None = None
-    agent_id = normalize_agent_id(agent_name)
-    if (
-        worker_self_claim_settings(config).get("enabled", False)
-        and agent_id
-        and agent_id in config.get("agents", {})
-    ):
-        recovery_runtime_snapshot = load_runtime_state_snapshot(config)
-        recovery_activity_events = failure_streak_recovery_activity_snapshot(
-            config,
-            recovery_runtime_snapshot,
-        )
-    return _run_with_deferred_dispatch_status_syncs(
-        config,
-        lambda: _claim_next_task_for_agent_locked(
-            config,
-            agent_name=agent_name,
-            release_task_id=release_task_id,
-            quiet=quiet,
-            recovery_activity_events=recovery_activity_events,
-        )
-    )
-
-
-def _claim_next_task_for_agent_locked(
-    config: dict[str, Any],
-    *,
-    agent_name: str,
-    release_task_id: str | None = None,
-    quiet: bool = False,
-    recovery_activity_events: list[dict[str, Any]] | None = None,
-) -> bool:
     settings = worker_self_claim_settings(config)
     if not settings.get("enabled", False):
         console_log("worker self-claim disabled", quiet=quiet)
@@ -19695,15 +19953,63 @@ def _claim_next_task_for_agent_locked(
         console_log(f"worker self-claim skipped: unknown agent {agent_name}", quiet=quiet)
         return False
 
-    state = load_runtime_state(config)
+    # Provider cache reads, canonical activity reads, and planning-state I/O are
+    # immutable inputs to this one-shot claim.  Gather them before reserving a
+    # runtime phase so none of their latency is charged to runtime admission.
+    recovery_runtime_snapshot = load_runtime_state_snapshot(config)
+    recovery_activity_events = failure_streak_recovery_activity_snapshot(
+        config,
+        recovery_runtime_snapshot,
+    )
+    provider_report = load_provider_report(config, refresh=False)
     planning_state = load_discussion_planning_state()
+    phase_name = f"claim_next_task_for_agent:{agent_id}"
+    changed = _run_reserved_runtime_phase(
+        config,
+        phase_name,
+        lambda state: _claim_next_task_for_agent_reserved(
+            config,
+            state,
+            agent_name=agent_name,
+            release_task_id=release_task_id,
+            quiet=quiet,
+            recovery_activity_events=recovery_activity_events,
+            provider_report=provider_report,
+            planning_state=planning_state,
+        ),
+    )
+    # Dashboard rendering imports status code and rewrites several derived
+    # artifacts.  It is intentionally post-CAS and outside runtime admission.
+    refresh_dashboard_runtime_artifacts(config)
+    return changed
+
+
+def _claim_next_task_for_agent_reserved(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    agent_name: str,
+    release_task_id: str | None = None,
+    quiet: bool = False,
+    recovery_activity_events: list[dict[str, Any]] | None = None,
+    provider_report: dict[str, Any],
+    planning_state: dict[str, Any],
+) -> bool:
+    """Mutate a detached self-claim snapshot between reservation and CAS.
+
+    Canonical/event queue reads, worktree preparation, adapter launch, and the
+    failure-recovery audit revalidation may be slow.  This function therefore
+    never owns the enclosing exclusive runtime-admission lock; only the
+    reservation, launch intent/receipt, and final whole-state CAS do.
+    """
+
+    agent_id = normalize_agent_id(agent_name)
     changed = release_completed_worker_for_claim(
         config,
         state,
         agent_name=display_name_for(config, agent_id),
         task_id=release_task_id,
     )
-    provider_report = load_provider_report(config, refresh=False)
     changed = expire_provider_dispatch_pauses(config, state) or changed
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed
@@ -19722,8 +20028,6 @@ def _claim_next_task_for_agent_locked(
     supervisor_state["mode_occupancy"] = occupancy
     focus_mode = str(supervisor_state.get("focus_mode") or "execution")
     supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get(focus_mode)) else "idle"
-    save_runtime_state(config, state)
-    refresh_dashboard_runtime_artifacts(config)
     return changed
 
 

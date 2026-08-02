@@ -24,25 +24,32 @@
   },
   "rejected_head_remediation": {
     "pr": 4520,
-    "rejected_head": "015d02d32239d03ebdf77b7fc888164ff893a775",
+    "rejected_head": "ab0d79e33bb1dfff452c93c32a96721168222ad9",
     "findings": [
       {
-        "finding": "A process could be alive after adapter launch while neither its worker row nor a recoverable launch record was durable before whole-state CAS.",
-        "resolution": "Publish an exact-token launch intent before adapter delivery and a complete worker receipt immediately after delivery. A restart adopts the receipt or the one post-intent runner marker and exact PID generation before any redispatch callback runs.",
+        "finding": "A durable launch_intent with no receipt and either no marker or multiple markers was retained forever, so an adapter exception before launch could permanently freeze process_queue and suppress normal quota/auth fallback or reassignment.",
+        "resolution": "Apply a finite 30-second launch grace capped at 300 seconds, then combine post-intent markers with exact live worker-runner evidence from ORCH_TASK_ID, ORCH_AGENT_ID/ORCH_PROVIDER, ORCH_RUN_ID, PID, and Linux PID start ticks. One live generation is adopted; a conclusive zero-process scan clears an unchanged stale token and retries in the same entry; multiple live generations remain fail-closed.",
         "tests": [
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_stale_no_launch_intent_clears_and_retries_same_entry",
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_stale_ambiguous_dead_markers_clear_after_process_proof",
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_ambiguous_live_launch_processes_remain_fail_closed",
           ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_hard_crash_after_launch_adopts_worker_before_redispatch",
-          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_phase_error_after_launch_adopts_durable_receipt"
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_phase_error_after_launch_adopts_durable_receipt",
+          ".orchestrator/test_supervisor.py::WorkerOsDuplicateGuardTests::test_launch_recovery_process_scan_binds_exact_env_and_pid_generation"
         ]
       },
       {
-        "finding": "A locked-operation exception bypassed deferred termination confirmation.",
-        "resolution": "Release runtime admission, flush all deferred runtime side effects, and only then re-raise the original operation exception.",
-        "test": ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_flushes_before_locked_error_is_reraised"
+        "finding": "claim_next_task_for_agent wrapped provider report loading, process_queue worktree/adapter launch, and dashboard rendering in one exclusive runtime-admission transaction.",
+        "resolution": "Prefetch immutable provider, activity, and planning inputs before admission; execute self-claim against a detached snapshot between a short per-agent reservation and whole-state CAS; render dashboard artifacts only after the CAS. The actual public entry point now proves all three named slow calls execute at lock depth zero.",
+        "test": ".orchestrator/test_supervisor.py::FailureStreakRecoveryDispatchConsumptionV2Tests::test_self_claim_prefetches_snapshot_before_lock_and_reuses_it"
       },
       {
-        "finding": "Lock telemetry started before blocking acquisition and therefore reported wait plus hold.",
-        "resolution": "Use one measured runtime lock context whose clock starts after acquisition and ends before release for core, reservation, commit, receipt, recovery, and telemetry transactions.",
-        "test": ".orchestrator/test_supervisor.py::RuntimeLockHoldTests::test_cycle_metric_excludes_blocking_acquisition_wait"
+        "finding": "_run_with_deferred_dispatch_status_syncs flushed canonical dispatch status, archive actions, and activity events after its operation raised even though no successful runtime mutation was proven.",
+        "resolution": "On operation failure, discard every uncommitted deferred canonical/archive/activity effect and run only exact PID-start-bound termination confirmation before re-raising the original error.",
+        "tests": [
+          ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_locked_error_discards_uncommitted_deferred_side_effects",
+          ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_flushes_before_locked_error_is_reraised"
+        ]
       }
     ]
   },
@@ -102,9 +109,10 @@
         "poll_workers_pre_dispatch",
         "process_queue",
         "poll_workers_post_dispatch",
-        "prune_worktrees"
+        "prune_worktrees",
+        "claim_next_task_for_agent:<agent_id>"
       ],
-      "contract": "Each phase publishes a token in one short exclusive transaction, performs marker/process/worktree/git/prune I/O against a detached snapshot with audit/status effects deferred, and commits through a second short whole-state CAS. Before adapter delivery, the exact token receives a durable launch intent; after successful delivery it receives a complete worker receipt. A restart adopts the receipt or the one post-intent runner marker and exact PID generation before redispatch. A concurrent writer wins; a losing phase cannot overwrite it, and any newly launched exact process generation is terminated fail-closed.",
+      "contract": "Each phase publishes a token in one short exclusive transaction, performs marker/process/worktree/git/prune I/O against a detached snapshot with audit/status effects deferred, and commits through a second short whole-state CAS. Before adapter delivery, the exact token receives a durable launch intent; after successful delivery it receives a complete worker receipt. Recovery combines markers with exact task/agent/run/PID-start process evidence: one live generation is adopted, a stale conclusive zero-process intent is cleared, and multiple live generations remain fail-closed. A concurrent writer wins; a losing phase cannot overwrite it, and any newly launched exact process generation is terminated fail-closed.",
       "actual_slow_paths": [
         "prepare_worker_workspace git/worktree allocation or refresh",
         "worker-tree git status guard",
@@ -116,8 +124,11 @@
       "tests": [
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_actual_queue_poll_and_prune_slow_paths_run_outside_admission",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_reservation_cas_conflict_preserves_concurrent_runtime_writer",
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_stale_no_launch_intent_clears_and_retries_same_entry",
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_ambiguous_live_launch_processes_remain_fail_closed",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_hard_crash_after_launch_adopts_worker_before_redispatch",
-        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_phase_error_after_launch_adopts_durable_receipt"
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_phase_error_after_launch_adopts_durable_receipt",
+        ".orchestrator/test_supervisor.py::FailureStreakRecoveryDispatchConsumptionV2Tests::test_self_claim_prefetches_snapshot_before_lock_and_reuses_it"
       ]
     },
     "fail_closed_git_fallback": "A worker base ref missing from the prefetch context may use an already-resolving local ref, but dispatch never starts a recovery network fetch while runtime admission is held; an unresolved ref waits for the next pre-admission fetch."
@@ -171,17 +182,17 @@
   },
   "validation": [
     {
-      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
-      "result": "565 tests and 158 subtests passed",
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
+      "result": "570 tests and 158 subtests passed",
       "status": "pass"
     },
     {
-      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
       "result": "165 tests and 31 subtests passed",
       "status": "pass"
     },
     {
-      "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py",
+      "command": ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py",
       "result": "pass",
       "status": "pass"
     },

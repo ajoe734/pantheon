@@ -6546,6 +6546,65 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         confirm_terminations.assert_called_once_with([(4242, 777)])
 
+    def test_locked_error_discards_uncommitted_deferred_side_effects(self) -> None:
+        """A failed mutation may run exact termination cleanup and nothing else."""
+
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        archive_action = {
+            "token": "archive-uncommitted",
+            "scheduled_at": "2026-08-02T18:20:00Z",
+        }
+
+        def failing_locked_cycle() -> bool:
+            deferred_dispatches = supervisor._DEFERRED_DISPATCH_STATUS_SYNCS.get()
+            deferred_archives = supervisor._DEFERRED_AUTO_COMMIT_ARCHIVES.get()
+            assert deferred_dispatches is not None
+            assert deferred_archives is not None
+            deferred_dispatches.append((event, "uncommitted-run", str(self.root)))
+            deferred_archives.append(archive_action)
+            supervisor.write_activity_log(
+                self.config,
+                {"type": "uncommitted-runtime-event", "message": "must be discarded"},
+            )
+            self.assertFalse(supervisor.terminate_worker_pid(4242))
+            raise RuntimeError("injected mutation failure before commit proof")
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
+            mock.patch.object(
+                supervisor,
+                "_confirm_deferred_worker_terminations",
+            ) as confirm_terminations,
+            mock.patch.object(
+                supervisor,
+                "sync_dispatched_task_status_batch",
+            ) as sync_status,
+            mock.patch.object(supervisor, "execute_auto_commit_archive") as run_archive,
+            mock.patch.object(
+                supervisor,
+                "_write_activity_log_immediate",
+            ) as write_activity,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected mutation failure before commit proof",
+            ):
+                supervisor._run_with_deferred_dispatch_status_syncs(
+                    self.config,
+                    failing_locked_cycle,
+                )
+
+        confirm_terminations.assert_called_once_with([(4242, 777)])
+        sync_status.assert_not_called()
+        run_archive.assert_not_called()
+        write_activity.assert_not_called()
+
     def test_deferred_termination_without_start_ticks_fails_closed(self) -> None:
         """An unreadable /proc identity never authorizes a signal."""
 
@@ -7167,6 +7226,51 @@ class ReservedRuntimeSlowIOTests(unittest.TestCase):
 
         return traced, lambda: depth
 
+    def _seed_stale_launch_intent(self, phase_name: str = "process_queue") -> dict:
+        intent = {
+            "schema_version": 1,
+            "status": "prepared",
+            "prepared_at": "2026-08-02T18:00:00Z",
+            "prepared_epoch_seconds": 1.0,
+            "task_id": "SLOW-IO-1",
+            "queue_event_id": "evt-stale-intent",
+            "event_id_for_log": "evt-stale-intent",
+            "agent_id": "codex",
+            "provider": "codex",
+            "attempt_count": 1,
+            "adapter_name": "codex",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake SLOW-IO-1",
+                "task_id": "SLOW-IO-1",
+                "reason": "manual_dispatch",
+                "context_files": [],
+                "target_files": [],
+                "metadata": {"workspace_path": str(self.root)},
+            },
+            "event": {
+                "event_id": "evt-stale-intent",
+                "task_id": "SLOW-IO-1",
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "manual_dispatch",
+            },
+        }
+        state = runtime_state.load_runtime_state(self.config)
+        state.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )[phase_name] = {
+            "token": "stale-launch-token",
+            "reserved_at": "2026-08-02T18:00:00Z",
+            "launch_intent": copy.deepcopy(intent),
+        }
+        runtime_state.save_runtime_state(self.config, state)
+        return intent
+
     def test_actual_queue_poll_and_prune_slow_paths_run_outside_admission(self) -> None:
         event = {
             "event_id": "evt-slow-io",
@@ -7354,6 +7458,116 @@ class ReservedRuntimeSlowIOTests(unittest.TestCase):
             "runtime_phase_reservations",
             state.get("supervisor", {}),
         )
+
+    def test_stale_no_launch_intent_clears_and_retries_same_entry(self) -> None:
+        """An adapter exception before spawn cannot freeze process_queue forever."""
+
+        self._seed_stale_launch_intent()
+        operation = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_marker_candidates",
+                return_value=[],
+            ),
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_process_candidates",
+                return_value=([], True),
+            ),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_called_once()
+        state = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            state.get("supervisor", {}),
+        )
+        activity = self.activity_path.read_text(encoding="utf-8")
+        self.assertIn("runtime_phase_launch_intent_expired", activity)
+
+    def test_stale_ambiguous_dead_markers_clear_after_process_proof(self) -> None:
+        """Marker debris without a live exact process does not retain the token."""
+
+        self._seed_stale_launch_intent()
+        marker_candidates = [
+            ({"run_id": "dead-a", "task_id": "SLOW-IO-1"}, self.root / "dead-a.json"),
+            ({"run_id": "dead-b", "task_id": "SLOW-IO-1"}, self.root / "dead-b.json"),
+        ]
+        operation = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_marker_candidates",
+                return_value=marker_candidates,
+            ),
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_process_candidates",
+                return_value=([], True),
+            ),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_called_once()
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            runtime_state.load_runtime_state(self.config).get("supervisor", {}),
+        )
+
+    def test_ambiguous_live_launch_processes_remain_fail_closed(self) -> None:
+        """Two exact live process generations never authorize redispatch."""
+
+        self._seed_stale_launch_intent()
+        process_candidates = [
+            (
+                {"run_id": "live-a", "task_id": "SLOW-IO-1", "pid": 4101},
+                self.root / "live-a.json",
+            ),
+            (
+                {"run_id": "live-b", "task_id": "SLOW-IO-1", "pid": 4102},
+                self.root / "live-b.json",
+            ),
+        ]
+        operation = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_marker_candidates",
+                return_value=[],
+            ),
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_process_candidates",
+                return_value=(process_candidates, True),
+            ),
+        ):
+            self.assertFalse(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_not_called()
+        reservation = runtime_state.load_runtime_state(self.config)["supervisor"][
+            "runtime_phase_reservations"
+        ]["process_queue"]
+        self.assertEqual(reservation["token"], "stale-launch-token")
 
     def test_hard_crash_after_launch_adopts_worker_before_redispatch(self) -> None:
         """The exact launch-before-CAS death boundary retains adoption proof."""
@@ -16497,6 +16711,11 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
         lock_depth = 0
         activity_read_depths: list[int] = []
         snapshots: list[list[dict[str, object]]] = []
+        slow_call_depths: dict[str, list[int]] = {
+            "load_provider_report": [],
+            "process_queue": [],
+            "refresh_dashboard_runtime_artifacts": [],
+        }
         real_activity_read = supervisor._failure_recovery_activity_events
         real_snapshot = supervisor.failure_streak_recovery_activity_snapshot
         real_decision = supervisor.failure_streak_recovery_decision_for_task
@@ -16524,6 +16743,17 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
             snapshots.append(events)
             return events
 
+        def outside_slow_call(name: str, result: object) -> object:
+            slow_call_depths[name].append(lock_depth)
+            self.assertEqual(
+                lock_depth,
+                0,
+                f"self-claim {name} must run outside runtime admission",
+            )
+            return result
+
+        runtime_state.save_runtime_state(self.config, self.state)
+
         with contextlib.ExitStack() as stack:
             stack.enter_context(
                 mock.patch.object(
@@ -16536,13 +16766,6 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
                 mock.patch.object(
                     supervisor,
                     "load_runtime_state_snapshot",
-                    return_value=self.state,
-                )
-            )
-            stack.enter_context(
-                mock.patch.object(
-                    supervisor,
-                    "load_runtime_state",
                     return_value=self.state,
                 )
             )
@@ -16589,7 +16812,14 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
                 )
             )
             stack.enter_context(
-                mock.patch.object(supervisor, "load_provider_report", return_value={})
+                mock.patch.object(
+                    supervisor,
+                    "load_provider_report",
+                    side_effect=lambda *_args, **_kwargs: outside_slow_call(
+                        "load_provider_report",
+                        {},
+                    ),
+                )
             )
             stack.enter_context(
                 mock.patch.object(
@@ -16640,14 +16870,27 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
                 )
             )
             stack.enter_context(
-                mock.patch.object(supervisor, "process_queue", return_value=False)
+                mock.patch.object(
+                    supervisor,
+                    "process_queue",
+                    side_effect=lambda *_args, **_kwargs: outside_slow_call(
+                        "process_queue",
+                        False,
+                    ),
+                )
             )
             stack.enter_context(
                 mock.patch.object(supervisor, "compute_mode_occupancy", return_value={})
             )
-            stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
             stack.enter_context(
-                mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts")
+                mock.patch.object(
+                    supervisor,
+                    "refresh_dashboard_runtime_artifacts",
+                    side_effect=lambda *_args, **_kwargs: outside_slow_call(
+                        "refresh_dashboard_runtime_artifacts",
+                        None,
+                    ),
+                )
             )
             stack.enter_context(
                 mock.patch.object(
@@ -16672,8 +16915,16 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
         self.assertEqual(len(snapshots), 1)
         self.assertEqual(
             activity_read_depths,
-            [0, 2],
-            "one pre-lock cycle read plus one nested in-lock atomic revalidation",
+            [0, 1],
+            "one pre-reservation snapshot plus one short atomic-consume revalidation",
+        )
+        self.assertEqual(
+            slow_call_depths,
+            {
+                "load_provider_report": [0],
+                "process_queue": [0],
+                "refresh_dashboard_runtime_artifacts": [0],
+            },
         )
         cycle_decisions = [
             call
@@ -18717,6 +18968,54 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         result = supervisor.scan_live_worker_pids_by_agent(proc_root=proc)
         self.assertEqual(result["Claude"], [111])
         self.assertEqual(sum(len(pids) for pids in result.values()), 1)
+
+    def test_launch_recovery_process_scan_binds_exact_env_and_pid_generation(self) -> None:
+        proc = self._make_fake_proc(
+            {
+                111: (
+                    "python3 .orchestrator/worker_runner.py --run-id run-exact "
+                    "--status-path status.json -- codex exec wake"
+                ),
+                222: (
+                    "python3 .orchestrator/worker_runner.py --run-id run-other "
+                    "--status-path other.json -- codex exec wake"
+                ),
+            }
+        )
+        for pid, task_id, run_id in (
+            (111, "TASK-EXACT", "run-exact"),
+            (222, "TASK-OTHER", "run-other"),
+        ):
+            (proc / str(pid) / "environ").write_bytes(
+                (
+                    f"ORCH_TASK_ID={task_id}\0ORCH_AGENT_ID=codex\0"
+                    f"ORCH_PROVIDER=codex\0ORCH_RUN_ID={run_id}\0"
+                ).encode("utf-8")
+            )
+            stat_fields = ["S", *("0" for _ in range(18)), str(pid * 100)]
+            (proc / str(pid) / "stat").write_text(
+                f"{pid} (python3) {' '.join(stat_fields)}\n",
+                encoding="utf-8",
+            )
+
+        candidates, conclusive = supervisor._runtime_launch_process_candidates(
+            {"paths": {"state_file": str(proc / "state.json")}},
+            {
+                "task_id": "TASK-EXACT",
+                "agent_id": "codex",
+                "provider": "codex",
+                "prepared_at": "2026-08-02T18:00:00Z",
+            },
+            proc_root=proc,
+        )
+
+        self.assertTrue(conclusive)
+        self.assertEqual(len(candidates), 1)
+        marker, status_path = candidates[0]
+        self.assertEqual(marker["run_id"], "run-exact")
+        self.assertEqual(marker["pid"], 111)
+        self.assertEqual(marker["pid_start_ticks"], 11100)
+        self.assertEqual(status_path.name, "run-exact.json")
 
     def test_block_reason_flags_live_duplicate(self) -> None:
         config = {
