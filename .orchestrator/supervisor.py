@@ -609,6 +609,70 @@ def assistant_dev_bridge_bff_dirs(repo_root: Path) -> list[Path]:
     return dirs
 
 
+def assistant_dev_bridge_task_is_admitted(
+    config: dict[str, Any],
+    task: dict[str, Any],
+) -> bool:
+    """Fail closed until the task's exact signed packet is durably admitted."""
+
+    bridge = task.get("dev_bridge")
+    if bridge is None:
+        return True
+    if not isinstance(bridge, dict):
+        return False
+    task_id = str(task.get("id") or "").strip()
+    packet_id = str(bridge.get("packet_id") or "").strip()
+    packet_digest = str(bridge.get("packet_digest") or "").strip().lower()
+    task_spec_hash = str(bridge.get("task_spec_hash") or "").strip().lower()
+    if (
+        not task_id
+        or not packet_id
+        or not re.fullmatch(r"[0-9a-f]{64}", packet_digest)
+        or not re.fullmatch(r"[0-9a-f]{64}", task_spec_hash)
+    ):
+        return False
+
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except KeyError:
+        repo_root = THIS_DIR.parent
+    for bff_dir in reversed(assistant_dev_bridge_bff_dirs(repo_root)):
+        if str(bff_dir) not in sys.path:
+            sys.path.insert(0, str(bff_dir))
+    try:
+        from assistant.dev_bridge_admission import load_admission_record
+
+        record = load_admission_record(
+            repo_root=str(repo_root),
+            packet_id=packet_id,
+            packet_digest=packet_digest,
+        )
+    except Exception:
+        return False
+    if not isinstance(record, dict):
+        return False
+    tasks = record.get("tasks")
+    dispatch_records = record.get("dispatch_records")
+    if not isinstance(tasks, list) or not isinstance(dispatch_records, list):
+        return False
+    task_matches = [
+        item
+        for item in tasks
+        if isinstance(item, dict)
+        and str(item.get("task_id") or "") == task_id
+        and str(item.get("task_spec_hash") or "").lower() == task_spec_hash
+    ]
+    dispatch_matches = [
+        item
+        for item in dispatch_records
+        if isinstance(item, dict)
+        and str(item.get("taskId") or item.get("task_id") or "") == task_id
+        and str(item.get("status") or "") == "dispatched"
+        and item.get("error") in (None, "")
+    ]
+    return len(task_matches) == 1 and len(dispatch_matches) == 1
+
+
 def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
     settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
     if settings.get("enabled") is False:
@@ -14453,6 +14517,8 @@ def agent_has_dispatchable_primary_work(
     for task in status.get("tasks", []) or []:
         if task_is_sidecar(task):
             continue
+        if not assistant_dev_bridge_task_is_admitted(config, task):
+            continue
         if not agent_can_take_task(config, agent_name, task):
             continue
         task_status = str(task.get("status") or "").lower()
@@ -14968,6 +15034,9 @@ def task_execution_dispatch_candidate(
     second, status-only copy previously let preemption kill a live worker for a
     task that the dispatcher could not actually queue.
     """
+
+    if not assistant_dev_bridge_task_is_admitted(config, task):
+        return None
 
     dispatch_settings = settings or ready_dispatch_settings(config)
     review_statuses = normalized_status_set(
@@ -15640,6 +15709,15 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
 
     expected_key = current_dispatch_event_key(config, event, task_map)
     task_id = str(event.get("task_id") or "unknown task")
+    current_task = task_map.get(task_id)
+    if current_task is not None and not assistant_dev_bridge_task_is_admitted(
+        config,
+        current_task,
+    ):
+        return (
+            f"Skipped queued wake event for {task_id}: signed dev-bridge packet "
+            "has no exact durable admission."
+        )
     if expected_key is None:
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
@@ -15807,6 +15885,8 @@ def dispatch_ready_tasks(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
+        if not assistant_dev_bridge_task_is_admitted(config, task):
+            continue
         normalized = normalize_mainline_task_assignment(config, task, state=state) or normalized
 
     if normalized:
@@ -15905,6 +15985,8 @@ def dispatch_ready_tasks(
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
+                continue
+            if not assistant_dev_bridge_task_is_admitted(config, task):
                 continue
             if task_id in active_task_ids or task_id in pending_task_ids:
                 continue
@@ -16596,6 +16678,32 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    # The bridge dispatcher shells out to the governed task-state writer.  It
+    # must never inherit the supervisor cycle's exclusive runtime-admission
+    # lock: worker commands take that lock shared while validating their
+    # leases, and a parent waiting on the child from inside the exclusive hold
+    # turns ordinary status traffic into a 30-second bridge timeout.  Drain
+    # into a scratch runtime fragment now and publish only the small result
+    # snapshot after runtime admission is acquired below.
+    bridge_runtime_scratch: dict[str, Any] = {}
+    bridge_drain_changed = bool(
+        _safe_phase(
+            "drain_assistant_dev_packet_inbox",
+            drain_assistant_dev_packet_inbox,
+            config,
+            bridge_runtime_scratch,
+            quiet=quiet,
+        )
+    )
+    bridge_state = bridge_runtime_scratch.get("assistant_dev_bridge")
+    assistant_dev_bridge_snapshot = (
+        {
+            "changed": bridge_drain_changed,
+            "state": deepcopy(bridge_state),
+        }
+        if isinstance(bridge_state, dict)
+        else None
+    )
     recovery_activity_events = failure_streak_recovery_activity_snapshot(
         config,
         github_runtime_snapshot,
@@ -16670,6 +16778,7 @@ def run_once(
                 recovery_activity_events=recovery_activity_events,
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
+                assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
                 prelock_changed=github_bus_changed,
             )
         )
@@ -16874,6 +16983,7 @@ def _run_once_locked(
     recovery_activity_events: list[dict[str, Any]],
     ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
     task_state_shadow_snapshot: dict[str, Any] | None = None,
+    assistant_dev_bridge_snapshot: dict[str, Any] | None = None,
     prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
@@ -16911,7 +17021,11 @@ def _run_once_locked(
         previous_provider_report, provider_report = provider_reports
         changed = _safe_phase("reconcile_provider_pause_recovery", reconcile_provider_pause_recovery, config, state, provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
-        changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
+        if isinstance(assistant_dev_bridge_snapshot, dict):
+            bridge_state = assistant_dev_bridge_snapshot.get("state")
+            if isinstance(bridge_state, dict):
+                state["assistant_dev_bridge"] = deepcopy(bridge_state)
+                changed = bool(assistant_dev_bridge_snapshot.get("changed")) or changed
         if watch:
             changed = _safe_phase("run_scan", _run_scan_locked, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
             state = load_runtime_state(config)
