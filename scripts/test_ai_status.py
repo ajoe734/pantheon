@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import io
 import json
+import contextlib
 import multiprocessing
 import os
 import shutil
@@ -770,6 +771,161 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
     def test_active_lease_workspace_roots_are_empty_without_run_lease(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True):
             self.assertEqual(ai_status.active_lease_workspace_roots(), ())
+
+    def test_explicit_batch_snapshots_avoid_per_mutation_runtime_reload(self) -> None:
+        env = {
+            "AI_NAME": "Codex",
+            "ORCH_RUN_ID": self.run_id,
+            "ORCH_TASK_ID": self.task_id,
+            "PANTHEON_WORKTREE_ROOT": str(self.workspace),
+            "ORCH_WORKSPACE_PATH": str(self.workspace),
+        }
+        config: dict[str, object] = {}
+        runtime_snapshot = self._runtime_state()
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "load_config", side_effect=AssertionError("config reloaded")),
+            mock.patch.object(
+                ai_status,
+                "load_runtime_state_snapshot",
+                side_effect=AssertionError("runtime reloaded"),
+            ),
+            mock.patch.object(
+                ai_status,
+                "status_command_metadata",
+                return_value=self.issued_runtime,
+            ),
+        ):
+            ai_status.validate_active_status_command_lease(
+                "progress",
+                [self.task_id, "batch progress"],
+                runtime_state_snapshot=runtime_snapshot,
+                config_snapshot=config,
+            )
+
+        self.assertEqual(
+            ai_status._STATUS_COMMAND_LEASE_LOCAL.binding["worker_run_id"],
+            self.run_id,
+        )
+
+
+class SupervisorDispatchBatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        self.state = ai_status.default_state()
+        self.state["tasks"] = [
+            {
+                "id": "BATCH-ONE",
+                "title": "First dispatch",
+                "phase": "test",
+                "owner": "Codex",
+                "reviewer": "Human/Ops",
+                "status": "todo",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "queued",
+            },
+            {
+                "id": "BATCH-TWO",
+                "title": "Second dispatch",
+                "phase": "test",
+                "owner": "Codex2",
+                "reviewer": "Human/Ops",
+                "status": "todo",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "queued",
+            },
+        ]
+        self.mutations = [
+            {
+                "actor": "Codex",
+                "command": "start",
+                "expected_statuses": ["todo"],
+                "message": "first started",
+                "run_id": "run-one",
+                "task_id": "BATCH-ONE",
+                "workspace_path": str(self._test_root / "one"),
+            },
+            {
+                "actor": "Codex2",
+                "command": "start",
+                "expected_statuses": ["todo"],
+                "message": "second started",
+                "run_id": "run-two",
+                "task_id": "BATCH-TWO",
+                "workspace_path": str(self._test_root / "two"),
+            },
+        ]
+
+    def _run_main(self, mutations: list[dict[str, object]], *, sync_all=None) -> int:
+        sync_all = sync_all or mock.Mock()
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "load_supervisor_dispatch_batch", return_value=mutations),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(ai_status, "runtime_state_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(ai_status, "load_runtime_state_snapshot", return_value={"workers": {}}) as runtime_load,
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(ai_status, "authoritative_task_state_transaction", return_value=contextlib.nullcontext()),
+            mock.patch.object(ai_status, "load_state", return_value=self.state) as state_load,
+            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False),
+            mock.patch.object(ai_status, "recover_status_activity_outbox", return_value=False),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(ai_status, "sync_all", side_effect=sync_all) as sync_mock,
+            mock.patch.object(ai_status, "refresh_derived_status_views_if_current"),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+        ):
+            self.sync_mock = sync_mock
+            result = ai_status.main(
+                ["ai_status.py", ai_status.SUPERVISOR_DISPATCH_BATCH_COMMAND, "/tmp/batch.json"]
+            )
+        self.assertEqual(runtime_load.call_count, 1)
+        self.assertEqual(state_load.call_count, 1)
+        return result
+
+    def test_batch_uses_one_runtime_and_canonical_snapshot(self) -> None:
+        result = self._run_main(self.mutations)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(self.sync_mock.call_count, 1)
+        self.assertEqual(ai_status.get_task(self.state, "BATCH-ONE")["status"], "in_progress")
+        self.assertEqual(ai_status.get_task(self.state, "BATCH-TWO")["status"], "in_progress")
+
+    def test_late_cas_failure_prevents_the_single_commit(self) -> None:
+        invalid = deepcopy(self.mutations)
+        invalid[1]["expected_statuses"] = ["review_approved"]
+
+        with self.assertRaisesRegex(RuntimeError, "status CAS failed for BATCH-TWO"):
+            self._run_main(invalid)
+
+        self.assertEqual(self.sync_mock.call_count, 0)
+
+    def test_payload_parser_rejects_duplicate_tasks_and_unbounded_rows(self) -> None:
+        payload = self._test_root / "batch.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "schema_version": ai_status.SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION,
+                    "mutations": [self.mutations[0], self.mutations[0]],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(SystemExit, "repeats task mutation"):
+            ai_status.load_supervisor_dispatch_batch(str(payload))
+
+    def test_lock_order_contract_is_explicit(self) -> None:
+        self.assertEqual(
+            ai_status.GLOBAL_STATUS_LOCK_ORDER,
+            ("runtime_admission", "task_state", "activity_audit"),
+        )
 
 
 class StatusRootRoutingTests(unittest.TestCase):

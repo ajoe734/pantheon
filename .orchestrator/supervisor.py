@@ -16,6 +16,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from copy import deepcopy
 from contextvars import ContextVar
@@ -9960,12 +9961,97 @@ def sync_dispatched_task_status(
     run_id: str | None = None,
     workspace_path: str | Path | None = None,
 ) -> bool:
+    mutation = prepare_dispatched_task_status_mutation(
+        config,
+        event,
+        run_id=run_id,
+        workspace_path=workspace_path,
+    )
+    if mutation is None:
+        return False
+
+    script, env = status_command_subprocess_context(
+        config,
+        workspace_path=mutation["workspace_path"],
+    )
+    if not script.exists():
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": mutation["task_id"],
+                "message": f"Dispatch status sync script not found at {script}.",
+            },
+        )
+        return False
+
+    env["AI_NAME"] = mutation["actor"]
+    _apply_dispatch_status_worker_binding(
+        config,
+        env,
+        run_id=mutation["run_id"],
+        task_id=mutation["task_id"],
+        workspace_path=mutation["workspace_path"],
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            mutation["command"],
+            mutation["task_id"],
+            mutation["message"],
+        ],
+        cwd=str(config_path(config, "status_file").parent),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode == 0:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_synced",
+                "task_id": mutation["task_id"],
+                "target_agent": mutation["actor"],
+                "dispatch_reason": mutation["dispatch_reason"],
+                "message": mutation["message"],
+            },
+        )
+        return True
+
+    write_activity_log(
+        config,
+        {
+            "type": "task_dispatch_sync_failed",
+            "task_id": mutation["task_id"],
+            "target_agent": mutation["actor"],
+            "dispatch_reason": mutation["dispatch_reason"],
+            "message": (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Dispatch status sync failed."
+            )[:1000],
+        },
+    )
+    return False
+
+
+def prepare_dispatched_task_status_mutation(
+    config: dict[str, Any],
+    event: Mapping[str, Any],
+    *,
+    run_id: str | None = None,
+    workspace_path: str | Path | None = None,
+    task_map: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Build one lease-bound compare-and-set row without mutating state."""
+
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
-        return False
+        return None
     if not config.get("paths", {}).get("status_file"):
-        return False
+        return None
 
     deferred = _DEFERRED_DISPATCH_STATUS_SYNCS.get()
     if deferred is not None:
@@ -9976,7 +10062,7 @@ def sync_dispatched_task_status(
                 str(workspace_path) if workspace_path is not None else None,
             )
         )
-        return False
+        return None
 
     lease_run_id = str(run_id or "").strip()
     workspace_binding = str(workspace_path or "").strip()
@@ -9993,70 +10079,149 @@ def sync_dispatched_task_status(
                 ),
             },
         )
-        return False
-
-    script, env = status_command_subprocess_context(
-        config,
-        workspace_path=workspace_binding or None,
-    )
-    if not script.exists():
-        write_activity_log(
-            config,
-            {
-                "type": "task_dispatch_sync_failed",
-                "task_id": event.get("task_id"),
-                "message": f"Dispatch status sync script not found at {script}.",
-            },
-        )
-        return False
+        return None
 
     task_id = str(event.get("task_id") or "").strip()
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or ""))).strip()
     if not task_id or not target_agent:
-        return False
+        return None
 
     command_name, eligible_statuses = action
-    task = task_index_from_status(config, load_status(config)).get(task_id)
+    tasks = task_map
+    if tasks is None:
+        tasks = task_index_from_status(config, load_status(config))
+    task = tasks.get(task_id)
     if not task:
-        return False
+        return None
     if str(task.get("owner") or "").strip() != target_agent:
-        return False
+        return None
     if str(task.get("status") or "").lower() not in eligible_statuses:
-        return False
+        return None
 
     message = {
         REASON_OWNED_READY: f"Supervisor auto-started {task_id} after successful dispatch.",
         REASON_OWNED_FINALIZE: f"Supervisor resumed {task_id} for finalize after successful dispatch.",
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
     }[reason]
-    env["AI_NAME"] = target_agent
-    # The status command runs as the dispatched agent, so ai_status.py treats it as an
-    # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
-    # the no-lease branch and raised "status command lease required for auto worker",
-    # which failed every dispatch sync. Both call sites already hold the worker run id.
-    _apply_dispatch_status_worker_binding(
-        config,
-        env,
-        run_id=lease_run_id,
-        task_id=task_id,
-        workspace_path=workspace_binding or None,
-    )
-    result = subprocess.run(
-        [sys.executable, str(script), command_name, task_id, message],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    return {
+        "actor": target_agent,
+        "command": command_name,
+        "dispatch_reason": reason,
+        "expected_statuses": sorted(eligible_statuses),
+        "message": message,
+        "run_id": lease_run_id,
+        "task_id": task_id,
+        "workspace_path": workspace_binding,
+    }
+
+
+def sync_dispatched_task_status_batch(
+    config: dict[str, Any],
+    deferred: list[tuple[dict[str, Any], str | None, str | None]],
+) -> bool:
+    """Commit lease-bound dispatch mutations through one ai-status process.
+
+    Slow payload rendering and subprocess work happen after runtime admission is
+    released.  ``ai_status.py`` revalidates every worker lease against one
+    runtime snapshot, applies every owner/status CAS to one authoritative task
+    snapshot, and publishes one activity outbox transaction.  One invalid row
+    aborts the whole canonical batch.
+    """
+
+    if not deferred:
+        return False
+    try:
+        status = load_status(config)
+    except (KeyError, OSError, RuntimeError):
+        return False
+    task_map = task_index_from_status(config, status)
+    mutations: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    for event, run_id, workspace_path in deferred:
+        mutation = prepare_dispatched_task_status_mutation(
+            config,
+            event,
+            run_id=run_id,
+            workspace_path=workspace_path,
+            task_map=task_map,
+        )
+        if mutation is None:
+            continue
+        task_id = str(mutation["task_id"])
+        if task_id in seen_task_ids:
+            continue
+        seen_task_ids.add(task_id)
+        mutation.pop("dispatch_reason", None)
+        mutations.append(mutation)
+    if not mutations:
+        return False
+
+    script, env = status_command_subprocess_context(config)
+    if not script.exists():
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_batch_sync_failed",
+                "mutation_count": len(mutations),
+                "message": f"Dispatch batch status script not found at {script}.",
+            },
+        )
+        return False
+
+    payload_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="pantheon-dispatch-status-batch-",
+            suffix=".json",
+            delete=False,
+        ) as handle:
+            json.dump(
+                {"schema_version": 1, "mutations": mutations},
+                handle,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            payload_path = Path(handle.name)
+
+        for env_name in DISPATCH_STATUS_WORKER_ENV_NAMES:
+            env.pop(env_name, None)
+        env["AI_NAME"] = "Human/Ops"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "supervisor-dispatch-batch",
+                str(payload_path),
+            ],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    finally:
+        if payload_path is not None:
+            try:
+                payload_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    task_ids = [str(mutation["task_id"]) for mutation in mutations]
     if result.returncode == 0:
         write_activity_log(
             config,
             {
-                "type": "task_dispatch_synced",
-                "task_id": task_id,
-                "target_agent": target_agent,
-                "dispatch_reason": reason,
-                "message": message,
+                "type": "task_dispatch_batch_synced",
+                "mutation_count": len(mutations),
+                "task_ids": task_ids,
+                "message": (
+                    f"Committed {len(mutations)} dispatch status mutations in one "
+                    "authoritative snapshot transaction."
+                ),
             },
         )
         return True
@@ -10064,11 +10229,14 @@ def sync_dispatched_task_status(
     write_activity_log(
         config,
         {
-            "type": "task_dispatch_sync_failed",
-            "task_id": task_id,
-            "target_agent": target_agent,
-            "dispatch_reason": reason,
-            "message": result.stderr.strip() or result.stdout.strip() or "Dispatch status sync failed.",
+            "type": "task_dispatch_batch_sync_failed",
+            "mutation_count": len(mutations),
+            "task_ids": task_ids,
+            "message": (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Dispatch status batch failed."
+            )[:1000],
         },
     )
     return False
@@ -10135,14 +10303,7 @@ def _run_with_deferred_dispatch_status_syncs(
             or archive_changed
         )
 
-    sync_changed = False
-    for event, run_id, workspace_path in deferred:
-        sync_changed = sync_dispatched_task_status(
-            config,
-            event,
-            run_id=run_id,
-            workspace_path=workspace_path,
-        ) or sync_changed
+    sync_changed = sync_dispatched_task_status_batch(config, deferred)
     return changed or archive_changed or sync_changed
 
 

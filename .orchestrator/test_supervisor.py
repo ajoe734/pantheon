@@ -5845,6 +5845,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
         }
         call_order: list[str] = []
+        captured_payload: dict[str, object] = {}
 
         @contextlib.contextmanager
         def runtime_lock(*_args: object, **_kwargs: object):
@@ -5867,6 +5868,11 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         def status_command(*_args: object, **_kwargs: object) -> mock.Mock:
             call_order.append("status_command")
+            command = _args[0]
+            self.assertEqual(command[-2], "supervisor-dispatch-batch")
+            captured_payload.update(
+                json.loads(Path(command[-1]).read_text(encoding="utf-8"))
+            )
             return mock.Mock(returncode=0, stderr="", stdout="")
 
         with (
@@ -5885,15 +5891,117 @@ class DispatchStatusSyncTests(unittest.TestCase):
             call_order,
             ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
         )
-        self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
+        self.assertEqual(captured_payload["schema_version"], 1)
         self.assertEqual(
-            run_mock.call_args.kwargs["env"]["PANTHEON_WORKTREE_ROOT"],
-            str(self.root),
+            captured_payload["mutations"],
+            [
+                {
+                    "actor": "Copilot",
+                    "command": "start",
+                    "expected_statuses": ["todo"],
+                    "message": (
+                        "Supervisor auto-started APP-002-W1-FRONT-HANDOFF "
+                        "after successful dispatch."
+                    ),
+                    "run_id": "copilot-run-7",
+                    "task_id": "APP-002-W1-FRONT-HANDOFF",
+                    "workspace_path": str(self.root),
+                }
+            ],
         )
+
+    def test_deferred_dispatches_share_one_status_process_and_activity_is_post_lock(self) -> None:
+        status = json.loads(self.status_path.read_text(encoding="utf-8"))
+        status["tasks"].append(
+            {
+                "id": "BATCH-SECOND",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Human/Ops",
+                "depends_on": [],
+            }
+        )
+        self.status_path.write_text(json.dumps(status), encoding="utf-8")
+        events = [
+            {
+                "task_id": "APP-002-W1-FRONT-HANDOFF",
+                "target_agent": "copilot",
+                "target_display_name": "Copilot",
+                "reason": "owned_ready_dispatch",
+            },
+            {
+                "task_id": "BATCH-SECOND",
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "reason": "owned_ready_dispatch",
+            },
+        ]
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        lock_depth = 0
+        payloads: list[dict[str, object]] = []
+        activity_depths: list[int] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_depth
+            lock_depth += 1
+            try:
+                yield
+            finally:
+                lock_depth -= 1
+
+        def operation() -> bool:
+            for index, event in enumerate(events):
+                self.assertFalse(
+                    supervisor.sync_dispatched_task_status(
+                        self.config,
+                        event,
+                        run_id=f"run-{index}",
+                        workspace_path=self.root,
+                    )
+                )
+            supervisor.write_activity_log(
+                self.config,
+                {"type": "batched-runtime-event", "message": "post-lock"},
+            )
+            return True
+
+        def status_process(command: list[str], **_kwargs: object) -> mock.Mock:
+            self.assertEqual(lock_depth, 0)
+            payloads.append(json.loads(Path(command[-1]).read_text(encoding="utf-8")))
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        def activity_writer(*_args: object, **_kwargs: object) -> None:
+            activity_depths.append(lock_depth)
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=status_process) as run_mock,
+            mock.patch.object(
+                supervisor,
+                "_write_activity_log_immediate",
+                side_effect=activity_writer,
+            ),
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                operation,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertEqual(len(payloads[0]["mutations"]), 2)
         self.assertEqual(
-            run_mock.call_args.kwargs["env"]["ORCH_WORKSPACE_PATH"],
-            str(self.root),
+            [row["task_id"] for row in payloads[0]["mutations"]],
+            ["APP-002-W1-FRONT-HANDOFF", "BATCH-SECOND"],
         )
+        self.assertTrue(activity_depths)
+        self.assertEqual(set(activity_depths), {0})
 
     def test_run_once_probes_providers_before_taking_the_runtime_lock(self) -> None:
         """A gh auth probe must not be charged to the exclusive runtime lock.
