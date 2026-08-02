@@ -179,9 +179,9 @@
     "decision": "pending",
     "reviewer": "Human/Ops",
     "reviewed_head": null,
-    "pull_request": null,
+    "pull_request": 4501,
     "recorded_at": null,
-    "notes": "Awaiting independent Human/Ops exact-head code, test, scope, source-chain, and evidence review."
+    "notes": "Awaiting independent Human/Ops exact-head code, test, scope, source-chain, and evidence review of PR #4501. The governed handoff and approval bind GitHub headRefOid because a committed manifest cannot self-reference its containing commit."
   },
   "delivery": {
     "repository": "ajoe734/pantheon",
@@ -189,7 +189,8 @@
     "base_commit": "c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65",
     "anchor_commit": "db6e23c3cfe79e6dcdb91c4df86f5eff7ad33062",
     "implementation_head": null,
-    "pull_request": null,
+    "exact_head_binding": "GitHub headRefOid supplied as REVIEW_HEAD_SHA by the governed handoff and approval; intentionally not self-referenced in this committed manifest.",
+    "pull_request": 4501,
     "merge_commit": null,
     "merged_at": null,
     "rollback": "Revert the V4 task merge commit to restore incumbent field-by-field fallback selection; no state or config migration is required."

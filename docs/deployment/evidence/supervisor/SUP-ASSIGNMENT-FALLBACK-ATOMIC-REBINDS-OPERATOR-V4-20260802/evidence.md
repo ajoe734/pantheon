@@ -38,4 +38,4 @@ The task changes only supervisor assignment planning/persistence, supervisor tes
 
 ## Review and delivery
 
-Review remains pending independent Human/Ops inspection of the exact task PR head. Delivery targets `ajoe734/pantheon` branch `dev`; merge and exact-head review identities will be recorded only after the governed review gate completes. Rollback is a revert of the V4 merge commit; no state or config migration is required, and source merge does not authorize live rollout.
+Review remains pending independent Human/Ops inspection of PR #4501's exact GitHub `headRefOid`. The governed handoff and approval bind that head because this committed manifest cannot self-reference its containing commit. Delivery targets `ajoe734/pantheon` branch `dev`; merge and exact-head review identities will be recorded only after the governed review gate completes. Rollback is a revert of the V4 merge commit; no state or config migration is required, and source merge does not authorize live rollout.

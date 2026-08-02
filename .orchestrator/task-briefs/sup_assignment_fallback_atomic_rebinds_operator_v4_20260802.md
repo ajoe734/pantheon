@@ -10,7 +10,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Base: `origin/dev` at `c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65`
 - Branch: `task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802`
 - Anchor: `db6e23c3cfe79e6dcdb91c4df86f5eff7ad33062`
-- Next: publish the task PR, pass exact-head CI, and obtain independent Human/Ops exact-head review before merge.
+- Pull request: `#4501`
+- Next: pass exact-head CI and obtain independent Human/Ops exact-head review of PR #4501 before merge.
 
 ## Summary
 Recover the already-tested atomic owner/reviewer pair planner under merged account-neutral governance after a stale post-merge coordinator race corrupted the V3 dependency record.
