@@ -150,9 +150,14 @@ class SupervisorAdmissionLockIdentity:
     inode: int
     byte_length: int
     sha256: str
+    mtime_ns: int
+    ctime_ns: int
     kernel_lock_id: str
     kernel_lock_kind: str
+    kernel_lock_class: str
     kernel_lock_mode: str
+    kernel_lock_start: str
+    kernel_lock_end: str
     owner_pid: int
     owner_starttime_ticks: int
 
@@ -2027,7 +2032,9 @@ def _capture_supervisor_admission_lock(
                 f"Kernel lock table is unreadable: {type(exc).__name__}"
             ) from exc
         expected_device = (os.major(before.st_dev), os.minor(before.st_dev))
-        matches: list[tuple[str, str, str, int]] = []
+        matches: list[
+            tuple[str, str, str, str, str, str, int]
+        ] = []
         for row in lock_rows:
             fields = row.split()
             if len(fields) < 8 or fields[1] == "->":
@@ -2040,13 +2047,37 @@ def _capture_supervisor_admission_lock(
             except (IndexError, ValueError):
                 continue
             if row_device == expected_device and row_inode == before.st_ino:
-                matches.append((fields[0].rstrip(":"), fields[1], fields[3], row_pid))
+                matches.append(
+                    (
+                        fields[0].rstrip(":"),
+                        fields[1],
+                        fields[2],
+                        fields[3],
+                        fields[6],
+                        fields[7],
+                        row_pid,
+                    )
+                )
         if len(matches) != 1:
             raise ValueError(
                 "Supervisor admission lock must have exactly one kernel lock owner"
             )
-        lock_id, lock_kind, lock_mode, kernel_owner_pid = matches[0]
-        if lock_kind != "FLOCK" or lock_mode != "WRITE":
+        (
+            lock_id,
+            lock_kind,
+            lock_class,
+            lock_mode,
+            lock_start,
+            lock_end,
+            kernel_owner_pid,
+        ) = matches[0]
+        if (
+            lock_kind != "FLOCK"
+            or lock_class != "ADVISORY"
+            or lock_mode != "WRITE"
+            or lock_start != "0"
+            or lock_end != "EOF"
+        ):
             raise ValueError("Supervisor admission lock has the wrong kernel lock mode")
         if kernel_owner_pid != owner_pid:
             raise ValueError("Supervisor admission lock file and kernel owner differ")
@@ -2067,9 +2098,14 @@ def _capture_supervisor_admission_lock(
             inode=before.st_ino,
             byte_length=len(content),
             sha256=hashlib.sha256(content).hexdigest(),
+            mtime_ns=before.st_mtime_ns,
+            ctime_ns=before.st_ctime_ns,
             kernel_lock_id=lock_id,
             kernel_lock_kind=lock_kind,
+            kernel_lock_class=lock_class,
             kernel_lock_mode=lock_mode,
+            kernel_lock_start=lock_start,
+            kernel_lock_end=lock_end,
             owner_pid=owner_pid,
             owner_starttime_ticks=owner_generation.starttime_ticks,
         )
@@ -2532,9 +2568,14 @@ def _supervisor_process_identity_summary(
             "inode": lock.inode,
             "byte_length": lock.byte_length,
             "sha256": lock.sha256,
+            "mtime_ns": lock.mtime_ns,
+            "ctime_ns": lock.ctime_ns,
             "kernel_lock_id": lock.kernel_lock_id,
             "kernel_lock_kind": lock.kernel_lock_kind,
+            "kernel_lock_class": lock.kernel_lock_class,
             "kernel_lock_mode": lock.kernel_lock_mode,
+            "kernel_lock_start": lock.kernel_lock_start,
+            "kernel_lock_end": lock.kernel_lock_end,
             "owner_pid": lock.owner_pid,
             "owner_starttime_ticks": lock.owner_starttime_ticks,
         },

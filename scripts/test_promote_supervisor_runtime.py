@@ -151,9 +151,14 @@ def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdenti
         inode=21,
         byte_length=6,
         sha256="e" * 64,
+        mtime_ns=22,
+        ctime_ns=23,
         kernel_lock_id="42",
         kernel_lock_kind="FLOCK",
+        kernel_lock_class="ADVISORY",
         kernel_lock_mode="WRITE",
+        kernel_lock_start="0",
+        kernel_lock_end="EOF",
         owner_pid=generation.pid,
         owner_starttime_ticks=generation.starttime_ticks,
     )
@@ -233,6 +238,42 @@ def test_promotion_snapshot_fails_closed_when_identity_capture_is_missing(
     assert snapshot["eligible_for_promotion"] is False
     assert identity_invariant["ok"] is False
     assert identity_invariant["details"]["error"] == "identity unavailable"
+
+
+@patch("promote_supervisor_runtime.lock_held", return_value=True)
+@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
+@patch("supervisor_runtime_health.lock_held", return_value=True)
+@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
+def test_promotion_snapshot_requires_exact_process_identity(
+    mock_matches,
+    mock_sup_lock,
+    mock_alive,
+    mock_lock,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    create_realistic_healthy_fixture(repo)
+    identity = _verified_identity_dependency(repo)
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        side_effect=ValueError("zero exact incumbents"),
+    ):
+        snapshot = capture_promotion_snapshot(repo, now=now)
+
+    process_invariant = next(
+        item
+        for item in snapshot["invariants"]
+        if item["name"]
+        == "incumbent_supervisor_process_identity_immutable"
+    )
+    assert snapshot["eligible_for_promotion"] is False
+    assert process_invariant["ok"] is False
+    assert process_invariant["details"]["error"] == "zero exact incumbents"
 
 
 def test_capture_promotion_snapshot_fail_closed_on_missing_files(tmp_path: Path) -> None:
@@ -2263,9 +2304,14 @@ def _injected_process_fixture(
         inode=31,
         byte_length=5,
         sha256="c" * 64,
+        mtime_ns=32,
+        ctime_ns=33,
         kernel_lock_id="71",
         kernel_lock_kind="FLOCK",
+        kernel_lock_class="ADVISORY",
         kernel_lock_mode="WRITE",
+        kernel_lock_start="0",
+        kernel_lock_end="EOF",
         owner_pid=generation.pid,
         owner_starttime_ticks=generation.starttime_ticks,
     )
@@ -2332,6 +2378,25 @@ def test_process_identity_binds_exact_generation_argv_cwd_git_env_and_lock(
         "PANTHEON_STATUS_ROOT",
     }
     assert "SECRET" not in encoded_summary
+
+
+def test_process_identity_revalidates_candidate_inside_lock_bracket(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    revalidator = Mock()
+
+    discover_incumbent_supervisor_process(
+        candidate,
+        reader=reader,
+        cwd_git_identity_reader=lambda _cwd: (
+            candidate.head_commit,
+            candidate.tracked_tree_identity,
+        ),
+        candidate_revalidator=revalidator,
+    )
+
+    revalidator.assert_called_once_with()
 
 
 def test_process_identity_rejects_zero_supervisor_candidates(tmp_path: Path) -> None:
@@ -2499,12 +2564,20 @@ def test_process_identity_rejects_executable_mismatch(tmp_path: Path) -> None:
         _discover_injected(candidate, reader)
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"kernel_lock_id": "72"},
+        {"mtime_ns": 34},
+    ],
+)
 def test_process_identity_rejects_admission_lock_generation_drift(
     tmp_path: Path,
+    changes: dict[str, Any],
 ) -> None:
     candidate, reader, _argv = _injected_process_fixture(tmp_path)
     original = reader.locks[0]
-    reader.locks[1] = replace(original, kernel_lock_id="72")
+    reader.locks[1] = replace(original, **changes)
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
         _discover_injected(candidate, reader)
@@ -2563,4 +2636,7 @@ def test_real_procfs_lock_capture_binds_kernel_owner_generation(
     assert captured.owner_pid == os.getpid()
     assert captured.owner_starttime_ticks > 0
     assert captured.kernel_lock_kind == "FLOCK"
+    assert captured.kernel_lock_class == "ADVISORY"
     assert captured.kernel_lock_mode == "WRITE"
+    assert captured.kernel_lock_start == "0"
+    assert captured.kernel_lock_end == "EOF"
