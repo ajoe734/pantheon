@@ -160,12 +160,12 @@
   "delivery": {
     "pull_request": null,
     "base_sha": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
-    "implementation_head": "145f549fa312194168b1624b9c1d782ceb103c01",
+    "implementation_head": "9f080f60e46762c066cacd0a44af4dd8024376ed",
     "implementation_commits": [
-      "ede27e6799a39b987ba8fbc32fd840b4674b6782",
-      "ff378fe967cab389433e51e52a7b0670bf598000",
-      "f265f4449ef59855a732246af94749f888ee0866",
-      "145f549fa312194168b1624b9c1d782ceb103c01"
+      "b16be897b4da81aee035969c2816a6522153d83a",
+      "8f6124af6ebaadf460a5ab9e0ad478c5d8800a00",
+      "3d298cc723595393fff441ef84139c039f737d28",
+      "9f080f60e46762c066cacd0a44af4dd8024376ed"
     ]
   },
   "rollout": "Source merge only. A separately governed canary may later prove provider-home quarantine, quota pause, distinct-group fallback, fresh-reset recovery, and rollback.",
