@@ -59,7 +59,7 @@ merge `16135f2316541591e54cba6d58f0a80273731bc1` and implementation merge
 `71fea47cbe65bb3e07792afa7e9f0134fd0066f5` are ancestors of this task branch.
 
 This source task must merge before
-`SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802`. No live supervisor
+`SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802`. No live supervisor
 mutation or restart belongs to this task.
 
 ## Verification

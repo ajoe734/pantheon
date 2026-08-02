@@ -183,7 +183,7 @@
     "verified_as_ancestor_of_origin_dev": true,
     "repository": "ajoe734/pantheon",
     "target_branch": "dev",
-    "merge_order_successor": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802"
+    "merge_order_successor": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802"
   },
   "finalization": {
     "owner": "Codex2",
@@ -214,7 +214,7 @@
   },
   "rollout": {
     "source_task": "No live supervisor mutation or service restart is authorized by this source task.",
-    "next_task": "Run the governed live canary only after this source PR is independently reviewed and merged.",
+    "next_task": "Run the governed integrated live canary SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 only after this source PR is independently reviewed and merged.",
     "rollback": "Revert the merge commit. The previous stale-cache fail-closed behavior returns; no credential or canonical task state rollback is required."
   }
 }
