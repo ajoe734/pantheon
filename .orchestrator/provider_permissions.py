@@ -285,6 +285,26 @@ def _auth_probe_due(config: dict[str, Any], provider_id: str, previous: dict[str
     return (datetime.now(timezone.utc) - checked_at).total_seconds() >= interval_seconds
 
 
+def provider_auth_probe_due(
+    config: dict[str, Any],
+    provider_id: str,
+    previous: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether one targeted provider probe may spend a live call.
+
+    Supervisor recovery paths already have the capability row in memory.  Let
+    them consult the same success/failure intervals as the provider probes
+    before forcing an authoritative check, rather than calling ``force=True``
+    on every supervisor tick.  Ambiguous/unsupported results are fail-closed
+    recovery outcomes, so they use the shorter failed-probe interval too.
+    """
+
+    previous_probe = dict(previous or _previous_provider_auth_probe(config, provider_id))
+    if previous_probe.get("ready") is not True:
+        previous_probe["ready"] = False
+    return _auth_probe_due(config, provider_id, previous_probe)
+
+
 def _auth_probe_record(
     provider_id: str,
     kind: str,
