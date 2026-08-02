@@ -2,7 +2,7 @@
 
 Task: Wire immutable failure generations from real supervisor records
 
-Owner: Codex · Reviewer: Codex2 · Status: **review_pending**
+Owner: Codex · Reviewer: Human/Ops · Status: **review_pending**
 
 PR: #4445 into `dev`
 
@@ -38,6 +38,7 @@ extraction, configuration, product tasks, or live services.
 - Full supervisor regression: 477 passed, 66 subtests passed.
 - Python compile check: passed.
 - `git diff --check`: passed.
+- Local commit-trailer gate over `origin/dev..HEAD`: passed.
 - Static production call-site proof: exactly six calls, each carrying
   `failure_kind`, `reason_class`, `raw_ref`, and `rejected_head`.
 - Rejected PR #4442 heads `e89d09ea`, `67e8ce11`, `1041551b`, `85b4d860`,
@@ -47,6 +48,9 @@ extraction, configuration, product tasks, or live services.
 
 ## Review boundary
 
-No independent review is claimed here. `reviewed_head` remains null until
-Codex2 reviews the final pushed head. Approval and `done` remain out of scope for
-this owner handoff.
+Human/Ops approved exact head `932a87e59e5a2f54e08e60ce57904c76ecf8ba2f`,
+but that approval was reopened after `dev` advanced. The implementation was
+then composed with base `c43954779aec517ab97916ab3f878ef96fa56c22` and the
+full verification suite above was rerun. No approval of the new pushed head is
+claimed here: `reviewed_head` remains null until Human/Ops reviews it. Approval
+and `done` remain out of scope for this owner handoff.

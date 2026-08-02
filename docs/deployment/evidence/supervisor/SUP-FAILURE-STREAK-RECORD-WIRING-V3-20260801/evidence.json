@@ -5,7 +5,7 @@
     "title": "Wire immutable failure generations from real supervisor records",
     "phase": "Supervisor Retry V3 / 1 Failure Record Wiring",
     "owner": "Codex",
-    "reviewer": "Codex2",
+    "reviewer": "Human/Ops",
     "status": "review_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -99,14 +99,16 @@
   "review": {
     "decision": "review_pending",
     "reviewed_head": null,
-    "reviewer": "Codex2",
-    "note": "This manifest records owner verification only. Independent exact-head review has not yet occurred and is required before approval."
+    "reviewer": "Human/Ops",
+    "note": "Human/Ops approval of 932a87e59e5a2f54e08e60ce57904c76ecf8ba2f was reopened after dev advanced. This manifest records owner revalidation only; independent review of the new exact pushed head is required before approval."
   },
   "delivery": {
     "pull_request": "https://github.com/ajoe734/pantheon/pull/4445",
     "implementation_anchor": "4f153990d19c2fa76dec75dfbb352695263e8498",
+    "superseded_reviewed_head": "932a87e59e5a2f54e08e60ce57904c76ecf8ba2f",
+    "dev_composition_commit": "f1eb9d0923bde973f71d6a4ca87b161719e8e253",
     "candidate_head": null,
-    "base_sha_at_verification": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
-    "generated_at": "2026-08-01T16:06:05Z"
+    "base_sha_at_verification": "c43954779aec517ab97916ab3f878ef96fa56c22",
+    "generated_at": "2026-08-02T03:07:12Z"
   }
 }
