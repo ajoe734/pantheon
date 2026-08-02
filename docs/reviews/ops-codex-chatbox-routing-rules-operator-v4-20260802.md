@@ -9,7 +9,7 @@ Task ID: `OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802`
 - Starting base: `79e02ee059387044eec1d21a283e4848f814f49a`
 - Task branch: `task/OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802`
 - Pull request: `#4499`
-- Exact head: bind from GitHub after this publication artifact commit is pushed
+- Exact head: GitHub `headRefOid` bound by governed handoff and approval
 - Scope: `AGENTS.md`, this task's brief, and this review evidence only
 
 ## Owner Decision And Source Boundary
@@ -93,9 +93,13 @@ print(f"policy assertions passed: {len(required)} required, {len(forbidden)} for
 - Runtime mirror guard inputs: passed; no generated-state changes and no
   embedded `execute-plans` mirror
 - Exact three-file scope: passed
-- Replacement PR publication: passed at preliminary head
+- Replacement PR publication: passed at preliminary policy head
   `894bff475e85598e8d280724dc4d0657b12a457d`
-- Final exact-head GitHub checks: pending publication-artifact push
+- Publication-artifact head `8b9ae09c1c4c4dd80bed19ddd61e8623bcc1a0fe`:
+  all 8 exact-head GitHub checks passed
+- Final review head: use the GitHub `headRefOid` and check results recorded in
+  the governed handoff; this manifest intentionally does not self-reference
+  its containing commit
 
 ## Independent Decision
 

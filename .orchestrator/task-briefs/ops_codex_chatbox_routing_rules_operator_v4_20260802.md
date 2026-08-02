@@ -93,6 +93,6 @@ JSON, runtime state, product code, services, deployment, or the 28-task catalog.
   `review_before_merge` and auto-merge was verified off.
 - After #4499 existed, PRs #4401 and #4405 were closed with supersession links.
   No stale branch, commit, or review history was deleted.
-- Human/Ops must review the final GitHub head after this publication metadata
-  commit is pushed. The governed approval must bind both `REVIEW_PR=4499` and
-  the exact `REVIEW_HEAD_SHA`; a prior head or green CI alone is insufficient.
+- Human/Ops must review the final GitHub head named in the governed handoff.
+  The governed approval must bind both `REVIEW_PR=4499` and the exact
+  `REVIEW_HEAD_SHA`; a prior head or green CI alone is insufficient.
