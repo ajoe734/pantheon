@@ -1,0 +1,197 @@
+{
+  "schema_version": "supervisor_assignment_fallback_atomic_rebinds_operator_v4.v1",
+  "task": {
+    "id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+    "title": "Restore atomic task-scoped quota/auth fallback after post-merge coordinator race",
+    "phase": "Supervisor reliability / assignment fallback topology operator V4",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "status": "review",
+    "review_status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802"
+  },
+  "dependencies": [
+    {
+      "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "implementation_merge_commit": "71fea47cbe65bb3e07792afa7e9f0134fd0066f5",
+      "closeout_merge_commit": "16135f2316541591e54cba6d58f0a80273731bc1"
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "merge_commit": "a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4"
+    }
+  ],
+  "source_decisions": [
+    {
+      "kind": "merged_account_neutral_governance",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4499",
+      "head": "d40b73adabec3eba27f6fa111586fc956d7bfe74",
+      "canonical_review_gate_at": "2026-08-02T09:12:29Z",
+      "merge_commit": "c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65",
+      "merged_at": "2026-08-02T09:12:35Z",
+      "decision": "Configured identities remain distinct; account/quota and reviewer eligibility follow configuration plus task-scoped live evidence."
+    },
+    {
+      "kind": "stale_v3_supersession",
+      "reference": "ai-task-archive/tasks/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802.json",
+      "terminal_outcome": "superseded",
+      "superseded_by": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "decision": "Replace only the dependency record corrupted by the post-merge coordinator race; preserve the implementation objective and account-neutral boundary."
+    },
+    {
+      "kind": "invalid_post_merge_v5_packet",
+      "reference": "ai-task-archive/tasks/OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V5-20260802.json",
+      "terminal_outcome": "superseded",
+      "archived_at": "2026-08-02T09:16:09Z",
+      "decision": "The packet contradicted the explicit operator constraint and was admitted after PR #4499 had already been approved and merged."
+    },
+    {
+      "kind": "reusable_design_only",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4496",
+      "pull_request_state": "closed_unmerged",
+      "source_commit": "f33ee38bb6bfc684cbb2be62e1751f54189aa6fe",
+      "decision": "Reapply code and regression design on current dev under the V4 Task-ID; do not reuse prior status, review, checks, or trailers as delivery authority."
+    }
+  ],
+  "scope": {
+    "owned_layer": "Supervisor assignment-pair planning, configured/preferred fallback traversal, canonical assignment compare-and-swap, and regression evidence.",
+    "not_changing": "Account or quota groups, provider readiness policy, global reviewer bans, configuration, catalog contracts, product tasks, canonical JSON by hand, live runtime state, services, deployment, or rollout.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py"
+    ],
+    "test_files": [
+      ".orchestrator/test_supervisor.py"
+    ],
+    "record_files": [
+      ".orchestrator/task-briefs/sup_assignment_fallback_atomic_rebinds_operator_v4_20260802.md",
+      "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.md"
+    ],
+    "source_commit": "f33ee38bb6bfc684cbb2be62e1751f54189aa6fe",
+    "anchor_commit": "db6e23c3cfe79e6dcdb91c4df86f5eff7ad33062",
+    "base_commit": "c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65"
+  },
+  "contract": {
+    "pair_planning": "Every automatic owner fallback is evaluated together with an independent reviewer candidate before canonical mutation; the incumbent reviewer may become owner when another viable reviewer completes the pair.",
+    "candidate_order": "Direct configured fallbacks retain declaration order, task-preferred lanes follow, and discovered mapping edges are traversed breadth-first with case-insensitive de-duplication.",
+    "bounded_cycles": "Traversal is bounded by finite unique candidate names and terminates when mappings contain cycles such as Antigravity -> Codex2 -> Antigravity.",
+    "atomic_persistence": "The canonical lock compares expected owner, reviewer, and status before assigning both fields in the same governed write.",
+    "shared_consumers": "Mainline normalization, helper claim dispatch, and worker-failure owner fallback consume plan_task_assignment_pair.",
+    "fail_closed": "Catalog-locked tasks, tasks without a viable distinct pair, and stale compare-and-swap inputs are not mutated.",
+    "identity_boundary": "Reviewer independence remains distinct configured agent identity; Codex/Codex2 mutual review is allowed and no account/quota-group rule is added."
+  },
+  "acceptance": {
+    "reproduce_23_stranded_tasks": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_normalize_rebinds_all_23_stranded_antigravity_tasks"
+      ],
+      "result": "All 23 unavailable-Antigravity/Codex2-reviewer todo tasks plan and persist Codex2 owner with Codex reviewer."
+    },
+    "plan_before_mutation": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_pair_planner_atomically_rebinds_incumbent_reviewer_as_owner",
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_pair_planner_no_legal_pair_causes_no_partial_mutation"
+      ]
+    },
+    "atomic_compare_and_swap": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ChairReviewDispatchTests::test_persist_task_reassignment_cas_rejects_stale_assignment"
+      ]
+    },
+    "bounded_deterministic_cycle_safe": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_pair_planner_traversal_is_deterministic_and_cycle_safe"
+      ]
+    },
+    "catalog_lock_immutable": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_normalize_does_not_reassign_catalog_locked_task",
+        ".orchestrator/test_supervisor.py::ChairReviewDispatchTests::test_persist_task_reassignment_rejects_catalog_assignment_drift"
+      ]
+    },
+    "shared_planner_consumers": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_worker_failure_replans_reviewer_when_fallback_is_incumbent_reviewer"
+      ]
+    },
+    "codex_codex2_mutual_review_allowed": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_pair_planner_atomically_rebinds_incumbent_reviewer_as_owner"
+      ]
+    },
+    "no_out_of_scope_changes": {
+      "status": "proven",
+      "changed_paths": [
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_supervisor.py",
+        ".orchestrator/task-briefs/sup_assignment_fallback_atomic_rebinds_operator_v4_20260802.md",
+        "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json",
+        "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.md"
+      ]
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned; pytest and project imports verified"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py -k 'pair_planner or normalize_mainline_task_assignment or helper_claim or persist_task_reassignment or WorkerReassignmentTests'",
+      "result": "38 passed, 475 deselected in 3.81s"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
+      "result": "513 passed, 147 subtests passed in 56.73s"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 -m json.tool docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "residual_risks": [
+    "The planner consumes current provider/auth/pause signals; a later signal change is handled by the same fail-closed replanning path rather than this source delivery.",
+    "A compare-and-swap rejection intentionally leaves the newer canonical assignment untouched and requires a subsequent supervisor cycle to plan from fresh state.",
+    "This task is source-only and does not authorize live supervisor rollout or service mutation."
+  ],
+  "review": {
+    "decision": "pending",
+    "reviewer": "Human/Ops",
+    "reviewed_head": null,
+    "pull_request": null,
+    "recorded_at": null,
+    "notes": "Awaiting independent Human/Ops exact-head code, test, scope, source-chain, and evidence review."
+  },
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "base_commit": "c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65",
+    "anchor_commit": "db6e23c3cfe79e6dcdb91c4df86f5eff7ad33062",
+    "implementation_head": null,
+    "pull_request": null,
+    "merge_commit": null,
+    "merged_at": null,
+    "rollback": "Revert the V4 task merge commit to restore incumbent field-by-field fallback selection; no state or config migration is required."
+  }
+}
