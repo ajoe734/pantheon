@@ -1,0 +1,109 @@
+{
+  "schema_version": "supervisor_failure_streak_activity_normalizer.v1",
+  "task": {
+    "id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+    "title": "Normalize governed progress from real activity event shapes",
+    "phase": "Supervisor Retry V3 / 2 Activity Normalizer",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801"
+  },
+  "scope": {
+    "owned_layer": "Pure immutable normalization of governed ai-status reviewer reopen and worker-commit activity over the merged V3 failure record.",
+    "not_changing": "Failure recording, retry eligibility, recovery consumption, canonical task state, queues, workers, leases, reservations, provider state, configuration, product controllers, and live services.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "captured_shapes": {
+    "human_ops_reopen": {
+      "source": "PANTHEON_STATUS_ROOT/ai-activity-log.jsonl line 3224 at capture time",
+      "event_id": "ai-status-event-442bd2862f29ac8b52aa46f84fa2191268a2ea233c17c3a3a268a5fda3f1cd4c",
+      "task_id": "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+      "actor": "Human/Ops",
+      "event_type": "reopen",
+      "exact_head": "932a87e59e5a2f54e08e60ce57904c76ecf8ba2f"
+    },
+    "antigravity_worker_commit": {
+      "source": "PANTHEON_STATUS_ROOT/ai-activity-log.jsonl line 2948 at capture time",
+      "event_id": "worker-commit-b77ac064341906b0b5b1caaa07606a2cce87bee3",
+      "task_id": "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "actor": "Antigravity",
+      "event_type": "worker_commit",
+      "exact_head": "b77ac064341906b0b5b1caaa07606a2cce87bee3"
+    }
+  },
+  "contract": {
+    "failure_input": "Exact V3 streak decoded by decode_task_failure_streak; the latest immutable generation is the only failure generation bound by one normalized event.",
+    "baseline": "A lowercase 40-hex rejected_head is required; ABSENT and malformed baselines fail closed.",
+    "identity": "The failure provider must equal normalize_agent_id(owner_at_failure), owner and reviewer must differ, and event task_id/actor must match exactly without aliases.",
+    "reviewer_reopen": "Requires type=reopen, exact reviewer actor, a recomputed ai-status-event SHA-256 identity, a timestamp strictly after failure, and a production review bridge that matches actor/decision/time/rejected head when present.",
+    "worker_commit": "Requires type=worker_commit, exact owner actor, lowercase 40-hex commit, event_id exactly worker-commit-<commit>, and commit different from rejected_head.",
+    "handoff": "Rejected: production ai-status handoff is owner-to-reviewer and is not independent reviewer progress.",
+    "output": "A scalar-only MappingProxyType carrying schema version, stable sha256 generation id, failure generation id, task/provider, event id/type/time/actor, and exact head or ABSENT.",
+    "purity": "The normalizer performs no writes or mutation of the streak, event, canonical task state, runtime state, or provider state."
+  },
+  "deny_matrix": [
+    "missing task_id, agent, event_id, timestamp, or commit",
+    "wrong owner or reviewer",
+    "cross-task event or owner/provider mismatch",
+    "stale or equal-to-failure timestamp",
+    "ABSENT or malformed failure baseline",
+    "same rejected commit replay",
+    "uppercase or malformed head and mismatched worker-commit identity",
+    "malformed ai-status digest identity",
+    "review bridge off the rejected-head lineage",
+    "generic note/progress/last_update, dispatch sync, wake, worker start, test rerun, or PR bind",
+    "owner-to-reviewer handoff of the same head",
+    "missing owner record or owner equal to reviewer"
+  ],
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakActivityNormalizerV3'",
+      "result": "5 passed, 477 deselected, 28 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "482 passed, 94 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q <two captured-shape node ids>",
+      "result": "2 passed"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check origin/dev..HEAD && git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "git merge-base --is-ancestor <each rejected PR #4442 head> HEAD",
+      "result": "all six rejected heads absent"
+    }
+  ],
+  "review": {
+    "decision": "review_pending",
+    "reviewer": "Antigravity",
+    "reviewed_head": null,
+    "reviewed_at": null,
+    "note": "Owner-authored evidence only. Independent exact-head review is required before approval or merge."
+  },
+  "delivery": {
+    "base_sha": "2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+    "implementation_anchor": "51b45f485dea47ebbea41157fd8d81c40ded3745",
+    "pull_request": null,
+    "candidate_head": null,
+    "rollout": "source merge only",
+    "rollback": "revert this task, then SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+  }
+}
