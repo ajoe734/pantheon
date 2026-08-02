@@ -7432,6 +7432,131 @@ class ReservedRuntimeSlowIOTests(unittest.TestCase):
             except OSError:
                 pass
 
+    def test_phase_error_after_launch_adopts_durable_receipt(self) -> None:
+        """A post-launch receipt survives an exception before whole-state CAS."""
+
+        event_id = "evt-launch-receipt"
+        self.event_queue_path.write_text(
+            json.dumps(
+                {
+                    "event_id": event_id,
+                    "task_id": "SLOW-IO-1",
+                    "target_agent": "codex",
+                    "provider": "codex",
+                    "reason": "manual_dispatch",
+                    "message": "wake SLOW-IO-1",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        delivery = mock.Mock(
+            ok=True,
+            mode="codex",
+            run_id="codex-launch-receipt-run",
+            pid=process.pid,
+            session_id=None,
+            resume_token=None,
+            pr_url=None,
+            session_url=None,
+            command=["codex", "exec"],
+            log_path=None,
+            payload_path=None,
+            manual_confirmation_required=False,
+            auto_delivered=True,
+            notes="started",
+            adapter="codex",
+            metadata={},
+        )
+        delivery.as_dict.return_value = {"auto_delivered": True}
+        adapter = mock.Mock()
+        adapter.deliver.return_value = delivery
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake SLOW-IO-1",
+            task_id="SLOW-IO-1",
+            reason="manual_dispatch",
+            context_files=[],
+            target_files=[],
+            metadata={"workspace_path": str(self.root)},
+        )
+
+        def failing_operation(state: dict[str, object]) -> bool:
+            started, run_id, _delivery = supervisor.start_worker_for_request(
+                self.config,
+                state,
+                {},
+                request,
+                queue_event_id=event_id,
+                attempt_count=1,
+                event_id_for_log=event_id,
+            )
+            self.assertTrue(started)
+            self.assertEqual(run_id, "codex-launch-receipt-run")
+            raise RuntimeError("injected after durable launch receipt")
+
+        try:
+            with (
+                mock.patch.object(supervisor, "build_adapter", return_value=adapter),
+                mock.patch.object(supervisor, "worker_commit_progress_snapshot", return_value={}),
+                mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "status_command_runtime_record_from_env",
+                    return_value={},
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected after durable launch receipt",
+                ):
+                    supervisor._run_reserved_runtime_phase(
+                        self.config,
+                        "process_queue",
+                        failing_operation,
+                    )
+
+            interrupted = runtime_state.load_runtime_state(self.config)
+            reservation = interrupted["supervisor"]["runtime_phase_reservations"][
+                "process_queue"
+            ]
+            self.assertEqual(
+                reservation["launch_receipt"]["worker"]["run_id"],
+                "codex-launch-receipt-run",
+            )
+            self.assertNotIn("codex-launch-receipt-run", interrupted["workers"])
+
+            forbidden_redispatch = mock.Mock(return_value=True)
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    forbidden_redispatch,
+                )
+            )
+            forbidden_redispatch.assert_not_called()
+            recovered = runtime_state.load_runtime_state(self.config)
+            self.assertEqual(
+                recovered["workers"]["codex-launch-receipt-run"]["pid"],
+                process.pid,
+            )
+            self.assertEqual(
+                recovered["queue"]["events"][event_id]["status"],
+                "started",
+            )
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            process.wait(timeout=5)
+
 
 class TaskStateShadowCatchupTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -8653,6 +8778,9 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         locked_operation_source = inspect.getsource(
             supervisor._run_with_deferred_dispatch_status_syncs
         )
+        measured_lock_source = inspect.getsource(
+            supervisor._measured_runtime_state_lock
+        )
         locked_cycle_source = inspect.getsource(supervisor._run_once_locked)
         queue_writer_source = inspect.getsource(supervisor.save_event_queue)
 
@@ -8684,8 +8812,12 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.assertIn("continue_or_skip_empty", run_once_source)
         self.assertNotIn("continue_or_skip_empty", locked_cycle_source)
         self.assertIn(
-            "with runtime_state_lock(config, shared=False",
+            "with _measured_runtime_state_lock(config)",
             locked_operation_source,
+        )
+        self.assertIn(
+            "with runtime_state_lock(config, shared=False",
+            measured_lock_source,
         )
         deferred_flush_source = inspect.getsource(
             supervisor._flush_deferred_runtime_side_effects

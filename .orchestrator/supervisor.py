@@ -10510,6 +10510,7 @@ def _runtime_launch_marker_candidate(
     agent_ids = {
         normalize_agent_id(str(intent.get("agent_id") or "")),
         normalize_agent_id(str(intent.get("provider") or "")),
+        normalize_agent_id(str(intent.get("adapter_name") or "")),
     }
     agent_ids.discard("")
     try:

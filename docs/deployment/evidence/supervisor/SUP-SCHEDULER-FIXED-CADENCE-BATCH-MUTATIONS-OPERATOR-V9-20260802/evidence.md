@@ -26,13 +26,23 @@ Slow provider/auth work, assistant-bridge subprocesses, GitHub reads, merged-PR 
 
 Worker marker/process/git observation, `process_queue` worktree preparation and adapter launch, and inactive/orphan/chair-review pruning now run in tokenized reservation phases. Each phase reserves in one short transaction, performs slow I/O against a detached snapshot with audit/status effects deferred, then commits in a second short whole-state CAS. If another runtime writer changes the state, that writer wins; the reserved snapshot is discarded and any process generation launched by the losing phase is terminated fail-closed.
 
+Before an adapter may launch a process, the exact phase token now publishes a durable launch intent containing the task, queue event, provider/agent, attempt, and request snapshot. A successful adapter result publishes the complete worker launch receipt before whole-state CAS. After supervisor death, a receipt is adopted directly; if death occurred after the external launch but before the receipt, the next phase adopts the one post-intent worker-runner marker and its exact PID start generation. An unresolved or ambiguous intent remains reserved and cannot redispatch.
+
 Dispatch never performs a recovery network fetch under runtime admission. If a ref was not recorded by the pre-admission fetch, an already-resolving local ref is safe to reuse; an unresolved ref fails closed until a later pre-admission fetch succeeds.
 
 ## Bounded telemetry
 
-Runtime telemetry stores aggregate scalars only: cycle elapsed, per-phase count/total/max, runtime lock hold, cadence overshoot/skips, queue-to-start count/average/max, and batch counts. Phase names and batch keys are source-owned and capped at 64 and 16 rows. No task body, event body, provider output, credentials, or unbounded timing history is retained.
+Runtime telemetry stores aggregate scalars only: cycle elapsed, per-phase count/total/max, runtime lock hold, cadence overshoot/skips, queue-to-start count/average/max, and batch counts. Runtime lock timing begins only after blocking acquisition succeeds, so contention wait and exclusive hold remain distinct evidence. Phase names and batch keys are source-owned and capped at 64 and 16 rows. No task body, event body, provider output, credentials, or unbounded timing history is retained.
 
 The bounded sample is persisted only after reserved process/poll/prune phases, deferred activity/status/archive work, dashboard refresh, and runtime summary. Its elapsed time therefore covers the complete cycle. Scheduler completion telemetry is exception-isolated so a failed runtime-state read or write cannot terminate the deadline loop or stop later cycles.
+
+## Rejected-head remediation
+
+Human/Ops rejected PR #4520 head `015d02d32239d03ebdf77b7fc888164ff893a775`. This repaired head addresses all three blocking findings:
+
+1. A forked hard-crash injection exits the supervisor with code 77 after an external process is alive and before the reserved phase can publish a worker row or CAS. The persisted launch intent is then adopted into one worker and queue lease before the redispatch callback can run. A separate exception injection proves the post-launch receipt path.
+2. Deferred worker termination confirmation is flushed after runtime admission releases even when the locked operation raises; the original operation error is re-raised only after cleanup.
+3. A deterministic clock injects 12 seconds of acquisition wait and 0.25 seconds of exclusive ownership; `runtime_lock_hold_seconds` reports only 0.25 seconds.
 
 ## Governance
 
@@ -42,8 +52,8 @@ No live service was restarted or deployed. Live promotion belongs to the depende
 
 ## Validation
 
-- Supervisor: 561 tests passed.
-- ai-status: 165 tests passed.
+- Supervisor: 565 tests and 158 subtests passed.
+- ai-status: 165 tests and 31 subtests passed.
 - `py_compile`: passed.
 - JSON validation and `git diff --check`: passed.
 
