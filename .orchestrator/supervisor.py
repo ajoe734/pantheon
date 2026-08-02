@@ -206,6 +206,14 @@ NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
     r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
     re.IGNORECASE,
 )
+RUNNER_FAILURE_STATUSES = frozenset({"error", "failed", "terminated"})
+PROVIDER_STREAM_FAILURE_STATUSES = frozenset(
+    {"blocked", "denied", "error", "failed", "rate_limited", "rejected"}
+)
+PROVIDER_STREAM_FAILURE_TYPES = frozenset({"error", "failure"})
+PROVIDER_STREAM_FAILURE_SUBTYPES = frozenset(
+    {"error", "error_during_execution", "failed", "failure"}
+)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
@@ -5167,6 +5175,89 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
                 break
 
 
+def worker_has_authoritative_runner_failure(worker: dict[str, Any]) -> bool:
+    """Return whether worker_runner published a terminal failure marker.
+
+    The provider transcript is mixed-trust content: prompts, tool output,
+    source snippets, and provider stderr all share one log.  A regex match in
+    that file is therefore not evidence that the provider failed.  The runner
+    status file is the authority for plain-text CLIs and is copied onto the
+    worker record by ``update_worker_runtime_markers``.
+    """
+
+    return str(worker.get("runner_status") or "").strip().lower() in RUNNER_FAILURE_STATUSES
+
+
+def worker_uses_structured_provider_stream(worker: dict[str, Any]) -> bool:
+    """Return whether top-level JSON lines are provider stream envelopes."""
+
+    provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
+    mode = str(worker.get("mode") or "").strip().lower()
+    if provider.startswith(("claude", "qwen")) or mode in {"claude_cli", "qwen"}:
+        return True
+    command = worker.get("command")
+    if not isinstance(command, list):
+        return False
+    normalized = [str(part).strip().lower() for part in command]
+    return "--output-format" in normalized and "stream-json" in normalized
+
+
+def is_authoritative_provider_failure_envelope(
+    worker: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Recognize terminal control envelopes, never arbitrary JSON content."""
+
+    if not worker_uses_structured_provider_stream(worker):
+        return False
+    message = payload.get("message")
+    role = message.get("role") if isinstance(message, dict) else None
+    if payload.get("type") == "user" or role == "user":
+        return False
+
+    info = rate_limit_info_payload(payload)
+    if info is not None:
+        status = str(info.get("status") or "").strip().lower()
+        return status in PROVIDER_STREAM_FAILURE_STATUSES
+
+    payload_type = str(payload.get("type") or "").strip().lower()
+    payload_status = str(payload.get("status") or "").strip().lower()
+    payload_subtype = str(payload.get("subtype") or "").strip().lower()
+    if payload_type in PROVIDER_STREAM_FAILURE_TYPES:
+        return True
+    if payload_type != "result":
+        return False
+    return bool(
+        payload.get("is_error") is True
+        or payload.get("error") not in (None, "", {}, [])
+        or payload_status in PROVIDER_STREAM_FAILURE_STATUSES
+        or payload_subtype in PROVIDER_STREAM_FAILURE_SUBTYPES
+    )
+
+
+def is_runner_gated_provider_error_envelope(
+    worker: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Recognize a retry/error control event after the runner failed.
+
+    Claude and Qwen can emit a structured retry record followed by ordinary
+    assistant text.  The assistant text is not authoritative, but the control
+    record is once the runner independently reports terminal failure.
+    """
+
+    if not worker_uses_structured_provider_stream(worker):
+        return False
+    payload_type = str(payload.get("type") or "").strip().lower()
+    payload_subtype = str(payload.get("subtype") or "").strip().lower()
+    return bool(
+        payload_type == "system"
+        and payload_subtype in {"api_error", "api_retry"}
+        and (
+            payload.get("error") not in (None, "", {}, [])
+            or payload.get("error_status") not in (None, "")
+        )
+    )
+
+
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     log_path_value = worker.get("log_path")
     if not log_path_value:
@@ -5179,6 +5270,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     except OSError:
         return None
 
+    runner_failed = worker_has_authoritative_runner_failure(worker)
     fallback: str | None = None
     for idx in range(len(lines) - 1, -1, -1):
         line = lines[idx]
@@ -5192,6 +5284,10 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         except json.JSONDecodeError:
             stream_payload = None
         if isinstance(stream_payload, dict):
+            if is_authoritative_provider_failure_envelope(worker, stream_payload):
+                return stripped
+            if runner_failed and is_runner_gated_provider_error_envelope(worker, stream_payload):
+                return stripped
             if is_captured_orchestrator_record(stream_payload):
                 continue
             if is_allowed_rate_limit_event(stream_payload):
@@ -5200,6 +5296,13 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             role = message.get("role") if isinstance(message, dict) else None
             if stream_payload.get("type") == "user" or role == "user":
                 continue
+            # A top-level JSON object which is not one of the provider control
+            # envelopes above is transcript content.  Do not regex its nested
+            # strings: assistant prose, tool results, fixtures, and source all
+            # legitimately contain words such as quota and authentication.
+            continue
+        if not runner_failed:
+            continue
         if is_allowed_rate_limit_line(stripped):
             continue
         if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
