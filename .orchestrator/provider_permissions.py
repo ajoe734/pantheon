@@ -11,7 +11,7 @@ import subprocess
 import threading
 
 import model_rotation
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -87,10 +87,23 @@ CODEX_MODELS_CACHE_SCHEMA_MARKERS = (
 )
 CODEX_MODELS_CACHE_FILENAME = "models_cache.json"
 _CODEX_QUOTA_RESET_ISO_PATTERN = re.compile(
-    r"(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))"
+    r"(?<![A-Za-z0-9])(?:reset(?:s)?(?:[_\s-]*at)?|try\s+again\s+at)"
+    r"(?![A-Za-z0-9])[^0-9]{0,32}"
+    r"(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))",
+    re.IGNORECASE,
 )
 _CODEX_QUOTA_RESET_EPOCH_PATTERN = re.compile(
     r'"?resetsAt"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
+    re.IGNORECASE,
+)
+_CODEX_QUOTA_RESET_HUMAN_DATE_PATTERN = re.compile(
+    r"\btry\s+again\s+at\s+"
+    r"(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<year>\d{4})\s+(?P<clock>\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)\b",
+    re.IGNORECASE,
+)
+_CODEX_QUOTA_RESET_HUMAN_TIME_PATTERN = re.compile(
+    r"\btry\s+again\s+at\s+(?P<clock>\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)\b",
     re.IGNORECASE,
 )
 _CODEX_CACHE_RECOVERY_LOCKS: dict[str, threading.Lock] = {}
@@ -165,6 +178,8 @@ def _codex_runtime_env(config: dict[str, Any] | None = None, provider_id: str = 
         api_key_value = env.get(api_key_env) or base_env.get(api_key_env) or ""
         if api_key_value:
             env["OPENAI_API_KEY"] = api_key_value
+        elif api_key_env != "OPENAI_API_KEY":
+            env.pop("OPENAI_API_KEY", None)
     else:
         env.pop("OPENAI_API_KEY", None)
     codex_home = str(codex_settings.get("codex_home") or codex_settings.get("config_home") or "").strip()
@@ -190,6 +205,8 @@ def _codex_runtime_env_with_overrides(
         api_key_env = str(codex_settings.get("api_key_env") or "").strip()
         if api_key_env and runtime_env.get(api_key_env):
             runtime_env["OPENAI_API_KEY"] = runtime_env[api_key_env]
+        elif api_key_env and api_key_env != "OPENAI_API_KEY":
+            runtime_env.pop("OPENAI_API_KEY", None)
     return runtime_env
 
 
@@ -401,8 +418,12 @@ def _codex_models_cache_schema_incompatible(output: str | None) -> bool:
     return all(marker.lower() in normalized for marker in CODEX_MODELS_CACHE_SCHEMA_MARKERS)
 
 
-def _codex_quota_reset_at(output: str | None) -> str | None:
-    """Extract one sanitized UTC reset timestamp without retaining payloads."""
+def _codex_quota_reset_at(
+    output: str | None,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Extract one reset-context-bound UTC timestamp without retaining payloads."""
 
     text = str(output or "")
     match = _CODEX_QUOTA_RESET_ISO_PATTERN.search(text)
@@ -420,6 +441,51 @@ def _codex_quota_reset_at(output: str | None) -> str | None:
         except (OverflowError, OSError, ValueError):
             return None
         return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    local_now = now or datetime.now().astimezone()
+    if local_now.tzinfo is None:
+        local_now = local_now.replace(tzinfo=timezone.utc)
+    human_date_match = _CODEX_QUOTA_RESET_HUMAN_DATE_PATTERN.search(text)
+    if human_date_match:
+        human_value = (
+            f"{human_date_match.group('month')} {human_date_match.group('day')} "
+            f"{human_date_match.group('year')} {human_date_match.group('clock')}"
+        )
+        parsed = None
+        for format_string in ("%b %d %Y %I:%M %p", "%B %d %Y %I:%M %p", "%b %d %Y %I:%M:%S %p", "%B %d %Y %I:%M:%S %p"):
+            try:
+                parsed = datetime.strptime(human_value, format_string)
+                break
+            except ValueError:
+                continue
+        if parsed is not None:
+            return (
+                parsed.replace(tzinfo=local_now.tzinfo)
+                .astimezone(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+    human_time_match = _CODEX_QUOTA_RESET_HUMAN_TIME_PATTERN.search(text)
+    if human_time_match:
+        parsed_clock = None
+        for format_string in ("%I:%M %p", "%I:%M:%S %p"):
+            try:
+                parsed_clock = datetime.strptime(human_time_match.group("clock"), format_string)
+                break
+            except ValueError:
+                continue
+        if parsed_clock is not None:
+            candidate = local_now.replace(
+                hour=parsed_clock.hour,
+                minute=parsed_clock.minute,
+                second=parsed_clock.second,
+                microsecond=0,
+            )
+            if candidate <= local_now:
+                candidate += timedelta(days=1)
+            return candidate.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     return None
 
 
@@ -457,6 +523,16 @@ def _codex_models_cache_path(
     effective_home = Path(str(env.get("CODEX_HOME") or configured_home)).expanduser()
     if not configured_home.is_absolute() or not effective_home.is_absolute():
         return None, "provider_home_not_absolute"
+    for provider_home in (configured_home, effective_home):
+        current = Path(provider_home.anchor)
+        for component in provider_home.parts[1:]:
+            current /= component
+            try:
+                component_stat = current.lstat()
+            except OSError:
+                return None, "provider_home_unavailable"
+            if stat.S_ISLNK(component_stat.st_mode):
+                return None, "provider_home_unsafe"
     configured_home = Path(os.path.abspath(configured_home))
     effective_home = Path(os.path.abspath(effective_home))
     if configured_home != effective_home:
@@ -667,7 +743,7 @@ def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str
     metadata = {
         "auth_file_exists": auth_path.exists(),
         "api_key_env_configured": bool(api_key_env),
-        "api_key_env_present": bool(api_key_env and env.get("OPENAI_API_KEY")),
+        "api_key_env_present": bool(api_key_env and env.get(api_key_env)),
     }
     return metadata
 

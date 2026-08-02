@@ -787,6 +787,70 @@ EOF
         self.assertEqual(env["CODEX_HOME"], str(home))
         self.assertNotIn("CODEX_SESSION_ID", env)
 
+    def test_codex_auth_probe_honors_configured_api_key_env_without_emitting_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex2"
+            home.mkdir()
+            config = {
+                "providers": {
+                    "codex2": {
+                        "codex": {
+                            "codex_home": str(home),
+                            "api_key_env": "CODEX2_TEST_API_KEY",
+                        }
+                    }
+                }
+            }
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with (
+                mock.patch.dict(os.environ, {"CODEX2_TEST_API_KEY": "test-secret"}, clear=True),
+                mock.patch.object(provider_permissions, "run_command", return_value=completed) as run_command,
+            ):
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex2",
+                    "/usr/bin/codex",
+                    force=True,
+                )
+
+        self.assertTrue(probe["ready"])
+        self.assertEqual(probe["method"], "codex_exec_api_key")
+        self.assertEqual(run_command.call_args.kwargs["env"]["OPENAI_API_KEY"], "test-secret")
+        serialized_metadata = json.dumps(probe["metadata"], sort_keys=True)
+        self.assertNotIn("CODEX2_TEST_API_KEY", serialized_metadata)
+        self.assertNotIn("test-secret", serialized_metadata)
+
+    def test_codex_auth_probe_does_not_substitute_unconfigured_openai_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex2"
+            home.mkdir()
+            config = {
+                "providers": {
+                    "codex2": {
+                        "codex": {
+                            "codex_home": str(home),
+                            "api_key_env": "CODEX2_TEST_API_KEY",
+                        }
+                    }
+                }
+            }
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "unrelated-secret"}, clear=True),
+                mock.patch.object(provider_permissions, "run_command") as run_command,
+            ):
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex2",
+                    "/usr/bin/codex",
+                    force=True,
+                )
+
+        self.assertFalse(probe["ready"])
+        self.assertEqual(probe["status"], "auth_material_missing")
+        self.assertFalse(probe["metadata"]["api_key_env_present"])
+        self.assertNotIn("CODEX2_TEST_API_KEY", json.dumps(probe["metadata"], sort_keys=True))
+        run_command.assert_not_called()
+
     def test_codex_auth_ready_false_on_revoked_refresh_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir) / "codex2"
@@ -985,6 +1049,41 @@ EOF
             self.assertEqual(outside.read_text(encoding="utf-8"), "do-not-move")
             run_command.assert_called_once()
 
+    def test_codex_cache_recovery_fails_closed_for_provider_home_ancestor_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real_parent = Path(tmpdir) / "real-parent"
+            real_home = real_parent / "codex"
+            real_home.mkdir(parents=True)
+            (real_home / "auth.json").write_text("{}", encoding="utf-8")
+            cache = real_home / "models_cache.json"
+            cache.write_text("incompatible", encoding="utf-8")
+            linked_parent = Path(tmpdir) / "linked-parent"
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+            configured_home = linked_parent / "codex"
+            config = self._codex_cache_config(configured_home)
+            with mock.patch.object(
+                provider_permissions,
+                "run_command",
+                return_value=self._codex_cache_failure(),
+            ) as run_command:
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                    recover_incompatible_models_cache=True,
+                )
+
+            self.assertFalse(probe["ready"])
+            self.assertEqual(probe["status"], "models_cache_recovery_failed")
+            self.assertEqual(
+                probe["metadata"]["models_cache_recovery"]["reason"],
+                "provider_home_unsafe",
+            )
+            self.assertTrue(cache.exists())
+            self.assertEqual(list(real_home.glob("models_cache.json.quarantine.*")), [])
+            run_command.assert_called_once()
+
     def test_codex_cache_recovery_fails_closed_for_unowned_provider_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir) / "codex"
@@ -1104,6 +1203,82 @@ EOF
         self.assertEqual(status, "quota_reached")
         self.assertEqual(error, "Codex usage limit reached.")
         self.assertIsNone(provider_permissions._codex_quota_reset_at(error))
+
+    def test_codex_usage_limit_observed_human_reset_ignores_unrelated_log_timestamp(self) -> None:
+        reset_at = provider_permissions._codex_quota_reset_at(
+            "2026-08-02T16:01:06Z ERROR: You've hit your usage limit. "
+            "Visit https://chatgpt.com/codex/settings/usage to purchase more credits "
+            "or try again at Aug 9th, 2026 5:10 AM.",
+            now=datetime(2026, 8, 2, 16, 1, 6, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(reset_at, "2026-08-09T05:10:00Z")
+
+    def test_codex_usage_limit_time_only_reset_uses_next_local_occurrence(self) -> None:
+        reset_at = provider_permissions._codex_quota_reset_at(
+            "ERROR: You've hit your usage limit; try again at 4:55 PM.",
+            now=datetime(2026, 8, 2, 17, 0, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(reset_at, "2026-08-03T16:55:00Z")
+
+    def test_codex_usage_limit_probe_without_reset_omits_quota_reset_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            config = self._codex_cache_config(home)
+            quota = subprocess.CompletedProcess(
+                ["codex"],
+                1,
+                "",
+                "ERROR: You've hit your usage limit.",
+            )
+            with mock.patch.object(provider_permissions, "run_command", return_value=quota):
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                )
+
+        self.assertFalse(probe["ready"])
+        self.assertEqual(probe["status"], "quota_reached")
+        self.assertNotIn("quota_reset_at", probe)
+
+    def test_codex_generic_malformed_cache_failure_is_never_quarantined(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            cache = home / "models_cache.json"
+            cache.write_text("malformed", encoding="utf-8")
+            config = self._codex_cache_config(home)
+            malformed = subprocess.CompletedProcess(
+                ["codex"],
+                1,
+                "",
+                "failed to load models_cache.json: expected value at line 1 column 1",
+            )
+            with mock.patch.object(
+                provider_permissions,
+                "run_command",
+                return_value=malformed,
+            ) as run_command:
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                    recover_incompatible_models_cache=True,
+                )
+
+            self.assertFalse(probe["ready"])
+            self.assertEqual(probe["status"], "exit_1")
+            self.assertNotIn("models_cache_recovery", probe["metadata"])
+            self.assertTrue(cache.exists())
+            self.assertEqual(list(home.glob("models_cache.json.quarantine.*")), [])
+            run_command.assert_called_once()
 
     def test_codex_probe_timeout_stays_fail_closed_without_cache_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
