@@ -5,8 +5,8 @@
     "title": "Gate worker failures on authoritative terminal envelopes",
     "phase": "Supervisor reliability / authoritative failure detection",
     "owner": "Codex",
-    "reviewer": "Codex2",
-    "status": "review",
+    "reviewer": "Human/Ops",
+    "status": "review_approved",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802"
@@ -70,13 +70,25 @@
     }
   ],
   "review": {
-    "decision": "pending",
-    "reviewer": "Codex2",
-    "required_gate": "Pantheon canonical review gate on the exact PR head"
+    "decision": "approved",
+    "reviewer": "Human/Ops",
+    "reviewed_head": "2f9f77b475cf2287e44da988ccd01a02e450cef4",
+    "pull_request": 4482,
+    "recorded_at": "2026-08-02T05:30:28Z",
+    "gate": {
+      "context": "Pantheon canonical review gate",
+      "state": "success",
+      "status_id": 51496748158
+    },
+    "notes": "Exact-head diff was limited to the four declared files; independent focused replay, full supervisor regression, and all eight GitHub checks passed."
   },
   "delivery": {
     "implementation_anchor": "50d9943947766271a887b124b4aad8cb9c439dc6",
+    "implementation_head": "2f9f77b475cf2287e44da988ccd01a02e450cef4",
     "base_sha_at_verification": "2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+    "pull_request": 4482,
+    "merge_commit": "4c5dcf4a55307776765bc402454e4a44c61259e2",
+    "merged_at": "2026-08-02T05:37:23Z",
     "generated_at": "2026-08-02T04:43:06Z"
   }
 }

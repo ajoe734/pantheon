@@ -2,7 +2,7 @@
 
 Task: Gate worker failures on authoritative terminal envelopes
 
-Owner: Codex · Reviewer: Codex2 · Status: **review pending**
+Owner: Codex · Reviewer: Human/Ops · Status: **review approved**
 
 ## Scope
 
@@ -47,9 +47,17 @@ runtime-state JSON, live process signals, or product behavior.
   — passed.
 - `git diff --check` — passed.
 
-## Review boundary
+## Review and delivery
 
-Independent Codex2 exact-head review is pending. The reviewer must bind this
-manifest through the governed `REVIEW_FILE` approval path. No implementation
-claim in this packet changes the configured account, reviewer, or runtime
-policy layers.
+Human/Ops approved PR #4482 at exact head
+`2f9f77b475cf2287e44da988ccd01a02e450cef4` through the Pantheon canonical
+review gate (`success`, status id `51496748158`) at
+`2026-08-02T05:30:28Z`. The approved head merged to `dev` as
+`4c5dcf4a55307776765bc402454e4a44c61259e2` at
+`2026-08-02T05:37:23Z`.
+
+The closeout-only evidence update records that already-governed decision and
+repairs the final task commit metadata after the canonical reviewer changed
+from Codex2 to Human/Ops. It does not change implementation behavior or the
+configured account, reviewer-policy, or runtime layers. The closeout commit
+still requires its own exact-head Human/Ops review before it may merge.
