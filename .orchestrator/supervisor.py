@@ -18499,26 +18499,28 @@ def run_once(
         if isinstance(postlock_state, dict):
             _safe_phase(
                 "log_runtime_summary",
-                log_runtime_summary,
-                postlock_state,
-                safe_load_approval_state(config),
-                changed=changed,
+                lambda: log_runtime_summary(
+                    postlock_state,
+                    safe_load_approval_state(config),
+                    changed=changed,
+                    quiet=quiet,
+                    verbose=verbose,
+                    previous_heartbeat=(
+                        (github_runtime_snapshot.get("supervisor") or {}).get(
+                            "last_heartbeat_at"
+                        )
+                        if isinstance(github_runtime_snapshot, dict)
+                        else None
+                    ),
+                    warn_after_seconds=float(
+                        config.get("supervisor", {}).get(
+                            "heartbeat_warn_after_seconds",
+                            10.0,
+                        )
+                    ),
+                    once=once,
+                ),
                 quiet=quiet,
-                verbose=verbose,
-                previous_heartbeat=(
-                    (github_runtime_snapshot.get("supervisor") or {}).get(
-                        "last_heartbeat_at"
-                    )
-                    if isinstance(github_runtime_snapshot, dict)
-                    else None
-                ),
-                warn_after_seconds=float(
-                    config.get("supervisor", {}).get(
-                        "heartbeat_warn_after_seconds",
-                        10.0,
-                    )
-                ),
-                once=once,
             )
         _safe_phase(
             "persist_complete_cycle_metrics",

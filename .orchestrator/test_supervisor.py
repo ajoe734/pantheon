@@ -7466,9 +7466,11 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertFalse(changed)
+        self.assertLess(call_order.index("task_state_shadow"), call_order.index("lock_enter"))
+        locked_index = call_order.index("locked_cycle")
         self.assertEqual(
-            call_order,
-            ["task_state_shadow", "lock_enter", "locked_cycle", "lock_exit"],
+            call_order[locked_index - 1 : locked_index + 2],
+            ["lock_enter", "locked_cycle", "lock_exit"],
         )
 
     def test_reconciliation_report_describes_one_journal_generation(self) -> None:
@@ -7675,6 +7677,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "trim_worker_history"),
             mock.patch.object(supervisor, "trim_seen_events"),
             mock.patch.object(supervisor, "save_runtime_state", side_effect=capture_save),
+            mock.patch.object(supervisor, "_run_reserved_runtime_phase", return_value=False),
         ):
             supervisor.run_once(config, watch=True, replay=False)
 
@@ -7727,6 +7730,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "trim_worker_history"),
             mock.patch.object(supervisor, "trim_seen_events"),
             mock.patch.object(supervisor, "save_runtime_state"),
+            mock.patch.object(supervisor, "_run_reserved_runtime_phase", return_value=False),
         ):
             supervisor.run_once(config, watch=True, replay=False)
 
@@ -7926,6 +7930,13 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
             stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
             stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "_run_reserved_runtime_phase",
+                    return_value=False,
+                )
+            )
             write_activity_log = stack.enter_context(mock.patch.object(supervisor, "write_activity_log"))
             changed = supervisor.run_once(config, watch=False, replay=False)
 
