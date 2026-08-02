@@ -6556,6 +6556,146 @@ class RuntimeLockHoldTests(unittest.TestCase):
         self.assertEqual(supervisor_state["runtime_lock_hold_peak_seconds"], peak)
 
 
+class FixedCadenceSchedulerTests(unittest.TestCase):
+    class FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+            self.sleeps: list[float] = []
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def sleep(self, seconds: float) -> None:
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    def test_cycle_work_is_subtracted_from_the_deadline_interval(self) -> None:
+        clock = self.FakeClock()
+        starts: list[float] = []
+
+        def cycle() -> None:
+            starts.append(clock.now)
+            clock.now += 3.0
+
+        supervisor.run_deadline_scheduler(
+            cycle,
+            5.0,
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            max_cycles=3,
+        )
+
+        self.assertEqual(starts, [0.0, 5.0, 10.0])
+        self.assertEqual(clock.sleeps, [2.0, 2.0])
+
+    def test_overrun_skips_missed_deadlines_and_never_busy_loops(self) -> None:
+        clock = self.FakeClock()
+        starts: list[float] = []
+        completions: list[dict[str, float]] = []
+
+        def cycle() -> None:
+            starts.append(clock.now)
+            clock.now += 12.0 if len(starts) == 1 else 1.0
+
+        supervisor.run_deadline_scheduler(
+            cycle,
+            5.0,
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            on_cycle_complete=completions.append,
+            max_cycles=3,
+        )
+
+        self.assertEqual(starts, [0.0, 15.0, 20.0])
+        self.assertEqual(clock.sleeps, [3.0, 4.0])
+        self.assertEqual(completions[0]["skipped_deadlines_after_cycle"], 2)
+        self.assertEqual(completions[1]["skipped_deadlines_before_start"], 2)
+
+    def test_slow_every_cycle_still_waits_for_a_future_deadline(self) -> None:
+        clock = self.FakeClock()
+
+        def cycle() -> None:
+            clock.now += 6.0
+
+        supervisor.run_deadline_scheduler(
+            cycle,
+            5.0,
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            max_cycles=3,
+        )
+
+        self.assertEqual(clock.sleeps, [4.0, 4.0])
+        self.assertTrue(all(delay > 0 for delay in clock.sleeps))
+
+    def test_invalid_interval_and_cycle_limit_fail_closed(self) -> None:
+        for interval in (0, -1, float("inf"), float("nan")):
+            with self.subTest(interval=interval), self.assertRaises(ValueError):
+                supervisor.run_deadline_scheduler(lambda: None, interval, max_cycles=0)
+        with self.assertRaises(ValueError):
+            supervisor.run_deadline_scheduler(lambda: None, 1, max_cycles=-1)
+
+
+class BoundedCycleTelemetryTests(unittest.TestCase):
+    def test_phase_queue_lock_and_batch_metrics_are_bounded_aggregates(self) -> None:
+        metrics = {
+            "started_monotonic": 10.0,
+            "phases": {},
+            "batch_counts": {},
+            "cadence": {
+                "scheduled_deadline": 9.5,
+                "start_overshoot_seconds": 0.5,
+                "skipped_deadlines_before_start": 2,
+            },
+        }
+        token = supervisor._CYCLE_METRICS.set(metrics)
+        try:
+            supervisor._record_cycle_phase_elapsed("poll_workers", 1.25)
+            supervisor._record_cycle_phase_elapsed("poll_workers", 0.75)
+            supervisor._record_cycle_batch_count("canonical_dispatch_mutations", 3)
+            state: dict[str, object] = {}
+            latency = supervisor.record_queue_to_start_latency(
+                state,
+                {"created_at": "2026-08-02T14:00:00Z", "secret": "not retained"},
+                started_at=datetime(2026, 8, 2, 14, 0, 7, tzinfo=timezone.utc),
+            )
+            metrics["runtime_lock_hold_seconds"] = 0.25
+            snapshot = supervisor._bounded_cycle_metrics_snapshot(
+                finished_monotonic=13.0,
+            )
+        finally:
+            supervisor._CYCLE_METRICS.reset(token)
+
+        self.assertEqual(latency, 7.0)
+        self.assertEqual(snapshot["cycle_elapsed_seconds"], 3.0)
+        self.assertEqual(
+            snapshot["phase_elapsed"]["poll_workers"],
+            {"count": 2, "elapsed_seconds": 2.0, "max_seconds": 1.25},
+        )
+        self.assertEqual(snapshot["queue_to_start"]["average_seconds"], 7.0)
+        self.assertEqual(snapshot["batch_counts"]["canonical_dispatch_mutations"], 3)
+        self.assertNotIn("secret", json.dumps(snapshot))
+        self.assertEqual(state["supervisor"]["queue_to_start_latency_seconds"], 7.0)
+
+    def test_phase_cardinality_is_capped(self) -> None:
+        metrics = {"started_monotonic": 0.0, "phases": {}, "batch_counts": {}}
+        token = supervisor._CYCLE_METRICS.set(metrics)
+        try:
+            for index in range(supervisor.CYCLE_PHASE_METRICS_MAX + 20):
+                supervisor._record_cycle_phase_elapsed(f"phase-{index}", 0.1)
+            snapshot = supervisor._bounded_cycle_metrics_snapshot(
+                finished_monotonic=1.0,
+            )
+        finally:
+            supervisor._CYCLE_METRICS.reset(token)
+
+        self.assertLessEqual(
+            len(snapshot["phase_elapsed"]),
+            supervisor.CYCLE_PHASE_METRICS_MAX,
+        )
+        self.assertIn("other", snapshot["phase_elapsed"])
+
+
 class TaskStateShadowCatchupTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

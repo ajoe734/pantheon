@@ -66,7 +66,7 @@ from common import (
     write_failure_evidence,
     write_json,
     write_status,
-    write_activity_log,
+    write_activity_log as _write_activity_log_immediate,
     worker_runtime_paths,
 )
 from coordination_file_watcher import sync_coordination_files
@@ -146,10 +146,174 @@ _DEFERRED_AUTO_COMMIT_ARCHIVES: ContextVar[
     "deferred_auto_commit_archives",
     default=None,
 )
+_DEFERRED_ACTIVITY_EVENTS: ContextVar[
+    list[tuple[dict[str, Any], dict[str, Any]]] | None
+] = ContextVar(
+    "deferred_supervisor_activity_events",
+    default=None,
+)
 _PREFETCHED_WORKER_BASE_REFS: ContextVar[frozenset[str] | None] = ContextVar(
     "prefetched_worker_base_refs",
     default=None,
 )
+_CYCLE_METRICS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "supervisor_cycle_metrics",
+    default=None,
+)
+_SCHEDULED_CYCLE_SAMPLE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "supervisor_scheduled_cycle_sample",
+    default=None,
+)
+
+
+CYCLE_PHASE_METRICS_MAX = 64
+CYCLE_BATCH_COUNT_MAX = 16
+
+
+def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
+    """Defer audit filesystem I/O while runtime admission is exclusive.
+
+    The entry is copied at the call boundary so later runtime-state mutation
+    cannot change the audit payload.  Outside a supervisor transaction the
+    canonical writer is used immediately, preserving direct-call behavior.
+    """
+
+    deferred = _DEFERRED_ACTIVITY_EVENTS.get()
+    if deferred is not None:
+        deferred.append((config, deepcopy(entry)))
+        return
+    _write_activity_log_immediate(config, entry)
+
+
+def _record_cycle_phase_elapsed(name: str, elapsed_seconds: float) -> None:
+    """Accumulate one bounded phase timing for the active cycle.
+
+    Phase names are source-owned constants passed to ``_safe_phase``.  Keeping
+    one aggregate row per name avoids placing task ids, provider output, or an
+    ever-growing timing history in runtime state.
+    """
+
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return
+    phases = metrics.setdefault("phases", {})
+    if name not in phases and len(phases) >= CYCLE_PHASE_METRICS_MAX - 1:
+        name = "other"
+    row = phases.setdefault(
+        name,
+        {"count": 0, "elapsed_seconds": 0.0, "max_seconds": 0.0},
+    )
+    elapsed = max(0.0, float(elapsed_seconds))
+    row["count"] = int(row.get("count", 0)) + 1
+    row["elapsed_seconds"] = float(row.get("elapsed_seconds", 0.0)) + elapsed
+    row["max_seconds"] = max(float(row.get("max_seconds", 0.0)), elapsed)
+
+
+def _record_cycle_batch_count(name: str, count: int) -> None:
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return
+    batches = metrics.setdefault("batch_counts", {})
+    if name not in batches and len(batches) >= CYCLE_BATCH_COUNT_MAX - 1:
+        name = "other"
+    batches[name] = int(batches.get(name, 0)) + max(0, int(count))
+
+
+def _bounded_cycle_metrics_snapshot(*, finished_monotonic: float) -> dict[str, Any] | None:
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return None
+    started = float(metrics.get("started_monotonic", finished_monotonic))
+    phases = {
+        str(name)[:80]: {
+            "count": int(row.get("count", 0)),
+            "elapsed_seconds": round(float(row.get("elapsed_seconds", 0.0)), 3),
+            "max_seconds": round(float(row.get("max_seconds", 0.0)), 3),
+        }
+        for name, row in list((metrics.get("phases") or {}).items())[
+            :CYCLE_PHASE_METRICS_MAX
+        ]
+        if isinstance(row, dict)
+    }
+    snapshot: dict[str, Any] = {
+        "schema_version": 1,
+        "cycle_elapsed_seconds": round(max(0.0, finished_monotonic - started), 3),
+        "phase_elapsed": phases,
+        "batch_counts": {
+            str(name)[:80]: max(0, int(count))
+            for name, count in list((metrics.get("batch_counts") or {}).items())[
+                :CYCLE_BATCH_COUNT_MAX
+            ]
+        },
+    }
+    cadence = metrics.get("cadence")
+    if isinstance(cadence, dict):
+        snapshot["cadence"] = {
+            "scheduled_deadline": round(float(cadence.get("scheduled_deadline", 0.0)), 6),
+            "start_overshoot_seconds": round(
+                max(0.0, float(cadence.get("start_overshoot_seconds", 0.0))),
+                3,
+            ),
+            "skipped_deadlines_before_start": max(
+                0,
+                int(cadence.get("skipped_deadlines_before_start", 0)),
+            ),
+        }
+    queue_latency = metrics.get("queue_to_start")
+    if isinstance(queue_latency, dict) and int(queue_latency.get("count", 0)) > 0:
+        count = int(queue_latency["count"])
+        total = float(queue_latency.get("total_seconds", 0.0))
+        snapshot["queue_to_start"] = {
+            "count": count,
+            "average_seconds": round(total / count, 3),
+            "max_seconds": round(float(queue_latency.get("max_seconds", 0.0)), 3),
+        }
+    if "runtime_lock_hold_seconds" in metrics:
+        snapshot["runtime_lock_hold_seconds"] = round(
+            max(0.0, float(metrics["runtime_lock_hold_seconds"])),
+            3,
+        )
+    return snapshot
+
+
+def record_queue_to_start_latency(
+    state: dict[str, Any],
+    event: Mapping[str, Any],
+    *,
+    started_at: datetime,
+) -> float | None:
+    """Publish bounded queue latency without retaining task/event payloads."""
+
+    queued_at = None
+    for field in ("created_at", "issued_at", "queued_at", "ts"):
+        queued_at = _parse_iso_utc(str(event.get(field) or ""))
+        if queued_at is not None:
+            break
+    if queued_at is None:
+        return None
+    latency = max(
+        0.0,
+        (started_at.astimezone(timezone.utc) - queued_at.astimezone(timezone.utc)).total_seconds(),
+    )
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["queue_to_start_latency_seconds"] = round(latency, 3)
+    supervisor_state["queue_to_start_latency_peak_seconds"] = round(
+        max(
+            latency,
+            float(supervisor_state.get("queue_to_start_latency_peak_seconds", 0.0)),
+        ),
+        3,
+    )
+    metrics = _CYCLE_METRICS.get()
+    if isinstance(metrics, dict):
+        row = metrics.setdefault(
+            "queue_to_start",
+            {"count": 0, "total_seconds": 0.0, "max_seconds": 0.0},
+        )
+        row["count"] = int(row.get("count", 0)) + 1
+        row["total_seconds"] = float(row.get("total_seconds", 0.0)) + latency
+        row["max_seconds"] = max(float(row.get("max_seconds", 0.0)), latency)
+    return latency
 
 
 SESSION_ID_PATTERNS = [
@@ -2998,12 +3162,21 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         if active_worker:
             desired_status = "manual_pending" if active_worker.get("status") in {"manual_pending", "waiting_approval"} else "started"
             if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
+                observed_started_at = (
+                    _parse_iso_utc(str(active_worker.get("lease_acquired_at") or ""))
+                    or datetime.now(timezone.utc)
+                )
                 record["status"] = desired_status
                 record["run_id"] = active_worker.get("run_id") or event_id
                 record["lease_owner"] = active_worker.get("run_id") or event_id
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
+                record_queue_to_start_latency(
+                    state,
+                    event,
+                    started_at=observed_started_at,
+                )
                 sync_dispatched_task_status(
                     config,
                     event,
@@ -3370,6 +3543,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
+        record_queue_to_start_latency(
+            state,
+            event,
+            started_at=queue_started_at,
+        )
         record_failure_streak_recovery_worker_started(
             config,
             state,
@@ -9912,9 +10090,11 @@ def _run_with_deferred_dispatch_status_syncs(
     deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
     deferred_terminations: list[tuple[int, int]] = []
     deferred_archives: list[dict[str, Any]] = []
+    deferred_activity_events: list[tuple[dict[str, Any], dict[str, Any]]] = []
     token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
     termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
     archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
+    activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
     try:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             changed = bool(operation())
@@ -9922,6 +10102,7 @@ def _run_with_deferred_dispatch_status_syncs(
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
         _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
         _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
+        _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
         # Keep confirmation outside runtime admission. The start-time token is
         # checked before the first signal and throughout confirmation, so PID
         # reuse can only turn the request into a fail-closed no-op.
@@ -9941,6 +10122,10 @@ def _run_with_deferred_dispatch_status_syncs(
                 sleep=time.sleep,
                 monotonic=time.monotonic,
             )
+
+    for activity_config, activity_event in deferred_activity_events:
+        _write_activity_log_immediate(activity_config, activity_event)
+    _record_cycle_batch_count("runtime_activity_events", len(deferred_activity_events))
 
     archive_changed = False
     for action in deferred_archives:
@@ -17241,6 +17426,9 @@ def record_runtime_lock_hold(
     """
 
     held_seconds = round(max(0.0, time.monotonic() - held_since), 3)
+    metrics = _CYCLE_METRICS.get()
+    if isinstance(metrics, dict):
+        metrics["runtime_lock_hold_seconds"] = held_seconds
     supervisor_state = state.setdefault("supervisor", {})
     supervisor_state["runtime_lock_hold_seconds"] = held_seconds
     peak = supervisor_state.get("runtime_lock_hold_peak_seconds")
@@ -17261,6 +17449,41 @@ def record_runtime_lock_hold(
             quiet=quiet,
         )
     return held_seconds
+
+
+def publish_cycle_metrics_to_state(
+    state: dict[str, Any],
+    *,
+    finished_monotonic: float | None = None,
+) -> dict[str, Any] | None:
+    """Replace the prior bounded cycle sample and retain only scalar peaks."""
+
+    finished = time.monotonic() if finished_monotonic is None else finished_monotonic
+    snapshot = _bounded_cycle_metrics_snapshot(finished_monotonic=finished)
+    if snapshot is None:
+        return None
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["last_cycle_metrics"] = snapshot
+    supervisor_state["cycle_elapsed_seconds"] = snapshot["cycle_elapsed_seconds"]
+    supervisor_state["cycle_elapsed_peak_seconds"] = round(
+        max(
+            float(supervisor_state.get("cycle_elapsed_peak_seconds", 0.0)),
+            float(snapshot["cycle_elapsed_seconds"]),
+        ),
+        3,
+    )
+    cadence = snapshot.get("cadence")
+    if isinstance(cadence, dict):
+        overshoot = float(cadence.get("start_overshoot_seconds", 0.0))
+        supervisor_state["cadence_overshoot_seconds"] = overshoot
+        supervisor_state["cadence_overshoot_peak_seconds"] = round(
+            max(
+                float(supervisor_state.get("cadence_overshoot_peak_seconds", 0.0)),
+                overshoot,
+            ),
+            3,
+        )
+    return snapshot
 
 
 def _configured_recovery_probe_provider(
@@ -17693,6 +17916,15 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
+    cycle_metrics: dict[str, Any] = {
+        "started_monotonic": time.monotonic(),
+        "phases": {},
+        "batch_counts": {},
+    }
+    scheduled_sample = _SCHEDULED_CYCLE_SAMPLE.get()
+    if isinstance(scheduled_sample, dict):
+        cycle_metrics["cadence"] = dict(scheduled_sample)
+    cycle_metrics_token = _CYCLE_METRICS.set(cycle_metrics)
     # GitHub bus sync can perform several gh/API round trips and status-command
     # subprocesses. It only consumes an atomic runtime snapshot; any queue or
     # status mutation it issues uses that subsystem's own canonical writer.
@@ -17797,7 +18029,7 @@ def run_once(
         frozenset(prefetched_worker_base_refs)
     )
     try:
-        return _run_with_deferred_dispatch_status_syncs(
+        changed = _run_with_deferred_dispatch_status_syncs(
             config,
             lambda: _run_once_locked(
                 config,
@@ -17815,8 +18047,46 @@ def run_once(
                 prelock_changed=github_bus_changed,
             )
         )
+        postlock_state = _safe_phase(
+            "load_postlock_runtime_snapshot",
+            load_runtime_state_snapshot,
+            config,
+            quiet=quiet,
+        )
+        _safe_phase(
+            "refresh_dashboard_runtime_artifacts",
+            refresh_dashboard_runtime_artifacts,
+            config,
+            quiet=quiet,
+        )
+        if isinstance(postlock_state, dict):
+            _safe_phase(
+                "log_runtime_summary",
+                log_runtime_summary,
+                postlock_state,
+                safe_load_approval_state(config),
+                changed=changed,
+                quiet=quiet,
+                verbose=verbose,
+                previous_heartbeat=(
+                    (github_runtime_snapshot.get("supervisor") or {}).get(
+                        "last_heartbeat_at"
+                    )
+                    if isinstance(github_runtime_snapshot, dict)
+                    else None
+                ),
+                warn_after_seconds=float(
+                    config.get("supervisor", {}).get(
+                        "heartbeat_warn_after_seconds",
+                        10.0,
+                    )
+                ),
+                once=once,
+            )
+        return changed
     finally:
         _PREFETCHED_WORKER_BASE_REFS.reset(base_ref_token)
+        _CYCLE_METRICS.reset(cycle_metrics_token)
 
 
 def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -17993,6 +18263,7 @@ def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
 
     Returns the phase result, or ``None`` if the phase raised.
     """
+    started = time.monotonic()
     try:
         return fn(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 - deliberate per-phase isolation
@@ -18002,6 +18273,8 @@ def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
             quiet=quiet,
         )
         return None
+    finally:
+        _record_cycle_phase_elapsed(name, time.monotonic() - started)
 
 
 def _run_once_locked(
@@ -18206,18 +18479,16 @@ def _run_once_locked(
             loop_error=None,
         )
         record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
-        save_runtime_state(config, state)
-        refresh_dashboard_runtime_artifacts(config)
-        log_runtime_summary(
-            state,
-            safe_load_approval_state(config),
-            changed=changed,
-            quiet=quiet,
-            verbose=verbose,
-            previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
-            once=once,
+        _record_cycle_batch_count(
+            "dispatch_status_mutations",
+            len(_DEFERRED_DISPATCH_STATUS_SYNCS.get() or []),
         )
+        _record_cycle_batch_count(
+            "runtime_activity_events",
+            len(_DEFERRED_ACTIVITY_EVENTS.get() or []),
+        )
+        publish_cycle_metrics_to_state(state)
+        save_runtime_state(config, state)
         return changed
     except Exception as exc:
         loop_finished_at = utc_now()
@@ -18231,8 +18502,16 @@ def _run_once_locked(
             loop_error=f"{type(exc).__name__}: {exc}",
         )
         record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
+        _record_cycle_batch_count(
+            "dispatch_status_mutations",
+            len(_DEFERRED_DISPATCH_STATUS_SYNCS.get() or []),
+        )
+        _record_cycle_batch_count(
+            "runtime_activity_events",
+            len(_DEFERRED_ACTIVITY_EVENTS.get() or []),
+        )
+        publish_cycle_metrics_to_state(state)
         save_runtime_state(config, state)
-        refresh_dashboard_runtime_artifacts(config)
         raise
 
 
@@ -18252,6 +18531,99 @@ def run_supervisor_cycle(
             quiet=quiet,
         )
         return False
+
+
+def run_deadline_scheduler(
+    cycle: Any,
+    poll_interval: float,
+    *,
+    sleep: Any = time.sleep,
+    monotonic: Any = time.monotonic,
+    on_cycle_complete: Any | None = None,
+    max_cycles: int | None = None,
+) -> None:
+    """Run cycles on an anchored monotonic deadline without catch-up spinning.
+
+    The first cycle is immediate.  Every later target is derived from that
+    monotonic schedule, so work consumes the interval instead of being followed
+    by another full sleep.  If work spans one or more deadlines, those missed
+    starts are skipped in one arithmetic step and the next cycle waits for the
+    first future deadline.  This makes overrun behavior deterministic and
+    prevents an overloaded supervisor from entering a zero-sleep busy loop.
+    """
+
+    interval = float(poll_interval)
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("poll_interval must be a finite positive number")
+    if max_cycles is not None and max_cycles < 0:
+        raise ValueError("max_cycles cannot be negative")
+
+    deadline = float(monotonic())
+    skipped_before_start = 0
+    completed = 0
+    while max_cycles is None or completed < max_cycles:
+        before_sleep = float(monotonic())
+        sleep_seconds = max(0.0, deadline - before_sleep)
+        if sleep_seconds > 0:
+            sleep(sleep_seconds)
+        started = float(monotonic())
+        cadence_sample = {
+            "scheduled_deadline": deadline,
+            "start_overshoot_seconds": max(0.0, started - deadline),
+            "skipped_deadlines_before_start": skipped_before_start,
+        }
+        token = _SCHEDULED_CYCLE_SAMPLE.set(cadence_sample)
+        try:
+            cycle()
+        finally:
+            _SCHEDULED_CYCLE_SAMPLE.reset(token)
+        finished = float(monotonic())
+        next_deadline = deadline + interval
+        skipped = 0
+        if next_deadline < finished:
+            skipped = int(math.floor((finished - next_deadline) / interval)) + 1
+            next_deadline += skipped * interval
+        completion = {
+            **cadence_sample,
+            "cycle_elapsed_seconds": max(0.0, finished - started),
+            "sleep_before_start_seconds": sleep_seconds,
+            "skipped_deadlines_after_cycle": skipped,
+            "next_deadline": next_deadline,
+        }
+        if on_cycle_complete is not None:
+            on_cycle_complete(completion)
+        deadline = next_deadline
+        skipped_before_start = skipped
+        completed += 1
+
+
+def publish_scheduler_cadence_completion(
+    config: dict[str, Any],
+    sample: Mapping[str, Any],
+) -> None:
+    """Persist one scalar scheduler completion sample in a short transaction."""
+
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        supervisor_state = state.setdefault("supervisor", {})
+        elapsed = round(max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3)
+        supervisor_state["scheduler_cycle_elapsed_seconds"] = elapsed
+        supervisor_state["scheduler_cycle_elapsed_peak_seconds"] = round(
+            max(
+                elapsed,
+                float(supervisor_state.get("scheduler_cycle_elapsed_peak_seconds", 0.0)),
+            ),
+            3,
+        )
+        supervisor_state["cadence_skipped_deadlines"] = max(
+            0,
+            int(sample.get("skipped_deadlines_after_cycle", 0)),
+        )
+        supervisor_state["cadence_next_deadline_monotonic"] = round(
+            float(sample.get("next_deadline", 0.0)),
+            6,
+        )
+        save_runtime_state(config, state)
 
 
 def claim_next_task_for_agent(
@@ -18390,22 +18762,28 @@ def main() -> int:
             once=True,
         )
         return 0
-    run_supervisor_cycle(
-        config,
-        watch=not args.no_watch,
-        replay=args.replay,
-        quiet=args.quiet,
-        verbose=args.verbose,
-    )
-    while True:
-        time.sleep(poll_interval)
-        run_supervisor_cycle(
+    first_cycle = True
+
+    def scheduled_cycle() -> bool:
+        nonlocal first_cycle
+        replay = args.replay if first_cycle else False
+        first_cycle = False
+        return run_supervisor_cycle(
             config,
             watch=not args.no_watch,
-            replay=False,
+            replay=replay,
             quiet=args.quiet,
             verbose=args.verbose,
         )
+
+    run_deadline_scheduler(
+        scheduled_cycle,
+        poll_interval,
+        on_cycle_complete=lambda sample: publish_scheduler_cadence_completion(
+            config,
+            sample,
+        ),
+    )
 
 
 if __name__ == "__main__":
