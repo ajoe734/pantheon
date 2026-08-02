@@ -2,10 +2,10 @@
   "cold_first_read": {
     "event_count": 2000,
     "resumed_from_checkpoint": false,
-    "seconds": 2.3
+    "seconds": 2.423
   },
   "fixture": {
-    "build_seconds": 2.934,
+    "build_seconds": 3.28,
     "bytes": 137953724,
     "events": 2000,
     "task_rows": 30
@@ -27,25 +27,25 @@
   },
   "meets_target": true,
   "speedup_p95": {
-    "uncontended": 97.4,
-    "under_active_supervisor_cycle": 37.7
+    "uncontended": 96.5,
+    "under_active_supervisor_cycle": 39.6
   },
   "target_p95_seconds": 2.0,
   "uncontended": {
     "current": {
       "label": "current",
-      "max_seconds": 0.117,
-      "min_seconds": 0.111,
-      "p50_seconds": 0.115,
-      "p95_seconds": 0.117,
+      "max_seconds": 0.121,
+      "min_seconds": 0.11,
+      "p50_seconds": 0.116,
+      "p95_seconds": 0.121,
       "samples": 4
     },
     "legacy": {
       "label": "legacy",
-      "max_seconds": 11.398,
-      "min_seconds": 10.122,
-      "p50_seconds": 10.992,
-      "p95_seconds": 11.398,
+      "max_seconds": 11.682,
+      "min_seconds": 10.633,
+      "p50_seconds": 11.278,
+      "p95_seconds": 11.682,
       "samples": 4
     }
   },
@@ -55,48 +55,48 @@
       "candidate_runtime": {
         "base_ref": "HEAD",
         "executable_paths_clean": true,
-        "source_sha": "64bf42c4ee316c8968feca2006bd9e1e3c84ea7f"
+        "source_sha": "fd34d63148aeff6ccbe7af01b37e9351298e7e15"
       },
       "command_latencies": [
         {
           "command": "approve",
           "index": 0,
-          "seconds": 1.393
+          "seconds": 1.407
         },
         {
           "command": "assign",
           "index": 1,
-          "seconds": 0.597
+          "seconds": 0.564
         },
         {
           "command": "note",
           "index": 2,
-          "seconds": 1.345
+          "seconds": 1.377
         },
         {
           "command": "reopen",
           "index": 3,
-          "seconds": 1.315
+          "seconds": 1.344
         },
         {
           "command": "approve",
           "index": 4,
-          "seconds": 1.012
+          "seconds": 1.002
         },
         {
           "command": "assign",
           "index": 5,
-          "seconds": 0.803
+          "seconds": 0.838
         },
         {
           "command": "note",
           "index": 6,
-          "seconds": 1.01
+          "seconds": 0.957
         },
         {
           "command": "reopen",
           "index": 7,
-          "seconds": 1.009
+          "seconds": 0.999
         }
       ],
       "command_mix": {
@@ -109,31 +109,30 @@
       "concurrent_workers": 4,
       "exact_projection": true,
       "final_event_count": 2016,
-      "full_run_once_cycles": 17,
+      "full_run_once_cycles": 16,
       "full_run_once_seconds": [
-        0.046,
-        0.042,
-        0.042,
-        0.053,
-        0.059,
-        0.054,
-        0.05,
+        0.043,
         0.041,
-        0.045,
-        0.352,
-        0.801,
-        0.068,
+        0.043,
+        0.051,
+        0.055,
+        0.05,
+        0.05,
+        0.056,
+        0.058,
+        0.328,
+        0.816,
         0.072,
-        0.063,
-        0.069,
-        0.069,
-        0.654
+        0.081,
+        0.079,
+        0.073,
+        0.707
       ],
       "harness": "real_governed_commands_full_run_once",
       "label": "current",
-      "max_seconds": 1.393,
-      "p50_seconds": 1.011,
-      "p95_seconds": 1.393,
+      "max_seconds": 1.407,
+      "p50_seconds": 1.001,
+      "p95_seconds": 1.407,
       "supervisor_active_during_commands": true,
       "worker_lease_bound_commands": 6
     },
@@ -141,9 +140,9 @@
       "commands": 8,
       "concurrent_workers": 4,
       "label": "legacy",
-      "max_seconds": 52.579,
-      "p50_seconds": 51.03,
-      "p95_seconds": 52.579,
+      "max_seconds": 55.694,
+      "p50_seconds": 54.372,
+      "p95_seconds": 55.694,
       "supervisor_cycle_seconds": 45.0
     }
   }

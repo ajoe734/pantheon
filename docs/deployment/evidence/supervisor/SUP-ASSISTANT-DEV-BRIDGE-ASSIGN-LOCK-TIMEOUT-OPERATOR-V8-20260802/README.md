@@ -10,7 +10,8 @@ admission, authoritative journal readback, and at-most-once materialization.
 | Reviewer | Human/Ops |
 | Base | `dev` |
 | Branch | `task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802` |
-| Implementation candidate | `64bf42c4ee316c8968feca2006bd9e1e3c84ea7f` |
+| Implementation candidate | `fd34d63148aeff6ccbe7af01b37e9351298e7e15` |
+| Composed `dev` base | `ef2b4f0a3988be6adbf56d24ec5df00df2717f39` |
 | Review state | `review_pending` |
 
 ## Incident reproduction and lock owner
@@ -59,16 +60,24 @@ then admitted and read back from the authoritative event log.
 - Exact packet claims bind packet ID, packet digest, every task-spec hash,
   claimant PID, timestamps, and expiry. A live exact duplicate is retryable;
   a different payload using the same ID fails closed.
+- Packet payloads are bounded to 16 tasks. Per-packet dispatch and per-item
+  processing OS fences make the live claimant authoritative even after a JSON
+  claim expires; a crash releases the fence for deterministic recovery.
 - Assignment/readback subprocess timeouts are bounded (2 seconds by default,
   capped at 5 seconds) and are retryable. Inbox retry metadata binds the signed
   packet digest and uses bounded exponential backoff.
 - A timeout after one task resumes the exact packet. Existing bridge
-  provenance makes the first task an idempotent no-op; each canonical task row
-  exists exactly once.
+  provenance in either active state or archive makes the first task an
+  idempotent no-op; archived task content is not mutated or reused and each
+  canonical task row exists exactly once.
 - A processed receipt requires durable bridge admission, exact packet/task
   hashes, and canonical active-or-archive readback for every task ID.
   Receipt-only, replay-row-only, projection-only, and forged-retry states cannot
   establish success.
+- Supervisor dispatch is fail-closed for bridge-owned tasks until an exact,
+  durable packet admission record proves every task-spec hash was successfully
+  materialized. A partial packet cannot queue or start a worker in the same
+  `run_once` cycle.
 
 Provider selection, configured quota groups, worker leases, owner/reviewer
 identity, packet signature checks, artifact guards, and event-log integrity
@@ -78,27 +87,47 @@ remain unchanged.
 
 The 2,000-event scratch fixture is 137,953,724 bytes. Four workers executed
 eight real governed commands (two each of approve, assign, note, and reopen)
-while 17 full `supervisor.run_once` cycles were active.
+while 16 full `supervisor.run_once` cycles were active.
 
 | Shape | Legacy p95 | Current p95 |
 |---|---:|---:|
-| Uncontended journal command | 11.398s | 0.117s |
-| Real governed commands during active supervisor cycles | 52.579s | **1.393s** |
+| Uncontended journal command | 11.682s | 0.121s |
+| Real governed commands during active supervisor cycles | 55.694s | **1.407s** |
 
 All eight commands succeeded, six used worker leases, supervisor/command
 execution overlapped, and exact projection parity held at event 2,016. The
 formal report has `meets_target: true` against the two-second p95 gate.
 
 The benchmark reuses the task-state latency harness with the exact committed
-bridge candidate `64bf42c4ee316c8968feca2006bd9e1e3c84ea7f`. It mutates only
+bridge candidate `fd34d63148aeff6ccbe7af01b37e9351298e7e15`. It mutates only
 scratch state.
+
+## Human/Ops review remediation
+
+Human/Ops rejected the prior exact head
+`d2f92118c9af913605780243a8842a8c38dbb484` and required four additional
+fail-closed guarantees. Candidate `fd34d63148aeff6ccbe7af01b37e9351298e7e15`
+addresses them on top of `origin/dev` commit
+`ef2b4f0a3988be6adbf56d24ec5df00df2717f39`:
+
+1. a full `run_once` partial-packet negative proves zero queued events and zero
+   workers before exact durable admission;
+2. a 16-task packet bound plus OS-owner fences prevents a live claimant from
+   being stolen after JSON TTL expiry;
+3. partial retry skips an exact archived prefix and leaves its archived record
+   byte-for-byte equivalent at the JSON-object boundary; and
+4. the complete supervisor and bridge matrix plus the concurrent benchmark
+   were rerun against the composed implementation commit.
 
 ## Regression matrix
 
 The focused suites cover:
 
 - timeout before any task and timeout after one task;
+- partial packet fail-closed supervisor dispatch and archived-prefix retry;
 - crash/stale dispatcher claim and processing rename restart recovery;
+- live dispatcher and inbox claimant fencing beyond expired JSON claims;
+- packet task-count validation at the 16-task boundary;
 - forged retry metadata and mismatched packet/spec identity;
 - concurrent drainers and concurrent exact duplicate dispatch;
 - missing/tampered admission, receipt-only recovery, and replay without
@@ -111,14 +140,14 @@ The focused suites cover:
 Owner validation:
 
 ```text
-pytest .orchestrator/test_supervisor.py plus bridge dispatcher/inbox/reliability
-→ 584 passed, 147 subtests passed
+pytest .orchestrator/test_supervisor.py plus all bridge suites and CLIs
+→ 597 passed, 147 subtests passed in 83.93s
 
-pytest test_dev_bridge_inbox_cli.py test_dev_bridge_dispatch_cli.py
-→ 8 passed
+pytest bridge dispatcher/inbox/reliability plus CLIs
+→ 81 passed in 18.32s
 
 2,000-event governed/full-cycle benchmark
-→ p95 1.393s, 8/8 commands, exact projection, meets_target true
+→ p95 1.407s, 8/8 commands, exact projection, meets_target true
 ```
 
 The final candidate is also required to pass `py_compile`, JSON parsing,
