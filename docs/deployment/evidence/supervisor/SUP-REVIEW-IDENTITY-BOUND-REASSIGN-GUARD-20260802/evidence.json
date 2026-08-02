@@ -43,7 +43,8 @@
     "anchors": [
       "37ff4c59a",
       "4d6a77c86",
-      "b32efd014"
+      "b32efd014",
+      "76cf4bbe2"
     ],
     "composition_commits": [
       "6097badb5",
@@ -69,6 +70,7 @@
     "identity_equivalence": "Only the verified Codex and Codex2 pair resolves to one ChatGPT review identity. Codex3 remains independent unless explicit configured account evidence establishes equivalence.",
     "approval_gate": "assign, approve, and merged-done reconciliation reject owner/reviewer pairs whose review identities are equivalent.",
     "merge_gate": "The review-before-merge contract treats equivalent identities as no independent reviewer, so neither merge nor auto-merge becomes authorized even if an exact-head approval record is forged for the alternate label.",
+    "merge_then_review": "The legacy no-review policy is honored only when owner and reviewer explicitly use the same canonical label. Distinct equivalent aliases such as Codex and Codex2 fall back to review-before-merge, and evaluator defense-in-depth rejects a forged merge-then-review contract.",
     "persistence_gate": "Supervisor reassignment persistence refuses any non-independent owner/reviewer pair, covering automatic and chair-driven callers at the canonical write boundary."
   },
   "acceptance": {
@@ -88,6 +90,12 @@
         "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_assign_rejects_same_account_owner_reviewer_pair",
         "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_same_account_codex2_reviewer_cannot_approve_codex_owner",
         "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_codex_and_codex2_are_not_independent_review_identities",
+        "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_declared_merge_then_review_rejects_equivalent_distinct_aliases",
+        "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_equivalent_alias_merge_then_review_fails_closed",
+        "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_evaluate_gate_rejects_a_forged_alias_merge_then_review_contract",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_equivalent_alias_merge_then_review_never_reaches_merge",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_withholds_auto_merge_for_equivalent_aliases",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_withholds_auto_merge_for_equivalent_aliases",
         "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_same_account_exact_head_approval_never_becomes_merge_ready"
       ]
     },
@@ -124,8 +132,8 @@
       "result": "checkout-scoped .venv-pantheon provisioned; imports and pytest verified"
     },
     {
-      "command": "five focused supervisor selectors from .orchestrator plus five focused ai-status/merge-gate selectors from repository root",
-      "result": "10 passed"
+      "command": "five focused supervisor selectors from .orchestrator plus fourteen focused ai-status/merge-gate/integrator/finalize selectors from repository root",
+      "result": "19 passed"
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
@@ -137,7 +145,7 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
-      "result": "95 passed"
+      "result": "101 passed"
     },
     {
       "command": "python3 -m py_compile .orchestrator/review_identity.py .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py",
@@ -154,12 +162,13 @@
     "reviewed_head": null,
     "pull_request": 4488,
     "recorded_at": null,
-    "notes": "Exact head 0b05455f0c96e1900825f888d36c638a61dcce51 was reopened because Codex3 lacked evidence for same-account equivalence. The bounded correction removes that alias and adds a negative regression; the updated head requires a fresh exact-head decision."
+    "notes": "Human/Ops reopened exact head 0b05455f0c96e1900825f888d36c638a61dcce51 because Codex3 lacked evidence for same-account equivalence, then reopened exact head 3ee3aaa86f6a1850b2cf1b3eeca60a1b2b6e8d7b because Codex/Codex2 could still obtain merge_then_review authority. Anchor 76cf4bbe2 limits that legacy policy to an explicit same-label contract and adds evaluator, integrator, task_finalize, and safe_pr negatives; the resulting final head requires a fresh exact-head decision."
   },
   "delivery": {
     "base_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
     "implementation_anchor": "37ff4c59a",
     "correction_anchor": "b32efd0143e2300051716e623b55e5ea2e1aec78",
+    "merge_policy_anchor": "76cf4bbe2b89add87b83b20215048893f9283ba8",
     "implementation_head": null,
     "pull_request": 4488,
     "merge_commit": null,
