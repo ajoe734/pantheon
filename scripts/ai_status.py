@@ -128,6 +128,14 @@ STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
 STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
+SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
+SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
+SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
+GLOBAL_STATUS_LOCK_ORDER = (
+    "runtime_admission",
+    "task_state",
+    "activity_audit",
+)
 _ACTIVITY_TRANSACTION_LOCAL = local()
 _TASK_STATE_TRANSACTION_LOCAL = local()
 _STATUS_COMMAND_LEASE_LOCAL = local()
@@ -701,7 +709,13 @@ def normalize_logical_actor(name: str | None) -> str:
     return canonical_agent_name(trimmed).casefold()
 
 
-def validate_active_status_command_lease(command: str, args: list[str]) -> None:
+def validate_active_status_command_lease(
+    command: str,
+    args: list[str],
+    *,
+    runtime_state_snapshot: Mapping[str, Any] | None = None,
+    config_snapshot: dict[str, Any] | None = None,
+) -> None:
     """Validate the supervisor-issued worker lease before canonical mutation."""
 
     _clear_status_command_lease_binding()
@@ -736,8 +750,12 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
                 raise RuntimeError(f"status command lease required for auto worker: {actor}")
         return
 
-    config = load_config()
-    runtime_state = load_runtime_state_snapshot(config)
+    config = config_snapshot if isinstance(config_snapshot, dict) else load_config()
+    runtime_state = (
+        runtime_state_snapshot
+        if isinstance(runtime_state_snapshot, Mapping)
+        else load_runtime_state_snapshot(config)
+    )
     workers = runtime_state.get("workers", {})
     if not isinstance(workers, Mapping):
         raise RuntimeError("central runtime state has no worker records")
@@ -7390,6 +7408,168 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
+def load_supervisor_dispatch_batch(path_value: str) -> list[dict[str, Any]]:
+    """Load one bounded, exact dispatch mutation packet from a regular file."""
+
+    if not path_value:
+        raise SystemExit(
+            f"Usage: {SUPERVISOR_DISPATCH_BATCH_COMMAND} <absolute-payload-path>"
+        )
+    path = Path(os.path.expanduser(path_value))
+    if not path.is_absolute():
+        raise SystemExit("Supervisor dispatch batch payload path must be absolute")
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"Unable to inspect supervisor dispatch batch payload: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+        raise SystemExit("Supervisor dispatch batch payload must be a non-symlink regular file")
+    if metadata.st_size > 1024 * 1024:
+        raise SystemExit("Supervisor dispatch batch payload exceeds 1 MiB")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Invalid supervisor dispatch batch payload: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "mutations"}:
+        raise SystemExit("Supervisor dispatch batch payload schema is not exact")
+    if payload.get("schema_version") != SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION:
+        raise SystemExit("Unsupported supervisor dispatch batch schema version")
+    mutations = payload.get("mutations")
+    if (
+        not isinstance(mutations, list)
+        or not mutations
+        or len(mutations) > SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS
+    ):
+        raise SystemExit(
+            "Supervisor dispatch batch mutations must contain between 1 and "
+            f"{SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS} rows"
+        )
+
+    allowed_commands = {"start", "progress", "note"}
+    normalized: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    exact_keys = {
+        "actor",
+        "command",
+        "expected_statuses",
+        "message",
+        "run_id",
+        "task_id",
+        "workspace_path",
+    }
+    for index, mutation in enumerate(mutations):
+        if not isinstance(mutation, dict) or set(mutation) != exact_keys:
+            raise SystemExit(f"Supervisor dispatch batch row {index} schema is not exact")
+        row = {key: mutation.get(key) for key in exact_keys}
+        for field, limit in (
+            ("actor", 80),
+            ("command", 32),
+            ("message", 4096),
+            ("run_id", 256),
+            ("task_id", 256),
+            ("workspace_path", 4096),
+        ):
+            value = row[field]
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise SystemExit(
+                    f"Supervisor dispatch batch row {index} has invalid {field}"
+                )
+            row[field] = value.strip()
+        if row["command"] not in allowed_commands:
+            raise SystemExit(
+                f"Supervisor dispatch batch row {index} command is not dispatch-safe"
+            )
+        expected_statuses = row["expected_statuses"]
+        if (
+            not isinstance(expected_statuses, list)
+            or not expected_statuses
+            or len(expected_statuses) > 4
+            or any(
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > 64
+                for value in expected_statuses
+            )
+        ):
+            raise SystemExit(
+                f"Supervisor dispatch batch row {index} has invalid expected_statuses"
+            )
+        row["expected_statuses"] = sorted(
+            {str(value).strip().lower() for value in expected_statuses}
+        )
+        task_id = str(row["task_id"])
+        if task_id in seen_task_ids:
+            raise SystemExit(
+                f"Supervisor dispatch batch repeats task mutation: {task_id}"
+            )
+        seen_task_ids.add(task_id)
+        normalized.append(row)
+    return normalized
+
+
+@contextmanager
+def supervisor_dispatch_mutation_environment(mutation: Mapping[str, Any]):
+    """Bind one batch row to the exact worker lease it claims."""
+
+    bindings = {
+        "AI_NAME": str(mutation["actor"]),
+        "ORCH_RUN_ID": str(mutation["run_id"]),
+        "ORCH_TASK_ID": str(mutation["task_id"]),
+        "PANTHEON_WORKTREE_ROOT": str(mutation["workspace_path"]),
+        "ORCH_WORKSPACE_PATH": str(mutation["workspace_path"]),
+    }
+    previous = {name: os.environ.get(name) for name in bindings}
+    try:
+        os.environ.update(bindings)
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        _clear_status_command_lease_binding()
+
+
+def run_supervisor_dispatch_batch(
+    state: dict[str, Any],
+    mutations: list[dict[str, Any]],
+    *,
+    commands: Mapping[str, Any],
+    runtime_snapshot: Mapping[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Apply dispatch status CAS rows to one in-memory canonical snapshot."""
+
+    for mutation in mutations:
+        task_id = str(mutation["task_id"])
+        actor = str(mutation["actor"])
+        command = str(mutation["command"])
+        task = get_task(state, task_id)
+        if task is None:
+            raise RuntimeError(f"Supervisor dispatch batch task is missing: {task_id}")
+        if str(task.get("owner") or "").strip() != actor:
+            raise RuntimeError(
+                f"Supervisor dispatch batch owner CAS failed for {task_id}: "
+                f"{task.get('owner')} != {actor}"
+            )
+        current_status = str(task.get("status") or "").strip().lower()
+        if current_status not in set(mutation["expected_statuses"]):
+            raise RuntimeError(
+                f"Supervisor dispatch batch status CAS failed for {task_id}: "
+                f"{current_status or 'missing'} not in {mutation['expected_statuses']}"
+            )
+        command_args = [task_id, str(mutation["message"])]
+        with supervisor_dispatch_mutation_environment(mutation):
+            validate_active_status_command_lease(
+                command,
+                command_args,
+                runtime_state_snapshot=runtime_snapshot,
+                config_snapshot=config,
+            )
+            commands[command](state, command_args)
+
+
 def main(argv: list[str]) -> int:
     validate_status_command_runtime_binding()
     validate_status_root_binding()
@@ -7421,6 +7601,50 @@ def main(argv: list[str]) -> int:
         "sync": command_sync,
         "wave": command_wave,
     }
+
+    if command == SUPERVISOR_DISPATCH_BATCH_COMMAND:
+        if len(args) != 1:
+            raise SystemExit(
+                f"Usage: {SUPERVISOR_DISPATCH_BATCH_COMMAND} <absolute-payload-path>"
+            )
+        # Payload/config reads and command-runtime git validation happen before
+        # the global lock order begins.  The transaction below is strictly:
+        # runtime_admission(shared) -> task_state(exclusive) -> activity_audit.
+        mutations = load_supervisor_dispatch_batch(args[0])
+        config = load_config()
+        committed_state: dict[str, Any] | None = None
+        with runtime_state_lock(config, shared=True):
+            runtime_snapshot = load_runtime_state_snapshot(config)
+            with canonical_task_state_lock(shared=False):
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    recover_status_archive_outbox(state)
+                    recover_status_activity_outbox(state)
+                    with buffer_activity_events():
+                        run_supervisor_dispatch_batch(
+                            state,
+                            mutations,
+                            commands=commands,
+                            runtime_snapshot=runtime_snapshot,
+                            config=config,
+                        )
+                        sync_all(state, refresh_views=False)
+                    committed_state = deepcopy(state)
+        if committed_state is not None:
+            refresh_derived_status_views_if_current(committed_state)
+        print(
+            json.dumps(
+                {
+                    "status": "committed",
+                    "mutation_count": len(mutations),
+                    "task_ids": [mutation["task_id"] for mutation in mutations],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
     if command == "recover":
         if args:
