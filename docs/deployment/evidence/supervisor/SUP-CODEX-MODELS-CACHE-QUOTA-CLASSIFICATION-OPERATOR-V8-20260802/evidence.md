@@ -7,15 +7,25 @@ Status: implementation complete; independent exact-head Human/Ops review pending
 The Codex probe now recognizes only the observed `models_cache.json` parser
 failure that names the missing `supports_reasoning_summaries` field. On the
 bounded pre-lock target path, it verifies the exact configured provider home,
-binds the pre-probe pathname to an owned regular single-link inode, hashes the
-cache, atomically quarantines that same inode, and performs one fresh probe.
-Unsafe, unowned, changed, concurrent-loser, or failed-quarantine paths stay
-closed and do not spend the refresh probe.
+rejects a symlink in every configured/effective home component, binds the
+pre-probe pathname to an owned regular single-link inode, hashes the cache,
+atomically quarantines that same inode, and performs one fresh probe. Generic
+malformed-cache errors do not authorize quarantine. Unsafe, unowned, changed,
+concurrent-loser, or failed-quarantine paths stay closed and do not spend the
+refresh probe.
 
 Codex usage-limit output is now `quota_reached`, never credential revocation.
-A validated reset is reduced to one UTC timestamp and passed through the
-existing capability and dispatch-pause APIs. Cache compatibility failures are
-recoverable capacity/tooling failures, not sticky auth failures.
+A validated reset is reduced to one UTC timestamp only when it is bound to an
+explicit reset or `try again at` context; unrelated ISO log prefixes are
+ignored, and both observed human-date and time-only output are supported. The
+sanitized result passes through the existing capability and dispatch-pause
+APIs. Cache compatibility failures are recoverable capacity/tooling failures,
+not sticky auth failures.
+
+API-key admission now checks the configured `api_key_env` name itself. A
+differently named inherited `OPENAI_API_KEY` cannot satisfy that configured
+credential lane; the selected value is mapped only into the child runtime,
+while neither the configured name nor its value appears in probe metadata.
 
 The supervisor enables cache mutation only during its existing pre-lock,
 bounded provider recovery phase. Under runtime admission it consumes the
@@ -36,7 +46,7 @@ being quarantined.
 
 ## Verification
 
-- Provider permissions: 93 tests passed plus 7 subtests.
+- Provider permissions: 100 tests passed plus 7 subtests.
 - Supervisor: 548 tests passed plus 154 subtests.
 - Final focused supervisor matrix: 22 tests passed plus 5 subtests.
 - `py_compile` and `git diff --check` passed.

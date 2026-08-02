@@ -21,8 +21,9 @@
   "scope": {
     "owned_layer": [
       "Exact Codex v0.144.6 models_cache.json schema-failure recognition requiring the cache filename, supports_reasoning_summaries field, and missing-field diagnosis together.",
-      "Targeted provider-home cache quarantine with owner/type/link checks, pre-probe and descriptor identity binding, SHA-256/inode/mtime/size evidence, same-directory atomic replace, and one bounded post-quarantine probe.",
-      "Codex usage-limit classification as quota_reached with a sanitized UTC reset timestamp when present.",
+      "Targeted provider-home cache quarantine with every configured/effective home component checked for symlinks, plus owner/type/link checks, pre-probe and descriptor identity binding, SHA-256/inode/mtime/size evidence, same-directory atomic replace, and one bounded post-quarantine probe.",
+      "Codex usage-limit classification as quota_reached with reset-context-bound ISO, epoch, or observed human try-again-at timestamps normalized to UTC when present.",
+      "Configured api_key_env selection controls API-key admission and runtime mapping without emitting the configured variable name or value.",
       "Pre-lock targeted cache recovery and in-lock projection of sanitized probe results through existing capability and dispatch-pause APIs.",
       "Scoped owner/reviewer fallback through the existing exact-CAS pair planner while keeping configured Codex and Codex2 account identities distinct."
     ],
@@ -61,10 +62,11 @@
   ],
   "contract": {
     "cache_failure_classification": "Only the exact three-marker models-cache schema signature authorizes recovery; generic JSON, CLI, auth, timeout, or path failures do not.",
-    "cache_path_authority": "Only <exact configured CODEX_HOME>/models_cache.json is eligible. Relative, divergent, symlinked, non-directory, unavailable, or unowned homes and symlinked/non-regular/unowned/multiply-linked caches fail closed.",
+    "cache_path_authority": "Only <exact configured CODEX_HOME>/models_cache.json is eligible. Every path component in both the configured and effective provider home is lstat-checked; relative, divergent, ancestor-symlinked, final-symlinked, non-directory, unavailable, or unowned homes and symlinked/non-regular/unowned/multiply-linked caches fail closed.",
     "quarantine_atomicity": "The cache is hashed through O_NOFOLLOW, identity is revalidated before os.replace, and the quarantined pathname is revalidated against the same inode evidence.",
     "probe_bound": "Cache mutation is enabled only on the bounded pre-lock Codex recovery target. In-lock pre-dispatch probes never request quarantine. A quarantine failure consumes no refresh probe.",
-    "quota_projection": "Usage-limit output becomes quota_reached/quota_terminal, with quota_reset_at stored only after ISO/epoch normalization. It never becomes auth revocation.",
+    "quota_projection": "Usage-limit output becomes quota_reached/quota_terminal, with quota_reset_at stored only when an ISO, epoch, full human date, or next local clock time is bound to explicit reset/try-again context and normalized to UTC. Unrelated log timestamps are ignored. It never becomes auth revocation.",
+    "api_key_admission": "The configured api_key_env is the sole API-key presence authority. A differently named inherited OPENAI_API_KEY cannot satisfy admission, while an explicitly configured alternate variable is mapped only into the child runtime and its name/value are absent from probe metadata.",
     "recovery": "A fresh successful probe clears only the affected configured dispatch identity; failed, timeout, revoked, quota, cache, and ambiguous outcomes remain closed without launching a worker.",
     "routing": "Configured account/quota identities remain authoritative. The existing atomic pair planner preserves explicit Human/Ops review and identity-only owner/reviewer independence; Codex and Codex2 are not globally coalesced."
   },
@@ -78,12 +80,16 @@
       "proof": "ProviderPermissionsTest::test_codex_exact_incompatible_cache_refresh_success_recovers_provider"
     },
     {
-      "case": "exact incompatible cache plus quota/reset",
+      "case": "exact incompatible cache plus observed human quota/reset with unrelated ISO log prefix",
       "proof": "ProviderPermissionsTest::test_codex_exact_incompatible_cache_is_quarantined_then_quota_is_classified"
     },
     {
-      "case": "unsafe symlink and unowned provider home",
-      "proof": "ProviderPermissionsTest::test_codex_cache_recovery_fails_closed_for_symlink; ::test_codex_cache_recovery_fails_closed_for_unowned_provider_home"
+      "case": "unsafe cache symlink, provider-home ancestor symlink, and unowned provider home",
+      "proof": "ProviderPermissionsTest::test_codex_cache_recovery_fails_closed_for_symlink; ::test_codex_cache_recovery_fails_closed_for_provider_home_ancestor_symlink; ::test_codex_cache_recovery_fails_closed_for_unowned_provider_home"
+    },
+    {
+      "case": "generic malformed models cache is not the exact recoverable schema signature",
+      "proof": "ProviderPermissionsTest::test_codex_generic_malformed_cache_failure_is_never_quarantined"
     },
     {
       "case": "concurrent probes",
@@ -94,8 +100,12 @@
       "proof": "ProviderPermissionsTest::test_codex_cache_quarantine_failure_does_not_spend_refresh_probe"
     },
     {
-      "case": "quota without reset",
-      "proof": "ProviderPermissionsTest::test_codex_usage_limit_without_reset_is_quota_not_auth"
+      "case": "quota with observed human reset, unrelated prefix timestamp, time-only reset, and no reset",
+      "proof": "ProviderPermissionsTest::test_codex_usage_limit_observed_human_reset_ignores_unrelated_log_timestamp; ::test_codex_usage_limit_time_only_reset_uses_next_local_occurrence; ::test_codex_usage_limit_without_reset_is_quota_not_auth; ::test_codex_usage_limit_probe_without_reset_omits_quota_reset_at"
+    },
+    {
+      "case": "configured API-key environment authority and metadata redaction",
+      "proof": "ProviderPermissionsTest::test_codex_auth_probe_honors_configured_api_key_env_without_emitting_it; ::test_codex_auth_probe_does_not_substitute_unconfigured_openai_api_key"
     },
     {
       "case": "auth revoked",
@@ -125,7 +135,7 @@
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py",
-      "result": "93 passed, 7 subtests passed"
+      "result": "100 passed, 7 subtests passed"
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
@@ -146,7 +156,7 @@
   ],
   "security": {
     "auth_json": "Existence is checked by stat only for admission. Payloads and paths are not loaded into probe/capability metadata.",
-    "api_keys": "Only configured/present booleans are used; values and configured variable names are not emitted in probe metadata.",
+    "api_keys": "Only the configured api_key_env can satisfy API-key admission. Its value is mapped to the child CLI's OPENAI_API_KEY only for execution; values and configured variable names are not emitted in probe metadata, and an unrelated inherited OPENAI_API_KEY is removed when a distinct configured variable is absent.",
     "cache_payload": "Read only for SHA-256 evidence after exact CLI signature and safe path/owner/type identity checks; no cache JSON is interpreted or rewritten.",
     "failure_output": "Cache and quota results are normalized to bounded generic errors; only a validated UTC quota reset timestamp is retained."
   },
@@ -155,17 +165,28 @@
     "reviewer": "Human/Ops",
     "reviewed_head": null,
     "reviewed_at": null,
-    "required": "Independent Human/Ops review must bind the final exact PR head before merge."
+    "required": "Independent Human/Ops review must bind the final exact PR head before merge.",
+    "prior_changes_requested": {
+      "reviewed_head": "6d6f686e10cab17c7652f79c0222bce183ca674d",
+      "recorded_at": "2026-08-02T16:01:06Z",
+      "resolved_by_commits": [
+        "caf3f78458e3ef381ca1de4c1fe39458f8afecd8",
+        "7d534d0cb1d6758c1679ee1fbd5bfad2f2615371"
+      ],
+      "summary": "Bound reset extraction to reset context and observed try-again-at formats, rejected every provider-home symlink component, honored configured api_key_env, added generic malformed-cache no-quarantine proof, and removed the generated task brief from the PR file set."
+    }
   },
   "delivery": {
     "pull_request": 4519,
     "base_sha": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
-    "implementation_head": "9f080f60e46762c066cacd0a44af4dd8024376ed",
+    "implementation_head": "7d534d0cb1d6758c1679ee1fbd5bfad2f2615371",
     "implementation_commits": [
       "b16be897b4da81aee035969c2816a6522153d83a",
       "8f6124af6ebaadf460a5ab9e0ad478c5d8800a00",
       "3d298cc723595393fff441ef84139c039f737d28",
-      "9f080f60e46762c066cacd0a44af4dd8024376ed"
+      "9f080f60e46762c066cacd0a44af4dd8024376ed",
+      "caf3f78458e3ef381ca1de4c1fe39458f8afecd8",
+      "7d534d0cb1d6758c1679ee1fbd5bfad2f2615371"
     ]
   },
   "rollout": "Source merge only. A separately governed canary may later prove provider-home quarantine, quota pause, distinct-group fallback, fresh-reset recovery, and rollback.",
