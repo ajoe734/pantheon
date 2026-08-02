@@ -14,6 +14,7 @@ import json
 import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -10103,6 +10104,105 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_resumed")
 
+    def test_resume_refreshes_exact_process_generation_after_pid_replacement(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="supervisor-resume-generation-") as temp_dir:
+            root = Path(temp_dir)
+            config = {
+                "paths": {
+                    "state_file": str(root / ".orchestrator" / "state.json"),
+                    "status_file": str(root / "ai-status.json"),
+                },
+                "providers": {
+                    "claude": {
+                        "runtime": {
+                            "cli": "claude",
+                            "include_hook_events": False,
+                            "output_format": "stream-json",
+                            "permission_mode": "acceptEdits",
+                        }
+                    }
+                },
+            }
+            worker = {
+                "run_id": "run-resume-generation",
+                "task_id": "TASK-RESUME-GENERATION",
+                "queue_event_id": "evt-resume-generation",
+                "agent_id": "claude",
+                "provider": "claude",
+                "session_id": "session-resume-generation",
+                "status": "suspended_approval",
+                "pid": 1111,
+                "pid_start_ticks": 111,
+                "workspace_path": str(root),
+                "status_root": str(root),
+            }
+            old_generation = supervisor.worker_process_generation_id(
+                task_id=worker["task_id"],
+                worker_run_id=worker["run_id"],
+                queue_event_id=worker["queue_event_id"],
+                pid=worker["pid"],
+                pid_start_ticks=worker["pid_start_ticks"],
+            )
+            worker["process_generation"] = old_generation
+            resumed_process = mock.Mock(pid=2222)
+            command_runtime_env = {
+                "PANTHEON_COMMAND_ROOT": str(root / "command-root"),
+                "PANTHEON_COMMAND_RUNTIME_SHA": "runtime-sha",
+            }
+
+            with (
+                mock.patch.object(supervisor, "command_exists", return_value="/usr/bin/claude"),
+                mock.patch.object(supervisor, "_claude_runtime_env", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "status_command_runtime_env",
+                    return_value=command_runtime_env,
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "spawn_background_process",
+                    return_value=(resumed_process, root / "unused.log"),
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "worker_pid_start_ticks",
+                    return_value=222,
+                ) as worker_pid_start_ticks,
+            ):
+                resumed = supervisor.resume_claude_worker(
+                    config,
+                    worker,
+                    provider_report={"providers": {}},
+                )
+
+        expected_generation = supervisor.worker_process_generation_id(
+            task_id="TASK-RESUME-GENERATION",
+            worker_run_id="run-resume-generation",
+            queue_event_id="evt-resume-generation",
+            pid=2222,
+            pid_start_ticks=222,
+        )
+        worker_pid_start_ticks.assert_called_once_with(2222)
+        self.assertIsNotNone(resumed)
+        self.assertEqual(worker["pid"], 2222)
+        self.assertEqual(worker["pid_start_ticks"], 222)
+        self.assertEqual(worker["process_generation"], expected_generation)
+        self.assertNotEqual(worker["process_generation"], old_generation)
+        self.assertEqual(
+            supervisor.worker_process_identity(worker),
+            {
+                "schema_version": supervisor.WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+                "task_id": "TASK-RESUME-GENERATION",
+                "worker_run_id": "run-resume-generation",
+                "queue_event_id": "evt-resume-generation",
+                "pid": 2222,
+                "pid_start_ticks": 222,
+                "process_generation": expected_generation,
+            },
+        )
+        self.assertEqual(resumed["pid_start_ticks"], 222)
+        self.assertEqual(resumed["process_generation"], expected_generation)
+
     def test_approval_stage_fails_denied_worker(self) -> None:
         worker = {
             "run_id": "run-denied",
@@ -10976,20 +11076,527 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(outcome, {"changed": True, "stop": True})
         requeue.assert_called_once()
 
+    def test_assignment_stage_preserves_healthy_owner_after_review_handoff(self) -> None:
+        """A worker's own governed handoff must not turn into exit 143."""
+
+        worker = {
+            "run_id": "run-owner-handoff",
+            "task_id": "TASK-HANDOFF",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-owner-handoff",
+            "pid": 1234,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        task = {
+            "id": "TASK-HANDOFF",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "status": "review",
+            "last_update": "2026-08-02T09:45:00Z",
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {"workers": {worker["run_id"]: worker}},
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome["stop"], False)
+        self.assertEqual(worker["status"], "running")
+        terminate_worker_pid.assert_not_called()
+        finalize_queue_event_record.assert_not_called()
+
+    def test_assignment_stage_preserves_healthy_reviewer_after_approval(self) -> None:
+        """Review approval advances governance without canceling its producer."""
+
+        worker = {
+            "run_id": "run-review-approval",
+            "task_id": "TASK-APPROVAL",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-review-approval",
+            "pid": 5678,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        task = {
+            "id": "TASK-APPROVAL",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "review_approved",
+            "last_update": "2026-08-02T09:50:00Z",
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {"workers": {worker["run_id"]: worker}},
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome["stop"], False)
+        self.assertEqual(worker["status"], "running")
+        terminate_worker_pid.assert_not_called()
+        finalize_queue_event_record.assert_not_called()
+
+    def test_assignment_stage_preserves_governance_only_assign_owner_change(self) -> None:
+        worker = {
+            "run_id": "run-governance-assign",
+            "task_id": "TASK-GOVERNANCE-ASSIGN",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-governance-assign",
+            "pid": 6789,
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        task = {
+            "id": worker["task_id"],
+            "owner": "Claude",
+            "reviewer": "Human/Ops",
+            "status": "in_progress",
+            "last_update": "2026-08-02T10:01:00Z",
+        }
+        governance_assign = {
+            "event_id": "ai-status-event-governance-only",
+            "ts": task["last_update"],
+            "agent": "Human/Ops",
+            "type": "assign",
+            "task_id": task["id"],
+            "message": "Assigned task to Claude with reviewer Human/Ops",
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_process_generation") as terminate,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {"workers": {worker["run_id"]: worker}},
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=True,
+                governance_activity_events=[governance_assign],
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": False})
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(
+            worker["governance_lease_guard"]["reason_code"],
+            "governance_only_transition",
+        )
+        terminate.assert_not_called()
+        finalize_queue_event_record.assert_not_called()
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "worker_governance_lease_preserved",
+        )
+
+    def test_note_and_reopen_are_governance_only_for_active_lease(self) -> None:
+        worker = {
+            "run_id": "run-governance-event",
+            "task_id": "TASK-GOVERNANCE-EVENT",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        task = {
+            "id": worker["task_id"],
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "status": "in_progress",
+        }
+        for event_type in ("note", "reopen"):
+            with self.subTest(event_type=event_type):
+                event = {
+                    "event_id": f"ai-status-event-{event_type}",
+                    "ts": "2026-08-02T10:01:00Z",
+                    "agent": "Human/Ops",
+                    "type": event_type,
+                    "task_id": task["id"],
+                    "message": f"governance {event_type}",
+                }
+                decision = supervisor.active_worker_governance_lease_decision(
+                    {},
+                    worker,
+                    task,
+                    activity_events=[event],
+                )
+                self.assertEqual(decision["action"], "preserve")
+                self.assertEqual(decision["reason_code"], "governance_only_transition")
+                self.assertEqual(decision["source_event_type"], event_type)
+
+    def test_explicit_cancel_and_supersede_are_terminal_lease_truth(self) -> None:
+        worker = {
+            "run_id": "run-explicit-terminal",
+            "task_id": "TASK-EXPLICIT-TERMINAL",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+        cancelled = supervisor.active_worker_governance_lease_decision(
+            {},
+            worker,
+            {
+                "id": worker["task_id"],
+                "owner": "Codex",
+                "reviewer": "Human/Ops",
+                "status": "cancelled",
+            },
+            activity_events=[],
+        )
+        self.assertEqual(cancelled["action"], "terminate")
+        self.assertEqual(cancelled["reason_code"], "terminal_task_truth")
+
+        superseded_event = {
+            "ts": "2026-08-02T10:01:00Z",
+            "agent": "Codex",
+            "type": "superseded",
+            "task_id": worker["task_id"],
+            "message": "Operator-authorized explicit supersession.",
+        }
+        superseded_event["event_id"] = "ai-status-event-" + hashlib.sha256(
+            json.dumps(
+                superseded_event,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        superseded = supervisor.active_worker_governance_lease_decision(
+            {},
+            worker,
+            None,
+            activity_events=[superseded_event],
+        )
+        self.assertEqual(superseded["action"], "terminate")
+        self.assertEqual(superseded["reason_code"], "terminal_activity_truth")
+
+        forged_event = copy.deepcopy(superseded_event)
+        forged_event["event_id"] += "-forged"
+        forged = supervisor.active_worker_governance_lease_decision(
+            {},
+            worker,
+            None,
+            activity_events=[forged_event],
+        )
+        self.assertEqual(forged["action"], "preserve")
+        self.assertEqual(forged["reason_code"], "missing_or_ambiguous_task_truth")
+
+    def test_assignment_stage_supersedes_exactly_reassigned_reviewer(self) -> None:
+        worker = {
+            "run_id": "run-reviewer-moved",
+            "task_id": "TASK-REVIEWER-MOVED",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-reviewer-moved",
+            "pid": 7890,
+            "pid_start_ticks": 888,
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
+        task = {
+            "id": worker["task_id"],
+            "owner": "Claude",
+            "reviewer": "Human/Ops",
+            "status": "review",
+        }
+        reassignment = {
+            "ts": "2026-08-02T10:01:00Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": task["id"],
+            "old_owner": "Claude",
+            "new_owner": "Claude",
+            "old_reviewer": "Codex",
+            "new_reviewer": "Human/Ops",
+            "message": "Exact reviewer reassignment.",
+        }
+        reassignment["event_id"] = "supervisor-reassign-" + hashlib.sha256(
+            (
+                task["id"] + "\0" + reassignment["ts"] + "\0Claude\0Claude\0"
+                "Codex\0Human/Ops\0" + reassignment["message"]
+            ).encode("utf-8")
+        ).hexdigest()
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {"workers": {worker["run_id"]: worker}},
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=True,
+                governance_activity_events=[reassignment],
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "superseded")
+        self.assertEqual(
+            worker["last_error"],
+            "Worker superseded after exact task responsibility transition.",
+        )
+        terminate.assert_called_once_with(worker)
+
+    def test_governance_lease_decision_fails_closed_on_concurrent_reassignment(self) -> None:
+        worker = {
+            "run_id": "run-concurrent-owner",
+            "task_id": "TASK-CONCURRENT-OWNER",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        event = {
+            "ts": "2026-08-02T10:01:00Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": worker["task_id"],
+            "old_owner": "Codex",
+            "new_owner": "Claude",
+            "old_reviewer": "Human/Ops",
+            "new_reviewer": "Human/Ops",
+            "message": "Exact owner reassignment.",
+        }
+        event["event_id"] = "supervisor-reassign-" + hashlib.sha256(
+            (
+                worker["task_id"] + "\0" + event["ts"] + "\0Codex\0Claude\0"
+                "Human/Ops\0Human/Ops\0" + event["message"]
+            ).encode("utf-8")
+        ).hexdigest()
+        concurrent_task = {
+            "id": worker["task_id"],
+            "status": "in_progress",
+            "owner": "Gemini",
+            "reviewer": "Human/Ops",
+        }
+
+        decision = supervisor.active_worker_governance_lease_decision(
+            {},
+            worker,
+            concurrent_task,
+            activity_events=[event],
+        )
+
+        self.assertEqual(decision["action"], "preserve")
+        self.assertEqual(decision["reason_code"], "concurrent_assignment_mutation")
+
+    def test_assignment_stage_terminal_task_may_end_exact_process_generation(self) -> None:
+        config = {
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+            },
+            "ready_dispatcher": {"dependency_done_statuses": ["done"]},
+        }
+        worker = {
+            "run_id": "run-terminal",
+            "task_id": "TASK-TERMINAL",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-terminal",
+            "pid": 8901,
+            "pid_start_ticks": 999,
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
+        task = {
+            "id": worker["task_id"],
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "status": "done",
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate,
+            mock.patch.object(supervisor, "clear_task_failure_streak"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                {"workers": {worker["run_id"]: worker}},
+                worker,
+                run_id=worker["run_id"],
+                provider_report={},
+                task_map={task["id"]: task},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        terminate.assert_called_once_with(worker)
+        finalize.assert_called_once()
+
+    def test_process_generation_termination_rejects_reused_pid(self) -> None:
+        worker = {
+            "task_id": "TASK-PID-REUSE",
+            "run_id": "run-pid-reuse",
+            "queue_event_id": "evt-pid-reuse",
+            "pid": 9012,
+            "pid_start_ticks": 111,
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
+        with (
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=222),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+        ):
+            terminated = supervisor.terminate_worker_process_generation(worker)
+
+        self.assertFalse(terminated)
+        terminate_worker_pid.assert_not_called()
+
+    def test_status_event_process_binding_matches_only_exact_worker_generation(self) -> None:
+        worker = {
+            "task_id": "TASK-STATUS-BINDING",
+            "run_id": "run-status-binding",
+            "queue_event_id": "evt-status-binding",
+            "pid": 9123,
+            "pid_start_ticks": 444,
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
+        identity = supervisor.worker_process_identity(worker)
+        event = {"status_command": {"worker_lease": identity}}
+
+        self.assertTrue(supervisor.status_event_matches_worker_process(event, worker))
+        forged = copy.deepcopy(event)
+        forged["status_command"]["worker_lease"]["pid_start_ticks"] = 445
+        self.assertFalse(supervisor.status_event_matches_worker_process(forged, worker))
+
     def test_assignment_stage_supersedes_worker_after_owner_moves(self) -> None:
         worker = {
             "run_id": "run-moved",
             "task_id": "TASK-MOVED",
             "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
             "status": "running",
             "queue_event_id": "evt-moved",
             "pid": 1234,
+            "pid_start_ticks": 777,
+            "lease_acquired_at": "2026-08-02T10:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
         }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
+        reassignment = {
+            "ts": "2026-08-02T10:01:00Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "TASK-MOVED",
+            "old_owner": "Codex",
+            "new_owner": "Claude",
+            "old_reviewer": "Human/Ops",
+            "new_reviewer": "Human/Ops",
+            "message": "Exact owner reassignment.",
+        }
+        reassignment["event_id"] = "supervisor-reassign-" + hashlib.sha256(
+            (
+                "TASK-MOVED\0" + reassignment["ts"] + "\0Codex\0Claude\0"
+                "Human/Ops\0Human/Ops\0" + reassignment["message"]
+            ).encode("utf-8")
+        ).hexdigest()
         with (
             mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
             mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
             mock.patch.object(supervisor, "worker_matches_current_assignment", return_value=False),
-            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate_worker_process_generation,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -10999,14 +11606,22 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                 worker,
                 run_id="run-moved",
                 provider_report={},
-                task_map={"TASK-MOVED": {"owner": "Claude"}},
+                task_map={
+                    "TASK-MOVED": {
+                        "id": "TASK-MOVED",
+                        "owner": "Claude",
+                        "reviewer": "Human/Ops",
+                        "status": "in_progress",
+                    }
+                },
                 active_worker_statuses={"running"},
                 alive=True,
+                governance_activity_events=[reassignment],
             )
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "superseded")
-        terminate_worker_pid.assert_called_once_with(1234)
+        terminate_worker_process_generation.assert_called_once_with(worker)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
         finalize_queue_event_record.assert_called_once()
 
@@ -11015,16 +11630,29 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "run_id": "run-preempted",
             "task_id": "TASK-LOW",
             "provider": "codex",
+            "agent_id": "codex",
             "status": "running",
             "queue_event_id": "evt-low",
             "pid": 1234,
+            "pid_start_ticks": 777,
         }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
         with (
             mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
             mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
             mock.patch.object(supervisor, "worker_matches_current_assignment", return_value=True),
             mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=True),
-            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate_worker_process_generation,
             mock.patch.object(supervisor, "sync_preempted_task_status") as sync_preempted,
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
@@ -11043,7 +11671,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "superseded")
         self.assertIn("higher-priority", worker["last_error"])
-        terminate_worker_pid.assert_called_once_with(1234)
+        terminate_worker_process_generation.assert_called_once_with(worker)
         sync_preempted.assert_called_once_with({}, worker)
         finalize_queue_event_record.assert_called_once()
 
@@ -11666,11 +12294,20 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                     "status": "running",
                     "queue_event_id": "evt-1",
                     "pid": 12345,
+                    "pid_start_ticks": 67890,
                     "last_event_at": "2026-04-06T09:00:00Z",
                     "request_snapshot": {"reason": "owned_ready_dispatch"},
                 }
             },
         }
+        worker = state["workers"]["run-1"]
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=worker["task_id"],
+            worker_run_id=worker["run_id"],
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
         status = {
             "tasks": [
                 {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Codex", "depends_on": []},
@@ -11684,18 +12321,21 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
-            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate_worker,
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
         ):
             changed = supervisor.poll_workers(config, state)
 
         self.assertTrue(changed)
-        worker = state["workers"]["run-1"]
         self.assertEqual(worker["status"], "superseded")
         self.assertIn("prioritize higher-priority review/finalize work", worker["last_error"])
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
-        terminate_worker_pid.assert_called_once_with(12345)
+        terminate_worker.assert_called_once_with(worker)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
 
     def test_parent_worker_is_not_superseded_for_its_sidecar_review(self) -> None:
@@ -12410,14 +13050,42 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                     "task_id": "REG-002",
                     "provider": "copilot",
                     "agent_id": "copilot",
+                    "logical_agent_id": "copilot",
                     "status": "stalled",
                     "queue_event_id": "evt-1",
                     "pid": 2222,
+                    "pid_start_ticks": 3333,
+                    "process_generation": supervisor.worker_process_generation_id(
+                        task_id="REG-002",
+                        worker_run_id="run-1",
+                        queue_event_id="evt-1",
+                        pid=2222,
+                        pid_start_ticks=3333,
+                    ),
+                    "lease_acquired_at": "2026-04-06T14:19:00Z",
                     "last_event_at": "2026-04-06T14:19:47Z",
+                    "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
                 }
             },
         }
         status = {"tasks": [{"id": "REG-002", "status": "review", "owner": "Codex", "reviewer": "Gemini"}]}
+        reassignment = {
+            "ts": "2026-04-06T14:19:30Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Copilot",
+            "new_owner": "Codex",
+            "old_reviewer": "Gemini",
+            "new_reviewer": "Gemini",
+            "message": "Exact owner reassignment.",
+        }
+        reassignment["event_id"] = "supervisor-reassign-" + hashlib.sha256(
+            (
+                "REG-002\0" + reassignment["ts"] + "\0Copilot\0Codex\0"
+                "Gemini\0Gemini\0" + reassignment["message"]
+            ).encode("utf-8")
+        ).hexdigest()
 
         with (
             mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
@@ -12425,15 +13093,25 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
-            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate_worker_process_generation,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
         ):
-            changed = supervisor.poll_workers(config, state)
+            changed = supervisor.poll_workers(
+                config,
+                state,
+                governance_activity_events=[reassignment],
+            )
 
         self.assertTrue(changed)
         self.assertEqual(state["workers"]["run-1"]["status"], "superseded")
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
-        terminate_worker_pid.assert_called_once_with(2222)
+        terminate_worker_process_generation.assert_called_once_with(
+            state["workers"]["run-1"]
+        )
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
 
     def test_alive_chair_worker_is_completed_after_valid_artifacts_apply(self) -> None:
@@ -16309,8 +16987,341 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Copilot")
         self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
+class ExplicitHumanReviewerPreservationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["todo", "in_progress"],
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "owner_fallbacks": {
+                    "Codex": ["Codex2", "Claude"],
+                    "Codex2": ["Codex", "Claude"],
+                },
+                "reviewer_fallbacks": {
+                    "Human/Ops": ["Codex2", "Claude"],
+                    "Codex": ["Codex2", "Claude"],
+                    "Codex2": ["Codex", "Claude"],
+                },
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        self.ready_report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+            }
+        }
+        self.codex_paused_state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "pause_kind": "quota_terminal",
+                    }
+                }
+            }
+        }
 
+    def test_mainline_normalization_awaits_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-REVIEW-READY",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
 
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(self.config, task)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Human/Ops"))
+
+    def test_mainline_owner_fallback_preserves_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-OWNER-FALLBACK",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["expected_reviewer"], "Human/Ops")
+
+    def test_helper_claim_preserves_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-HELPER",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "_cached_provider_capabilities",
+            return_value=self.ready_report,
+        ):
+            planned = supervisor.plan_helper_claim_assignment(
+                self.config,
+                task=task,
+                owner_name="Codex",
+                reviewer_name="Human/Ops",
+                idle_agent_name="Codex2",
+                agent_loads={"Codex": [1]},
+                helper_settings={
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                },
+            )
+
+        self.assertEqual(planned, ("Codex2", "Human/Ops"))
+
+    def test_explicit_human_reviewer_failure_fails_closed(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["agents"]["human_ops"] = {
+            "id": "human_ops",
+            "display_name": "Human/Ops",
+            "provider": "human_ops",
+        }
+        worker = {
+            "task_id": "SUP-HUMAN-REVIEW-FAILURE",
+            "agent_id": "human_ops",
+            "retry_count": 1,
+            "run_id": "human-review-run",
+        }
+        task = {
+            "id": "SUP-HUMAN-REVIEW-FAILURE",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                {},
+                worker,
+                "terminal reviewer provider failure",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_owner_failure_preserves_explicit_human_reviewer(self) -> None:
+        worker = {
+            "task_id": "SUP-HUMAN-OWNER-FAILURE",
+            "agent_id": "codex",
+            "retry_count": 1,
+            "run_id": "codex-owner-failure",
+        }
+        task = {
+            "id": "SUP-HUMAN-OWNER-FAILURE",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                {},
+                worker,
+                "terminal owner provider failure",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Codex2")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["new_status"], "todo")
+
+    def test_bound_review_approved_identity_is_not_normalized(self) -> None:
+        task = {
+            "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "review_binding": {
+                "pr": 4508,
+                "head_sha": "7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
+                "head_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+                "base": "dev",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Human/Ops"))
+
+    def test_unbound_review_approved_owner_recovery_keeps_human_gate(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-UNBOUND-FINALIZE",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+
+    def test_persistence_rejects_supervisor_human_reviewer_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            original = {
+                "tasks": [
+                    {
+                        "id": "SUP-HUMAN-PERSIST-GUARD",
+                        "status": "todo",
+                        "owner": "Codex",
+                        "reviewer": "Human/Ops",
+                    }
+                ]
+            }
+            status_path.write_text(json.dumps(original), encoding="utf-8")
+            config = {**self.config, "paths": {"status_file": str(status_path)}}
+
+            with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+                applied = supervisor.persist_task_reassignment(
+                    config,
+                    task_id="SUP-HUMAN-PERSIST-GUARD",
+                    new_owner="Codex2",
+                    new_reviewer="Claude",
+                    message="Availability fallback must retain the human gate.",
+                    expected_owner="Codex",
+                    expected_reviewer="Human/Ops",
+                    expected_status="todo",
+                )
+
+            self.assertFalse(applied)
+            sync.assert_not_called()
+            self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), original)
+
+    def test_concurrent_stale_owner_plans_apply_once_and_keep_human_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "SUP-HUMAN-CONCURRENT-CAS",
+                                "status": "todo",
+                                "owner": "Codex",
+                                "reviewer": "Human/Ops",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {**self.config, "paths": {"status_file": str(status_path)}}
+            plans_ready = threading.Barrier(2)
+            first_synced = threading.Event()
+
+            def drain_outbox(_config: dict) -> bool:
+                payload = json.loads(status_path.read_text(encoding="utf-8"))
+                payload.pop("status_activity_outbox", None)
+                status_path.write_text(json.dumps(payload), encoding="utf-8")
+                first_synced.set()
+                return True
+
+            def apply_stale_plan(new_owner: str, wait_for_winner: bool) -> bool:
+                plans_ready.wait(timeout=5)
+                if wait_for_winner:
+                    self.assertTrue(first_synced.wait(timeout=5))
+                return supervisor.persist_task_reassignment(
+                    config,
+                    task_id="SUP-HUMAN-CONCURRENT-CAS",
+                    new_owner=new_owner,
+                    new_reviewer="Human/Ops",
+                    message=f"Concurrent fallback candidate {new_owner}.",
+                    expected_owner="Codex",
+                    expected_reviewer="Human/Ops",
+                    expected_status="todo",
+                )
+
+            with (
+                mock.patch.object(supervisor, "sync_status_pipeline", side_effect=drain_outbox),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                winner = executor.submit(apply_stale_plan, "Codex2", False)
+                stale = executor.submit(apply_stale_plan, "Claude", True)
+                results = [winner.result(timeout=10), stale.result(timeout=10)]
+
+            self.assertEqual(results, [True, False])
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["tasks"][0]["owner"], "Codex2")
+            self.assertEqual(saved["tasks"][0]["reviewer"], "Human/Ops")
 
 
 class MissingHandoffBlockerTests(unittest.TestCase):
