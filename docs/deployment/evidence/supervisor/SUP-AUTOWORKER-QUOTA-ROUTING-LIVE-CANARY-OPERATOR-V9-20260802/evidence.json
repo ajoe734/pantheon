@@ -1,0 +1,308 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "phase": "Supervisor governed live promotion / integrated V9 canary",
+    "status": "blocked",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802/evidence.json"
+  },
+  "outcome": {
+    "decision": "no_go_preflight",
+    "recorded_at": "2026-08-02T19:44:30Z",
+    "live_transition_attempted": false,
+    "incumbent_signalled": false,
+    "candidate_launched": false,
+    "rollback_launched": false,
+    "reason": "The read-only transaction preflight rejected the incumbent/config bootstrap before intent or TERM: the live watchdog command remains bound to the mutable dev-root entrypoint, so the immutable candidate cannot assemble an incumbent identity or governed launch contract.",
+    "required_follow_up": "A separately governed source/config bootstrap repair must define how the transaction atomically moves from the mutable dev-root incumbent and rewrites the watchdog target without allowing a watchdog bypass or weakening rollback. Re-run this canary only after that repair is exact-head reviewed, merged, archived, and present in a newly selected candidate."
+  },
+  "dependency_gate": {
+    "candidate_commit": "0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+    "candidate_tree": "3e447ad165aba237524639200c0f56399164461b",
+    "candidate_required_checks": {
+      "commit_trailers": "success",
+      "runtime_mirror_guard": "success",
+      "python_packaging_provision": "success",
+      "smoke_acceptance": "success",
+      "forward_to_orchestrator": "success"
+    },
+    "dependencies": [
+      {
+        "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+        "archive_sha256": "d945f4c69d9c834378430f847701b36686e80047f6b4933f98ce702471dcbd39",
+        "reviewer": "Human/Ops",
+        "reviewed_head": "a6efcd594d488b74380ec21cbbb79f191d14430a",
+        "review_pr": 4517,
+        "merge_commit": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
+        "candidate_ancestor": true,
+        "evidence_sha256": "ac90b5a66c132407c3688cd044e6f0913ed9e2601760cb4a956857342f1d209a"
+      },
+      {
+        "task_id": "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+        "archive_sha256": "0cafad601bbdf670f6a88277a846df3807a7a0167de953deddc41b1e218a3002",
+        "reviewer": "Human/Ops",
+        "reviewed_head": "916910c1fd7f1380551154f6d64311ea21f97124",
+        "review_pr": 4519,
+        "merge_commit": "280c4f38ebef3a71271c2e16b2b0f3225b7a4c2f",
+        "candidate_ancestor": true,
+        "evidence_sha256": "413081b43cf645bd2ca2e5f95c17642e2ce10593fd8d0fac4db5dc9201834ae9"
+      },
+      {
+        "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+        "archive_sha256": "ecdd8cf8c00c77ad3d33b1d344b17ae813365b4e789c81de3763caeae2ac7ea3",
+        "reviewer": "Human/Ops",
+        "reviewed_head": "10f0bdcb49390bd3eb493a6f5225e3fd706a9106",
+        "review_pr": 4520,
+        "merge_commit": "0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+        "candidate_ancestor": true,
+        "evidence_sha256": "bb5504ae0c5decd692f4b58ceb6ee174c1a501484e18c6e62a88f54859b231dd"
+      },
+      {
+        "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+        "archive_sha256": "b47000977fb1d7565e585e7e99333aead5a7f1013987d22c5b94943486ed3eb8",
+        "reviewer": "Human/Ops",
+        "reviewed_head": "c1a76ef240716452316bbd932137ecae08521744",
+        "review_pr": 4508,
+        "merge_commit": "d15eb5266b911116d6f0c92ea33e1e5d6a2bb532",
+        "candidate_ancestor": true,
+        "evidence_sha256": "4d3e539f726cfd34c610bbfce2ed3ca1fe42aa9a5ee4d34f1c1c19e5c0772842"
+      },
+      {
+        "task_id": "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802",
+        "archive_sha256": "7434b7fc75bd360cd4a09e953df3be38a1bd474ba1ab81a0161abce02376fb4d",
+        "reviewer": "Human/Ops",
+        "reviewed_head": "eb3c90396495ff9a36faef529a423e07db87246a",
+        "review_pr": 4515,
+        "merge_commit": "941b47946fe945feb0d705f773b91bd3153a6715",
+        "candidate_ancestor": true,
+        "evidence_sha256": "c5fd9ee6b40e12df75e9ad426c942f893503d3825c2fb4a4283c241299fbb1f1"
+      }
+    ]
+  },
+  "runtime_preflight": {
+    "captured_at": "2026-08-02T19:38:34.793404Z",
+    "command": "PYTHONDONTWRITEBYTECODE=1 <candidate>/scripts/promote-supervisor-runtime.sh --repo <candidate> --config-path <live-config> --json",
+    "exit_code": 1,
+    "raw_external_sha256": "4958422cd9e9745e59521bfb84932edab702741b1a4140fa2e70d55bbe721a40",
+    "eligible_for_promotion": false,
+    "candidate": {
+      "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+      "commit": "0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+      "tree": "3e447ad165aba237524639200c0f56399164461b",
+      "accepted_dev_commit": "0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+      "remote": "ajoe734/pantheon",
+      "clean": true,
+      "identity_invariant": "pass"
+    },
+    "live_config": {
+      "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+      "inode": 2098443,
+      "byte_length": 39742,
+      "poll_interval_seconds": 30,
+      "auto_refresh_provider_capabilities": false,
+      "watchdog_entrypoint_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+    },
+    "incumbent": {
+      "pid": 3538768,
+      "starttime_ticks": 3631742,
+      "state": "S",
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+      "status_root": "/home/lupin/pantheon",
+      "health": "healthy",
+      "transaction_identity": "unavailable"
+    },
+    "failed_invariants": [
+      {
+        "name": "incumbent_supervisor_process_identity_immutable",
+        "error": "Captured live config does not bind the exact canonical supervisor entrypoint"
+      },
+      {
+        "name": "governed_supervisor_launch_contract_immutable",
+        "error": "Candidate/process identity is unavailable"
+      }
+    ],
+    "passing_invariants": [
+      "candidate_runtime_identity_immutable",
+      "config_and_state_files_readable",
+      "runtime_health_clean",
+      "supervisor_lifecycle_valid",
+      "supervisor_pid_bound_and_locked",
+      "ai_status_schema_valid",
+      "task_state_shadow_valid",
+      "fresh_loop_sequence",
+      "worker_lease_parity_and_no_duplicates",
+      "provider_readiness_baseline",
+      "no_orphaned_in_progress_tasks"
+    ]
+  },
+  "identity_and_governance": {
+    "configured_accounts": {
+      "Codex": {
+        "account": "codex1",
+        "quota_group": "codex1",
+        "provider_home": "~/.codex",
+        "worker_slots": 4
+      },
+      "Codex2": {
+        "account": "codex2",
+        "quota_group": "codex2",
+        "provider_home": "~/.codex2",
+        "worker_slots": 4
+      }
+    },
+    "distinct_account_and_quota_groups": true,
+    "global_mutual_review_ban_added": false,
+    "explicit_human_ops_reviewer_preserved": true,
+    "task_owner": "Codex2",
+    "task_reviewer": "Human/Ops",
+    "live_capability_snapshot": {
+      "Codex": "cached auth_ready=false on the incumbent runtime; no canary probe executed",
+      "Codex2": "cached auth_ready=true and local_worker_ready=true on the incumbent runtime"
+    },
+    "credentials": {
+      "auth_json_read_by_canary": false,
+      "auth_json_modified": false,
+      "api_key_material_read": false,
+      "api_key_material_modified": false,
+      "provider_cache_quarantine_executed": false
+    }
+  },
+  "sanitized_runtime_snapshot": {
+    "capture_window": "2026-08-02T19:42:25Z/2026-08-02T19:43:32Z",
+    "state_sha256": "7dc1e229b3fe4ae0af9648b5d9ce832e5b505510499f93b7304f750043e0a406",
+    "status_sha256": "ae4f5562e75ae896663b980f1af22398cd007511d131c1623bb93bc1711d0757",
+    "event_queue_sha256": "0ccdaf09ba31626674e5b970b4e116c3675a0c20d877f9681ced07c891806f49",
+    "provider_capabilities_sha256": "504cb4f9b619e62602f19753c6583ff9a6f03756f4ab5d237f84346d9c0b143d",
+    "task_state_shadow": {
+      "mode": "authoritative",
+      "ok": true,
+      "caught_up": true,
+      "event_count": 9345,
+      "nonterminal_task_count": 56,
+      "projected_equals_expected": true
+    },
+    "queue": {
+      "event_count": 1,
+      "reason": "owned_ready_dispatch",
+      "provider_group": "codex2",
+      "duplicate_active_workers": 0,
+      "queue_to_start_seconds": 13
+    },
+    "worker_lease": {
+      "active_provider": "codex2-1",
+      "provider_ready": true,
+      "heartbeat_and_lease_refresh_observed": true
+    },
+    "runtime_lock": {
+      "latest_hold_seconds": 3.919,
+      "historical_peak_seconds": 327.321,
+      "hold_exceeded": false
+    }
+  },
+  "incumbent_containment": {
+    "statement": "Because preflight stopped before intent or TERM, the incumbent remained the rollback-safe running generation; no competing supervisor was launched.",
+    "post_preflight_successful_loop_markers": [
+      "2026-08-02T19:39:14Z",
+      "2026-08-02T19:40:07Z",
+      "2026-08-02T19:41:01Z",
+      "2026-08-02T19:41:53Z",
+      "2026-08-02T19:42:42Z",
+      "2026-08-02T19:43:36Z",
+      "2026-08-02T19:44:28Z"
+    ],
+    "post_preflight_cycles": 7,
+    "incumbent_ten_interval_baseline_seconds": [
+      54,
+      48,
+      56,
+      55,
+      53,
+      54,
+      52,
+      49,
+      54,
+      52
+    ],
+    "incumbent_baseline_median_seconds": 53.5,
+    "incumbent_baseline_p95_seconds": 55.55,
+    "incumbent_baseline_max_seconds": 56,
+    "configured_interval_seconds": 30,
+    "incumbent_baseline_median_overshoot_seconds": 23.5,
+    "candidate_cycle_claim": "not_run"
+  },
+  "isolated_negative_matrix": [
+    {
+      "command": "cd .orchestrator && env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT ../.venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py",
+      "result": "100 passed, 7 subtests passed",
+      "covers": [
+        "exact and generic malformed cache paths",
+        "unsafe or ambiguous provider-home paths",
+        "single quarantine under concurrent probes",
+        "quota with and without reset",
+        "revoked auth",
+        "timeout",
+        "credential metadata redaction"
+      ]
+    },
+    {
+      "command": "cd .orchestrator && env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py -k '<scheduler/quota/lease/reviewer focused classes>'",
+      "result": "136 passed, 443 deselected, 13 subtests passed",
+      "covers": [
+        "fixed cadence without busy loop",
+        "bounded telemetry and runtime lock accounting",
+        "distinct Codex/Codex2 quota fallback",
+        "stale auth readmission and duplicate probe prevention",
+        "explicit Human/Ops preservation",
+        "reused PID and ambiguous generation fail closed",
+        "active lease and worker duplicate guards"
+      ]
+    },
+    {
+      "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py::SidecarTaskTests scripts/test_ai_status.py::SupervisorDispatchBatchTests scripts/test_ai_status.py::StatusCommandLeaseValidationTests scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests scripts/git/test_task_review_merge_gate.py::FailClosedTests",
+      "result": "55 passed, 2 subtests passed",
+      "covers": [
+        "overlapping task artifacts",
+        "atomic batch CAS and lease binding",
+        "stale exact-head review",
+        "missing or mismatched review binding"
+      ]
+    },
+    {
+      "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py",
+      "result": "209 passed",
+      "log_sha256": "eddc21a04d9c1da26917fdd9d7fa2bd85a57a10f76e9fc03e1197d09423067dc",
+      "covers": [
+        "source/config/root/process preflight",
+        "PID reuse",
+        "candidate rollback",
+        "rollback failure",
+        "stale/equal/regressing loop markers",
+        "unknown child containment"
+      ]
+    }
+  ],
+  "acceptance_not_claimed": [
+    "No candidate runtime launch occurred, so ten candidate cycles, candidate cadence telemetry, candidate cache quarantine, candidate quota projection, live fallback dispatch, candidate resume-generation refresh, and candidate rollback are not claimed.",
+    "The seven post-preflight loops prove incumbent containment, not a successful candidate rollout.",
+    "The isolated matrices qualify merged source behavior but do not replace the required promoted-runtime canary."
+  ],
+  "rollback": {
+    "selected_incumbent_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "selected_incumbent_commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+    "transaction_qualified_rollback_target": false,
+    "reason": "The incumbent is healthy but does not satisfy the immutable 40-hex command-runtime contract; preflight therefore aborted before a rollback plan could be constructed.",
+    "candidate_runtime_prepared": "/home/lupin/pantheon-ci-deploy/command-runtimes/0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+    "candidate_runtime_active": false,
+    "config_changed": false,
+    "incumbent_pid_unchanged": true
+  },
+  "review": {
+    "decision": "not_requested_yet",
+    "reviewer": "Human/Ops",
+    "required": "Review this exact NO-GO evidence head and keep the task blocked; do not approve completion as a successful live canary."
+  }
+}
