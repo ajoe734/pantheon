@@ -82,6 +82,7 @@ from dispatch_policy import (
 from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from provider_permissions import (
     probe_provider_auth,
+    provider_auth_probe_due,
     provider_capabilities as build_provider_capabilities,
     write_provider_capabilities,
 )
@@ -6090,6 +6091,7 @@ def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
         int(provider_auth.get("failed_probe_interval_seconds", 60) or 60),
     )
     settings.setdefault("recovery_probe_max_per_cycle", 2)
+    settings.setdefault("stale_cache_readmission_probe_max_per_cycle", 1)
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
 
@@ -8827,6 +8829,10 @@ def apply_provider_probe_to_report(
     if not isinstance(capability, dict):
         capability = {}
         providers[provider_key] = capability
+    capability["auth_error"] = probe.get("error")
+    capability["auth_method"] = probe.get("method")
+    capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    capability["auth_probe"] = probe
     health = rewrite_provider_health.classify_probe(
         probe.get("ready"),
         status=probe.get("status"),
@@ -8838,10 +8844,6 @@ def apply_provider_probe_to_report(
         status=probe.get("status"),
     )
     capability["auth_ready"] = probe.get("ready") is True
-    capability["auth_error"] = probe.get("error")
-    capability["auth_method"] = probe.get("method")
-    capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
-    capability["auth_probe"] = probe
     capability["account_health"] = health.value
     capability["probe_failure_kind"] = failure_kind
     ready = health is rewrite_provider_health.AccountHealth.HEALTHY
@@ -8959,6 +8961,7 @@ def agent_can_take_task(
     task: dict[str, Any] | None,
     *,
     state: dict[str, Any] | None = None,
+    allow_stale_provider_auth: bool = False,
 ) -> bool:
     name = str(agent_name or "").strip()
     if not name:
@@ -8967,7 +8970,7 @@ def agent_can_take_task(
         return False
     if state is not None and agent_dispatch_paused(config, state, name):
         return False
-    if agent_provider_auth_blocked(config, name):
+    if not allow_stale_provider_auth and agent_provider_auth_blocked(config, name):
         return False
     if not agent_is_known(config, name):
         return False
@@ -9193,6 +9196,8 @@ def agent_auto_dispatch_block_reason(
     state: dict[str, Any],
     agent_id: str | None,
     provider_report: dict[str, Any] | None = None,
+    *,
+    allow_stale_provider_auth: bool = False,
 ) -> str | None:
     """Return a human-readable reason when an agent must not receive auto dispatch."""
     normalized_agent = normalize_agent_id(agent_id or "")
@@ -9235,7 +9240,11 @@ def agent_auto_dispatch_block_reason(
             notes = str(agent_capability.get("notes") or "").strip()
             return notes or f"{normalized_agent} cannot auto-deliver in the current workspace"
 
-    if provider_capability:
+    stale_auth_readmission = bool(
+        allow_stale_provider_auth
+        and provider_capability.get("auth_ready") is False
+    )
+    if provider_capability and not stale_auth_readmission:
         if provider_capability.get("local_cli_worker_supported") is False:
             return f"{provider_id} local CLI worker is not ready"
         if provider_capability.get("supports_auto_approve") is False:
@@ -16525,6 +16534,210 @@ def _configured_recovery_probe_provider(
     return None
 
 
+def _stale_auth_provider_key_for_agent(
+    config: dict[str, Any],
+    agent_id: str,
+    provider_report: dict[str, Any],
+) -> str | None:
+    """Resolve the exact stale provider row behind a logical agent or slot."""
+
+    candidates: list[str] = []
+    provider_key = agent_provider_key(config, agent_id)
+    if provider_key:
+        candidates.append(provider_key)
+    for slot_id in logical_worker_slot_ids(config, agent_id):
+        slot_provider = agent_provider_key(config, slot_id)
+        if slot_provider:
+            candidates.append(slot_provider)
+    for candidate in dict.fromkeys(candidates):
+        capability = _provider_report_entry(provider_report, candidate)
+        if capability.get("auth_ready") is False:
+            return candidate
+    return None
+
+
+def provider_stale_cache_readmission_probe_targets(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any],
+    *,
+    status: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Select stale-auth providers that have real work waiting behind the gate.
+
+    This is a read-only preflight for ``run_once``'s pre-lock provider phase.
+    It deliberately reuses the dispatcher's lifecycle, dependency, queue,
+    capacity, failure-loop, chair-triage, and cooldown predicates while
+    ignoring only the cached provider-auth booleans under examination.  No
+    task, queue event, or runtime request is created here.
+    """
+
+    if not isinstance(provider_report, dict) or not provider_report.get("providers"):
+        return []
+    settings = ready_dispatch_settings(config)
+    if not settings.get("enabled", True):
+        return []
+    status = status if isinstance(status, dict) else load_status(config)
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+    task_map = {str(task.get(task_id_field)): task for task in tasks}
+    task_resolver = task_resolver_for_config(config, task_map)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    _pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
+    pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
+    agent_loads = agent_dispatch_loads(config, state, active_statuses)
+    active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+    pending_quota_counts = queued_quota_group_counts(config, state)
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(
+        config,
+        state,
+        task_map,
+        provider_report,
+        activity_events,
+    )
+    seen = state.get("seen_event_keys", {})
+    if not isinstance(seen, dict):
+        seen = {}
+    try:
+        unchanged_cooldown_seconds = max(
+            0.0,
+            float(settings.get("unchanged_task_cooldown_seconds", 900)),
+        )
+    except (TypeError, ValueError):
+        unchanged_cooldown_seconds = 900.0
+    checked_at = utc_now()
+
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None and max_concurrent > 0:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        pending_only_total = len(pending_task_ids - active_task_ids)
+        if live_total + pending_only_total >= max_concurrent:
+            return []
+
+    max_targets = max(
+        1,
+        int(
+            provider_guardrail_settings(config).get(
+                "stale_cache_readmission_probe_max_per_cycle",
+                1,
+            )
+            or 1
+        ),
+    )
+    targets: list[str] = []
+    seen_groups: set[str] = set()
+    for agent_id in weighted_dispatch_agent_ids(config, settings):
+        provider_key = _stale_auth_provider_key_for_agent(
+            config,
+            agent_id,
+            provider_report,
+        )
+        if not provider_key:
+            continue
+        group_id = provider_dispatch_group_id(config, provider_key) or normalize_agent_id(provider_key)
+        if group_id in seen_groups:
+            continue
+        if provider_dispatch_paused(config, state, provider_key):
+            # Existing auth/capacity pauses already feed
+            # provider_recovery_probe_targets with their own not-before gate.
+            continue
+        if agent_auto_dispatch_block_reason(
+            config,
+            state,
+            agent_id,
+            provider_report,
+            allow_stale_provider_auth=True,
+        ):
+            continue
+        target_agent = display_name_for(config, agent_id)
+        if not target_agent:
+            continue
+        quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
+        quota_group = agent_quota_group_id(config, agent_id)
+        quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
+        if quota_limit and quota_group and quota_used >= quota_limit:
+            continue
+        if len(agent_loads.get(target_agent, [])) >= agent_dispatch_capacity(config, agent_id, settings):
+            continue
+
+        eligible = False
+        for task in tasks:
+            task_id = str(task.get(task_id_field) or "")
+            if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
+                continue
+            candidate = task_execution_dispatch_candidate(
+                config,
+                task,
+                target_agent,
+                task_resolver,
+                settings=settings,
+            )
+            if candidate is None:
+                continue
+            reason, _priority = candidate
+            if not agent_can_take_task(
+                config,
+                target_agent,
+                task,
+                state=state,
+                allow_stale_provider_auth=True,
+            ):
+                continue
+            if (task_id, target_agent) in failure_loop_task_agents:
+                continue
+            if chair_reassignment_triage_needed_for_task(
+                config,
+                state,
+                task_id,
+                target_agent,
+                task=task,
+                provider_report=provider_report,
+                activity_events=activity_events,
+            ):
+                continue
+            event = build_dispatch_event(task, target_agent, reason, task_resolver)
+            if event["key"] in pending_event_keys:
+                continue
+            if dispatch_event_is_in_unchanged_cooldown(
+                seen,
+                event["key"],
+                cooldown_seconds=unchanged_cooldown_seconds,
+                now=checked_at,
+            ):
+                if reason != REASON_REVIEW_READY:
+                    continue
+                handoff = pending_review_handoff(
+                    config,
+                    status,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                )
+                if handoff is None or terminal_review_worker_for_redispatch(
+                    config,
+                    state,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                    event_key=event["key"],
+                    handoff=handoff,
+                ) is None:
+                    continue
+            eligible = True
+            break
+
+        if not eligible:
+            continue
+        seen_groups.add(group_id)
+        targets.append(provider_key)
+        if len(targets) >= max_targets:
+            break
+    return targets
+
+
 def provider_recovery_probe_targets(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -16590,18 +16803,43 @@ def probe_provider_reports(
     report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
     if report is None:
         report = previous or {}
-    targeted = False
-    for provider_key in provider_recovery_probe_targets(
+    recovery_targets = provider_recovery_probe_targets(
         config,
         runtime_snapshot or {},
-    ):
+    )
+    stale_targets = _safe_phase(
+        "select_provider_stale_cache_readmission_targets",
+        provider_stale_cache_readmission_probe_targets,
+        config,
+        runtime_snapshot or {},
+        report,
+        quiet=quiet,
+    )
+    if not isinstance(stale_targets, list):
+        stale_targets = []
+    targeted = False
+    seen_groups: set[str] = set()
+    for provider_key, stale_readmission in [
+        *((target, False) for target in recovery_targets),
+        *((target, True) for target in stale_targets),
+    ]:
+        group_id = provider_dispatch_group_id(config, provider_key) or normalize_agent_id(provider_key)
+        if group_id in seen_groups:
+            continue
+        seen_groups.add(group_id)
         current = _provider_report_entry(report, provider_key)
-        not_before = provider_pause_probe_not_before(
-            config,
-            runtime_snapshot or {},
-            provider_key,
-        )
-        if provider_report_has_fresh_live_probe(current, not_before=not_before):
+        if stale_readmission:
+            previous_probe = current.get("auth_probe") if isinstance(current.get("auth_probe"), dict) else None
+            if not provider_auth_probe_due(config, provider_key, previous_probe):
+                continue
+            not_before = None
+        else:
+            not_before = provider_pause_probe_not_before(
+                config,
+                runtime_snapshot or {},
+                provider_key,
+            )
+        if not stale_readmission and provider_report_has_fresh_live_probe(current, not_before=not_before):
             # A normal capability refresh already produced an authoritative
             # result for this gate in the same recovery window. Reconcile it
             # under the runtime lock instead of spending a duplicate probe.
@@ -16615,6 +16853,18 @@ def probe_provider_reports(
             quiet=quiet,
         )
         if not isinstance(probe, dict):
+            checked_at = utc_now()
+            probe = {
+                "provider": provider_key,
+                "ready": False,
+                "status": "probe_error",
+                "method": "stale_cache_readmission" if stale_readmission else "provider_recovery",
+                "error": "Provider auth probe raised or returned no normalized result.",
+                "checked_at": checked_at,
+                "last_auth_probe_at": checked_at,
+                "source": "live",
+            }
+        if str(probe.get("source") or "").strip().lower() != "live":
             continue
         apply_provider_probe_to_report(report, provider_key, probe)
         targeted = True
