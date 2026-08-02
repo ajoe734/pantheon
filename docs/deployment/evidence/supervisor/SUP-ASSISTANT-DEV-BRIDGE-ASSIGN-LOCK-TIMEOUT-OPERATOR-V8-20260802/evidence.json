@@ -9,11 +9,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
     "review_status": "review_pending",
-    "implementation_anchors": [
-      "91367aa0103330b64206f4c4295fa30c46e823a5",
-      "b33231225ac6b9656108e41df525d28ba7126ad1",
-      "c93404f68055ed48d496f8b5e4777f4aa1b94feb"
-    ]
+    "implementation_commit": "64bf42c4ee316c8968feca2006bd9e1e3c84ea7f"
   },
   "scope": {
     "owned_layer": "Supervisor assistant-bridge lock boundary, signed-packet dispatch claims, bounded governed assignment/readback, retry and receipt recovery, and task-scoped tests/evidence.",
@@ -115,10 +111,10 @@
           "note": 2,
           "reopen": 2
         },
-        "full_run_once_cycles": 16,
-        "current_p95_seconds": 1.391,
-        "current_max_seconds": 1.391,
-        "legacy_p95_seconds": 53.598,
+        "full_run_once_cycles": 17,
+        "current_p95_seconds": 1.393,
+        "current_max_seconds": 1.393,
+        "legacy_p95_seconds": 52.579,
         "all_commands_succeeded": true,
         "exact_projection": true,
         "final_event_count": 2016
@@ -158,21 +154,19 @@
     },
     "benchmark": {
       "report": "bench-report.json",
-      "report_sha256": "85803d55b8cd2d4b5bdeedb175792395992cba4b711106db818b503cebee5f59",
+      "report_sha256": "1745f50549d31910b2c5535764b4a020d34217ac9e322cc2f63431294cd5d6a7",
       "status": "pass"
     },
     "final_gates": {
       "py_compile": "pass",
       "json": "pass",
-      "commit_trailers": "pending_final_commit",
+      "commit_trailers": "pass",
       "git_diff_check": "pass"
     }
   },
   "delivery": {
     "merge_order": [
-      "91367aa0103330b64206f4c4295fa30c46e823a5",
-      "b33231225",
-      "c93404f68055ed48d496f8b5e4777f4aa1b94feb",
+      "64bf42c4ee316c8968feca2006bd9e1e3c84ea7f",
       "task evidence/finalization commit"
     ],
     "rollout": "Merge the reviewed task PR to dev; no direct live mutation.",

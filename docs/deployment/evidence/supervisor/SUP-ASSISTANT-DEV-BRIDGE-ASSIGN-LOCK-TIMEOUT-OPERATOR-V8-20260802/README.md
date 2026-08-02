@@ -10,7 +10,7 @@ admission, authoritative journal readback, and at-most-once materialization.
 | Reviewer | Human/Ops |
 | Base | `dev` |
 | Branch | `task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802` |
-| Implementation anchors | `91367aa01`, `b33231225`, `c93404f68` |
+| Implementation candidate | `64bf42c4ee316c8968feca2006bd9e1e3c84ea7f` |
 | Review state | `review_pending` |
 
 ## Incident reproduction and lock owner
@@ -44,8 +44,8 @@ competing process:
    OS PID.
 
 Scratch-root instrumentation now records the dispatch claimant PID, claim
-creation/expiry, and per-phase `phaseTimingsMs`. The supervisor ordering regression
-proves `bridge_drain -> runtime_lock_enter -> locked_cycle ->
+creation/expiry, and per-phase `phaseTimingsMs`. The supervisor ordering
+regression proves `bridge_drain -> runtime_lock_enter -> locked_cycle ->
 runtime_lock_exit`; the full-cycle integration test proves a signed packet is
 then admitted and read back from the authoritative event log.
 
@@ -78,19 +78,19 @@ remain unchanged.
 
 The 2,000-event scratch fixture is 137,953,724 bytes. Four workers executed
 eight real governed commands (two each of approve, assign, note, and reopen)
-while 16 full `supervisor.run_once` cycles were active.
+while 17 full `supervisor.run_once` cycles were active.
 
 | Shape | Legacy p95 | Current p95 |
 |---|---:|---:|
-| Uncontended journal command | 11.274s | 0.117s |
-| Real governed commands during active supervisor cycles | 53.598s | **1.391s** |
+| Uncontended journal command | 11.398s | 0.117s |
+| Real governed commands during active supervisor cycles | 52.579s | **1.393s** |
 
 All eight commands succeeded, six used worker leases, supervisor/command
 execution overlapped, and exact projection parity held at event 2,016. The
 formal report has `meets_target: true` against the two-second p95 gate.
 
 The benchmark reuses the task-state latency harness with the exact committed
-bridge candidate `c93404f68055ed48d496f8b5e4777f4aa1b94feb`. It mutates only
+bridge candidate `64bf42c4ee316c8968feca2006bd9e1e3c84ea7f`. It mutates only
 scratch state.
 
 ## Regression matrix
@@ -118,7 +118,7 @@ pytest test_dev_bridge_inbox_cli.py test_dev_bridge_dispatch_cli.py
 → 8 passed
 
 2,000-event governed/full-cycle benchmark
-→ p95 1.391s, 8/8 commands, exact projection, meets_target true
+→ p95 1.393s, 8/8 commands, exact projection, meets_target true
 ```
 
 The final candidate is also required to pass `py_compile`, JSON parsing,
@@ -131,7 +131,7 @@ their tests, and this evidence directory. There are no config, live runtime,
 provider-policy, product-service, canonical JSON, dashboard bundle, or
 deployment mutations.
 
-Merge order is the three implementation anchors followed by the task evidence
+Merge order is the scoped implementation commit followed by this evidence-only
 commit, one PR to `dev`, exact-head Human/Ops review, merge, then governed
 canonical closeout. Rollout is the merged supervisor/BFF source only. Rollback
 is a revert of that merge commit; claims and retries are additive scratch
