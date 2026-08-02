@@ -1,0 +1,82 @@
+{
+  "schema_version": "supervisor_worker_failure_envelope_gate.v1",
+  "task": {
+    "id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+    "title": "Gate worker failures on authoritative terminal envelopes",
+    "phase": "Supervisor reliability / authoritative failure detection",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802"
+  },
+  "scope": {
+    "owned_layer": "Supervisor worker-failure evidence admission, classification entry, boot-reconciliation behavior, and regression evidence.",
+    "not_changing": "Provider credentials, account/quota grouping, retry thresholds, reviewer policy, runtime-state JSON, live process signals, and product code.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "contract": {
+    "plain_text_gate": "A worker_runner terminal failure status is required before plain transcript lines can enter regex classification.",
+    "provider_envelope_gate": "Structured provider streams independently admit only explicit terminal result/error/failure envelopes and rejected rate-limit control events.",
+    "mixed_trust_exclusions": [
+      "structured user and tool-result content",
+      "assistant prose without a terminal control envelope",
+      "source and diff lines",
+      "tool command output",
+      "search-result prefixes",
+      "captured orchestrator records",
+      "allowed and allowed_warning rate-limit notices"
+    ],
+    "missing_process_fallback": "Quota-like log text without a runner/provider terminal envelope remains failure_kind missing_process and never opens a quota dispatch pause."
+  },
+  "acceptance": {
+    "captured_quota_fixture_count": 4,
+    "preserved_failure_classes": [
+      "auth",
+      "capacity_retryable",
+      "quota_terminal",
+      "terminal"
+    ],
+    "boot_reconciliation": {
+      "runner_failed_gemini": "quota_terminal preserved",
+      "unenveloped_missing_copilot": "missing_process preserved and no provider pause"
+    },
+    "config_runtime_account_reviewer_changes": false
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'DetectWorkerFailureTests or RuntimeLeaseReconciliationTests or AllowedRateLimitNoticeTests or pause_dispatch_for_reaped_worker'",
+      "result": "88 passed, 392 deselected, 10 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "480 passed, 74 subtests passed in 64.33s"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review": {
+    "decision": "pending",
+    "reviewer": "Codex2",
+    "required_gate": "Pantheon canonical review gate on the exact PR head"
+  },
+  "delivery": {
+    "implementation_anchor": "50d9943947766271a887b124b4aad8cb9c439dc6",
+    "base_sha_at_verification": "2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+    "generated_at": "2026-08-02T04:43:06Z"
+  }
+}

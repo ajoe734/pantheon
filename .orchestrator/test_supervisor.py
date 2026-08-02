@@ -279,7 +279,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     'worker_retry_scheduled: {"message": "Transient worker failure detected; retry 1 scheduled at 2026-04-05T13:48:48Z: reason: \\"QUOTA_EXHAUSTED\\""}',
                     "No local failure happened in this session.",
                 ]
-            )
+            ),
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -342,7 +343,9 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_ignores_auth_text_inside_tool_result_user_message(self) -> None:
         worker = self._worker_for_log(
-            '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"prior state said not authenticated, but this is just captured inspection output"}]}}\n'
+            '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"prior state said not authenticated, but this is just captured inspection output"}]}}\n',
+            provider="claude",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -356,7 +359,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -370,14 +374,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_ignores_activity_log_bullet_that_mentions_prior_quota_reassignment(self) -> None:
         worker = self._worker_for_log(
-            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n"
+            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -397,7 +403,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                 }
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -417,7 +424,9 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                 }
             )
-            + "\n"
+            + "\n",
+            provider="claude",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -456,7 +465,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "worker continued reviewing after this probe.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -475,7 +485,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -489,7 +500,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -503,7 +515,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "The quoted failure came from a reviewed diff, not this worker process.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
