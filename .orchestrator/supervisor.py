@@ -1959,9 +1959,6 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
-WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS = 30
-
-
 def _fetch_worker_base_ref(
     repo_root: Path,
     base_ref: str,
@@ -1976,10 +1973,9 @@ def _fetch_worker_base_ref(
     ``master``).  Worktree creation and freshness checks consume the remote-
     tracking ref, so fetch it with an explicit source and destination.
 
-    ``timeout_seconds`` bounds the network wait. The pre-admission caller leaves
-    it unset because it runs outside every lock; the recovery caller sets it
-    because it runs inside the supervisor cycle, where an unbounded fetch would
-    charge its wait to the runtime-admission hold.
+    ``timeout_seconds`` is available to standalone callers.  The supervisor
+    cycle invokes this function only during its pre-admission phase; dispatch
+    itself never performs a recovery fetch while holding runtime admission.
     """
 
     normalized = str(base_ref or "").strip()
@@ -2022,8 +2018,10 @@ def _worker_base_ref_precondition(
     repository.  Treating the missing flag as proof of a missing fetch stalled
     the scheduler with ``base_ref_not_prefetched:origin/dev``.
 
-    Recovery order: trust the context, else refresh the ref and require it to
-    resolve.  Fail closed only when the ref truly does not resolve.
+    Recovery order: trust the context, else accept an already-resolving local
+    remote-tracking ref.  A missing ref fails closed and waits for the next
+    cycle's pre-admission fetch; it never starts a network operation from the
+    runtime mutation transaction.
     """
 
     prefetched = _PREFETCHED_WORKER_BASE_REFS.get()
@@ -2038,22 +2036,14 @@ def _worker_base_ref_precondition(
     if repo_root is None:
         return False, f"base_ref_not_prefetched:{normalized}"
 
-    _fetched, fetch_error = _fetch_worker_base_ref(
-        repo_root,
-        normalized,
-        timeout_seconds=WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
-    )
     if not _git_ref_exists(repo_root, normalized):
-        return False, (
-            f"base_ref_unresolved:{normalized}:"
-            f"{fetch_error or 'ref missing after refresh'}"
-        )
+        return False, f"base_ref_unresolved:{normalized}:pre_admission_fetch_required"
     # Cache the recovered ref for the rest of this cycle so a redispatch storm
-    # does not re-fetch once per worktree operation.
+    # does not re-run even the local ref check once per worktree operation.
     _PREFETCHED_WORKER_BASE_REFS.set(prefetched | {normalized})
     console_log(
-        f"worker base {normalized} recovered outside the per-loop prefetch context "
-        f"(fetch_error={fetch_error or 'none'}); ref resolves, dispatch continues",
+        f"worker base {normalized} resolves outside the per-loop prefetch context; "
+        "dispatch continues without a locked network refresh",
         quiet=SUPERVISOR_LOG_QUIET,
     )
     return True, None

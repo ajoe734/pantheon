@@ -1,0 +1,142 @@
+{
+  "schema_version": "supervisor_scheduler_fixed_cadence_batch_mutations_operator_v9.v1",
+  "task": {
+    "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+    "review_status": "review_pending"
+  },
+  "scope": {
+    "owned_layer": "Supervisor cadence, slow-I/O lock boundaries, bounded cycle telemetry, and lease-bound dispatch-status batching.",
+    "not_changing": "Dispatch eligibility, dependency or priority policy, worker limits, provider account/quota grouping, reviewer policy, live runtime, deployment, or product services.",
+    "anchor_commits": [
+      "d83fd8acb79ab7aa3f38e2c033705a53d46985d3",
+      "0717f04723da313c8faaf1586dc01504a547ed86",
+      "dbd589d8111652e95f2e53208113be9b4223ab87"
+    ]
+  },
+  "cadence_reproduction": {
+    "source": "The governed task packet records live 2026-08-02 cycles of approximately 51 to 80 seconds; the referenced live log is intentionally not copied into this source worktree.",
+    "poll_interval_seconds": 5,
+    "sample_work_seconds": [
+      46,
+      75
+    ],
+    "legacy_work_plus_full_sleep_start_delta_seconds": [
+      51,
+      80
+    ],
+    "deadline_scheduler_start_delta_seconds": [
+      50,
+      80
+    ],
+    "nominal_three_second_work": {
+      "legacy_start_delta_seconds": 8,
+      "deadline_start_delta_seconds": 5
+    },
+    "overrun_contract": "Advance arithmetically to the first future anchored monotonic deadline; skipped starts are counted and never replayed in a zero-sleep loop.",
+    "test": ".orchestrator/test_supervisor.py::FixedCadenceSchedulerTests"
+  },
+  "global_lock_order": {
+    "order": [
+      "runtime_admission",
+      "task_state",
+      "activity_audit"
+    ],
+    "rule": "Slow preparation happens before this order. Lease validation takes runtime admission shared, canonical CAS takes task state exclusive, and the durable activity outbox appends only after the canonical state snapshot is durable.",
+    "tests": [
+      "scripts/test_ai_status.py::SupervisorDispatchBatchTests::test_lock_order_contract_is_explicit",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_injected_slow_prelock_phase_does_not_extend_runtime_hold",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_dispatches_share_one_status_process_and_activity_is_post_lock"
+    ]
+  },
+  "slow_io_boundaries": {
+    "before_runtime_admission": [
+      "provider/auth and recovery probes",
+      "GitHub bus and merged-PR metadata reads",
+      "assistant dev-bridge governed subprocesses",
+      "canonical task-state shadow reconciliation",
+      "remote worker-base git fetch",
+      "local branch continuation git probe"
+    ],
+    "after_runtime_admission": [
+      "activity audit appends",
+      "lease-bound canonical dispatch batch subprocess",
+      "auto-commit/archive subprocess",
+      "worker termination confirmation waits",
+      "dashboard and runtime-summary rendering"
+    ],
+    "fail_closed_git_fallback": "A worker base ref missing from the prefetch context may use an already-resolving local ref, but dispatch never starts a recovery network fetch while runtime admission is held; an unresolved ref waits for the next pre-admission fetch."
+  },
+  "batch_contract": {
+    "schema_version": 1,
+    "max_mutations": 64,
+    "runtime_snapshot_reads": 1,
+    "canonical_snapshot_reads": 1,
+    "canonical_commits": 1,
+    "activity_outbox_transactions": 1,
+    "properties": [
+      "Exact owner and expected-status CAS is checked for every row before the single durable commit.",
+      "Every row revalidates its exact actor, task, run, workspace, and process-generation lease against the shared runtime snapshot.",
+      "A late invalid row aborts without calling the canonical commit.",
+      "A crash after canonical save leaves one digest-bound activity outbox that recovery appends exactly once.",
+      "The outer supervisor process cannot impersonate a worker because each row installs and clears its own status-command binding."
+    ],
+    "tests": [
+      "scripts/test_ai_status.py::SupervisorDispatchBatchTests",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_dispatches_share_one_status_process_and_activity_is_post_lock"
+    ]
+  },
+  "telemetry": {
+    "bounded_phase_rows": 64,
+    "bounded_batch_rows": 16,
+    "fields": [
+      "cycle_elapsed_seconds",
+      "phase_elapsed",
+      "runtime_lock_hold_seconds",
+      "cadence.start_overshoot_seconds",
+      "cadence.skipped_deadlines_before_start",
+      "queue_to_start.average_seconds",
+      "queue_to_start.max_seconds",
+      "batch_counts"
+    ],
+    "privacy": "Only aggregate scalar counts and durations are retained; no task payload, provider output, credentials, or unbounded history is stored."
+  },
+  "governance_preservation": {
+    "dispatch_decisions": "Existing dependency, priority, worker-limit, failure-loop, chair-review, quota/auth fallback, active-lease, and rollback paths remain unchanged.",
+    "identity": "Codex and Codex2 remain distinct configured identities and quota groups; no equivalence or global mutual-review prohibition is introduced.",
+    "review": "Human/Ops remains the explicit independent reviewer and must bind its decision to the exact PR head before closeout."
+  },
+  "validation": [
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
+      "result": "557 passed, 158 subtests passed in 61.77s",
+      "status": "pass"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py",
+      "result": "165 passed, 31 subtests passed in 29.79s",
+      "status": "pass"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py",
+      "result": "pass",
+      "status": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "result": "pass",
+      "status": "pass"
+    }
+  ],
+  "delivery": {
+    "source_only": true,
+    "live_restart_or_deployment": false,
+    "rollout": "Merge the exact Human/Ops-reviewed PR to dev; the dependent V8 canary owns any live promotion.",
+    "rollback": "Revert the merge commit; do not hand-edit runtime, canonical task, or activity state.",
+    "remaining": "Commit evidence, push/open the PR, obtain exact-head Human/Ops review, merge, then perform governed done/archive closeout."
+  }
+}

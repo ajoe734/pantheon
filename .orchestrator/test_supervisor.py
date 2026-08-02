@@ -5882,6 +5882,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
             # Provider probing is its own pre-lock step and shells out too; it is
             # stubbed here so call_order records only the dispatch sync.
             mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "continue_or_skip_empty"),
             mock.patch.object(supervisor.subprocess, "run", side_effect=status_command) as run_mock,
         ):
             changed = supervisor.run_once(self.config, watch=False)
@@ -6727,6 +6728,43 @@ class FixedCadenceSchedulerTests(unittest.TestCase):
 
         self.assertEqual(starts, [0.0, 5.0, 10.0])
         self.assertEqual(clock.sleeps, [2.0, 2.0])
+
+    def test_live_51_to_80_second_full_sleep_drift_is_reproduced(self) -> None:
+        legacy_start_deltas: list[float] = []
+        deadline_start_deltas: list[float] = []
+
+        for work_seconds in (46.0, 75.0):
+            # The former loop always slept the full five seconds after work.
+            legacy_start_deltas.append(work_seconds + 5.0)
+            clock = self.FakeClock()
+            starts: list[float] = []
+
+            def cycle() -> None:
+                starts.append(clock.now)
+                if len(starts) == 1:
+                    clock.now += work_seconds
+
+            supervisor.run_deadline_scheduler(
+                cycle,
+                5.0,
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+                max_cycles=2,
+            )
+            deadline_start_deltas.append(starts[1] - starts[0])
+
+        self.assertEqual(legacy_start_deltas, [51.0, 80.0])
+        self.assertEqual(deadline_start_deltas, [50.0, 80.0])
+        self.assertTrue(
+            all(
+                deadline <= legacy
+                for deadline, legacy in zip(
+                    deadline_start_deltas,
+                    legacy_start_deltas,
+                    strict=True,
+                )
+            )
+        )
 
     def test_overrun_skips_missed_deadlines_and_never_busy_loops(self) -> None:
         clock = self.FakeClock()
@@ -14049,16 +14087,18 @@ class WorkerBaseRefPreconditionTests(unittest.TestCase):
         finally:
             supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
 
-    def test_empty_context_accepts_a_resolvable_freshly_fetched_base(self) -> None:
+    def test_empty_context_accepts_a_resolvable_base_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._origin_backed_repo(tmpdir)
             token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
             try:
-                ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+                with mock.patch.object(supervisor, "_fetch_worker_base_ref") as fetch:
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
                 self.assertTrue(ready, error)
                 self.assertIsNone(error)
                 # The recovered ref is cached for the rest of the cycle.
                 self.assertIn("origin/dev", supervisor._PREFETCHED_WORKER_BASE_REFS.get())
+                fetch.assert_not_called()
             finally:
                 supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
 
@@ -14077,45 +14117,35 @@ class WorkerBaseRefPreconditionTests(unittest.TestCase):
             self.assertTrue(created, error)
             self.assertTrue((worktree / "tracked.txt").exists())
 
-    def test_recovery_fetch_is_time_bounded_inside_the_cycle(self) -> None:
-        """The pre-admission fetch runs outside every lock; this one does not.
-
-        An unbounded recovery fetch would charge its network wait to the
-        runtime-admission hold that approve/assign/note commands queue behind.
-        """
+    def test_missing_context_never_recovers_with_network_inside_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._origin_backed_repo(tmpdir)
             token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
             try:
-                with mock.patch.object(
-                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
-                ) as fetch:
+                with mock.patch.object(supervisor, "_fetch_worker_base_ref") as fetch:
                     ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
             finally:
                 supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
 
         self.assertTrue(ready, error)
-        self.assertEqual(
-            fetch.call_args.kwargs["timeout_seconds"],
-            supervisor.WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
-        )
+        fetch.assert_not_called()
 
-    def test_a_hung_recovery_fetch_still_accepts_an_already_resolving_ref(self) -> None:
-        """A fetch timeout is not proof the ref is missing; only rev-parse is."""
+    def test_unresolvable_base_fails_without_network_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._origin_backed_repo(tmpdir)
             token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
             try:
-                with mock.patch.object(
-                    supervisor,
-                    "_fetch_worker_base_ref",
-                    return_value=(False, "git fetch timed out after 30s"),
-                ):
-                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+                with mock.patch.object(supervisor, "_fetch_worker_base_ref") as fetch:
+                    ready, error = supervisor._worker_base_ref_precondition(
+                        "origin/no-such-branch",
+                        repo,
+                    )
             finally:
                 supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
 
-        self.assertTrue(ready, error)
+        self.assertFalse(ready)
+        self.assertIn("pre_admission_fetch_required", str(error))
+        fetch.assert_not_called()
 
     def test_unresolvable_base_still_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
