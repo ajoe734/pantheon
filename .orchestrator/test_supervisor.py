@@ -14,6 +14,7 @@ import json
 import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -16309,8 +16310,341 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Copilot")
         self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
+class ExplicitHumanReviewerPreservationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["todo", "in_progress"],
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "owner_fallbacks": {
+                    "Codex": ["Codex2", "Claude"],
+                    "Codex2": ["Codex", "Claude"],
+                },
+                "reviewer_fallbacks": {
+                    "Human/Ops": ["Codex2", "Claude"],
+                    "Codex": ["Codex2", "Claude"],
+                    "Codex2": ["Codex", "Claude"],
+                },
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        self.ready_report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+            }
+        }
+        self.codex_paused_state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "pause_kind": "quota_terminal",
+                    }
+                }
+            }
+        }
 
+    def test_mainline_normalization_awaits_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-REVIEW-READY",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
 
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(self.config, task)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Human/Ops"))
+
+    def test_mainline_owner_fallback_preserves_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-OWNER-FALLBACK",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["expected_reviewer"], "Human/Ops")
+
+    def test_helper_claim_preserves_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-HELPER",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "_cached_provider_capabilities",
+            return_value=self.ready_report,
+        ):
+            planned = supervisor.plan_helper_claim_assignment(
+                self.config,
+                task=task,
+                owner_name="Codex",
+                reviewer_name="Human/Ops",
+                idle_agent_name="Codex2",
+                agent_loads={"Codex": [1]},
+                helper_settings={
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                },
+            )
+
+        self.assertEqual(planned, ("Codex2", "Human/Ops"))
+
+    def test_explicit_human_reviewer_failure_fails_closed(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["agents"]["human_ops"] = {
+            "id": "human_ops",
+            "display_name": "Human/Ops",
+            "provider": "human_ops",
+        }
+        worker = {
+            "task_id": "SUP-HUMAN-REVIEW-FAILURE",
+            "agent_id": "human_ops",
+            "retry_count": 1,
+            "run_id": "human-review-run",
+        }
+        task = {
+            "id": "SUP-HUMAN-REVIEW-FAILURE",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                {},
+                worker,
+                "terminal reviewer provider failure",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_owner_failure_preserves_explicit_human_reviewer(self) -> None:
+        worker = {
+            "task_id": "SUP-HUMAN-OWNER-FAILURE",
+            "agent_id": "codex",
+            "retry_count": 1,
+            "run_id": "codex-owner-failure",
+        }
+        task = {
+            "id": "SUP-HUMAN-OWNER-FAILURE",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                {},
+                worker,
+                "terminal owner provider failure",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Codex2")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["new_status"], "todo")
+
+    def test_bound_review_approved_identity_is_not_normalized(self) -> None:
+        task = {
+            "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "review_binding": {
+                "pr": 4508,
+                "head_sha": "7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
+                "head_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+                "base": "dev",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Human/Ops"))
+
+    def test_unbound_review_approved_owner_recovery_keeps_human_gate(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-UNBOUND-FINALIZE",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+
+    def test_persistence_rejects_supervisor_human_reviewer_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            original = {
+                "tasks": [
+                    {
+                        "id": "SUP-HUMAN-PERSIST-GUARD",
+                        "status": "todo",
+                        "owner": "Codex",
+                        "reviewer": "Human/Ops",
+                    }
+                ]
+            }
+            status_path.write_text(json.dumps(original), encoding="utf-8")
+            config = {**self.config, "paths": {"status_file": str(status_path)}}
+
+            with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+                applied = supervisor.persist_task_reassignment(
+                    config,
+                    task_id="SUP-HUMAN-PERSIST-GUARD",
+                    new_owner="Codex2",
+                    new_reviewer="Claude",
+                    message="Availability fallback must retain the human gate.",
+                    expected_owner="Codex",
+                    expected_reviewer="Human/Ops",
+                    expected_status="todo",
+                )
+
+            self.assertFalse(applied)
+            sync.assert_not_called()
+            self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), original)
+
+    def test_concurrent_stale_owner_plans_apply_once_and_keep_human_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "SUP-HUMAN-CONCURRENT-CAS",
+                                "status": "todo",
+                                "owner": "Codex",
+                                "reviewer": "Human/Ops",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {**self.config, "paths": {"status_file": str(status_path)}}
+            plans_ready = threading.Barrier(2)
+            first_synced = threading.Event()
+
+            def drain_outbox(_config: dict) -> bool:
+                payload = json.loads(status_path.read_text(encoding="utf-8"))
+                payload.pop("status_activity_outbox", None)
+                status_path.write_text(json.dumps(payload), encoding="utf-8")
+                first_synced.set()
+                return True
+
+            def apply_stale_plan(new_owner: str, wait_for_winner: bool) -> bool:
+                plans_ready.wait(timeout=5)
+                if wait_for_winner:
+                    self.assertTrue(first_synced.wait(timeout=5))
+                return supervisor.persist_task_reassignment(
+                    config,
+                    task_id="SUP-HUMAN-CONCURRENT-CAS",
+                    new_owner=new_owner,
+                    new_reviewer="Human/Ops",
+                    message=f"Concurrent fallback candidate {new_owner}.",
+                    expected_owner="Codex",
+                    expected_reviewer="Human/Ops",
+                    expected_status="todo",
+                )
+
+            with (
+                mock.patch.object(supervisor, "sync_status_pipeline", side_effect=drain_outbox),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                winner = executor.submit(apply_stale_plan, "Codex2", False)
+                stale = executor.submit(apply_stale_plan, "Claude", True)
+                results = [winner.result(timeout=10), stale.result(timeout=10)]
+
+            self.assertEqual(results, [True, False])
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["tasks"][0]["owner"], "Codex2")
+            self.assertEqual(saved["tasks"][0]["reviewer"], "Human/Ops")
 
 
 class MissingHandoffBlockerTests(unittest.TestCase):
