@@ -9,7 +9,7 @@ and task-state integrity.
 | Owner | Codex |
 | Reviewer | Human/Ops |
 | Branch | `task/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802` |
-| Implementation candidate | `626631be8a7912cc4e9f9409f2756ce6d59a2c22` |
+| Implementation candidate | `b1ce3eb42d3d8b4371e27972ae8f30cdda89aa1a` |
 | Review state | `review_pending` |
 | Catalog bytes | unchanged, SHA-256 `7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca` |
 
@@ -19,12 +19,12 @@ The 2026-08-02 baseline used the live 2,174,900,966-byte, 8,632-event
 journal. `load_events()` plus `project_latest_state()` did not reach catalog
 admission within 30 seconds and peaked at 5,604,472 KiB RSS.
 
-Candidate `626631be8` used a shared-lock-consistent scratch clone of the later
-2,232,574,631-byte, 8,723-event generation. It verified the complete SHA-256
+Candidate `b1ce3eb42` used a shared-lock-consistent scratch clone of the later
+2,303,516,986-byte, 8,836-event generation. It verified the complete SHA-256
 prefix, accepted the checkpoint only after binding its cached head to the
 actual final prefix record, revalidated zero tail events, and reached the
-guarded admission verdict in 2.100 seconds at 59,076 KiB peak child RSS.
-Snapshot validation itself took 1.776 seconds at 43,432 KiB process peak RSS.
+guarded admission verdict in 2.628 seconds at 58,740 KiB peak child RSS.
+Snapshot validation itself took 2.306 seconds at 43,896 KiB process peak RSS.
 
 The admission verdict was a correct fail-closed decision, not a timeout:
 `L12-CONTROLLER-BFF-20260731` overlaps the currently live nonterminal
@@ -42,9 +42,14 @@ not resolve that runtime/catalog conflict and did not materialize any task.
 - Hashing is chunked and JSONL replay is record-wise; completed mmap pages are
   released where the platform supports it, removing the multi-gigabyte RSS
   high-water mark without weakening validation.
-- Dry-run selects the non-mutating snapshot mode. Warm, stale-tail, missing,
-  and corrupt checkpoint cases preserve journal, projection, checkpoint bytes
-  or absence, and the checkpoint temp-file set while still validating every
+- Dry-run selects the strict observational snapshot mode. It requires an
+  existing non-symlink parent, regular journal, and regular lock; opens the
+  lock read-only without `O_CREAT` or `fchmod`; and never refreshes a
+  checkpoint. Missing parent/event/lock and symlink authority cases fail
+  closed without creating directory entries.
+- Warm, stale-tail, missing, and corrupt checkpoint cases preserve the exact
+  directory listing plus journal, projection, checkpoint, and lock bytes,
+  inode, mode, size, atime, mtime, and ctime while still validating every
   prefix byte and every required tail event.
 - Mutation-capable reads retain checkpoint refresh. Concurrent append, forced
   replay parity, edited/truncated history, forged checkpoint, sequence/previous
@@ -65,12 +70,12 @@ not resolve that runtime/catalog conflict and did not materialize any task.
   --json docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/bench-report.json
 ```
 
-The filesystem did not support reflink, so this run used the harness's physical
-scratch-copy fallback under the journal shared lock. Source journal and
-checkpoint were never opened for writing; the scratch generation was removed
-after the run. On the scratch generation, journal stat, checkpoint SHA/size,
-and checkpoint temp-file set were identical before and after both the direct
-snapshot read and guarded dry-run.
+The filesystem did not support a required reflink, so this run used the
+harness's physical scratch-copy fallback under the journal shared lock. The
+existing regular lock was copied into scratch; source journal, checkpoint, and
+lock were never opened for writing. On the scratch generation, directory
+entries and journal/checkpoint/lock bytes or stat identity were identical
+before and after both the direct snapshot read and guarded dry-run.
 
 ## Validation
 
@@ -79,7 +84,7 @@ PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q \
   .orchestrator/rewrite/test_task_state_store.py \
   scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py \
   .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests
-→ 107 passed in 16.12s
+→ 116 passed in 24.20s
 
 .venv-pantheon/bin/python scripts/dispatch_twelve_loop_gap_2026_07_26.py \
   --validate-only --current

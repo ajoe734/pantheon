@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import resource
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -76,20 +77,35 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _file_surface(path: Path, *, include_sha256: bool = True) -> dict[str, Any]:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return {"exists": False}
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"benchmark authority path is not regular: {path}")
+    return {
+        "exists": True,
+        "inode": int(info.st_ino),
+        "mode": oct(stat.S_IMODE(info.st_mode)),
+        "size": int(info.st_size),
+        "mtime_ns": int(info.st_mtime_ns),
+        "ctime_ns": int(info.st_ctime_ns),
+        "sha256": _sha256(path) if include_sha256 else None,
+    }
+
+
 def _read_only_surface(event_log: Path) -> dict[str, Any]:
     checkpoint = event_log.with_name(f"{event_log.name}.checkpoint.json")
-    journal_stat = event_log.stat()
+    lock = event_log.with_name(f"{event_log.name}.lock")
     return {
-        "journal": {
-            "size": int(journal_stat.st_size),
-            "mtime_ns": int(journal_stat.st_mtime_ns),
-            "ctime_ns": int(journal_stat.st_ctime_ns),
-        },
-        "checkpoint": {
-            "exists": checkpoint.exists(),
-            "size": checkpoint.stat().st_size if checkpoint.exists() else None,
-            "sha256": _sha256(checkpoint) if checkpoint.exists() else None,
-        },
+        # The journal is already integrity-hashed by load_snapshot; hashing it
+        # twice more here would distort the phase timing. Size/inode/stat plus
+        # the validated snapshot digest identify the same immutable generation.
+        "journal": _file_surface(event_log, include_sha256=False),
+        "checkpoint": _file_surface(checkpoint),
+        "lock": _file_surface(lock),
+        "directory_entries": sorted(path.name for path in event_log.parent.iterdir()),
         "checkpoint_temp_files": sorted(
             path.name
             for path in checkpoint.parent.glob(f"{checkpoint.name}.*.tmp")
@@ -116,11 +132,16 @@ def _shared_store_lock(event_log: Path):
 
 def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
     checkpoint = source.with_name(f"{source.name}.checkpoint.json")
+    lock = source.with_name(f"{source.name}.lock")
     clone = scratch / source.name
     clone_checkpoint = clone.with_name(f"{clone.name}.checkpoint.json")
+    clone_lock = clone.with_name(f"{clone.name}.lock")
     started = time.monotonic()
     with _shared_store_lock(source):
         source_stat = source.stat()
+        lock_stat = lock.stat(follow_symlinks=False)
+        if not stat.S_ISREG(lock_stat.st_mode):
+            raise RuntimeError(f"source task-state lock is not regular: {lock}")
         checkpoint_bytes = checkpoint.read_bytes()
         checkpoint_sha256 = hashlib.sha256(checkpoint_bytes).hexdigest()
         reflink = subprocess.run(
@@ -142,6 +163,7 @@ def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
             clone_strategy = "reflink_auto_physical_fallback"
             reflink_rejection = reflink.stderr.strip()
         clone_checkpoint.write_bytes(checkpoint_bytes)
+        shutil.copy2(lock, clone_lock, follow_symlinks=False)
         if source.stat().st_size != source_stat.st_size:
             raise RuntimeError("source journal changed while its shared lock was held")
         if hashlib.sha256(checkpoint.read_bytes()).hexdigest() != checkpoint_sha256:
@@ -171,6 +193,8 @@ def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
         "clone_path": str(clone),
         "clone_bytes": clone.stat().st_size,
         "clone_checkpoint_sha256": _sha256(clone_checkpoint),
+        "clone_lock_sha256": _sha256(clone_lock),
+        "clone_lock_mode": oct(stat.S_IMODE(clone_lock.stat().st_mode)),
     }
 
 
@@ -406,6 +430,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "non_interference": {
             "source_event_log_opened_for_write": False,
             "source_checkpoint_opened_for_write": False,
+            "source_lock_opened_for_write": False,
             "benchmark_journal": "scratch clone removed after run",
             "scratch_read_only_surface_before": read_only_surface_before,
             "scratch_read_only_surface_after": read_only_surface_after,
