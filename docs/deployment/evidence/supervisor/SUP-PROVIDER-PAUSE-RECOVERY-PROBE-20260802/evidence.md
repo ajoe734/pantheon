@@ -2,7 +2,7 @@
 
 Task: Make quota pauses probeable and self-recovering
 
-Owner: Codex · Reviewer: Codex2 · Status: **pending independent review**
+Owner: Codex · Reviewer: Human/Ops · Status: **review approved; implementation merged**
 
 ## Delivered contract
 
@@ -30,9 +30,10 @@ control flow, regression tests, and this evidence directory. It does not change
 credentials, account or quota grouping, configured probe values, runtime-state
 JSON, reviewer policy, service processes, rollout, or product code.
 
-The generated task brief, dashboard mirrors, and assistant packet/lock files
-are supervisor-owned workspace state and are deliberately excluded from the
-task commit and PR scope.
+Dashboard mirrors and assistant packet/lock files remain supervisor-owned
+workspace state and are deliberately excluded from task commits. The generated
+task brief is included only in the docs-only closeout commit so the approved
+review and merged delivery are durable after the canonical reviewer changed.
 
 ## Dependency
 
@@ -49,6 +50,18 @@ task commit and PR scope.
 
 ## Review and delivery
 
-Independent Codex2 exact-head review, GitHub checks, PR number, and merge commit
-remain pending. Those fields must be bound to this manifest before governed
-approval and owner closeout.
+Human/Ops independently reviewed exact head
+`116f0cafd0142cfa8a018144fbcba0f83d04f046` in a clean worktree and approved it
+at `2026-08-02T06:10:11Z`. The reviewer re-ran provider-health 14, focused
+supervisor 93, full supervisor 486, `py_compile`, and diff checks; all nine
+GitHub checks were green. The reviewed diff remained limited to the declared
+six files and did not change account groups or global reviewer policy.
+
+Pantheon PR #4486 merged that exact head into `dev` as
+`71fea47cbe65bb3e07792afa7e9f0134fd0066f5` at
+`2026-08-02T06:13:56Z`. The repository is `ajoe734/pantheon`.
+
+The first governed owner `done` attempt correctly failed closed because the
+implementation commit predated the canonical reviewer change and still carried
+`Reviewer: Codex2`. This docs-only closeout records the approved reviewer and
+delivery without changing the reviewed runtime implementation.

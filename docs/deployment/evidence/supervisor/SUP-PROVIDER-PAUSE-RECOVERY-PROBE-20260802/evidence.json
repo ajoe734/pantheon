@@ -5,9 +5,9 @@
     "title": "Make quota pauses probeable and self-recovering",
     "phase": "Supervisor reliability / provider pause recovery",
     "owner": "Codex",
-    "reviewer": "Codex2",
-    "status": "in_progress",
-    "review_status": "pending_independent_review",
+    "reviewer": "Human/Ops",
+    "status": "review_approved",
+    "review_status": "approved",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802"
@@ -133,18 +133,24 @@
     }
   ],
   "review": {
-    "decision": "pending",
-    "reviewer": "Codex2",
-    "reviewed_head": null,
-    "pull_request": null,
-    "recorded_at": null,
-    "notes": null
+    "decision": "approved",
+    "reviewer": "Human/Ops",
+    "reviewed_head": "116f0cafd0142cfa8a018144fbcba0f83d04f046",
+    "pull_request": 4486,
+    "recorded_at": "2026-08-02T06:10:11Z",
+    "notes": "Exact-head independent review in a clean worktree passed provider-health 14, focused supervisor 93, full supervisor 486, py_compile, and diff checks; all nine GitHub checks were green and the six-file scope did not alter account groups or global reviewer policy."
   },
   "delivery": {
     "base_commit": "c25471b48d1c2e476d2a639db36f341c6dc16c8a",
-    "implementation_head": null,
-    "pull_request": null,
-    "merge_commit": null,
-    "merged_at": null
+    "implementation_head": "116f0cafd0142cfa8a018144fbcba0f83d04f046",
+    "pull_request": 4486,
+    "merge_commit": "71fea47cbe65bb3e07792afa7e9f0134fd0066f5",
+    "merged_at": "2026-08-02T06:13:56Z",
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev"
+  },
+  "closeout": {
+    "scope": "Durable review and merge evidence only; no runtime implementation changed after exact-head approval.",
+    "normal_done_precondition": "The final task commit must bind the current canonical reviewer Human/Ops after reviewer reassignment from Codex2."
   }
 }
