@@ -1,0 +1,91 @@
+{
+  "schema_version": "supervisor_failure_streak_dispatch_consumption.v1",
+  "task": {
+    "id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+    "title": "Consume one retry generation in governed dispatch with audit",
+    "phase": "Supervisor Retry V2 / 3 Dispatch Consumption",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+  },
+  "scope": {
+    "owned_layer": "Runtime-locked exact-generation consumption, governed queue reservation, failure-loop/chair integration, worker-start audit binding, and deterministic integration tests.",
+    "not_changing": "Pure V2 decision semantics, V3 failure/progress schemas, provider or reviewer policy, configuration, canonical task state, product controllers, and live services.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "contract": {
+    "progress_source": "Newest exact governed reviewer reopen from the locked activity stream, normalized against the latest failure generation.",
+    "admission": "The merged pure V2 decision is re-evaluated under runtime_state_lock immediately before the existing governed queue append.",
+    "one_shot": "Runtime state and durable activity audit both retain the exact failure-recovery token; either source denies replay across loops or processes.",
+    "queue_failure": "Queue rejection, exception, or missing exact readback leaves the token consumed with an explicit fail-closed outcome.",
+    "dispatch_key": "The exact token extends the existing signed task dispatch key, permitting a newer governed generation without bypassing cooldown or queue identity.",
+    "failure_loop": "Automatic reassignment, task-agent blocking, and chair triage yield only for an allowed exact owner recovery; helper claims remain blocked for every threshold task.",
+    "worker_start": "Queue metadata carries only token and generation identities; worker start records the queue event and run ID and can reconstruct consumption from durable audit after a crash window.",
+    "streak_retention": "Consumption, queueing, worker start, and arbitrary active-worker commits do not clear the streak; later failures append and retain threshold state.",
+    "audit": "Redacted audit includes task/provider/owner/reviewer, prior count/kind/time, failure/progress generations, qualifying event/head, reason, token, queue identity, and worker run when available."
+  },
+  "acceptance_coverage": [
+    "captured Antigravity/Human-Ops incident",
+    "failure-loop, reassignment, and chair-triage gate release",
+    "concurrent double consumption",
+    "next-loop replay",
+    "queue rejection",
+    "worker start and crash-window audit reconstruction",
+    "subsequent failure without newer progress",
+    "newer second progress generation",
+    "provider and exact-task occupancy denial",
+    "audit shape and redaction",
+    "unrelated failure-streak preservation",
+    "all merged pure V2 deny rows"
+  ],
+  "verification": [
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDispatchConsumptionV2 or FailureStreakRecoveryDecisionV2'",
+      "result": "14 passed, 491 deselected, 45 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDispatchConsumptionV2 or FailureStreakRecoveryDecisionV2 or failure_loop'",
+      "result": "20 passed, 485 deselected, 45 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "505 passed, 147 subtests passed"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "rejected_ancestry_absent": [
+    "07316c73b8f9b574d659aa95616680301198392f",
+    "77af55015c5630c18f10670f5cb877ef7c40b115",
+    "94e3b6f34bda69711b16254f7623085bd41eecf5",
+    "d616beaae7249dd76ee32749b7daa5096a9b484d",
+    "35056b716108812d784cf9d902fd0a0d5a07777c"
+  ],
+  "review": {
+    "decision": "review_pending",
+    "reviewer": "Human/Ops",
+    "reviewed_head": null,
+    "reviewed_at": null,
+    "note": "Owner-authored evidence only. Independent exact-head Human/Ops review is required before merge."
+  },
+  "delivery": {
+    "base_sha": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
+    "implementation_anchor": "25c30277cf79b649f0762c695e10eca64e55329a",
+    "candidate_head": "25c30277cf79b649f0762c695e10eca64e55329a",
+    "pull_request": null,
+    "rollout": "source merge only; live promotion remains separately governed",
+    "rollback": "revert the activity-normalizer, pure-decision, and dispatch-consumption task merge commits; no config migration"
+  }
+}

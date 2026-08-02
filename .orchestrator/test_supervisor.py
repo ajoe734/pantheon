@@ -14559,14 +14559,54 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
         # Simulate a supervisor crash after the durable queue/audit append but
         # before the in-memory runtime state reaches its ordinary cycle save.
         self.state["provider_guardrails"]["failure_recovery_consumptions"] = {}
-
-        recorded = supervisor.record_failure_streak_recovery_worker_started(
-            self.config,
-            self.state,
-            queued_event,
-            queue_event_id=queued_event["event_id"],
-            worker_run_id="antigravity-recovery-run-1",
+        request = supervisor.DeliveryRequest(
+            agent_id=self.provider,
+            provider=self.provider,
+            delivery_mode="antigravity",
+            message="bounded recovery",
+            task_id=self.task_id,
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
         )
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_event_queue",
+                return_value=[copy.deepcopy(queued_event)],
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "queue_event_is_orphaned", return_value=False),
+            mock.patch.object(supervisor, "stale_dispatch_skip_message", return_value=None),
+            mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "refresh_provider_auth_before_dispatch"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor,
+                "select_dispatch_agent_id",
+                return_value=self.provider,
+            ),
+            mock.patch.object(
+                supervisor,
+                "prepare_worker_workspace",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                supervisor,
+                "check_worker_tree_clean",
+                return_value=(True, None),
+            ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(
+                    True,
+                    "antigravity-recovery-run-1",
+                    {"auto_delivered": True},
+                ),
+            ),
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+        ):
+            recorded = supervisor.process_queue(self.config, self.state, {})
 
         self.assertTrue(recorded)
         consumption = next(
