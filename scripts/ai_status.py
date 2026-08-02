@@ -130,6 +130,7 @@ STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
 _ACTIVITY_TRANSACTION_LOCAL = local()
 _TASK_STATE_TRANSACTION_LOCAL = local()
+_STATUS_COMMAND_LEASE_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -380,6 +381,90 @@ def validate_status_command_runtime_binding() -> None:
         )
 
 
+STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
+STATUS_WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
+
+
+def status_worker_process_generation_id(
+    *,
+    task_id: str,
+    worker_run_id: str,
+    queue_event_id: str,
+    pid: int,
+    pid_start_ticks: int,
+) -> str:
+    payload = {
+        "schema_version": STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "worker_run_id": str(worker_run_id),
+        "queue_event_id": str(queue_event_id),
+        "pid": int(pid),
+        "pid_start_ticks": int(pid_start_ticks),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return STATUS_WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _clear_status_command_lease_binding() -> None:
+    try:
+        delattr(_STATUS_COMMAND_LEASE_LOCAL, "binding")
+    except AttributeError:
+        pass
+
+
+def _validated_status_command_worker_lease(
+    worker: Mapping[str, Any],
+    *,
+    run_id: str,
+    task_id: str,
+) -> dict[str, Any]:
+    worker_run_id = str(worker.get("run_id") or "").strip()
+    worker_task_id = str(worker.get("task_id") or "").strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    pid = worker.get("pid")
+    pid_start_ticks = worker.get("pid_start_ticks")
+    if worker_run_id != run_id or worker_task_id != task_id:
+        raise RuntimeError("active status command process generation has mismatched run/task identity")
+    if (
+        not queue_event_id
+        or not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(pid_start_ticks, int)
+        or isinstance(pid_start_ticks, bool)
+        or pid_start_ticks <= 0
+    ):
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} has no exact process generation"
+        )
+    expected = status_worker_process_generation_id(
+        task_id=task_id,
+        worker_run_id=run_id,
+        queue_event_id=queue_event_id,
+        pid=pid,
+        pid_start_ticks=pid_start_ticks,
+    )
+    if process_generation != expected:
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} has invalid process generation"
+        )
+    return {
+        "schema_version": STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": task_id,
+        "worker_run_id": run_id,
+        "queue_event_id": queue_event_id,
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+    }
+
+
 def status_command_metadata() -> dict[str, Any] | None:
     raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
     raw_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
@@ -397,6 +482,9 @@ def status_command_metadata() -> dict[str, Any] | None:
         "delivery_root": str(delivery_root) if delivery_root is not None else None,
         "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,
     }
+    worker_lease = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
+    if isinstance(worker_lease, Mapping):
+        payload["worker_lease"] = dict(worker_lease)
     return {key: value for key, value in payload.items() if value not in (None, "")}
 
 
@@ -616,6 +704,7 @@ def normalize_logical_actor(name: str | None) -> str:
 def validate_active_status_command_lease(command: str, args: list[str]) -> None:
     """Validate the supervisor-issued worker lease before canonical mutation."""
 
+    _clear_status_command_lease_binding()
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
     actor = current_actor()
 
@@ -774,6 +863,12 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
             raise RuntimeError(
                 f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
             )
+
+    _STATUS_COMMAND_LEASE_LOCAL.binding = _validated_status_command_worker_lease(
+        worker,
+        run_id=run_id,
+        task_id=worker_task_id or str(expected_task_id or ""),
+    )
 
 
 def _path_parent_under_root(path: Path, root: Path) -> bool:
