@@ -21,7 +21,8 @@ from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -205,6 +206,14 @@ NONTHROTTLING_RATE_LIMIT_STATUSES = frozenset({"allowed", "allowed_warning"})
 NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
     r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
     re.IGNORECASE,
+)
+RUNNER_FAILURE_STATUSES = frozenset({"error", "failed", "terminated"})
+PROVIDER_STREAM_FAILURE_STATUSES = frozenset(
+    {"blocked", "denied", "error", "failed", "rate_limited", "rejected"}
+)
+PROVIDER_STREAM_FAILURE_TYPES = frozenset({"error", "failure"})
+PROVIDER_STREAM_FAILURE_SUBTYPES = frozenset(
+    {"error", "error_during_execution", "failed", "failure"}
 )
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
@@ -2708,12 +2717,15 @@ def start_worker_for_request(
     request.metadata["status_command_runtime"] = issued_command_runtime
     result = adapter.deliver(request)
     if not result.ok:
+        failure_run_id = (
+            f"{event_id_for_log or queue_event_id}-attempt-{max(1, int(attempt_count))}"
+        )
         failure_worker = {
             "provider": request.provider,
             "agent_id": request.agent_id,
             "task_id": request.task_id,
             "queue_event_id": event_id_for_log,
-            "run_id": None,
+            "run_id": failure_run_id,
             "log_path": result.log_path,
         }
         failure_summary = summarize_failure_reason(result.error or result.notes or "Worker delivery failed.", request.provider)
@@ -3110,13 +3122,23 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             event_id_for_log=event_id,
         )
         if not ok:
+            failure_run_id = (
+                f"{event_id}-attempt-{max(1, int(record.get('attempt_count', 0)))}"
+            )
             failure_worker = {
                 "provider": request.provider,
                 "agent_id": request.agent_id,
                 "task_id": request.task_id,
                 "queue_event_id": event_id,
-                "run_id": record.get("run_id"),
+                "run_id": failure_run_id,
                 "retry_count": max(0, int(record.get("attempt_count", 0)) - 1),
+                "request_snapshot": request_snapshot(request),
+                "work_progress_snapshot": worker_commit_progress_snapshot(
+                    {
+                        "workspace_mode": request.metadata.get("workspace_mode"),
+                        "workspace_path": request.metadata.get("workspace_path"),
+                    }
+                ),
             }
             failure_reason = str(outcome or "")
             failure = classify_worker_failure(config, failure_worker, failure_reason)
@@ -3132,6 +3154,9 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_worker,
                 failure_reason,
                 failure_kind=str(failure.get("kind") or ""),
+                reason_class=str(failure_summary.get("kind") or ""),
+                raw_ref=raw_ref,
+                rejected_head=worker_failure_rejected_head(failure_worker),
             )
             failure_kind = str(failure.get("kind") or "")
             rotation_outcome = maybe_rotate_provider_model(
@@ -5151,6 +5176,89 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
                 break
 
 
+def worker_has_authoritative_runner_failure(worker: dict[str, Any]) -> bool:
+    """Return whether worker_runner published a terminal failure marker.
+
+    The provider transcript is mixed-trust content: prompts, tool output,
+    source snippets, and provider stderr all share one log.  A regex match in
+    that file is therefore not evidence that the provider failed.  The runner
+    status file is the authority for plain-text CLIs and is copied onto the
+    worker record by ``update_worker_runtime_markers``.
+    """
+
+    return str(worker.get("runner_status") or "").strip().lower() in RUNNER_FAILURE_STATUSES
+
+
+def worker_uses_structured_provider_stream(worker: dict[str, Any]) -> bool:
+    """Return whether top-level JSON lines are provider stream envelopes."""
+
+    provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
+    mode = str(worker.get("mode") or "").strip().lower()
+    if provider.startswith(("claude", "qwen")) or mode in {"claude_cli", "qwen"}:
+        return True
+    command = worker.get("command")
+    if not isinstance(command, list):
+        return False
+    normalized = [str(part).strip().lower() for part in command]
+    return "--output-format" in normalized and "stream-json" in normalized
+
+
+def is_authoritative_provider_failure_envelope(
+    worker: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Recognize terminal control envelopes, never arbitrary JSON content."""
+
+    if not worker_uses_structured_provider_stream(worker):
+        return False
+    message = payload.get("message")
+    role = message.get("role") if isinstance(message, dict) else None
+    if payload.get("type") == "user" or role == "user":
+        return False
+
+    info = rate_limit_info_payload(payload)
+    if info is not None:
+        status = str(info.get("status") or "").strip().lower()
+        return status in PROVIDER_STREAM_FAILURE_STATUSES
+
+    payload_type = str(payload.get("type") or "").strip().lower()
+    payload_status = str(payload.get("status") or "").strip().lower()
+    payload_subtype = str(payload.get("subtype") or "").strip().lower()
+    if payload_type in PROVIDER_STREAM_FAILURE_TYPES:
+        return True
+    if payload_type != "result":
+        return False
+    return bool(
+        payload.get("is_error") is True
+        or payload.get("error") not in (None, "", {}, [])
+        or payload_status in PROVIDER_STREAM_FAILURE_STATUSES
+        or payload_subtype in PROVIDER_STREAM_FAILURE_SUBTYPES
+    )
+
+
+def is_runner_gated_provider_error_envelope(
+    worker: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Recognize a retry/error control event after the runner failed.
+
+    Claude and Qwen can emit a structured retry record followed by ordinary
+    assistant text.  The assistant text is not authoritative, but the control
+    record is once the runner independently reports terminal failure.
+    """
+
+    if not worker_uses_structured_provider_stream(worker):
+        return False
+    payload_type = str(payload.get("type") or "").strip().lower()
+    payload_subtype = str(payload.get("subtype") or "").strip().lower()
+    return bool(
+        payload_type == "system"
+        and payload_subtype in {"api_error", "api_retry"}
+        and (
+            payload.get("error") not in (None, "", {}, [])
+            or payload.get("error_status") not in (None, "")
+        )
+    )
+
+
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     log_path_value = worker.get("log_path")
     if not log_path_value:
@@ -5163,6 +5271,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     except OSError:
         return None
 
+    runner_failed = worker_has_authoritative_runner_failure(worker)
     fallback: str | None = None
     for idx in range(len(lines) - 1, -1, -1):
         line = lines[idx]
@@ -5176,6 +5285,10 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         except json.JSONDecodeError:
             stream_payload = None
         if isinstance(stream_payload, dict):
+            if is_authoritative_provider_failure_envelope(worker, stream_payload):
+                return stripped
+            if runner_failed and is_runner_gated_provider_error_envelope(worker, stream_payload):
+                return stripped
             if is_captured_orchestrator_record(stream_payload):
                 continue
             if is_allowed_rate_limit_event(stream_payload):
@@ -5184,6 +5297,13 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             role = message.get("role") if isinstance(message, dict) else None
             if stream_payload.get("type") == "user" or role == "user":
                 continue
+            # A top-level JSON object which is not one of the provider control
+            # envelopes above is transcript content.  Do not regex its nested
+            # strings: assistant prose, tool results, fixtures, and source all
+            # legitimately contain words such as quota and authentication.
+            continue
+        if not runner_failed:
+            continue
         if is_allowed_rate_limit_line(stripped):
             continue
         if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
@@ -5304,6 +5424,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "you have no quota",
         "quota exceeded",
         "quota_exceeded",
+        "quota_reached",
         "exceeded your monthly quota",
         "individual quota reached",
         "free daily quota has been reached",
@@ -5333,14 +5454,14 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "transient", "transient": True, "label": "allowed rate-limit notice"}
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
-    if any(marker in normalized for marker in auth_markers):
-        return {"kind": "auth", "transient": False, "label": "auth"}
     if re.search(r"\b(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+){0,3}\s+limit\b", normalized):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
         return {"kind": "capacity_retryable", "transient": True, "label": "capacity/429"}
+    if any(marker in normalized for marker in auth_markers):
+        return {"kind": "auth", "transient": False, "label": "auth"}
     if provider.startswith("gemini") and any(marker in normalized for marker in unknown_critical_markers):
         return {"kind": "unknown_critical", "transient": False, "label": "unknown critical error"}
     if any(pattern in normalized for pattern in transient_patterns):
@@ -5775,11 +5896,17 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
 
 def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("provider_guardrails", {}) or {})
+    provider_auth = config.get("provider_auth", {}) if isinstance(config.get("provider_auth"), dict) else {}
     settings.setdefault("pause_on_capacity_failure", True)
     settings.setdefault("pause_on_auth_failure", True)
     settings.setdefault("capacity_pause_seconds", 900)
     settings.setdefault("auth_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("quota_terminal_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
+    settings.setdefault(
+        "recovery_probe_interval_seconds",
+        int(provider_auth.get("failed_probe_interval_seconds", 60) or 60),
+    )
+    settings.setdefault("recovery_probe_max_per_cycle", 2)
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
 
@@ -5820,7 +5947,7 @@ def current_provider_dispatch_pause(
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         now = datetime.now(timezone.utc)
         if blocked_until is not None and blocked_until <= now:
-            if auth_pause_requires_live_probe(entry):
+            if provider_pause_requires_live_probe(entry):
                 return entry
             bucket.pop(pause_id, None)
             continue
@@ -5888,7 +6015,31 @@ def auth_pause_requires_live_probe(entry: dict[str, Any] | None) -> bool:
     if is_sticky_auth_dispatch_pause(entry):
         return True
     pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
-    return pause_kind == "auth" and entry.get("requires_live_auth_probe") is True
+    return pause_kind == "auth"
+
+
+def is_probe_recoverable_pause_kind(entry: dict[str, Any] | None) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+    return pause_kind in {"quota_terminal", "capacity", "capacity_retryable"}
+
+
+def provider_pause_requires_live_probe(entry: dict[str, Any] | None) -> bool:
+    """Whether dispatch must remain closed until a fresh live probe succeeds."""
+
+    if not isinstance(entry, dict):
+        return False
+    if auth_pause_requires_live_probe(entry):
+        return True
+    if entry.get("requires_live_recovery_probe") is True:
+        return True
+    blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
+    return bool(
+        is_probe_recoverable_pause_kind(entry)
+        and blocked_until is not None
+        and blocked_until <= datetime.now(timezone.utc)
+    )
 
 
 def _legacy_failure_response_enabled() -> bool:
@@ -6021,11 +6172,12 @@ def mark_provider_dispatch_paused(
             return False
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
-    sticky_auth_pause = effective_pause_kind == "auth" and is_sticky_auth_failure_reason(reason)
+    probe_gated_auth_pause = effective_pause_kind == "auth"
+    sticky_auth_pause = probe_gated_auth_pause and is_sticky_auth_failure_reason(reason)
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     hinted_blocked_until: str | None = None
     hint_capped = False
-    if sticky_auth_pause:
+    if probe_gated_auth_pause:
         blocked_until = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     if effective_pause_kind == "quota_terminal":
         hinted = parse_quota_retry_hint(reason, now=now)
@@ -6044,7 +6196,7 @@ def mark_provider_dispatch_paused(
                 blocked_until = hinted
     blocked_until_iso = (
         STICKY_AUTH_BLOCKED_UNTIL
-        if sticky_auth_pause
+        if probe_gated_auth_pause
         else blocked_until.isoformat().replace("+00:00", "Z")
     )
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
@@ -6057,10 +6209,11 @@ def mark_provider_dispatch_paused(
         or str(previous.get("summary") or "") != summary.get("summary")
         or str(previous.get("raw_ref") or "") != str(raw_ref or "")
     )
+    paused_at_iso = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     bucket[pause_provider_id] = {
         "provider": pause_provider_id,
         "trigger_provider": provider_id,
-        "paused_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "paused_at": paused_at_iso,
         "blocked_until": blocked_until_iso,
         "reason": summary.get("summary"),
         "summary": summary.get("summary"),
@@ -6072,6 +6225,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    if probe_gated_auth_pause:
+        bucket[pause_provider_id]["requires_live_auth_probe"] = True
+        bucket[pause_provider_id]["recovery_probe_not_before"] = paused_at_iso
     if sticky_auth_pause:
         bucket[pause_provider_id]["sticky_until_auth_probe"] = True
         bucket[pause_provider_id]["sticky_reason"] = "refresh_token_revoked"
@@ -6175,6 +6331,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
         return False
     now = datetime.now(timezone.utc)
     expired: list[tuple[str, dict[str, Any]]] = []
+    scheduled: list[tuple[str, dict[str, Any]]] = []
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
             continue
@@ -6183,9 +6340,30 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
+        if is_probe_recoverable_pause_kind(entry):
+            if entry.get("requires_live_recovery_probe") is not True:
+                entry["requires_live_recovery_probe"] = True
+                entry["recovery_probe_not_before"] = str(entry.get("blocked_until") or utc_now())
+                scheduled.append((provider_id, dict(entry)))
+            continue
         expired.append((provider_id, dict(entry)))
         bucket.pop(provider_id, None)
 
+    for provider_id, entry in scheduled:
+        write_activity_log(
+            config,
+            {
+                "type": "provider_recovery_probe_scheduled",
+                "provider": provider_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": (
+                    f"Dispatch pause for {provider_id} reached {entry.get('blocked_until')}; "
+                    "dispatch remains blocked until a fresh targeted live probe succeeds."
+                ),
+                "raw_ref": entry.get("raw_ref"),
+            },
+        )
     for provider_id, entry in expired:
         write_activity_log(
             config,
@@ -6198,7 +6376,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
                 "raw_ref": entry.get("raw_ref"),
             },
         )
-    return bool(expired)
+    return bool(expired or scheduled)
 
 
 def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
@@ -6220,31 +6398,506 @@ def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
     )
 
 
+FAILURE_STREAK_SCHEMA_VERSION = 3
+FAILURE_STREAK_ABSENT_HEAD = "ABSENT"
+FAILURE_STREAK_GENERATION_PREFIX = "sha256:"
+FAILURE_PROGRESS_SCHEMA_VERSION = 1
+_FAILURE_STREAK_CLASS_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_FAILURE_STREAK_TIMESTAMP_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z"
+)
+_FAILURE_STREAK_GENERATION_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+_FAILURE_PROGRESS_EVENT_ID_PATTERN = re.compile(r"ai-status-event-[0-9a-f]{64}")
+_FAILURE_PROGRESS_EVENT_TIMESTAMP_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z"
+)
+_FAILURE_STREAK_GENERATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "generation_id",
+        "recorded_at",
+        "task_id",
+        "provider",
+        "owner_at_failure",
+        "reviewer_at_failure",
+        "worker_run_id",
+        "failure_kind",
+        "reason_class",
+        "reason",
+        "raw_ref",
+        "rejected_head",
+    }
+)
+_FAILURE_STREAK_RECORD_FIELDS = frozenset(
+    {
+        "schema_version",
+        "task_id",
+        "provider",
+        "count",
+        "last_reason",
+        "last_failure_at",
+        "last_failure_kind",
+        "last_raw_ref",
+        "last_worker_run_id",
+        "generations",
+    }
+)
+
+
+def _failure_streak_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or normalized != value or len(normalized) > 4096:
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+        return None
+    return normalized
+
+
+def _failure_streak_class(value: Any) -> str | None:
+    normalized = _failure_streak_text(value)
+    if normalized is None or _FAILURE_STREAK_CLASS_PATTERN.fullmatch(normalized) is None:
+        return None
+    return normalized
+
+
+def _failure_streak_reason(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())
+    return normalized if normalized and len(normalized) <= 4096 else None
+
+
+def _failure_streak_timestamp_valid(value: str) -> bool:
+    if _FAILURE_STREAK_TIMESTAMP_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        return False
+    return True
+
+
+def _failure_streak_task_identity(
+    worker: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    task_id = _failure_streak_text(worker.get("task_id"))
+    snapshot = worker.get("request_snapshot")
+    if task_id is None or not isinstance(snapshot, dict):
+        return None
+    if _failure_streak_text(snapshot.get("task_id")) != task_id:
+        return None
+    metadata = snapshot.get("metadata")
+    task = metadata.get("task") if isinstance(metadata, dict) else None
+    if not isinstance(task, dict) or _failure_streak_text(task.get("id")) != task_id:
+        return None
+    owner = _failure_streak_text(task.get("owner"))
+    reviewer = _failure_streak_text(task.get("reviewer"))
+    if owner is None or reviewer is None or owner == reviewer:
+        return None
+    return task_id, owner, reviewer
+
+
+def worker_failure_rejected_head(worker: dict[str, Any]) -> str:
+    head = str(worker_delivery_head_commit(worker) or "").strip().lower()
+    return head if re.fullmatch(r"[0-9a-f]{40}", head) else FAILURE_STREAK_ABSENT_HEAD
+
+
+def _failure_streak_generation_id(fields: dict[str, Any]) -> str:
+    identity = {
+        "schema_version": fields["schema_version"],
+        "task_id": fields["task_id"],
+        "provider": fields["provider"],
+        "owner_at_failure": fields["owner_at_failure"],
+        "reviewer_at_failure": fields["reviewer_at_failure"],
+        "worker_run_id": fields["worker_run_id"],
+        "failure_kind": fields["failure_kind"],
+        "reason_class": fields["reason_class"],
+        "reason": fields["reason"],
+        "raw_ref": fields["raw_ref"],
+        "rejected_head": fields["rejected_head"],
+    }
+    encoded = json.dumps(
+        identity,
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return FAILURE_STREAK_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _failure_streak_timestamp() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def decode_task_failure_generation(value: Any) -> dict[str, Any] | None:
+    """Decode one exact V3 generation without consulting legacy aliases."""
+    if (
+        not isinstance(value, dict)
+        or set(value) != _FAILURE_STREAK_GENERATION_FIELDS
+        or value.get("schema_version") != FAILURE_STREAK_SCHEMA_VERSION
+    ):
+        return None
+    task_id = _failure_streak_text(value.get("task_id"))
+    provider = _failure_streak_text(value.get("provider"))
+    owner = _failure_streak_text(value.get("owner_at_failure"))
+    reviewer = _failure_streak_text(value.get("reviewer_at_failure"))
+    worker_run_id = _failure_streak_text(value.get("worker_run_id"))
+    failure_kind = _failure_streak_class(value.get("failure_kind"))
+    reason_class = _failure_streak_class(value.get("reason_class"))
+    reason = _failure_streak_reason(value.get("reason"))
+    raw_ref = _failure_streak_text(value.get("raw_ref"))
+    rejected_head = _failure_streak_text(value.get("rejected_head"))
+    recorded_at = _failure_streak_text(value.get("recorded_at"))
+    generation_id = _failure_streak_text(value.get("generation_id"))
+    if (
+        task_id is None
+        or provider is None
+        or provider != normalize_agent_id(provider)
+        or owner is None
+        or reviewer is None
+        or owner == reviewer
+        or worker_run_id is None
+        or failure_kind is None
+        or reason_class is None
+        or reason is None
+        or value.get("reason") != reason
+        or raw_ref is None
+        or rejected_head is None
+        or recorded_at is None
+        or generation_id is None
+    ):
+        return None
+    if rejected_head != FAILURE_STREAK_ABSENT_HEAD and re.fullmatch(
+        r"[0-9a-f]{40}", rejected_head
+    ) is None:
+        return None
+    if not _failure_streak_timestamp_valid(recorded_at):
+        return None
+    if _FAILURE_STREAK_GENERATION_PATTERN.fullmatch(generation_id) is None:
+        return None
+    expected_generation_id = _failure_streak_generation_id(
+        {
+            "schema_version": FAILURE_STREAK_SCHEMA_VERSION,
+            "task_id": task_id,
+            "provider": provider,
+            "owner_at_failure": owner,
+            "reviewer_at_failure": reviewer,
+            "worker_run_id": worker_run_id,
+            "failure_kind": failure_kind,
+            "reason_class": reason_class,
+            "reason": reason,
+            "raw_ref": raw_ref,
+            "rejected_head": rejected_head,
+        }
+    )
+    if generation_id != expected_generation_id:
+        return None
+    return dict(value)
+
+
+def decode_task_failure_streak(record: Any) -> dict[str, Any] | None:
+    """Decode one exact V3 streak and all of its immutable generations."""
+    if (
+        not isinstance(record, dict)
+        or set(record) != _FAILURE_STREAK_RECORD_FIELDS
+        or record.get("schema_version") != FAILURE_STREAK_SCHEMA_VERSION
+    ):
+        return None
+    task_id = _failure_streak_text(record.get("task_id"))
+    provider = _failure_streak_text(record.get("provider"))
+    last_reason = _failure_streak_reason(record.get("last_reason"))
+    last_failure_at = _failure_streak_text(record.get("last_failure_at"))
+    last_failure_kind = _failure_streak_class(record.get("last_failure_kind"))
+    last_raw_ref = _failure_streak_text(record.get("last_raw_ref"))
+    last_worker_run_id = _failure_streak_text(record.get("last_worker_run_id"))
+    count = record.get("count")
+    raw_generations = record.get("generations")
+    if (
+        task_id is None
+        or provider is None
+        or provider != normalize_agent_id(provider)
+        or last_reason is None
+        or record.get("last_reason") != last_reason
+        or last_failure_at is None
+        or not _failure_streak_timestamp_valid(last_failure_at)
+        or last_failure_kind is None
+        or last_raw_ref is None
+        or last_worker_run_id is None
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+        or not isinstance(raw_generations, list)
+        or len(raw_generations) != count
+    ):
+        return None
+    generations = [decode_task_failure_generation(item) for item in raw_generations]
+    if any(item is None for item in generations):
+        return None
+    decoded_generations = [item for item in generations if item is not None]
+    if (
+        len({item["generation_id"] for item in decoded_generations}) != count
+        or any(
+            item["task_id"] != task_id or item["provider"] != provider
+            for item in decoded_generations
+        )
+    ):
+        return None
+    last_generation = decoded_generations[-1]
+    if (
+        last_reason != last_generation["reason"]
+        or last_failure_at != last_generation["recorded_at"]
+        or last_failure_kind != last_generation["failure_kind"]
+        or last_raw_ref != last_generation["raw_ref"]
+        or last_worker_run_id != last_generation["worker_run_id"]
+    ):
+        return None
+    return dict(record)
+
+
+def _failure_progress_event_timestamp(value: Any) -> datetime | None:
+    normalized = _failure_streak_text(value)
+    if (
+        normalized is None
+        or _FAILURE_PROGRESS_EVENT_TIMESTAMP_PATTERN.fullmatch(normalized) is None
+    ):
+        return None
+    timestamp_format = (
+        "%Y-%m-%dT%H:%M:%S.%fZ" if "." in normalized else "%Y-%m-%dT%H:%M:%SZ"
+    )
+    try:
+        return datetime.strptime(normalized, timestamp_format)
+    except ValueError:
+        return None
+
+
+def _canonical_ai_status_event_id(event: dict[str, Any]) -> str | None:
+    event_id = _failure_streak_text(event.get("event_id"))
+    if (
+        event_id is None
+        or _FAILURE_PROGRESS_EVENT_ID_PATTERN.fullmatch(event_id) is None
+    ):
+        return None
+    identity = dict(event)
+    identity.pop("event_id", None)
+    try:
+        encoded = json.dumps(
+            identity,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    expected = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+    return event_id if event_id == expected else None
+
+
+def _failure_progress_generation_id(fields: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(fields),
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return FAILURE_STREAK_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _reviewer_reopen_exact_head(
+    event: dict[str, Any],
+    *,
+    actor: str,
+    event_at: str,
+    rejected_head: str,
+) -> tuple[bool, str]:
+    bridge = event.get("github_review_bridge")
+    if bridge is None:
+        return True, FAILURE_STREAK_ABSENT_HEAD
+    if not isinstance(bridge, dict):
+        return False, FAILURE_STREAK_ABSENT_HEAD
+    head = _failure_streak_text(bridge.get("head_sha"))
+    if (
+        bridge.get("decision") != "reopen"
+        or bridge.get("actor") != actor
+        or bridge.get("recorded_at") != event_at
+        or head is None
+        or re.fullmatch(r"[0-9a-f]{40}", head) is None
+        or head != rejected_head
+    ):
+        return False, FAILURE_STREAK_ABSENT_HEAD
+    return True, head
+
+
+def normalize_failure_streak_progress_event(
+    record: Any,
+    event: Any,
+) -> Mapping[str, Any] | None:
+    """Normalize one governed post-failure activity row without mutating state."""
+    decoded = decode_task_failure_streak(record)
+    if decoded is None or not isinstance(event, dict):
+        return None
+    failure = decoded["generations"][-1]
+    task_id = failure["task_id"]
+    provider = failure["provider"]
+    owner = failure["owner_at_failure"]
+    reviewer = failure["reviewer_at_failure"]
+    rejected_head = failure["rejected_head"]
+    if (
+        owner == reviewer
+        or provider != normalize_agent_id(owner)
+        or re.fullmatch(r"[0-9a-f]{40}", rejected_head) is None
+        or event.get("task_id") != task_id
+    ):
+        return None
+
+    event_type = _failure_streak_text(event.get("type"))
+    event_id = _failure_streak_text(event.get("event_id"))
+    event_at = _failure_streak_text(event.get("ts"))
+    actor = _failure_streak_text(event.get("agent"))
+    event_timestamp = _failure_progress_event_timestamp(event_at)
+    failure_timestamp = _failure_progress_event_timestamp(failure["recorded_at"])
+    if (
+        event_type is None
+        or event_id is None
+        or event_at is None
+        or actor is None
+        or event_timestamp is None
+        or failure_timestamp is None
+        or event_timestamp <= failure_timestamp
+        or "provider" in event
+    ):
+        return None
+
+    exact_head = FAILURE_STREAK_ABSENT_HEAD
+    if event_type == "reopen":
+        if actor != reviewer or _canonical_ai_status_event_id(event) is None:
+            return None
+        binding_valid, exact_head = _reviewer_reopen_exact_head(
+            event,
+            actor=actor,
+            event_at=event_at,
+            rejected_head=rejected_head,
+        )
+        if not binding_valid:
+            return None
+    elif event_type == "worker_commit":
+        commit = _failure_streak_text(event.get("commit"))
+        if (
+            actor != owner
+            or commit is None
+            or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+            or event_id != f"worker-commit-{commit}"
+            or commit == rejected_head
+        ):
+            return None
+        exact_head = commit
+    else:
+        return None
+
+    identity = {
+        "schema_version": FAILURE_PROGRESS_SCHEMA_VERSION,
+        "failure_generation_id": failure["generation_id"],
+        "task_id": task_id,
+        "provider": provider,
+        "event_id": event_id,
+        "event_type": event_type,
+        "event_at": event_at,
+        "actor": actor,
+        "exact_head": exact_head,
+    }
+    generation = {
+        **identity,
+        "generation_id": _failure_progress_generation_id(identity),
+    }
+    return MappingProxyType(generation)
+
+
 def record_task_failure_streak(
     state: dict[str, Any],
     worker: dict[str, Any],
     reason: str,
     *,
     failure_kind: str | None = None,
+    reason_class: str | None = None,
+    raw_ref: str | None = None,
+    rejected_head: str | None = None,
 ) -> int:
-    task_id = str(worker.get("task_id") or "").strip()
+    identity = _failure_streak_task_identity(worker)
     provider_id = worker_failure_streak_provider_id(worker)
-    if not task_id or not provider_id:
+    normalized_kind = _failure_streak_class(failure_kind)
+    normalized_reason_class = _failure_streak_class(reason_class)
+    normalized_reason = _failure_streak_reason(reason)
+    normalized_raw_ref = _failure_streak_text(raw_ref)
+    normalized_head = _failure_streak_text(rejected_head)
+    worker_run_id = _failure_streak_text(worker.get("run_id"))
+    if (
+        identity is None
+        or not provider_id
+        or provider_id != normalize_agent_id(provider_id)
+        or worker_run_id is None
+        or normalized_kind is None
+        or normalized_reason_class is None
+        or normalized_reason is None
+        or normalized_raw_ref is None
+        or normalized_head is None
+        or (
+            normalized_head != FAILURE_STREAK_ABSENT_HEAD
+            and re.fullmatch(r"[0-9a-f]{40}", normalized_head) is None
+        )
+    ):
         return 0
+    task_id, owner, reviewer = identity
     bucket = _task_failure_streak_bucket(state)
     key = _failure_streak_key(task_id, provider_id)
-    record = dict(bucket.get(key) or {})
-    count = int(record.get("count", 0)) + 1
-    record.update(
-        {
-            "task_id": task_id,
-            "provider": provider_id,
-            "count": count,
-            "last_reason": reason,
-            "last_failure_at": utc_now(),
-            "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
-        }
-    )
+    prior = bucket.get(key)
+    immutable_fields = {
+        "schema_version": FAILURE_STREAK_SCHEMA_VERSION,
+        "task_id": task_id,
+        "provider": provider_id,
+        "owner_at_failure": owner,
+        "reviewer_at_failure": reviewer,
+        "worker_run_id": worker_run_id,
+        "failure_kind": normalized_kind,
+        "reason_class": normalized_reason_class,
+        "reason": normalized_reason,
+        "raw_ref": normalized_raw_ref,
+        "rejected_head": normalized_head,
+    }
+    generation_id = _failure_streak_generation_id(immutable_fields)
+    if prior is None:
+        decoded_prior = None
+        prior_generations: list[dict[str, Any]] = []
+    else:
+        decoded_prior = decode_task_failure_streak(prior)
+        if decoded_prior is None:
+            return 0
+        prior_generations = list(decoded_prior["generations"])
+        if any(item.get("generation_id") == generation_id for item in prior_generations):
+            return int(decoded_prior["count"])
+    recorded_at = _failure_streak_timestamp()
+    generation = {
+        **immutable_fields,
+        "generation_id": generation_id,
+        "recorded_at": recorded_at,
+    }
+    count = len(prior_generations) + 1
+    record = {
+        "schema_version": FAILURE_STREAK_SCHEMA_VERSION,
+        "task_id": task_id,
+        "provider": provider_id,
+        "count": count,
+        "last_reason": normalized_reason,
+        "last_failure_at": recorded_at,
+        "last_failure_kind": normalized_kind,
+        "last_raw_ref": normalized_raw_ref,
+        "last_worker_run_id": worker_run_id,
+        "generations": [*prior_generations, generation],
+    }
     bucket[key] = record
     return count
 
@@ -6347,13 +7000,76 @@ def provider_auth_pause_requires_live_probe(
     return False
 
 
-def provider_auth_report_is_live_success(report: dict[str, Any]) -> bool:
+def provider_report_live_probe_checked_at(report: dict[str, Any]) -> datetime | None:
+    if not isinstance(report, dict):
+        return None
+    probe = report.get("auth_probe")
+    if not isinstance(probe, dict):
+        return None
+    return _parse_iso_utc(
+        str(probe.get("checked_at") or probe.get("last_auth_probe_at") or report.get("last_auth_probe_at") or "")
+    )
+
+
+def provider_report_has_fresh_live_probe(
+    report: dict[str, Any],
+    *,
+    not_before: str | None = None,
+) -> bool:
+    if not isinstance(report, dict):
+        return False
+    probe = report.get("auth_probe")
+    if not isinstance(probe, dict) or str(probe.get("source") or "").strip().lower() != "live":
+        return False
+    threshold = _parse_iso_utc(not_before)
+    if threshold is None:
+        return True
+    checked_at = provider_report_live_probe_checked_at(report)
+    return checked_at is not None and checked_at >= threshold
+
+
+def provider_auth_report_is_live_success(
+    report: dict[str, Any],
+    *,
+    not_before: str | None = None,
+) -> bool:
     if not isinstance(report, dict) or report.get("auth_ready") is not True:
         return False
     probe = report.get("auth_probe")
     if not isinstance(probe, dict):
         return False
-    return probe.get("ready") is True and str(probe.get("source") or "").strip().lower() == "live"
+    return probe.get("ready") is True and provider_report_has_fresh_live_probe(
+        report,
+        not_before=not_before,
+    )
+
+
+def provider_pause_probe_not_before(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider: str | None,
+    *,
+    auth_only: bool = False,
+) -> str | None:
+    ids = _provider_auth_identity_ids(config, provider)
+    thresholds: list[datetime] = []
+    for pause_id, entry in _dispatch_pause_bucket(state).items():
+        if normalize_agent_id(str(pause_id)) not in ids or not isinstance(entry, dict):
+            continue
+        if auth_only and not auth_pause_requires_live_probe(entry):
+            continue
+        raw = str(
+            entry.get("recovery_probe_not_before")
+            or entry.get("auth_probe_checked_at")
+            or entry.get("paused_at")
+            or ""
+        )
+        parsed = _parse_iso_utc(raw)
+        if parsed is not None:
+            thresholds.append(parsed)
+    if not thresholds:
+        return None
+    return _isoformat_utc(max(thresholds))
 
 
 def _is_auth_failure_streak(config: dict[str, Any], record: dict[str, Any]) -> bool:
@@ -6412,6 +7128,115 @@ def clear_auth_dispatch_pauses_for_provider(config: dict[str, Any], state: dict[
     return removed
 
 
+def reconcile_provider_pause_recovery(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    current_report: dict[str, Any] | None,
+) -> bool:
+    """Apply fresh targeted probe outcomes to probe-gated dispatch pauses.
+
+    Capacity/quota windows no longer reopen dispatch on time alone.  Once their
+    window elapses, a live targeted provider probe must prove the account is
+    healthy.  Failed probes retain the gate and set a bounded next-probe time;
+    a probe that reveals a real credential failure upgrades the gate to sticky
+    auth semantics.  Authentication successes remain owned by
+    ``reconcile_provider_auth_recovery`` so auth failure streaks are cleared in
+    the same transaction as their pause.
+    """
+
+    bucket = _dispatch_pause_bucket(state)
+    settings = provider_guardrail_settings(config)
+    interval_seconds = max(1, int(settings.get("recovery_probe_interval_seconds", 60) or 60))
+    changed = False
+    for pause_id, entry in list(bucket.items()):
+        if not isinstance(entry, dict) or not provider_pause_requires_live_probe(entry):
+            continue
+        trigger_provider = str(entry.get("trigger_provider") or pause_id)
+        current = _provider_report_entry(current_report, trigger_provider)
+        not_before = str(
+            entry.get("recovery_probe_not_before")
+            or entry.get("auth_probe_checked_at")
+            or entry.get("paused_at")
+            or ""
+        ) or None
+        if not provider_report_has_fresh_live_probe(current, not_before=not_before):
+            continue
+        probe = current.get("auth_probe") if isinstance(current.get("auth_probe"), dict) else {}
+        checked_at = provider_report_live_probe_checked_at(current) or datetime.now(timezone.utc)
+        checked_at_iso = _isoformat_utc(checked_at)
+
+        if current.get("auth_ready") is True and probe.get("ready") is True:
+            if auth_pause_requires_live_probe(entry):
+                # The auth reconciler below clears the pause together with auth
+                # streaks and emits the canonical auth-recovered evidence.
+                continue
+            removed = bucket.pop(pause_id, None)
+            if not isinstance(removed, dict):
+                continue
+            changed = True
+            write_activity_log(
+                config,
+                {
+                    "type": "provider_dispatch_resumed",
+                    "provider": pause_id,
+                    "task_id": removed.get("task_id"),
+                    "worker_run_id": removed.get("worker_run_id"),
+                    "message": (
+                        f"Fresh live recovery probe succeeded for {pause_id} at {checked_at_iso}; "
+                        "dispatch is enabled again."
+                    ),
+                    "raw_ref": removed.get("raw_ref"),
+                    "cleared_pause": removed,
+                },
+            )
+            continue
+
+        failure_kind = str(
+            current.get("probe_failure_kind")
+            or rewrite_provider_health.classify_probe_failure_kind(
+                probe.get("ready"),
+                status=probe.get("status"),
+            )
+            or "capacity_retryable"
+        )
+        next_probe_at = _isoformat_utc(checked_at + timedelta(seconds=interval_seconds))
+        if str(entry.get("last_recovery_probe_at") or "") == checked_at_iso:
+            continue
+        entry["last_recovery_probe_at"] = checked_at_iso
+        entry["next_recovery_probe_at"] = next_probe_at
+        entry["recovery_probe_status"] = probe.get("status")
+        if failure_kind == "auth":
+            entry["failure_kind"] = "auth"
+            entry["pause_kind"] = "auth"
+            entry["requires_live_auth_probe"] = True
+            entry.pop("requires_live_recovery_probe", None)
+            entry["recovery_probe_not_before"] = checked_at_iso
+            entry["blocked_until"] = STICKY_AUTH_BLOCKED_UNTIL
+        else:
+            entry["failure_kind"] = failure_kind
+            entry["pause_kind"] = failure_kind
+            entry["requires_live_recovery_probe"] = True
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "provider_recovery_probe_failed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "failure_kind": failure_kind,
+                "probe_status": probe.get("status"),
+                "next_probe_at": next_probe_at,
+                "message": (
+                    f"Live recovery probe for {pause_id} remained {failure_kind}; "
+                    f"dispatch stays blocked and the next probe is due at {next_probe_at}."
+                ),
+                "raw_ref": entry.get("raw_ref"),
+            },
+        )
+    return changed
+
+
 def reconcile_provider_auth_recovery(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -6426,7 +7251,16 @@ def reconcile_provider_auth_recovery(
         live_probe_gated = provider_auth_pause_requires_live_probe(config, state, str(provider_id))
         if previous.get("auth_ready") is not False and not live_probe_gated:
             continue
-        if live_probe_gated and not provider_auth_report_is_live_success(current):
+        not_before = provider_pause_probe_not_before(
+            config,
+            state,
+            str(provider_id),
+            auth_only=True,
+        )
+        if live_probe_gated and not provider_auth_report_is_live_success(
+            current,
+            not_before=not_before,
+        ):
             continue
         cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
         cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))
@@ -6737,9 +7571,48 @@ def mark_provider_auth_probe_not_ready(
     entry["requires_live_auth_probe"] = True
     entry["auth_probe_status"] = probe.get("status")
     entry["auth_probe_checked_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    if entry.get("auth_probe_checked_at"):
+        entry["recovery_probe_not_before"] = entry["auth_probe_checked_at"]
     if not is_sticky_auth_dispatch_pause(entry):
         entry["blocked_until"] = STICKY_AUTH_BLOCKED_UNTIL
     return changed or not already_gated
+
+
+def apply_provider_probe_to_report(
+    provider_report: dict[str, Any],
+    provider_key: str,
+    probe: dict[str, Any],
+) -> rewrite_provider_health.AccountHealth | None:
+    """Project one normalized provider probe into a capability report."""
+
+    providers = provider_report.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        return None
+    capability = providers.setdefault(provider_key, {})
+    if not isinstance(capability, dict):
+        capability = {}
+        providers[provider_key] = capability
+    health = rewrite_provider_health.classify_probe(
+        probe.get("ready"),
+        status=probe.get("status"),
+    )
+    if health is None:
+        return None
+    failure_kind = rewrite_provider_health.classify_probe_failure_kind(
+        probe.get("ready"),
+        status=probe.get("status"),
+    )
+    capability["auth_ready"] = probe.get("ready") is True
+    capability["auth_error"] = probe.get("error")
+    capability["auth_method"] = probe.get("method")
+    capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    capability["auth_probe"] = probe
+    capability["account_health"] = health.value
+    capability["probe_failure_kind"] = failure_kind
+    ready = health is rewrite_provider_health.AccountHealth.HEALTHY
+    capability["local_cli_worker_supported"] = ready
+    capability["supports_auto_approve"] = ready
+    return health
 
 
 def refresh_provider_auth_before_dispatch(
@@ -6780,26 +7653,11 @@ def refresh_provider_auth_before_dispatch(
             "last_auth_probe_at": utc_now(),
             "source": "live",
         }
-    health = rewrite_provider_health.classify_probe(
-        probe.get("ready"),
-        status=probe.get("status"),
-    )
-    if health is None:
-        return None
     capability = existing_providers[provider_key]
     previously_ready = capability.get("auth_ready")
-    capability["auth_ready"] = probe.get("ready") is True
-    capability["auth_error"] = probe.get("error")
-    capability["auth_method"] = probe.get("method")
-    capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
-    capability["auth_probe"] = probe
-    capability["account_health"] = health.value
-    if health is rewrite_provider_health.AccountHealth.HEALTHY:
-        capability["local_cli_worker_supported"] = True
-        capability["supports_auto_approve"] = True
-    else:
-        capability["local_cli_worker_supported"] = False
-        capability["supports_auto_approve"] = False
+    health = apply_provider_probe_to_report(provider_report, provider_key, probe)
+    if health is None:
+        return None
     if capability["auth_ready"] != previously_ready:
         # Persist auth transitions in both directions so the next dispatch gate
         # consumes the same live pre-dispatch probe result.  Only persisting
@@ -6810,7 +7668,18 @@ def refresh_provider_auth_before_dispatch(
         except Exception:  # a report write must never block or bypass dispatch gating
             pass
     if state is not None and capability["auth_ready"] is False and str(probe.get("source") or "").strip().lower() == "live":
-        mark_provider_auth_probe_not_ready(config, state, provider_key, probe)
+        failure_kind = str(capability.get("probe_failure_kind") or "auth")
+        if failure_kind == "auth":
+            mark_provider_auth_probe_not_ready(config, state, provider_key, probe)
+        else:
+            mark_provider_dispatch_paused(
+                config,
+                state,
+                provider_key,
+                str(probe.get("error") or probe.get("status") or "provider capacity probe failed"),
+                failure_kind=failure_kind,
+                pause_kind=failure_kind,
+            )
     return health
 
 
@@ -9810,6 +10679,9 @@ def poll_worker_failure_stage(
         worker,
         failure_reason,
         failure_kind=failure_kind,
+        reason_class=str(failure_summary.get("kind") or ""),
+        raw_ref=raw_ref,
+        rejected_head=worker_failure_rejected_head(worker),
     )
     console_log(
         f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
@@ -10052,11 +10924,24 @@ def poll_worker_completion_stage(
                     config, state, worker, "failed", MISSING_HANDOFF_EXIT_REASON
                 )
                 return {"changed": True, "stop": True}
+        generic_failure_summary = summarize_failure_reason(
+            GENERIC_WORKER_EXIT_REASON,
+            str(worker.get("provider") or worker.get("agent_id") or ""),
+        )
+        raw_ref = write_failure_evidence(
+            config,
+            worker=worker,
+            reason=GENERIC_WORKER_EXIT_REASON,
+            failure_kind="generic_exit",
+        )
         failure_count = record_task_failure_streak(
             state,
             worker,
             GENERIC_WORKER_EXIT_REASON,
             failure_kind="generic_exit",
+            reason_class=str(generic_failure_summary.get("kind") or ""),
+            raw_ref=raw_ref,
+            rejected_head=worker_failure_rejected_head(worker),
         )
         generic_threshold = max(
             1,
@@ -11544,12 +12429,15 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         detected_reason = None if runner_succeeded else detect_worker_failure(worker)
         failure_count: int | None = None
         failure_kind = ""
+        failure_reason_class = ""
+        raw_ref: str | None = None
         if detected_reason:
             failure = classify_worker_failure(config, worker, detected_reason)
             failure_summary = summarize_failure_reason(
                 detected_reason,
                 str(worker.get("provider") or worker.get("agent_id") or ""),
             )
+            failure_reason_class = str(failure_summary.get("kind") or "")
             raw_ref = write_failure_evidence(
                 config,
                 worker=worker,
@@ -11561,6 +12449,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 worker,
                 detected_reason,
                 failure_kind=str(failure.get("kind") or ""),
+                reason_class=failure_reason_class,
+                raw_ref=raw_ref,
+                rejected_head=worker_failure_rejected_head(worker),
             )
             failure_kind = str(failure.get("kind") or "")
             failure_response = decide_provider_failure_response(failure_kind)
@@ -11649,20 +12540,49 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             worker["last_error_raw_ref"] = raw_ref
         elif missing_process:
             failure_kind = "missing_process"
+            failure_summary = summarize_failure_reason(
+                reason,
+                str(worker.get("provider") or worker.get("agent_id") or ""),
+            )
+            failure_reason_class = str(failure_summary.get("kind") or "")
+            raw_ref = write_failure_evidence(
+                config,
+                worker=worker,
+                reason=reason,
+                failure_kind=failure_kind,
+            )
             failure_count = record_task_failure_streak(
                 state,
                 worker,
                 reason,
                 failure_kind=failure_kind,
+                reason_class=failure_reason_class,
+                raw_ref=raw_ref,
+                rejected_head=worker_failure_rejected_head(worker),
             )
 
         if missing_process:
             if failure_count is None:
+                fallback_kind = failure_kind or "missing_process"
+                fallback_summary = summarize_failure_reason(
+                    reason,
+                    str(worker.get("provider") or worker.get("agent_id") or ""),
+                )
+                failure_reason_class = str(fallback_summary.get("kind") or "")
+                raw_ref = raw_ref or write_failure_evidence(
+                    config,
+                    worker=worker,
+                    reason=reason,
+                    failure_kind=fallback_kind,
+                )
                 failure_count = record_task_failure_streak(
                     state,
                     worker,
                     reason,
-                    failure_kind=failure_kind or "missing_process",
+                    failure_kind=fallback_kind,
+                    reason_class=failure_reason_class,
+                    raw_ref=raw_ref,
+                    rejected_head=worker_failure_rejected_head(worker),
                 )
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
@@ -13280,6 +14200,8 @@ def build_dispatch_event(
 ) -> dict[str, Any]:
     task_payload = {
         "id": task.get("id"),
+        "owner": task.get("owner"),
+        "reviewer": task.get("reviewer"),
         "artifacts": list(task.get("artifacts", []) or []),
         "next": task.get("next"),
     }
@@ -13933,10 +14855,79 @@ def record_runtime_lock_hold(
     return held_seconds
 
 
+def _configured_recovery_probe_provider(
+    config: dict[str, Any],
+    pause_id: str,
+    entry: dict[str, Any],
+) -> str | None:
+    providers = config.get("providers", {}) or {}
+    candidates = [
+        str(entry.get("trigger_provider") or "").strip(),
+        str(entry.get("provider") or "").strip(),
+        str(pause_id or "").strip(),
+    ]
+    for candidate in candidates:
+        if candidate in providers:
+            return candidate
+        normalized = normalize_agent_id(candidate)
+        for configured_provider in providers:
+            if normalize_agent_id(str(configured_provider)) == normalized:
+                return str(configured_provider)
+    normalized_pause_id = normalize_agent_id(pause_id)
+    for configured_provider in providers:
+        if provider_dispatch_group_id(config, str(configured_provider)) == normalized_pause_id:
+            return str(configured_provider)
+    return None
+
+
+def provider_recovery_probe_targets(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    """Return a bounded, de-duplicated set of paused providers due a probe."""
+
+    now = now or datetime.now(timezone.utc)
+    settings = provider_guardrail_settings(config)
+    max_per_cycle = max(1, int(settings.get("recovery_probe_max_per_cycle", 2) or 2))
+    targets: list[str] = []
+    seen_groups: set[str] = set()
+    for pause_id, entry in sorted(_dispatch_pause_bucket(state).items()):
+        if not isinstance(entry, dict):
+            continue
+        auth_gated = auth_pause_requires_live_probe(entry)
+        blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
+        capacity_gated = bool(
+            is_probe_recoverable_pause_kind(entry)
+            and (
+                entry.get("requires_live_recovery_probe") is True
+                or (blocked_until is not None and blocked_until <= now)
+            )
+        )
+        if not auth_gated and not capacity_gated:
+            continue
+        next_probe_at = _parse_iso_utc(str(entry.get("next_recovery_probe_at") or ""))
+        if next_probe_at is not None and next_probe_at > now:
+            continue
+        target = _configured_recovery_probe_provider(config, str(pause_id), entry)
+        if not target:
+            continue
+        group_id = provider_dispatch_group_id(config, target) or normalize_agent_id(target)
+        if group_id in seen_groups:
+            continue
+        seen_groups.add(group_id)
+        targets.append(target)
+        if len(targets) >= max_per_cycle:
+            break
+    return targets
+
+
 def probe_provider_reports(
     config: dict[str, Any],
     *,
     quiet: bool = False,
+    runtime_snapshot: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Refresh provider capabilities outside every canonical lock.
 
@@ -13954,6 +14945,42 @@ def probe_provider_reports(
     report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
     if report is None:
         report = previous or {}
+    targeted = False
+    for provider_key in provider_recovery_probe_targets(
+        config,
+        runtime_snapshot or {},
+    ):
+        current = _provider_report_entry(report, provider_key)
+        not_before = provider_pause_probe_not_before(
+            config,
+            runtime_snapshot or {},
+            provider_key,
+        )
+        if provider_report_has_fresh_live_probe(current, not_before=not_before):
+            # A normal capability refresh already produced an authoritative
+            # result for this gate in the same recovery window. Reconcile it
+            # under the runtime lock instead of spending a duplicate probe.
+            continue
+        probe = _safe_phase(
+            f"probe_provider_recovery:{provider_key}",
+            probe_provider_auth,
+            config,
+            provider_key,
+            force=True,
+            quiet=quiet,
+        )
+        if not isinstance(probe, dict):
+            continue
+        apply_provider_probe_to_report(report, provider_key, probe)
+        targeted = True
+    if targeted:
+        _safe_phase(
+            "persist_provider_recovery_probes",
+            write_provider_capabilities,
+            config,
+            report=report,
+            quiet=quiet,
+        )
     return previous, report
 
 
@@ -13997,7 +15024,6 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
-    provider_reports = probe_provider_reports(config, quiet=quiet)
     # GitHub bus sync can perform several gh/API round trips and status-command
     # subprocesses. It only consumes an atomic runtime snapshot; any queue or
     # status mutation it issues uses that subsystem's own canonical writer.
@@ -14007,6 +15033,11 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    provider_reports = probe_provider_reports(
+        config,
+        quiet=quiet,
+        runtime_snapshot=github_runtime_snapshot,
+    )
     task_state_shadow_snapshot = _safe_phase(
         "prefetch_task_state_shadow",
         prefetch_task_state_shadow,
@@ -14309,6 +15340,7 @@ def _run_once_locked(
         # runtime-admission hold; run_once supplies the reports it gathered
         # before the lock was taken.
         previous_provider_report, provider_report = provider_reports
+        changed = _safe_phase("reconcile_provider_pause_recovery", reconcile_provider_pause_recovery, config, state, provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:

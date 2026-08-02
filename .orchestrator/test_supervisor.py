@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import contextlib
+import copy
+import hashlib
 import inspect
 import multiprocessing
 import tempfile
@@ -250,13 +253,22 @@ class RuntimeConfigTests(unittest.TestCase):
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
-    def _worker_for_log(self, content: str) -> dict[str, str]:
+    def _worker_for_log(
+        self,
+        content: str,
+        *,
+        provider: str = "codex",
+        runner_failed: bool = False,
+    ) -> dict[str, object]:
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
         handle.write(content)
         handle.flush()
         handle.close()
         self.addCleanup(Path(handle.name).unlink, missing_ok=True)
-        return {"log_path": handle.name}
+        worker: dict[str, object] = {"log_path": handle.name, "provider": provider}
+        if runner_failed:
+            worker.update({"runner_status": "failed", "exit_code": 1})
+        return worker
 
     def test_ignores_error_markers_inside_captured_log_output(self) -> None:
         worker = self._worker_for_log(
@@ -268,13 +280,17 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     'worker_retry_scheduled: {"message": "Transient worker failure detected; retry 1 scheduled at 2026-04-05T13:48:48Z: reason: \\"QUOTA_EXHAUSTED\\""}',
                     "No local failure happened in this session.",
                 ]
-            )
+            ),
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_real_model_availability_failure(self) -> None:
-        worker = self._worker_for_log('Error: Model "grok-code-fast-1" from --model flag is not available.\n')
+        worker = self._worker_for_log(
+            'Error: Model "grok-code-fast-1" from --model flag is not available.\n',
+            runner_failed=True,
+        )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
@@ -291,7 +307,9 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "An unexpected critical error occurred:[object Object]",
                 ]
             )
-            + "\n"
+            + "\n",
+            provider="gemini",
+            runner_failed=True,
         )
 
         self.assertEqual(
@@ -301,29 +319,34 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_detects_copilot_monthly_quota_failure(self) -> None:
         line = '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
-        worker = self._worker_for_log(line + "\n")
+        worker = self._worker_for_log(line + "\n", provider="copilot", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_claude_auth_failure_from_cli_log(self) -> None:
+        system_line = (
+            '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,'
+            '"retry_delay_ms":590.5,"error_status":401,"error":"authentication_failed"}'
+        )
         worker = self._worker_for_log(
             "\n".join(
                 [
-                    '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":590.5,"error_status":401,"error":"authentication_failed"}',
+                    system_line,
                     '{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"Invalid authentication credentials\\"}}"}]}}',
                 ]
             )
-            + "\n"
+            + "\n",
+            provider="claude",
+            runner_failed=True,
         )
 
-        self.assertEqual(
-            supervisor.detect_worker_failure(worker),
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"Invalid authentication credentials\\"}}"}]}}',
-        )
+        self.assertEqual(supervisor.detect_worker_failure(worker), system_line)
 
     def test_ignores_auth_text_inside_tool_result_user_message(self) -> None:
         worker = self._worker_for_log(
-            '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"prior state said not authenticated, but this is just captured inspection output"}]}}\n'
+            '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"prior state said not authenticated, but this is just captured inspection output"}]}}\n',
+            provider="claude",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -337,7 +360,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -351,14 +375,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_ignores_activity_log_bullet_that_mentions_prior_quota_reassignment(self) -> None:
         worker = self._worker_for_log(
-            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n"
+            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -378,7 +404,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                 }
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -398,7 +425,9 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                 }
             )
-            + "\n"
+            + "\n",
+            provider="claude",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -413,12 +442,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 },
             }
         )
-        worker = self._worker_for_log(line + "\n")
+        worker = self._worker_for_log(line + "\n", provider="claude")
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_real_no_quota_line(self) -> None:
-        worker = self._worker_for_log("402 You have no quota\n")
+        worker = self._worker_for_log(
+            "402 You have no quota\n",
+            provider="copilot",
+            runner_failed=True,
+        )
 
         self.assertEqual(supervisor.detect_worker_failure(worker), "402 You have no quota")
 
@@ -433,13 +466,14 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "worker continued reviewing after this probe.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_standalone_fatal_line(self) -> None:
-        worker = self._worker_for_log("fatal: provider process crashed\n")
+        worker = self._worker_for_log("fatal: provider process crashed\n", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), "fatal: provider process crashed")
 
@@ -452,7 +486,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -466,7 +501,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -480,10 +516,68 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "The quoted failure came from a reviewed diff, not this worker process.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_captured_quota_fixtures_and_source_lines_are_not_terminal_evidence(self) -> None:
+        captured_lines = (
+            "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json "
+            "TerminalQuotaError: You have exhausted your capacity on this model.",
+            '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}',
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits.",
+            '{"type":"result","subtype":"error_during_execution","is_error":true,'
+            '"result":"You\'ve hit your weekly limit · resets Jun 8, 12pm (UTC)"}',
+        )
+
+        for captured_line in captured_lines:
+            with self.subTest(captured_line=captured_line):
+                worker = self._worker_for_log(captured_line + "\n", provider="codex")
+                self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_successful_runner_never_promotes_transcript_quota_text(self) -> None:
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "completed", "exit_code": 0})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
+        cases = (
+            ("claude", "status: 401 unauthorized", True, "auth"),
+            ("gemini", "status: 429 RESOURCE_EXHAUSTED", True, "capacity_retryable"),
+            (
+                "claude",
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "result": "You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+                    },
+                    separators=(",", ":"),
+                ),
+                False,
+                "quota_terminal",
+            ),
+            ("codex", "fatal: provider process crashed", True, "terminal"),
+        )
+
+        for provider, line, runner_failed, expected_kind in cases:
+            with self.subTest(provider=provider, expected_kind=expected_kind):
+                worker = self._worker_for_log(
+                    line + "\n",
+                    provider=provider,
+                    runner_failed=runner_failed,
+                )
+                reason = supervisor.detect_worker_failure(worker)
+                self.assertEqual(reason, line)
+                failure = supervisor.classify_worker_failure({}, worker, reason)
+                self.assertEqual(failure["kind"], expected_kind)
 
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
@@ -560,6 +654,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_quota_reached_probe_envelope_before_auth_words(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "antigravity"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "Provider authentication probe status: quota_reached",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
     def test_classifies_claude_weekly_rate_limit_as_terminal_quota(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "claude"}
@@ -575,7 +682,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
         worker = self._worker_for_log(
-            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n"
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n",
+            runner_failed=True,
         )
 
         self.assertEqual(
@@ -584,7 +692,11 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
     def test_detects_claude_weekly_rate_limit_line_as_worker_failure(self) -> None:
-        worker = self._worker_for_log("rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n")
+        worker = self._worker_for_log(
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n",
+            provider="claude",
+            runner_failed=True,
+        )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
@@ -754,7 +866,13 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "Your quota will reset after 89h52m2s.\n"
         )
         worker.update(
-            {"provider": "antigravity", "run_id": "antigravity-run-1", "task_id": "TJ-E2E-005"}
+            {
+                "provider": "antigravity",
+                "run_id": "antigravity-run-1",
+                "task_id": "TJ-E2E-005",
+                "runner_status": "failed",
+                "exit_code": 1,
+            }
         )
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
@@ -1120,7 +1238,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIn("claude_account_manual", pauses)
         self.assertTrue(supervisor.agent_dispatch_paused(config, state, "claude2"))
 
-    def test_expire_provider_dispatch_pauses_removes_expired_entry(self) -> None:
+    def test_expired_quota_pause_becomes_probe_gated_without_reopening_dispatch(self) -> None:
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -1144,9 +1262,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
             changed = supervisor.expire_provider_dispatch_pauses(config, state)
 
         self.assertTrue(changed)
-        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
+        self.assertTrue(pause["requires_live_recovery_probe"])
+        self.assertEqual(pause["recovery_probe_not_before"], "2026-04-06T12:00:00Z")
+        self.assertTrue(supervisor.provider_dispatch_paused(config, state, "copilot"))
         write_activity_log.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_recovery_probe_scheduled")
 
     def test_mark_revoked_auth_pause_is_sticky_until_probe(self) -> None:
         from datetime import datetime, timezone
@@ -1298,6 +1419,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "auth_ready": True,
                     "last_auth_probe_at": "2026-06-06T12:00:00Z",
                     "auth_method": "codex_exec_oauth",
+                    "auth_probe": {
+                        "ready": True,
+                        "source": "live",
+                        "method": "codex_exec_oauth",
+                        "checked_at": "2026-06-06T12:00:00Z",
+                    },
                 }
             }
         }
@@ -2310,6 +2437,96 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             run_id="run-123",
             workspace_path="/tmp/workers/bus-val-004",
         )
+
+    def test_immediate_start_failure_captures_v3_record_inputs(self) -> None:
+        task = {
+            "id": "BUS-FAILURE-V3",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-08-01T16:10:00Z",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {task["id"]: task},
+        )
+        queue_payload = {
+            "event_id": "evt-bus-failure-v3",
+            "event_key": event["key"],
+            "task_id": task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+            "message": "wake",
+            "context_files": [],
+            "metadata": {"task": event["task"]},
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(False, "adapter delivery failed", None),
+            ),
+            mock.patch.object(
+                supervisor,
+                "worker_commit_progress_snapshot",
+                return_value={"commit_sha": "b" * 40},
+            ),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "terminal", "label": "terminal"},
+            ),
+            mock.patch.object(
+                supervisor,
+                "summarize_failure_reason",
+                return_value={"kind": "terminal", "summary": "adapter failed"},
+            ),
+            mock.patch.object(
+                supervisor,
+                "write_failure_evidence",
+                return_value=".orchestrator/evidence/evt-bus-failure-v3.json",
+            ),
+            mock.patch.object(
+                supervisor,
+                "record_task_failure_streak",
+                return_value=1,
+            ) as record_streak,
+            mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="unchanged"),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.REASSIGN,
+            ),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        record_streak.assert_called_once()
+        failure_worker = record_streak.call_args.args[1]
+        self.assertEqual(failure_worker["run_id"], "evt-bus-failure-v3-attempt-1")
+        self.assertEqual(
+            failure_worker["request_snapshot"]["metadata"]["task"],
+            event["task"],
+        )
+        self.assertEqual(record_streak.call_args.kwargs["failure_kind"], "terminal")
+        self.assertEqual(record_streak.call_args.kwargs["reason_class"], "terminal")
+        self.assertEqual(
+            record_streak.call_args.kwargs["raw_ref"],
+            ".orchestrator/evidence/evt-bus-failure-v3.json",
+        )
+        self.assertEqual(record_streak.call_args.kwargs["rejected_head"], "b" * 40)
 
     def test_process_queue_skips_second_event_when_task_worker_is_active(self) -> None:
         current_task = {
@@ -9838,6 +10055,77 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "transient error",
         )
 
+    def test_active_worker_failure_captures_v3_record_inputs(self) -> None:
+        worker = {
+            "run_id": "run-active-v3",
+            "task_id": "TASK-ACTIVE-V3",
+            "provider": "codex",
+            "status": "running",
+            "retry_count": 0,
+            "work_progress_snapshot": {"commit_sha": "c" * 40},
+            "request_snapshot": {
+                "task_id": "TASK-ACTIVE-V3",
+                "metadata": {
+                    "logical_agent_id": "codex",
+                    "task": {
+                        "id": "TASK-ACTIVE-V3",
+                        "owner": "Claude",
+                        "reviewer": "Codex",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value="quota exhausted"),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "quota_terminal", "label": "quota", "transient": False},
+            ),
+            mock.patch.object(
+                supervisor,
+                "summarize_failure_reason",
+                return_value={"kind": "quota", "summary": "quota summary"},
+            ),
+            mock.patch.object(
+                supervisor,
+                "write_failure_evidence",
+                return_value=".orchestrator/evidence/run-active-v3.json",
+            ),
+            mock.patch.object(
+                supervisor,
+                "record_task_failure_streak",
+                return_value=1,
+            ) as record_streak,
+            mock.patch.object(supervisor, "worker_retry_settings", return_value={"max_attempts": 0}),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.REASSIGN,
+            ),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_failure_stage(
+                {},
+                {},
+                worker,
+                provider_report={},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_streak.assert_called_once_with(
+            {},
+            worker,
+            "quota exhausted",
+            failure_kind="quota_terminal",
+            reason_class="quota",
+            raw_ref=".orchestrator/evidence/run-active-v3.json",
+            rejected_head="c" * 40,
+        )
+
     def test_completion_stage_keeps_existing_terminal_worker_unchanged(self) -> None:
         worker = {"run_id": "run-terminal", "status": "failed"}
 
@@ -10075,6 +10363,74 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         record_blocker.assert_not_called()
         record_streak.assert_called_once()
         self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
+
+    def test_generic_exit_captures_v3_record_inputs(self) -> None:
+        worker = {
+            "run_id": "run-generic-v3",
+            "task_id": "TASK-GENERIC-V3",
+            "provider": "codex",
+            "status": "running",
+            "work_progress_snapshot": {"commit_sha": "d" * 40},
+            "request_snapshot": {
+                "task_id": "TASK-GENERIC-V3",
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "metadata": {
+                    "logical_agent_id": "codex",
+                    "task": {
+                        "id": "TASK-GENERIC-V3",
+                        "owner": "Codex",
+                        "reviewer": "Gemini",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "worker_prepared_review_head", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "summarize_failure_reason",
+                return_value={"kind": "terminal", "summary": "generic exit"},
+            ),
+            mock.patch.object(
+                supervisor,
+                "write_failure_evidence",
+                return_value=".orchestrator/evidence/run-generic-v3.json",
+            ),
+            mock.patch.object(
+                supervisor,
+                "record_task_failure_streak",
+                return_value=1,
+            ) as record_streak,
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-GENERIC-V3": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_streak.assert_called_once_with(
+            {},
+            worker,
+            supervisor.GENERIC_WORKER_EXIT_REASON,
+            failure_kind="generic_exit",
+            reason_class="terminal",
+            raw_ref=".orchestrator/evidence/run-generic-v3.json",
+            rejected_head="d" * 40,
+        )
 
     def test_completion_stage_ignores_mention_only_pr_url(self) -> None:
         """A PR URL scraped from logs is audit data, not prepared-head proof."""
@@ -12489,6 +12845,794 @@ class WorkerBaseRefPreconditionTests(unittest.TestCase):
         )
 
 
+class FailureStreakV3Tests(unittest.TestCase):
+    task = {
+        "id": "SUP-FAILURE-V3-001",
+        "owner": "Codex",
+        "reviewer": "Codex2",
+    }
+
+    def _worker(
+        self,
+        *,
+        task: dict | None = None,
+        provider: str = "codex1-2",
+        logical_agent_id: str = "codex",
+        run_id: str = "codex-run-v3",
+    ) -> dict:
+        canonical_task = dict(task or self.task)
+        return {
+            "task_id": canonical_task["id"],
+            "provider": provider,
+            "run_id": run_id,
+            "request_snapshot": {
+                "task_id": canonical_task["id"],
+                "metadata": {
+                    "logical_agent_id": logical_agent_id,
+                    "task": canonical_task,
+                },
+            },
+        }
+
+    def _record(
+        self,
+        state: dict,
+        worker: dict,
+        *,
+        reason: str = "provider failed",
+        failure_kind: str = "terminal",
+        reason_class: str = "terminal",
+        raw_ref: str = ".orchestrator/evidence/codex-run-v3.json",
+        rejected_head: str = supervisor.FAILURE_STREAK_ABSENT_HEAD,
+    ) -> int:
+        return supervisor.record_task_failure_streak(
+            state,
+            worker,
+            reason,
+            failure_kind=failure_kind,
+            reason_class=reason_class,
+            raw_ref=raw_ref,
+            rejected_head=rejected_head,
+        )
+
+    def test_generation_replay_is_stable_after_clear_and_recreate(self) -> None:
+        state: dict = {}
+        worker = self._worker()
+        timestamps = [
+            "2026-08-01T16:00:00.000001Z",
+            "2026-08-01T16:00:01.000002Z",
+        ]
+
+        with mock.patch.object(
+            supervisor,
+            "_failure_streak_timestamp",
+            side_effect=timestamps,
+        ) as timestamp:
+            self.assertEqual(self._record(state, worker), 1)
+            first_record = copy.deepcopy(
+                state["provider_guardrails"]["task_failure_streaks"][
+                    "SUP-FAILURE-V3-001:codex"
+                ]
+            )
+            self.assertEqual(self._record(state, worker), 1)
+            self.assertEqual(
+                state["provider_guardrails"]["task_failure_streaks"][
+                    "SUP-FAILURE-V3-001:codex"
+                ],
+                first_record,
+            )
+
+            supervisor.clear_task_failure_streak(state, worker=worker)
+            self.assertEqual(self._record(state, worker), 1)
+
+        recreated = state["provider_guardrails"]["task_failure_streaks"][
+            "SUP-FAILURE-V3-001:codex"
+        ]
+        self.assertEqual(timestamp.call_count, 2)
+        self.assertEqual(
+            recreated["generations"][0]["generation_id"],
+            first_record["generations"][0]["generation_id"],
+        )
+        self.assertNotEqual(
+            recreated["generations"][0]["recorded_at"],
+            first_record["generations"][0]["recorded_at"],
+        )
+        self.assertIsNotNone(supervisor.decode_task_failure_streak(recreated))
+
+    def test_distinct_evidence_is_unique_and_unrelated_streak_is_preserved(self) -> None:
+        state: dict = {}
+        unrelated_task = {
+            "id": "SUP-FAILURE-V3-OTHER",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+        }
+        unrelated_worker = self._worker(
+            task=unrelated_task,
+            provider="claude",
+            logical_agent_id="claude",
+            run_id="claude-run-other",
+        )
+        self.assertEqual(
+            self._record(
+                state,
+                unrelated_worker,
+                raw_ref=".orchestrator/evidence/claude-run-other.json",
+            ),
+            1,
+        )
+        unrelated_before = copy.deepcopy(
+            state["provider_guardrails"]["task_failure_streaks"][
+                "SUP-FAILURE-V3-OTHER:claude"
+            ]
+        )
+
+        worker = self._worker()
+        raw_ref = ".orchestrator/evidence/shared-ref.json"
+        self.assertEqual(self._record(state, worker, raw_ref=raw_ref), 1)
+        self.assertEqual(
+            self._record(
+                state,
+                worker,
+                raw_ref=raw_ref,
+                failure_kind="auth",
+                reason_class="auth",
+            ),
+            2,
+        )
+        self.assertEqual(
+            self._record(
+                state,
+                worker,
+                raw_ref=raw_ref,
+                reason="different provider failure",
+            ),
+            3,
+        )
+        self.assertEqual(
+            self._record(
+                state,
+                worker,
+                raw_ref=raw_ref,
+                rejected_head="a" * 40,
+            ),
+            4,
+        )
+        record = state["provider_guardrails"]["task_failure_streaks"][
+            "SUP-FAILURE-V3-001:codex"
+        ]
+        self.assertEqual(record["count"], 4)
+        self.assertEqual(
+            len({item["generation_id"] for item in record["generations"]}),
+            4,
+        )
+
+        before_replay = copy.deepcopy(record)
+        self.assertEqual(self._record(state, worker, raw_ref=raw_ref), 4)
+        self.assertEqual(record, before_replay)
+        supervisor.clear_task_failure_streak(state, worker=worker)
+        self.assertEqual(
+            state["provider_guardrails"]["task_failure_streaks"][
+                "SUP-FAILURE-V3-OTHER:claude"
+            ],
+            unrelated_before,
+        )
+
+    def test_decoders_deny_missing_malformed_and_alias_fields(self) -> None:
+        state: dict = {}
+        self.assertEqual(self._record(state, self._worker()), 1)
+        record = state["provider_guardrails"]["task_failure_streaks"][
+            "SUP-FAILURE-V3-001:codex"
+        ]
+        generation = record["generations"][0]
+        self.assertIsNotNone(supervisor.decode_task_failure_generation(generation))
+        self.assertIsNotNone(supervisor.decode_task_failure_streak(record))
+
+        for field in generation:
+            with self.subTest(generation_missing=field):
+                candidate = copy.deepcopy(generation)
+                candidate.pop(field)
+                self.assertIsNone(
+                    supervisor.decode_task_failure_generation(candidate)
+                )
+
+        malformed_generation_fields = {
+            "schema_version": 2,
+            "generation_id": "sha256:" + "A" * 64,
+            "recorded_at": "2026-08-01T16:00:00Z",
+            "task_id": " SUP-FAILURE-V3-001",
+            "provider": "Codex",
+            "owner_at_failure": "Codex2",
+            "worker_run_id": "",
+            "failure_kind": "quota-terminal",
+            "reason_class": "quota terminal",
+            "reason": "provider  failed",
+            "raw_ref": "",
+            "rejected_head": "abc123",
+        }
+        for field, value in malformed_generation_fields.items():
+            with self.subTest(generation_malformed=field):
+                candidate = copy.deepcopy(generation)
+                candidate[field] = value
+                self.assertIsNone(
+                    supervisor.decode_task_failure_generation(candidate)
+                )
+
+        for alias in ("owner", "reviewer", "last_raw_ref", "last_failure_kind"):
+            with self.subTest(generation_alias=alias):
+                candidate = copy.deepcopy(generation)
+                candidate[alias] = "alias-must-not-be-consulted"
+                self.assertIsNone(
+                    supervisor.decode_task_failure_generation(candidate)
+                )
+
+        for field in record:
+            with self.subTest(record_missing=field):
+                candidate = copy.deepcopy(record)
+                candidate.pop(field)
+                self.assertIsNone(supervisor.decode_task_failure_streak(candidate))
+
+        malformed_records = []
+        count_mismatch = copy.deepcopy(record)
+        count_mismatch["count"] = 2
+        malformed_records.append(count_mismatch)
+        last_reason_mismatch = copy.deepcopy(record)
+        last_reason_mismatch["last_reason"] = "different provider failure"
+        malformed_records.append(last_reason_mismatch)
+        alias_record = copy.deepcopy(record)
+        alias_record["generation_id"] = generation["generation_id"]
+        malformed_records.append(alias_record)
+        duplicate_generation = copy.deepcopy(record)
+        duplicate_generation["count"] = 2
+        duplicate_generation["generations"].append(
+            copy.deepcopy(duplicate_generation["generations"][0])
+        )
+        malformed_records.append(duplicate_generation)
+        for index, candidate in enumerate(malformed_records):
+            with self.subTest(record_malformed=index):
+                self.assertIsNone(supervisor.decode_task_failure_streak(candidate))
+
+    def test_recorder_fails_closed_without_canonical_identity_or_evidence(self) -> None:
+        valid_worker = self._worker()
+        invalid_workers = []
+        for path in (
+            ("run_id",),
+            ("request_snapshot", "task_id"),
+            ("request_snapshot", "metadata", "task", "owner"),
+            ("request_snapshot", "metadata", "task", "reviewer"),
+        ):
+            candidate = copy.deepcopy(valid_worker)
+            parent = candidate
+            for key in path[:-1]:
+                parent = parent[key]
+            parent.pop(path[-1])
+            invalid_workers.append(candidate)
+        mismatched_task = copy.deepcopy(valid_worker)
+        mismatched_task["request_snapshot"]["task_id"] = "OTHER-TASK"
+        invalid_workers.append(mismatched_task)
+        aliased_task = copy.deepcopy(valid_worker)
+        aliased_task["request_snapshot"]["metadata"] = {
+            "owner": "Codex",
+            "reviewer": "Codex2",
+        }
+        invalid_workers.append(aliased_task)
+        same_reviewer = copy.deepcopy(valid_worker)
+        same_reviewer["request_snapshot"]["metadata"]["task"]["reviewer"] = "Codex"
+        invalid_workers.append(same_reviewer)
+
+        for index, worker in enumerate(invalid_workers):
+            with self.subTest(invalid_worker=index):
+                state: dict = {}
+                self.assertEqual(self._record(state, worker), 0)
+                self.assertEqual(state, {})
+
+        invalid_evidence = [
+            {"failure_kind": ""},
+            {"reason_class": ""},
+            {"reason": " \n "},
+            {"raw_ref": ""},
+            {"rejected_head": "f" * 39},
+            {"rejected_head": "F" * 40},
+        ]
+        for overrides in invalid_evidence:
+            with self.subTest(invalid_evidence=overrides):
+                state = {}
+                self.assertEqual(
+                    self._record(state, valid_worker, **overrides),
+                    0,
+                )
+                self.assertEqual(state, {})
+
+    def test_dispatch_request_captures_independent_owner_and_reviewer(self) -> None:
+        task = {
+            **self.task,
+            "status": "in_progress",
+            "depends_on": [],
+            "last_update": "2026-08-01T16:00:00Z",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {task["id"]: task},
+        )
+        self.assertEqual(event["task"]["owner"], "Codex")
+        self.assertEqual(event["task"]["reviewer"], "Codex2")
+
+        request = supervisor.build_request(
+            {
+                "agents": {
+                    "codex": {
+                        "id": "codex",
+                        "display_name": "Codex",
+                        "provider": "codex",
+                        "adapter": "codex",
+                    }
+                },
+                "providers": {"codex": {"delivery_mode": "codex"}},
+            },
+            {
+                "target_agent": "codex",
+                "message": "wake",
+                "task_id": task["id"],
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "context_files": [],
+                "metadata": {"task": event["task"]},
+            },
+        )
+        snapshot = supervisor.request_snapshot(request)
+        self.assertEqual(snapshot["task_id"], task["id"])
+        self.assertEqual(snapshot["metadata"]["task"]["owner"], "Codex")
+        self.assertEqual(snapshot["metadata"]["task"]["reviewer"], "Codex2")
+
+    def test_all_six_production_record_call_sites_supply_v3_evidence(self) -> None:
+        tree = ast.parse(Path(supervisor.__file__).read_text(encoding="utf-8"))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "record_task_failure_streak"
+        ]
+        self.assertEqual(len(calls), 6)
+        required_keywords = {
+            "failure_kind",
+            "reason_class",
+            "raw_ref",
+            "rejected_head",
+        }
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                self.assertTrue(
+                    required_keywords.issubset(
+                        {keyword.arg for keyword in call.keywords}
+                    )
+                )
+
+
+class FailureStreakActivityNormalizerV3Tests(unittest.TestCase):
+    def _record(
+        self,
+        *,
+        task_id: str,
+        owner: str,
+        reviewer: str,
+        provider: str,
+        rejected_head: str,
+        recorded_at: str,
+    ) -> dict:
+        state: dict = {}
+        worker = {
+            "task_id": task_id,
+            "provider": provider,
+            "run_id": f"{provider}-captured-run",
+            "request_snapshot": {
+                "task_id": task_id,
+                "metadata": {
+                    "logical_agent_id": provider,
+                    "task": {
+                        "id": task_id,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                    },
+                },
+            },
+        }
+        with mock.patch.object(
+            supervisor,
+            "_failure_streak_timestamp",
+            return_value=recorded_at,
+        ):
+            count = supervisor.record_task_failure_streak(
+                state,
+                worker,
+                "captured generic exit",
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=f".orchestrator/logs/{provider}-captured-run.json",
+                rejected_head=rejected_head,
+            )
+        self.assertEqual(count, 1)
+        return state["provider_guardrails"]["task_failure_streaks"][
+            f"{task_id}:{provider}"
+        ]
+
+    def _ai_status_event(self, **fields: object) -> dict:
+        event = dict(fields)
+        encoded = json.dumps(
+            event,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        event["event_id"] = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+        return event
+
+    def _worker_commit_event(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        commit: str,
+        ts: str = "2026-08-02T02:00:00Z",
+    ) -> dict:
+        return {
+            "ts": ts,
+            "agent": actor,
+            "event_id": f"worker-commit-{commit}",
+            "type": "worker_commit",
+            "task_id": task_id,
+            "message": f"Worker commit {commit[:12]} recorded 1 staged file(s) for {task_id}.",
+            "commit": commit,
+            "scope": [".orchestrator/supervisor.py"],
+            "staged": [".orchestrator/supervisor.py"],
+            "index_file": "/tmp/git-index-captured",
+            "default_index_refreshed": True,
+            "default_index_refresh_error": None,
+        }
+
+    def test_captured_human_ops_reopen_normalizes_exact_review_binding(self) -> None:
+        rejected_head = "932a87e59e5a2f54e08e60ce57904c76ecf8ba2f"
+        task_id = "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+        record = self._record(
+            task_id=task_id,
+            owner="Codex",
+            reviewer="Human/Ops",
+            provider="codex",
+            rejected_head=rejected_head,
+            recorded_at="2026-08-02T01:40:00.000000Z",
+        )
+        event = {
+            "ts": "2026-08-02T01:44:37Z",
+            "agent": "Human/Ops",
+            "type": "reopen",
+            "task_id": task_id,
+            "message": "Reopen only to renew the exact-head review after the later owner note; implementation head is unchanged.",
+            "github_review_bridge": {
+                "repository": "ajoe734/pantheon",
+                "pr": 4445,
+                "head_sha": rejected_head,
+                "head_branch": "task/SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+                "base": "dev",
+                "decision": "reopen",
+                "actor": "Human/Ops",
+                "mode": "required_commit_status",
+                "status_id": 51493935990,
+                "status_context": "Pantheon canonical review gate",
+                "status_state": "failure",
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/4445",
+                "recorded_at": "2026-08-02T01:44:37Z",
+                "review_error": "gh: Unprocessable Entity (HTTP 422)",
+            },
+            "event_id": "ai-status-event-442bd2862f29ac8b52aa46f84fa2191268a2ea233c17c3a3a268a5fda3f1cd4c",
+        }
+        record_before = copy.deepcopy(record)
+        event_before = copy.deepcopy(event)
+
+        normalized = supervisor.normalize_failure_streak_progress_event(record, event)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["failure_generation_id"], record["generations"][-1]["generation_id"])
+        self.assertEqual(normalized["event_id"], event["event_id"])
+        self.assertEqual(normalized["event_type"], "reopen")
+        self.assertEqual(normalized["event_at"], event["ts"])
+        self.assertEqual(normalized["actor"], "Human/Ops")
+        self.assertEqual(normalized["exact_head"], rejected_head)
+        self.assertRegex(normalized["generation_id"], r"^sha256:[0-9a-f]{64}$")
+        with self.assertRaises(TypeError):
+            normalized["actor"] = "forged"  # type: ignore[index]
+        self.assertEqual(record, record_before)
+        self.assertEqual(event, event_before)
+
+    def test_captured_antigravity_worker_commit_normalizes_new_head(self) -> None:
+        task_id = "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801"
+        record = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head="a" * 40,
+            recorded_at="2026-08-01T22:50:00.000000Z",
+        )
+        event = {
+            "ts": "2026-08-01T22:58:31Z",
+            "agent": "Antigravity",
+            "event_id": "worker-commit-b77ac064341906b0b5b1caaa07606a2cce87bee3",
+            "type": "worker_commit",
+            "task_id": task_id,
+            "message": "Worker commit b77ac0643419 recorded 1 staged file(s) for LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801.",
+            "commit": "b77ac064341906b0b5b1caaa07606a2cce87bee3",
+            "scope": [
+                ".orchestrator/task-briefs/lifecycle_proj_hotfix_composed_head_review_20260801.md"
+            ],
+            "staged": [
+                ".orchestrator/task-briefs/lifecycle_proj_hotfix_composed_head_review_20260801.md"
+            ],
+            "index_file": "/tmp/git-index-task-LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+            "default_index_refreshed": True,
+            "default_index_refresh_error": None,
+        }
+
+        normalized = supervisor.normalize_failure_streak_progress_event(record, event)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["actor"], "Antigravity")
+        self.assertEqual(normalized["exact_head"], event["commit"])
+        self.assertEqual(normalized["provider"], "antigravity")
+
+    def test_governed_reopen_without_pr_binding_remains_identity_bound(self) -> None:
+        task_id = "SUP-FAILURE-NON-PR"
+        record = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head="a" * 40,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        event = self._ai_status_event(
+            ts="2026-08-02T01:05:00Z",
+            agent="Human/Ops",
+            type="reopen",
+            task_id=task_id,
+            message="Captured governed reviewer reopen without a PR target.",
+        )
+
+        normalized = supervisor.normalize_failure_streak_progress_event(record, event)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["exact_head"], supervisor.FAILURE_STREAK_ABSENT_HEAD)
+
+    def test_deny_matrix_rejects_non_governed_or_unbound_activity(self) -> None:
+        task_id = "SUP-FAILURE-DENY"
+        baseline = "a" * 40
+        new_head = "b" * 40
+        record = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head=baseline,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        valid_worker = self._worker_commit_event(
+            task_id=task_id,
+            actor="Antigravity",
+            commit=new_head,
+        )
+        valid_reopen_fields = {
+            "ts": "2026-08-02T02:00:00Z",
+            "agent": "Human/Ops",
+            "type": "reopen",
+            "task_id": task_id,
+            "message": "Reviewer requests changes.",
+        }
+
+        invalid_events: list[tuple[str, dict]] = []
+        for field in ("task_id", "agent", "event_id", "ts", "commit"):
+            candidate = copy.deepcopy(valid_worker)
+            candidate.pop(field)
+            invalid_events.append((f"worker missing {field}", candidate))
+
+        invalid_events.extend(
+            [
+                (
+                    "wrong owner",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Codex",
+                        commit=new_head,
+                    ),
+                ),
+                (
+                    "cross task",
+                    self._worker_commit_event(
+                        task_id="OTHER-TASK",
+                        actor="Antigravity",
+                        commit=new_head,
+                    ),
+                ),
+                (
+                    "stale before failure",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Antigravity",
+                        commit=new_head,
+                        ts="2026-08-02T00:59:59Z",
+                    ),
+                ),
+                (
+                    "same rejected head",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Antigravity",
+                        commit=baseline,
+                    ),
+                ),
+                (
+                    "uppercase commit",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Antigravity",
+                        commit="B" * 40,
+                    ),
+                ),
+                (
+                    "malformed worker identity",
+                    {**valid_worker, "event_id": "worker-commit-" + "c" * 40},
+                ),
+                (
+                    "cross provider field",
+                    {**valid_worker, "provider": "codex"},
+                ),
+            ]
+        )
+
+        wrong_reviewer = self._ai_status_event(
+            **{**valid_reopen_fields, "agent": "Codex"}
+        )
+        malformed_reopen_identity = self._ai_status_event(**valid_reopen_fields)
+        malformed_reopen_identity["event_id"] = "ai-status-event-" + "0" * 64
+        malformed_bridge = self._ai_status_event(
+            **valid_reopen_fields,
+            github_review_bridge={
+                "decision": "reopen",
+                "actor": "Human/Ops",
+                "recorded_at": valid_reopen_fields["ts"],
+                "head_sha": "c" * 40,
+            },
+        )
+        invalid_events.extend(
+            [
+                ("wrong reviewer", wrong_reviewer),
+                ("malformed ai-status identity", malformed_reopen_identity),
+                ("review bridge off lineage", malformed_bridge),
+            ]
+        )
+
+        generic_types = (
+            "note",
+            "progress",
+            "last_update",
+            "task_dispatch_synced",
+            "wake_queued",
+            "worker_started",
+            "test_rerun",
+            "github_review_bound",
+        )
+        for event_type in generic_types:
+            invalid_events.append(
+                (
+                    event_type,
+                    self._ai_status_event(
+                        **{
+                            **valid_reopen_fields,
+                            "agent": "Antigravity",
+                            "type": event_type,
+                            "commit": new_head,
+                        }
+                    ),
+                )
+            )
+        invalid_events.append(
+            (
+                "owner to reviewer handoff of same head",
+                self._ai_status_event(
+                    **{
+                        **valid_reopen_fields,
+                        "agent": "Antigravity",
+                        "type": "handoff",
+                        "to": "Human/Ops",
+                        "head_sha": baseline,
+                    }
+                ),
+            )
+        )
+
+        record_before = copy.deepcopy(record)
+        for label, event in invalid_events:
+            with self.subTest(event=label):
+                event_before = copy.deepcopy(event)
+                self.assertIsNone(
+                    supervisor.normalize_failure_streak_progress_event(record, event)
+                )
+                self.assertEqual(event, event_before)
+                self.assertEqual(record, record_before)
+
+        absent_baseline = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        cross_provider = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="codex",
+            rejected_head=baseline,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        missing_owner = copy.deepcopy(record)
+        missing_owner["generations"][-1].pop("owner_at_failure")
+        same_owner_reviewer = copy.deepcopy(record)
+        same_owner_reviewer["generations"][-1]["reviewer_at_failure"] = "Antigravity"
+        for label, invalid_record in (
+            ("absent failure baseline", absent_baseline),
+            ("cross provider record", cross_provider),
+            ("missing owner record", missing_owner),
+            ("owner equals reviewer", same_owner_reviewer),
+        ):
+            with self.subTest(record=label):
+                self.assertIsNone(
+                    supervisor.normalize_failure_streak_progress_event(
+                        invalid_record,
+                        valid_worker,
+                    )
+                )
+
+    def test_unrelated_event_and_streak_are_preserved(self) -> None:
+        target_record = self._record(
+            task_id="SUP-FAILURE-TARGET",
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head="a" * 40,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        unrelated_record = self._record(
+            task_id="SUP-FAILURE-OTHER",
+            owner="Codex",
+            reviewer="Codex2",
+            provider="codex",
+            rejected_head="c" * 40,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        unrelated_event = self._worker_commit_event(
+            task_id="SUP-FAILURE-OTHER",
+            actor="Codex",
+            commit="d" * 40,
+        )
+        target_before = copy.deepcopy(target_record)
+        unrelated_before = copy.deepcopy(unrelated_record)
+        event_before = copy.deepcopy(unrelated_event)
+
+        self.assertIsNone(
+            supervisor.normalize_failure_streak_progress_event(
+                target_record,
+                unrelated_event,
+            )
+        )
+
+        self.assertEqual(target_record, target_before)
+        self.assertEqual(unrelated_record, unrelated_before)
+        self.assertEqual(unrelated_event, event_before)
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -12801,23 +13945,52 @@ class WorkerReassignmentTests(unittest.TestCase):
 
     def test_failure_streaks_aggregate_dispatch_slots_by_logical_agent(self) -> None:
         state: dict = {}
+        task = {
+            "id": "OPS-CHURN-001",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+        }
         worker_one = {
             "task_id": "OPS-CHURN-001",
             "provider": "codex1-1",
-            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+            "run_id": "codex-run-one",
+            "request_snapshot": {
+                "task_id": "OPS-CHURN-001",
+                "metadata": {"logical_agent_id": "codex", "task": task},
+            },
         }
         worker_two = {
             "task_id": "OPS-CHURN-001",
             "provider": "codex1-2",
-            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+            "run_id": "codex-run-two",
+            "request_snapshot": {
+                "task_id": "OPS-CHURN-001",
+                "metadata": {"logical_agent_id": "codex", "task": task},
+            },
         }
 
         self.assertEqual(
-            supervisor.record_task_failure_streak(state, worker_one, "no progress", failure_kind="generic_exit"),
+            supervisor.record_task_failure_streak(
+                state,
+                worker_one,
+                "no progress",
+                failure_kind="generic_exit",
+                reason_class="terminal",
+                raw_ref=".orchestrator/evidence/churn-one.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
             1,
         )
         self.assertEqual(
-            supervisor.record_task_failure_streak(state, worker_two, "no progress", failure_kind="generic_exit"),
+            supervisor.record_task_failure_streak(
+                state,
+                worker_two,
+                "no progress",
+                failure_kind="generic_exit",
+                reason_class="terminal",
+                raw_ref=".orchestrator/evidence/churn-two.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
             2,
         )
         self.assertEqual(
@@ -14017,7 +15190,16 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 "message": "wake",
                 "task_id": task_id,
                 "reason": dispatch_reason,
+                "metadata": {
+                    "logical_agent_id": "codex",
+                    "task": {
+                        "id": task_id,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                    },
+                },
             },
+            "work_progress_snapshot": {"commit_sha": "e" * 40},
         }
         if runner_succeeded:
             worker.update(
@@ -14353,6 +15535,17 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(event["provider"], "codex")
             self.assertEqual(event["outcome"], "retry")
             self.assertIn("process missing", event["reason"])
+            streak = state["provider_guardrails"]["task_failure_streaks"][
+                "OPS-LEASE-RETRY:codex"
+            ]
+            generation = streak["generations"][0]
+            self.assertEqual(streak["schema_version"], 3)
+            self.assertEqual(generation["owner_at_failure"], "Codex")
+            self.assertEqual(generation["reviewer_at_failure"], "Claude")
+            self.assertEqual(generation["failure_kind"], "missing_process")
+            self.assertEqual(generation["reason_class"], "terminal")
+            self.assertEqual(generation["rejected_head"], "e" * 40)
+            self.assertTrue(generation["raw_ref"])
             metrics = state["worker_runtime_metrics"]
             self.assertEqual(metrics["totals"]["missing_process_workers_retried"], 1)
             self.assertEqual(
@@ -14700,6 +15893,20 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                         "queue_event_id": "evt-gemini",
                         "pid": 987654,
                         "log_path": str(log_path),
+                        "runner_status": "failed",
+                        "exit_code": 1,
+                        "work_progress_snapshot": {"commit_sha": "f" * 40},
+                        "request_snapshot": {
+                            "task_id": "OPS-LEASE-003",
+                            "metadata": {
+                                "logical_agent_id": "gemini",
+                                "task": {
+                                    "id": "OPS-LEASE-003",
+                                    "owner": "Gemini",
+                                    "reviewer": "Claude",
+                                },
+                            },
+                        },
                     }
                 },
             }
@@ -14720,10 +15927,13 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(pause["pause_kind"], "quota_terminal")
             self.assertEqual(pause["worker_run_id"], "gemini-run-dead")
             streak = state["provider_guardrails"]["task_failure_streaks"]["OPS-LEASE-003:gemini"]
+            self.assertEqual(streak["schema_version"], 3)
             self.assertEqual(streak["last_failure_kind"], "quota_terminal")
+            self.assertEqual(streak["generations"][0]["reason_class"], "capacity")
+            self.assertEqual(streak["generations"][0]["rejected_head"], "f" * 40)
             self.assertIn("capacity", worker["last_error"].lower())
 
-    def test_reconcile_runtime_uses_log_failure_for_copilot_monthly_quota(self) -> None:
+    def test_reconcile_runtime_keeps_missing_process_without_terminal_envelope_out_of_quota(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config = self._config(root)
@@ -14768,6 +15978,18 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                         "queue_event_id": "evt-copilot",
                         "pid": 987654,
                         "log_path": str(log_path),
+                        "work_progress_snapshot": {"commit_sha": "1" * 40},
+                        "request_snapshot": {
+                            "task_id": "MPOS-P1-PER-002",
+                            "metadata": {
+                                "logical_agent_id": "copilot",
+                                "task": {
+                                    "id": "MPOS-P1-PER-002",
+                                    "owner": "Copilot",
+                                    "reviewer": "Codex",
+                                },
+                            },
+                        },
                     }
                 },
             }
@@ -14784,12 +16006,13 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(worker["status"], "reassigned")
             self.assertEqual(worker["reassigned_to"], "Claude")
             self.assertEqual(state["queue"]["events"]["evt-copilot"]["status"], "completed")
-            pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
-            self.assertEqual(pause["pause_kind"], "quota_terminal")
-            self.assertEqual(pause["worker_run_id"], "copilot-run-dead")
+            self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
             streak = state["provider_guardrails"]["task_failure_streaks"]["MPOS-P1-PER-002:copilot"]
-            self.assertEqual(streak["last_failure_kind"], "quota_terminal")
-            self.assertIn("monthly quota", worker["last_error"].lower())
+            self.assertEqual(streak["schema_version"], 3)
+            self.assertEqual(streak["last_failure_kind"], "missing_process")
+            self.assertEqual(streak["generations"][0]["reason_class"], "terminal")
+            self.assertEqual(streak["generations"][0]["rejected_head"], "1" * 40)
+            self.assertIn("process missing", worker["last_error"].lower())
 
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
@@ -15738,6 +16961,29 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
         write_caps.assert_called_once_with(self.config, report=report)
 
+    def test_live_quota_probe_is_degraded_and_never_creates_an_auth_pause(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "quota_reached",
+            "method": "codex_exec_oauth",
+            "error": "Provider authentication probe status: quota_reached",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+
+        report = self._refresh(probe, state)
+
+        capability = report["providers"]["codex2"]
+        self.assertEqual(capability["account_health"], "degraded")
+        self.assertEqual(capability["probe_failure_kind"], "quota_terminal")
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(pause["pause_kind"], "quota_terminal")
+        self.assertNotIn("requires_live_auth_probe", pause)
+        self.assertNotIn("sticky_until_auth_probe", pause)
+
     def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
         """The observed regression: an auth pause reopened the lane on a timer."""
         state = {
@@ -15758,7 +17004,7 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
         self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
 
-    def test_capacity_pause_still_expires_on_its_window(self) -> None:
+    def test_capacity_pause_stays_blocked_while_recovery_probe_is_pending(self) -> None:
         state = {
             "provider_guardrails": {
                 "dispatch_pauses": {
@@ -15773,7 +17019,192 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         with mock.patch.object(supervisor, "write_activity_log"):
             expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
         self.assertTrue(expired)
-        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertTrue(pause["requires_live_recovery_probe"])
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+
+class ProviderPauseRecoveryProbeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "supervisor": {"auto_refresh_provider_capabilities": False},
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                }
+            },
+            "providers": {
+                "antigravity": {
+                    "delivery_mode": "antigravity",
+                    "quota_group": "antigravity",
+                }
+            },
+            "provider_guardrails": {
+                "recovery_probe_interval_seconds": 300,
+                "recovery_probe_max_per_cycle": 1,
+            },
+        }
+
+    @staticmethod
+    def _gated_pause() -> dict[str, object]:
+        return {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "trigger_provider": "antigravity",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "2026-08-02T05:00:00Z",
+                        "requires_live_recovery_probe": True,
+                        "recovery_probe_not_before": "2026-08-02T05:00:00Z",
+                    }
+                }
+            }
+        }
+
+    def test_auto_refresh_false_still_runs_one_targeted_recovery_probe(self) -> None:
+        state = self._gated_pause()
+        cached = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": False,
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T05:00:00Z",
+                        "source": "cached",
+                    },
+                }
+            }
+        }
+        live = {
+            "provider": "antigravity",
+            "ready": True,
+            "status": "ready",
+            "method": "agy_prompt_oauth",
+            "checked_at": "2026-08-02T06:00:00Z",
+            "last_auth_probe_at": "2026-08-02T06:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(cached)),
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=live) as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_called_once_with(self.config, "antigravity", force=True)
+        write_caps.assert_called_once_with(self.config, report=current)
+        self.assertEqual(current["providers"]["antigravity"]["account_health"], "healthy")
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_cached_success_cannot_clear_a_probe_gated_quota_pause(self) -> None:
+        state = self._gated_pause()
+        cached_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "cached",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(
+                self.config,
+                state,
+                cached_success,
+            )
+
+        self.assertFalse(changed)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_fresh_full_refresh_result_avoids_a_duplicate_targeted_probe(self) -> None:
+        state = self._gated_pause()
+        live_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(live_success)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_failed_live_recovery_probe_is_interval_bounded(self) -> None:
+        state = self._gated_pause()
+        live_failure = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": False,
+                    "account_health": "degraded",
+                    "probe_failure_kind": "quota_terminal",
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(
+                self.config,
+                state,
+                live_failure,
+            )
+
+        self.assertTrue(changed)
+        pause = state["provider_guardrails"]["dispatch_pauses"]["antigravity"]
+        self.assertEqual(pause["last_recovery_probe_at"], "2026-08-02T06:00:00Z")
+        self.assertEqual(pause["next_recovery_probe_at"], "2026-08-02T06:05:00Z")
+        targets = supervisor.provider_recovery_probe_targets(
+            self.config,
+            state,
+            now=datetime(2026, 8, 2, 6, 4, 59, tzinfo=timezone.utc),
+        )
+        self.assertEqual(targets, [])
 
 
 class OwnerlessInProgressReconciliationTests(unittest.TestCase):
