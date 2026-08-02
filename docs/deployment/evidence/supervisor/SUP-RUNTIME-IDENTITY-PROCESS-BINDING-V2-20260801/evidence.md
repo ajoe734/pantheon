@@ -6,7 +6,7 @@ Owner: Codex
 
 Reviewer: Human/Ops
 
-Repository / PR: `ajoe734/pantheon` / pending
+Repository / PR: `ajoe734/pantheon` / `#4495`
 
 ## Result
 
@@ -84,4 +84,5 @@ evidence makes no live runtime or promotion claim.
 
 Rollout is source merge only. Rollback is revert of the eventual task merge
 commit. Independent exact-head Human/Ops review remains required before merge;
-this evidence does not assert `review_approved`.
+this evidence does not assert `review_approved`. The reviewer must bind
+`REVIEW_PR=4495` and the final PR head after this evidence refresh.

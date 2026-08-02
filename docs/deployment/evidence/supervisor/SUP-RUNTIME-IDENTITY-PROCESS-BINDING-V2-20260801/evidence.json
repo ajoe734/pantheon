@@ -11,7 +11,7 @@
   "base_branch": "dev",
   "base_commit": "11d766efbd8bf81aca447d4ccf213109d7263dac",
   "pre_evidence_head": "1103c674d267400fb1d96669d1bc2f053629b0a2",
-  "pull_request": null,
+  "pull_request": 4495,
   "implementation_commits": [
     "20ff6325f678f02481fc0f43bd40cf5680786fe8",
     "1103c674d267400fb1d96669d1bc2f053629b0a2"
@@ -21,6 +21,13 @@
     "merge_commit": "11d766efbd8bf81aca447d4ccf213109d7263dac",
     "pull_request": 4443,
     "is_ancestor": true
+  },
+  "review_binding": {
+    "policy": "review_before_merge",
+    "reviewer": "Human/Ops",
+    "pull_request": 4495,
+    "head_before_evidence_refresh": "1fcd61f9f7a6eaf6d236b337645642d7188445e1",
+    "required": "REVIEW_PR=4495 and REVIEW_HEAD_SHA=<final PR head after this evidence refresh>"
   },
   "scope": {
     "owned": [
@@ -169,5 +176,5 @@
   "rollback": "revert the eventual task merge commit",
   "live_discovery_probe": "not run",
   "live_claims": [],
-  "next_gate": "Push the task branch, open a PR to dev, and obtain independent exact-head Human/Ops approval before merge."
+  "next_gate": "Push this evidence refresh and obtain independent Human/Ops approval bound to PR #4495 and its final exact head before merge."
 }
