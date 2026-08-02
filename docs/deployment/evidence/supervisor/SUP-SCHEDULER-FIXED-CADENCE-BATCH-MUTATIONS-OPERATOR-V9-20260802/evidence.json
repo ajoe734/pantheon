@@ -21,18 +21,20 @@
       "d880ac0c47ff0e923b29633a19b94f61846f5bce",
       "02c057d65abfa7353377250064cdb38dd45d9d18",
       "2c710b66b0c35d1e6c943c4bb9a413b48f1026ff",
-      "267bbc09fcbd51e0d86787fb34b51b773c569d8e"
+      "267bbc09fcbd51e0d86787fb34b51b773c569d8e",
+      "5e3b55868f1a97cf3e0bf8835971fed9e7e6b8d3"
     ]
   },
   "rejected_head_remediation": {
     "pr": 4520,
-    "rejected_head": "ba3b176500f557944eb6f3e08709361281609989",
+    "rejected_head": "c9299f51a4ccb6d76bd3964f060cfde87673201b",
     "rejected_heads": [
       "ab0d79e33bb1dfff452c93c32a96721168222ad9",
       "fb923abe2182acb4b5c10a0e557040b968598008",
-      "ba3b176500f557944eb6f3e08709361281609989"
+      "ba3b176500f557944eb6f3e08709361281609989",
+      "c9299f51a4ccb6d76bd3964f060cfde87673201b"
     ],
-    "latest_rejected_head": "ba3b176500f557944eb6f3e08709361281609989",
+    "latest_rejected_head": "c9299f51a4ccb6d76bd3964f060cfde87673201b",
     "findings": [
       {
         "finding": "A durable launch_intent with no receipt and either no marker or multiple markers was retained forever, so an adapter exception before launch could permanently freeze process_queue and suppress normal quota/auth fallback or reassignment.",
@@ -77,6 +79,16 @@
           ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_same_second_pre_intent_running_marker_cannot_claim_lease",
           ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_same_second_pre_intent_terminal_marker_cannot_claim_lease",
           ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_post_intent_live_marker_still_requires_process_proof",
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_post_intent_terminal_marker_only_is_adopted",
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_hard_crash_after_launch_adopts_worker_before_redispatch"
+        ]
+      },
+      {
+        "finding": "Head c9299f51 accepted a launch marker whose second-resolution started_at exactly equaled the reconstructed prepared epoch because _runtime_launch_marker_candidates excluded only timestamps strictly less than the boundary. A legacy intent reconstructed from second-resolution prepared_at could therefore treat equality as post-intent proof, and a unique terminal/dead marker could bypass /proc recovery.",
+        "resolution": "Require marker started_at to be strictly greater than the prepared epoch by excluding equality as well as earlier timestamps. Exact-equality running and terminal markers reconstructed through legacy prepared_at now fail closed, while a terminal marker in the strictly next second remains recoverable and an exact hard-crash process generation remains adoptable through /proc.",
+        "tests": [
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_exact_intent_time_running_marker_is_not_a_candidate",
+          ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_exact_intent_time_terminal_marker_cannot_claim_lease",
           ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_post_intent_terminal_marker_only_is_adopted",
           ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_hard_crash_after_launch_adopts_worker_before_redispatch"
         ]
@@ -142,7 +154,7 @@
         "prune_worktrees",
         "claim_next_task_for_agent:<agent_id>"
       ],
-      "contract": "Each phase publishes a token in one short exclusive transaction, performs marker/process/worktree/git/prune I/O against a detached snapshot with audit/status effects deferred, and commits through a second short whole-state CAS. Before adapter delivery, the exact token receives a durable launch intent with wall epoch and boot-relative tick boundary; after successful delivery it receives a complete worker receipt. Recovery compares immutable marker started_at with the full non-floored intent epoch and binds a running/live marker only to the exact task/agent/run/PID-start process candidate proven after the intent by procfs btime, CLK_TCK, and the persisted boot-tick boundary. Same-second marker ambiguity is excluded. A strictly post-intent terminal/dead marker remains recoverable, a stale conclusive zero-process intent is cleared, and multiple live generations remain fail-closed. A concurrent writer wins; a losing phase cannot overwrite it, and any newly launched exact process generation is terminated fail-closed.",
+      "contract": "Each phase publishes a token in one short exclusive transaction, performs marker/process/worktree/git/prune I/O against a detached snapshot with audit/status effects deferred, and commits through a second short whole-state CAS. Before adapter delivery, the exact token receives a durable launch intent with wall epoch and boot-relative tick boundary; after successful delivery it receives a complete worker receipt. Recovery compares immutable marker started_at with the full non-floored intent epoch and binds a running/live marker only to the exact task/agent/run/PID-start process candidate proven after the intent by procfs btime, CLK_TCK, and the persisted boot-tick boundary. Same-second and exact-equality marker ambiguity is excluded. A strictly post-intent terminal/dead marker remains recoverable, a stale conclusive zero-process intent is cleared, and multiple live generations remain fail-closed. A concurrent writer wins; a losing phase cannot overwrite it, and any newly launched exact process generation is terminated fail-closed.",
       "actual_slow_paths": [
         "prepare_worker_workspace git/worktree allocation or refresh",
         "worker-tree git status guard",
@@ -159,6 +171,8 @@
                 ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_ambiguous_live_launch_processes_remain_fail_closed",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_same_second_pre_intent_running_marker_cannot_claim_lease",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_same_second_pre_intent_terminal_marker_cannot_claim_lease",
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_exact_intent_time_running_marker_is_not_a_candidate",
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_exact_intent_time_terminal_marker_cannot_claim_lease",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_post_intent_live_marker_still_requires_process_proof",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_post_intent_terminal_marker_only_is_adopted",
         ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_hard_crash_after_launch_adopts_worker_before_redispatch",
@@ -219,12 +233,12 @@
   },
   "validation": [
     {
-      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
-      "result": "577 tests and 158 subtests passed",
+      "command": "cd .orchestrator && /home/lupin/pantheon-ci-deploy/dev-root/.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
+      "result": "579 tests and 158 subtests passed",
       "status": "pass"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+      "command": "/home/lupin/pantheon-ci-deploy/dev-root/.venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
       "result": "165 tests and 31 subtests passed",
       "status": "pass"
     },
