@@ -7545,6 +7545,251 @@ class ReservedRuntimeSlowIOTests(unittest.TestCase):
             recovered.get("supervisor", {}),
         )
 
+    def test_same_second_pre_intent_running_marker_cannot_claim_lease(self) -> None:
+        """A live marker needs exact process proof across timestamp ambiguity."""
+
+        intent = self._seed_stale_launch_intent()
+        marker_second = int(time.time()) - 3600
+        prepared_epoch = marker_second + 0.75
+        intent["prepared_epoch_seconds"] = prepared_epoch
+        intent["prepared_at"] = supervisor._isoformat_utc(
+            datetime.fromtimestamp(prepared_epoch, tz=timezone.utc)
+        )
+        state = runtime_state.load_runtime_state(self.config)
+        state["supervisor"]["runtime_phase_reservations"]["process_queue"][
+            "launch_intent"
+        ] = copy.deepcopy(intent)
+        runtime_state.save_runtime_state(self.config, state)
+
+        marker_path = common.worker_runtime_paths(self.config, "run-same-second")[
+            "status_path"
+        ]
+        common.write_json(
+            marker_path,
+            {
+                "run_id": "run-same-second",
+                "task_id": "SLOW-IO-1",
+                "agent": "codex",
+                "status": "running",
+                "pid": 4242,
+                "started_at": supervisor._isoformat_utc(
+                    datetime.fromtimestamp(marker_second, tz=timezone.utc)
+                ),
+                "last_heartbeat_at": supervisor.utc_now(),
+            },
+        )
+
+        operation = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_process_candidates",
+                return_value=([], True),
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "worker_pid_start_ticks",
+                return_value=12345,
+            ),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_called_once()
+        recovered = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn("run-same-second", recovered.get("workers", {}))
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            recovered.get("supervisor", {}),
+        )
+
+    def test_same_second_pre_intent_terminal_marker_cannot_claim_lease(self) -> None:
+        """Marker-only terminal recovery excludes second-resolution ambiguity."""
+
+        intent = self._seed_stale_launch_intent()
+        marker_second = int(time.time()) - 3600
+        prepared_epoch = marker_second + 0.75
+        intent["prepared_epoch_seconds"] = prepared_epoch
+        intent["prepared_at"] = supervisor._isoformat_utc(
+            datetime.fromtimestamp(prepared_epoch, tz=timezone.utc)
+        )
+        state = runtime_state.load_runtime_state(self.config)
+        state["supervisor"]["runtime_phase_reservations"]["process_queue"][
+            "launch_intent"
+        ] = copy.deepcopy(intent)
+        runtime_state.save_runtime_state(self.config, state)
+
+        marker_path = common.worker_runtime_paths(self.config, "terminal-same-second")[
+            "status_path"
+        ]
+        common.write_json(
+            marker_path,
+            {
+                "run_id": "terminal-same-second",
+                "task_id": "SLOW-IO-1",
+                "agent": "codex",
+                "status": "completed",
+                "pid": None,
+                "started_at": supervisor._isoformat_utc(
+                    datetime.fromtimestamp(marker_second, tz=timezone.utc)
+                ),
+                "last_heartbeat_at": supervisor.utc_now(),
+            },
+        )
+
+        operation = mock.Mock(return_value=True)
+        with mock.patch.object(
+            supervisor,
+            "_runtime_launch_process_candidates",
+            return_value=([], True),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_called_once()
+        recovered = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn("terminal-same-second", recovered.get("workers", {}))
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            recovered.get("supervisor", {}),
+        )
+
+    def test_post_intent_live_marker_still_requires_process_proof(self) -> None:
+        """Marker uniqueness cannot replace an exact live process candidate."""
+
+        intent = self._seed_stale_launch_intent()
+        prepared_second = int(time.time()) - 3600
+        prepared_epoch = prepared_second + 0.25
+        intent["prepared_epoch_seconds"] = prepared_epoch
+        intent["prepared_at"] = supervisor._isoformat_utc(
+            datetime.fromtimestamp(prepared_epoch, tz=timezone.utc)
+        )
+        state = runtime_state.load_runtime_state(self.config)
+        state["supervisor"]["runtime_phase_reservations"]["process_queue"][
+            "launch_intent"
+        ] = copy.deepcopy(intent)
+        runtime_state.save_runtime_state(self.config, state)
+
+        marker_path = common.worker_runtime_paths(self.config, "run-live-only")[
+            "status_path"
+        ]
+        common.write_json(
+            marker_path,
+            {
+                "run_id": "run-live-only",
+                "task_id": "SLOW-IO-1",
+                "agent": "codex",
+                "status": "running",
+                "pid": 4242,
+                "started_at": supervisor._isoformat_utc(
+                    datetime.fromtimestamp(prepared_second + 1, tz=timezone.utc)
+                ),
+                "last_heartbeat_at": supervisor.utc_now(),
+            },
+        )
+
+        operation = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(
+                supervisor,
+                "_runtime_launch_process_candidates",
+                return_value=([], True),
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_called_once()
+        recovered = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn("run-live-only", recovered.get("workers", {}))
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            recovered.get("supervisor", {}),
+        )
+
+    def test_post_intent_terminal_marker_only_is_adopted(self) -> None:
+        """A strictly post-intent terminal marker retains recovery semantics."""
+
+        intent = self._seed_stale_launch_intent()
+        prepared_second = int(time.time()) - 3600
+        prepared_epoch = prepared_second + 0.25
+        intent["prepared_epoch_seconds"] = prepared_epoch
+        intent["prepared_at"] = supervisor._isoformat_utc(
+            datetime.fromtimestamp(prepared_epoch, tz=timezone.utc)
+        )
+        state = runtime_state.load_runtime_state(self.config)
+        state["supervisor"]["runtime_phase_reservations"]["process_queue"][
+            "launch_intent"
+        ] = copy.deepcopy(intent)
+        runtime_state.save_runtime_state(self.config, state)
+
+        marker_path = common.worker_runtime_paths(self.config, "terminal-after-intent")[
+            "status_path"
+        ]
+        common.write_json(
+            marker_path,
+            {
+                "run_id": "terminal-after-intent",
+                "task_id": "SLOW-IO-1",
+                "agent": "codex",
+                "status": "completed",
+                "pid": None,
+                "started_at": supervisor._isoformat_utc(
+                    datetime.fromtimestamp(prepared_second + 1, tz=timezone.utc)
+                ),
+                "last_heartbeat_at": supervisor.utc_now(),
+            },
+        )
+
+        forbidden_redispatch = mock.Mock(return_value=True)
+        with mock.patch.object(
+            supervisor,
+            "_runtime_launch_process_candidates",
+            return_value=([], True),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    forbidden_redispatch,
+                )
+            )
+
+        forbidden_redispatch.assert_not_called()
+        # Read the persisted mutation directly: load_runtime_state rebuilds
+        # queue truth from the deliberately empty test event queue and prunes
+        # terminal workers after that rebuild.
+        recovered = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            recovered["workers"]["terminal-after-intent"]["status"],
+            "completed",
+        )
+        self.assertEqual(
+            recovered["queue"]["events"]["evt-stale-intent"]["status"],
+            "completed",
+        )
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            recovered.get("supervisor", {}),
+        )
+
     def test_stale_ambiguous_dead_markers_clear_after_process_proof(self) -> None:
         """Marker debris without a live exact process does not retain the token."""
 

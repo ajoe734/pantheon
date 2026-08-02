@@ -10513,7 +10513,7 @@ def _runtime_launch_marker_candidates(
     config: dict[str, Any],
     intent: Mapping[str, Any],
 ) -> list[tuple[dict[str, Any], Path]]:
-    """Find every runner marker created after a durable launch intent."""
+    """Find markers whose immutable start time proves post-intent order."""
 
     task_id = str(intent.get("task_id") or "")
     agent_ids = {
@@ -10525,10 +10525,6 @@ def _runtime_launch_marker_candidates(
     prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
     if prepared_epoch is None:
         return []
-    # worker_runner emits second-resolution UTC timestamps.  Compare at that
-    # declared resolution so a runner launched later in the same wall-clock
-    # second is retained without letting heartbeat rewrites refresh an old run.
-    prepared_marker_epoch = math.floor(prepared_epoch)
     status_dir = worker_runtime_paths(config, "launch-recovery-probe")[
         "status_path"
     ].parent
@@ -10557,7 +10553,11 @@ def _runtime_launch_marker_candidates(
             continue
         if marker_started_at.tzinfo is None:
             marker_started_at = marker_started_at.replace(tzinfo=timezone.utc)
-        if marker_started_at.timestamp() < prepared_marker_epoch:
+        # worker_runner timestamps have one-second resolution.  A marker in
+        # the same wall-clock second as a fractional intent boundary cannot
+        # prove which happened first, so it must fail closed.  A matching live
+        # process may still be recovered through the boot-tick proof below.
+        if marker_started_at.timestamp() < prepared_epoch:
             continue
         candidates.append((marker, path))
 
@@ -10572,6 +10572,19 @@ def _runtime_launch_marker_candidate(
 
     candidates = _runtime_launch_marker_candidates(config, intent)
     return candidates[0] if len(candidates) == 1 else None
+
+
+def _runtime_launch_marker_is_terminal_or_dead(
+    marker: Mapping[str, Any],
+) -> bool:
+    """Return whether marker-only recovery cannot claim a live generation."""
+
+    marker_status = str(marker.get("status") or "").lower()
+    if marker_status in {"completed", "failed", "terminated", "cancelled"}:
+        return True
+    raw_pid = marker.get("pid")
+    pid = raw_pid if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) else None
+    return not pid_is_alive(pid)
 
 
 def _runtime_launch_intent_stale_seconds(config: Mapping[str, Any]) -> float:
@@ -11066,9 +11079,13 @@ def _recover_runtime_phase_reservation(
             # not merely stale marker debris. Preserve the reservation until
             # operators or process exit reduce it to one generation.
             return False
-        elif len(marker_candidates) == 1:
-            # A unique terminal/dead marker is still exact evidence. Adopt it
-            # as a failed/completed worker so normal queue fallback can run.
+        elif len(marker_candidates) == 1 and _runtime_launch_marker_is_terminal_or_dead(
+            marker_candidates[0][0]
+        ):
+            # A unique post-intent terminal/dead marker is sufficient to
+            # recover the terminal outcome. A marker that still claims a live
+            # worker must match an exact post-intent /proc generation above;
+            # uniqueness alone never authorizes a new queue lease binding.
             candidate = marker_candidates[0]
         elif not _runtime_launch_intent_is_stale(config, intent):
             # The runner may not have written its first marker yet. The bounded
