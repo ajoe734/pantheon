@@ -8955,6 +8955,20 @@ def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | 
     return out
 
 
+EXPLICIT_HUMAN_REVIEWER = "Human/Ops"
+
+
+def reviewer_is_explicit_human_gate(reviewer: str | None) -> bool:
+    """Return whether the canonical task explicitly requires Human/Ops review.
+
+    Human/Ops is a governance actor, not an auto-worker lane. Availability
+    planning must therefore preserve this reviewer even when ordinary worker
+    eligibility checks correctly report that it cannot be dispatched.
+    """
+
+    return str(reviewer or "").strip().casefold() == EXPLICIT_HUMAN_REVIEWER.casefold()
+
+
 def agent_can_take_task(
     config: dict[str, Any],
     agent_name: str | None,
@@ -9069,6 +9083,7 @@ def plan_task_assignment_pair(
 
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    explicit_human_reviewer = reviewer_is_explicit_human_gate(reviewer)
     task_status = str(task.get("status") or "").strip().lower()
     allowed_reviewer_keys = (
         {
@@ -9096,7 +9111,10 @@ def plan_task_assignment_pair(
                 or reviewer.casefold() in allowed_reviewer_keys
             )
             and agent_can_take_task(config, owner, task, state=state)
-            and agent_can_take_task(config, reviewer, task, state=state)
+            and (
+                explicit_human_reviewer
+                or agent_can_take_task(config, reviewer, task, state=state)
+            )
         ):
             return owner, reviewer
         return None
@@ -9140,24 +9158,30 @@ def plan_task_assignment_pair(
         if not agent_can_take_task(config, candidate_owner, task, state=owner_state):
             continue
 
-        reviewer_order = list(preferred_reviewers or ([reviewer] if reviewer else []))
-        if preferred_reviewers is None and owner and owner not in reviewer_order:
-            reviewer_order.append(owner)
-        reviewer_order.extend(
-            bounded_fallback_candidates(
-                config,
-                reviewer_mapping,
-                roots=[name for name in (reviewer, owner, candidate_owner) if name],
-                preferred=[lane for lane in preferred_lanes if lane != candidate_owner],
+        if explicit_human_reviewer:
+            # An explicit human gate is not a fallback candidate. Keep it as
+            # the only reviewer while owner/helper recovery searches for a
+            # viable auto-worker; incompatible constraints fail closed below.
+            reviewer_order = [reviewer]
+        else:
+            reviewer_order = list(preferred_reviewers or ([reviewer] if reviewer else []))
+            if preferred_reviewers is None and owner and owner not in reviewer_order:
+                reviewer_order.append(owner)
+            reviewer_order.extend(
+                bounded_fallback_candidates(
+                    config,
+                    reviewer_mapping,
+                    roots=[name for name in (reviewer, owner, candidate_owner) if name],
+                    preferred=[lane for lane in preferred_lanes if lane != candidate_owner],
+                )
             )
-        )
-        reviewer_order.extend(
-            bounded_fallback_candidates(
-                config,
-                owner_mapping,
-                roots=[name for name in (owner, candidate_owner) if name],
+            reviewer_order.extend(
+                bounded_fallback_candidates(
+                    config,
+                    owner_mapping,
+                    roots=[name for name in (owner, candidate_owner) if name],
+                )
             )
-        )
 
         seen_reviewers: set[str] = set()
         for candidate_reviewer in reviewer_order:
@@ -9181,11 +9205,14 @@ def plan_task_assignment_pair(
                 if incumbent_reviewer and preserve_in_progress_incumbents and task_status == "in_progress"
                 else state
             )
-            if agent_can_take_task(
-                config,
-                candidate_reviewer,
-                task,
-                state=reviewer_state,
+            if (
+                reviewer_is_explicit_human_gate(candidate_reviewer)
+                or agent_can_take_task(
+                    config,
+                    candidate_reviewer,
+                    task,
+                    state=reviewer_state,
+                )
             ):
                 return candidate_owner, candidate_reviewer
     return None
@@ -10975,6 +11002,14 @@ def _persist_task_reassignment_locked(
     if expected_status is not None and old_status != expected_status:
         return False
     if (
+        reviewer_is_explicit_human_gate(old_reviewer)
+        and not reviewer_is_explicit_human_gate(new_reviewer)
+    ):
+        # Supervisor availability repair may move execution ownership, but it
+        # cannot silently weaken an explicit human review gate. An intentional
+        # operator reassignment remains available through governed ai-status.
+        return False
+    if (
         task_assignment_is_catalog_locked(task)
         and (new_owner != old_owner or new_reviewer != old_reviewer)
     ):
@@ -11139,6 +11174,15 @@ def maybe_reassign_task_after_worker_failure(
         # Exact-head review/delivery identity is immutable. A missing finalize
         # worker may retry and ultimately block fail-closed, but provider
         # failure must not rewrite the owner named by the reviewed commit.
+        return None
+
+    if (
+        task_status in review_statuses
+        and reviewer == failing_agent
+        and reviewer_is_explicit_human_gate(reviewer)
+    ):
+        # Human/Ops review is an external governance wait, not a failed worker
+        # lane that the supervisor may replace to regain dispatch eligibility.
         return None
 
     if task_status in review_statuses and reviewer == failing_agent:
@@ -14441,9 +14485,28 @@ def normalize_mainline_task_assignment(
 
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
+    explicit_human_reviewer = reviewer_is_explicit_human_gate(reviewer)
+    finalize_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("finalize_statuses"),
+        ["review_approved"],
+    )
+    if (
+        explicit_human_reviewer
+        and task_status in finalize_statuses
+        and task_has_bound_finalize_delivery_identity(task)
+    ):
+        # An exact-head approval binds both delivery ownership and the explicit
+        # human decision. Availability scans must await closeout instead of
+        # rewriting either side of that approved identity.
+        return False
     assignment_state = None if task_status == "in_progress" else state
     owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
-    reviewer_allowed = agent_can_take_task(config, reviewer, task, state=assignment_state)
+    reviewer_allowed = explicit_human_reviewer or agent_can_take_task(
+        config,
+        reviewer,
+        task,
+        state=assignment_state,
+    )
     if (
         owner_allowed
         and reviewer_allowed
