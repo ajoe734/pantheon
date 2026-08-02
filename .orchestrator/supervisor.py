@@ -49,6 +49,7 @@ from common import (
     normalize_agent_id,
     is_github_cli_auth_failure,
     preserve_github_cli_auth_env,
+    read_activity_log_tail_bytes,
     resolved_coordinator_status_root,
     config_status_root,
     relpath,
@@ -58,6 +59,7 @@ from common import (
     snapshot_task,
     spawn_background_process,
     status_command_runtime_env,
+    strict_activity_json_loads,
     task_state_store_runtime_env,
     summarize_failure_reason,
     utc_now,
@@ -2820,6 +2822,22 @@ def start_worker_for_request(
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
+    result_pid = result.pid if isinstance(result.pid, int) and not isinstance(result.pid, bool) else None
+    result_pid_start_ticks = worker_pid_start_ticks(result_pid)
+    result_process_generation = (
+        worker_process_generation_id(
+            task_id=str(request.task_id or ""),
+            worker_run_id=str(worker_run_id),
+            queue_event_id=str(queue_event_id or ""),
+            pid=result_pid,
+            pid_start_ticks=result_pid_start_ticks,
+        )
+        if request.task_id
+        and queue_event_id
+        and result_pid is not None
+        and result_pid_start_ticks is not None
+        else None
+    )
     now_dt = datetime.now(timezone.utc)
     now = _isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
@@ -2858,7 +2876,9 @@ def start_worker_for_request(
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
         "status_command_runtime": issued_command_runtime,
-        "pid": result.pid,
+        "pid": result_pid,
+        "pid_start_ticks": result_pid_start_ticks,
+        "process_generation": result_process_generation,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
         "notes": result.notes,
@@ -2883,6 +2903,9 @@ def start_worker_for_request(
         details={
             "worker_run_id": worker_run_id,
             "queue_event_id": queue_event_id,
+            "pid": result_pid,
+            "pid_start_ticks": result_pid_start_ticks,
+            "process_generation": result_process_generation,
             "task_id": request.task_id,
             "agent_id": agent["id"],
             "provider": request.provider,
@@ -2904,6 +2927,9 @@ def start_worker_for_request(
             "message": activity_message or f"Worker started via {result.adapter}: {request.reason}",
             "queue_event_id": event_id_for_log,
             "worker_run_id": worker_run_id,
+            "pid": result_pid,
+            "pid_start_ticks": result_pid_start_ticks,
+            "process_generation": result_process_generation,
             "parent_run_id": parent_run_id,
             "command": result.command,
             "log_path": result.log_path,
@@ -3410,6 +3436,78 @@ def worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> in
         return None
 
 
+WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
+WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
+
+
+def worker_process_generation_id(
+    *,
+    task_id: str,
+    worker_run_id: str,
+    queue_event_id: str,
+    pid: int,
+    pid_start_ticks: int,
+) -> str:
+    """Bind one worker lease to the exact Linux process generation it launched."""
+
+    payload = {
+        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "worker_run_id": str(worker_run_id),
+        "queue_event_id": str(queue_event_id),
+        "pid": int(pid),
+        "pid_start_ticks": int(pid_start_ticks),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def worker_process_identity(worker: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return a validated immutable worker/process generation binding."""
+
+    task_id = str(worker.get("task_id") or "").strip()
+    worker_run_id = str(worker.get("run_id") or "").strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    pid = worker.get("pid")
+    pid_start_ticks = worker.get("pid_start_ticks")
+    if (
+        not task_id
+        or not worker_run_id
+        or not queue_event_id
+        or not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(pid_start_ticks, int)
+        or isinstance(pid_start_ticks, bool)
+        or pid_start_ticks <= 0
+    ):
+        return None
+    expected_generation = worker_process_generation_id(
+        task_id=task_id,
+        worker_run_id=worker_run_id,
+        queue_event_id=queue_event_id,
+        pid=pid,
+        pid_start_ticks=pid_start_ticks,
+    )
+    if process_generation != expected_generation:
+        return None
+    return {
+        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": task_id,
+        "worker_run_id": worker_run_id,
+        "queue_event_id": queue_event_id,
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+    }
+
+
 def _proc_activity_record(pid: int, proc_root: Path) -> dict[str, Any] | None:
     stat_path = proc_root / str(pid) / "stat"
     try:
@@ -3563,9 +3661,27 @@ def active_worker_refs_for_agent_id(
     return sorted(set(refs))
 
 
-def terminate_worker_pid(pid: int | None) -> bool:
+def terminate_worker_pid(
+    pid: int | None,
+    *,
+    expected_start_ticks: int | None = None,
+) -> bool:
     if not pid:
         return False
+    if (
+        expected_start_ticks is not None
+        and worker_pid_start_ticks(pid) != expected_start_ticks
+    ):
+        return False
+
+    def identity_bound_is_alive(candidate_pid: int) -> bool:
+        if not pid_is_alive(candidate_pid):
+            return False
+        return (
+            expected_start_ticks is None
+            or worker_pid_start_ticks(candidate_pid) == expected_start_ticks
+        )
+
     deferred = _DEFERRED_WORKER_TERMINATIONS.get()
     if deferred is not None:
         # A terminal state must never be published until the process is
@@ -3574,9 +3690,9 @@ def terminate_worker_pid(pid: int | None) -> bool:
         # while the worker can still mutate state.
         if any(item[0] == pid for item in deferred):
             return False
-        if not pid_is_alive(pid):
+        if not identity_bound_is_alive(pid):
             return True
-        start_ticks = worker_pid_start_ticks(pid)
+        start_ticks = expected_start_ticks or worker_pid_start_ticks(pid)
         if start_ticks is None:
             # Without Linux's immutable process-start token, a reused PID is
             # indistinguishable from the intended worker. Fail closed: do not
@@ -3595,7 +3711,7 @@ def terminate_worker_pid(pid: int | None) -> bool:
         try:
             return rewrite_worker_lifecycle.confirm_kill(
                 pid,
-                is_alive=pid_is_alive,
+                is_alive=identity_bound_is_alive,
                 send_signal=os.kill,
                 sleep=time.sleep,
                 monotonic=time.monotonic,
@@ -3607,6 +3723,28 @@ def terminate_worker_pid(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+def terminate_worker_process_generation(worker: Mapping[str, Any]) -> bool:
+    """Signal only the exact process generation captured when this run started."""
+
+    identity = worker_process_identity(worker)
+    if identity is None:
+        return False
+    if worker_pid_start_ticks(identity["pid"]) != identity["pid_start_ticks"]:
+        return False
+    return terminate_worker_pid(
+        identity["pid"],
+        expected_start_ticks=identity["pid_start_ticks"],
+    )
+
+
+def worker_process_generation_is_current(worker: Mapping[str, Any]) -> bool:
+    identity = worker_process_identity(worker)
+    return bool(
+        identity is not None
+        and worker_pid_start_ticks(identity["pid"]) == identity["pid_start_ticks"]
+    )
 
 
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
@@ -9808,6 +9946,352 @@ MISSING_HANDOFF_EXIT_REASON = (
     "task to review/handoff."
 )
 
+GOVERNANCE_ACTIVITY_TAIL_LINES = 1024
+GOVERNANCE_ASSIGNMENT_EVENT_TYPES = frozenset({"assign", "task_reassigned"})
+GOVERNANCE_LIFECYCLE_EVENT_TYPES = frozenset(
+    {
+        "assign",
+        "start",
+        "progress",
+        "note",
+        "reopen",
+        "handoff",
+        "review_approved",
+        "blocker",
+        "done",
+        "supersede",
+        "superseded",
+        "cancel",
+        "cancelled",
+        "canceled",
+        "task_reassigned",
+    }
+)
+GOVERNANCE_TERMINAL_EVENT_TYPES = frozenset(
+    {"done", "supersede", "superseded", "cancel", "cancelled", "canceled"}
+)
+GOVERNANCE_TERMINAL_TASK_STATUSES = frozenset(
+    {"done", "superseded", "cancelled", "canceled"}
+)
+
+
+def worker_governance_activity_snapshot(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read only the recent canonical audit tail before runtime admission."""
+
+    try:
+        activity_path = config_path(config, "activity_log")
+        payload = read_activity_log_tail_bytes(
+            activity_path,
+            max_lines=GOVERNANCE_ACTIVITY_TAIL_LINES,
+        )
+    except (KeyError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    if not payload:
+        return []
+    events: list[dict[str, Any]] = []
+    try:
+        for line in payload.splitlines():
+            if not line.strip():
+                continue
+            event = strict_activity_json_loads(line)
+            if not isinstance(event, dict):
+                return []
+            events.append(event)
+    except (RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    return events
+
+
+def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
+    event_id = str(event.get("event_id") or "").strip()
+    if not event_id.startswith("ai-status-event-"):
+        return False
+    payload = dict(event)
+    payload.pop("event_id", None)
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return event_id == "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+
+
+def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
+    if event.get("agent") != "Orchestrator" or event.get("type") != "task_reassigned":
+        return False
+    payload = (
+        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
+        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
+        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
+        f"{event.get('message') or ''}"
+    )
+    expected = "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return str(event.get("event_id") or "") == expected
+
+
+def _governance_event_after_worker_start(
+    worker: Mapping[str, Any],
+    event: Mapping[str, Any],
+) -> bool:
+    started_at = _parse_iso_utc(
+        str(
+            worker.get("lease_acquired_at")
+            or worker.get("runner_started_at")
+            or worker.get("started_at")
+            or ""
+        )
+    )
+    event_at = _parse_iso_utc(str(event.get("ts") or ""))
+    return started_at is not None and event_at is not None and event_at >= started_at
+
+
+def _latest_task_governance_event(
+    worker: Mapping[str, Any],
+    activity_events: list[dict[str, Any]] | None,
+    *,
+    event_types: frozenset[str],
+) -> dict[str, Any] | None:
+    task_id = str(worker.get("task_id") or "").strip()
+    if not task_id:
+        return None
+    for event in reversed(activity_events or []):
+        if (
+            str(event.get("task_id") or "").strip() == task_id
+            and str(event.get("type") or "") in event_types
+            and _governance_event_after_worker_start(worker, event)
+        ):
+            return event
+    return None
+
+
+def status_event_matches_worker_process(
+    event: Mapping[str, Any] | None,
+    worker: Mapping[str, Any],
+) -> bool:
+    """Return whether a canonical status event was emitted by this exact run."""
+
+    identity = worker_process_identity(worker)
+    if identity is None or not isinstance(event, Mapping):
+        return False
+    command = event.get("status_command")
+    lease = command.get("worker_lease") if isinstance(command, Mapping) else None
+    return isinstance(lease, Mapping) and dict(lease) == identity
+
+
+def active_worker_governance_lease_decision(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Classify whether canonical governance truth may end this active lease.
+
+    Absence, ambiguity, an ordinary ``assign``/``note``/review transition, or a
+    concurrent task mutation all preserve the process. Only terminal lifecycle
+    truth or the latest exact supervisor ``task_reassigned`` event can authorize
+    responsibility preemption here.
+    """
+
+    settings = ready_dispatch_settings(config)
+    done_statuses = normalized_status_set(
+        settings.get("dependency_done_statuses"),
+        ["done"],
+    ) | GOVERNANCE_TERMINAL_TASK_STATUSES
+    if isinstance(task, Mapping) and str(task.get("status") or "").lower() in done_statuses:
+        return {
+            "action": "terminate",
+            "reason_code": "terminal_task_truth",
+            "source_event_id": None,
+            "source_event_type": None,
+        }
+
+    latest_lifecycle = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+    )
+    if task is None:
+        if (
+            latest_lifecycle is not None
+            and str(latest_lifecycle.get("type") or "") in GOVERNANCE_TERMINAL_EVENT_TYPES
+            and _ai_status_activity_event_id_matches(latest_lifecycle)
+        ):
+            return {
+                "action": "terminate",
+                "reason_code": "terminal_activity_truth",
+                "source_event_id": latest_lifecycle.get("event_id"),
+                "source_event_type": latest_lifecycle.get("type"),
+            }
+        return {
+            "action": "preserve",
+            "reason_code": "missing_or_ambiguous_task_truth",
+            "source_event_id": latest_lifecycle.get("event_id") if latest_lifecycle else None,
+            "source_event_type": latest_lifecycle.get("type") if latest_lifecycle else None,
+            "producer_event_matches_process": status_event_matches_worker_process(
+                latest_lifecycle,
+                worker,
+            ),
+        }
+
+    latest_assignment = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=GOVERNANCE_ASSIGNMENT_EVENT_TYPES,
+    )
+    if latest_assignment is None or latest_assignment.get("type") != "task_reassigned":
+        return {
+            "action": "preserve",
+            "reason_code": "governance_only_transition",
+            "source_event_id": latest_lifecycle.get("event_id") if latest_lifecycle else None,
+            "source_event_type": latest_lifecycle.get("type") if latest_lifecycle else None,
+            "producer_event_matches_process": status_event_matches_worker_process(
+                latest_lifecycle,
+                worker,
+            ),
+        }
+    if not _supervisor_reassignment_event_id_matches(latest_assignment):
+        return {
+            "action": "preserve",
+            "reason_code": "invalid_reassignment_evidence",
+            "source_event_id": latest_assignment.get("event_id"),
+            "source_event_type": latest_assignment.get("type"),
+        }
+
+    current_owner = canonical_agent_name(config, str(task.get("owner") or ""))
+    current_reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    new_owner = canonical_agent_name(config, str(latest_assignment.get("new_owner") or ""))
+    new_reviewer = canonical_agent_name(config, str(latest_assignment.get("new_reviewer") or ""))
+    if (
+        current_owner.casefold() != new_owner.casefold()
+        or current_reviewer.casefold() != new_reviewer.casefold()
+    ):
+        return {
+            "action": "preserve",
+            "reason_code": "concurrent_assignment_mutation",
+            "source_event_id": latest_assignment.get("event_id"),
+            "source_event_type": latest_assignment.get("type"),
+        }
+
+    worker_actor = canonical_agent_name(
+        config,
+        display_name_for(
+            config,
+            str(
+                worker.get("logical_agent_id")
+                or worker.get("agent_id")
+                or worker.get("provider")
+                or ""
+            ),
+        ),
+    )
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "")
+    if dispatch_reason == REASON_REVIEW_READY:
+        old_actor = canonical_agent_name(
+            config,
+            str(latest_assignment.get("old_reviewer") or ""),
+        )
+        new_actor = new_reviewer
+        role = "reviewer"
+    else:
+        old_actor = canonical_agent_name(
+            config,
+            str(latest_assignment.get("old_owner") or ""),
+        )
+        new_actor = new_owner
+        role = "owner"
+    if (
+        not worker_actor
+        or worker_actor.casefold() != old_actor.casefold()
+        or worker_actor.casefold() == new_actor.casefold()
+    ):
+        return {
+            "action": "preserve",
+            "reason_code": "reassignment_does_not_move_worker_role",
+            "source_event_id": latest_assignment.get("event_id"),
+            "source_event_type": latest_assignment.get("type"),
+        }
+    return {
+        "action": "terminate",
+        "reason_code": f"exact_{role}_reassignment",
+        "source_event_id": latest_assignment.get("event_id"),
+        "source_event_type": latest_assignment.get("type"),
+    }
+
+
+def record_worker_governance_lease_guard(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: Mapping[str, Any] | None,
+    decision: Mapping[str, Any],
+) -> bool:
+    """Record one deduplicated runtime/audit observation without ending work."""
+
+    identity = worker_process_identity(worker)
+    observed = {
+        "action": str(decision.get("action") or "preserve"),
+        "reason_code": str(decision.get("reason_code") or "governance_only_transition"),
+        "task_status": str(task.get("status") or "missing") if isinstance(task, Mapping) else "missing",
+        "task_last_update": str(task.get("last_update") or "") if isinstance(task, Mapping) else None,
+        "source_event_id": decision.get("source_event_id"),
+        "source_event_type": decision.get("source_event_type"),
+        "producer_event_matches_process": bool(decision.get("producer_event_matches_process")),
+        "process_generation": identity.get("process_generation") if identity else None,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            observed,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    previous = worker.get("governance_lease_guard")
+    if isinstance(previous, Mapping) and previous.get("fingerprint") == fingerprint:
+        return False
+    recorded_at = utc_now()
+    worker["governance_lease_guard"] = {
+        **observed,
+        "fingerprint": fingerprint,
+        "recorded_at": recorded_at,
+    }
+    termination_pending = observed["reason_code"].endswith(
+        "termination_pending_confirmation"
+    )
+    write_activity_log(
+        config,
+        {
+            "type": (
+                "worker_governance_lease_termination_deferred"
+                if termination_pending
+                else "worker_governance_lease_preserved"
+            ),
+            "task_id": worker.get("task_id"),
+            "provider": worker.get("provider"),
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+            "pid": identity.get("pid") if identity else worker.get("pid"),
+            "pid_start_ticks": identity.get("pid_start_ticks") if identity else worker.get("pid_start_ticks"),
+            "process_generation": identity.get("process_generation") if identity else worker.get("process_generation"),
+            "task_status": observed["task_status"],
+            "source_event_id": observed["source_event_id"],
+            "source_event_type": observed["source_event_type"],
+            "producer_event_matches_process": observed["producer_event_matches_process"],
+            "reason_code": observed["reason_code"],
+            "message": (
+                (
+                    "Kept the worker nonterminal while its exact process-generation "
+                    "termination waits for post-admission confirmation"
+                    if termination_pending
+                    else "Preserved the healthy active worker lease across a governance-only task transition"
+                )
+                + f" ({observed['reason_code']})."
+            ),
+        },
+    )
+    return True
+
 
 def worker_prepared_review_head(worker: dict[str, Any]) -> bool:
     """True for an owner run that pushed a PR head and then exited cleanly.
@@ -12595,8 +13079,10 @@ def poll_worker_assignment_stage(
     active_worker_statuses: set[str],
     alive: bool,
     activity_events: list[dict[str, Any]] | None = None,
+    governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     """Apply control completion, redelivery, ownership, and preemption rules."""
+    changed = False
     if (
         alive
         and worker.get("status") in active_worker_statuses
@@ -12636,61 +13122,141 @@ def poll_worker_assignment_stage(
 
     task = task_map.get(str(worker.get("task_id") or ""))
     handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+    lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:
-        if alive and not terminate_worker_pid(worker.get("pid")):
-            return {"changed": False, "stop": True}
-        worker["status"] = "completed"
-        worker["last_event_at"] = utc_now()
-        worker.pop("last_error", None)
-        clear_task_failure_streak(state, worker=worker)
-        finalize_queue_event_record(config, state, worker, "completed")
-        write_activity_log(
-            config,
-            {
-                "type": "worker_completed",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": (
-                    "Owner worker reached canonical task outcome "
-                    f"{handoff_status}; review/finalize responsibility advanced."
-                ),
-                "worker_run_id": worker.get("run_id"),
-                "pr_url": worker.get("pr_url"),
-                "session_url": worker.get("session_url"),
-            },
-        )
-        return {"changed": True, "stop": True}
+        if alive:
+            terminal_statuses = normalized_status_set(
+                ready_dispatch_settings(config).get("dependency_done_statuses"),
+                ["done"],
+            )
+            if handoff_status in terminal_statuses:
+                if not terminate_worker_process_generation(worker):
+                    changed = record_worker_governance_lease_guard(
+                        config,
+                        worker,
+                        task,
+                        {
+                            "action": "preserve",
+                            "reason_code": (
+                                "terminal_termination_pending_confirmation"
+                                if worker_process_generation_is_current(worker)
+                                else "terminal_process_identity_unproven"
+                            ),
+                            "source_event_id": None,
+                            "source_event_type": None,
+                        },
+                    ) or changed
+                    return {"changed": changed, "stop": True}
+            else:
+                producer_event = _latest_task_governance_event(
+                    worker,
+                    governance_activity_events,
+                    event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+                )
+                lease_guard_decision = {
+                    "action": "preserve",
+                    "reason_code": "canonical_review_handoff",
+                    "source_event_id": producer_event.get("event_id") if producer_event else None,
+                    "source_event_type": producer_event.get("type") if producer_event else None,
+                    "producer_event_matches_process": status_event_matches_worker_process(
+                        producer_event,
+                        worker,
+                    ),
+                }
+                changed = record_worker_governance_lease_guard(
+                    config,
+                    worker,
+                    task,
+                    lease_guard_decision,
+                ) or changed
+        if not alive or handoff_status in normalized_status_set(
+            ready_dispatch_settings(config).get("dependency_done_statuses"),
+            ["done"],
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = utc_now()
+            worker.pop("last_error", None)
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": (
+                        "Owner worker reached canonical task outcome "
+                        f"{handoff_status}; review/finalize responsibility advanced."
+                    ),
+                    "worker_run_id": worker.get("run_id"),
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            return {"changed": True, "stop": True}
 
     if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
-        if alive and not terminate_worker_pid(worker.get("pid")):
-            return {"changed": False, "stop": True}
-        worker["status"] = "superseded"
-        worker["last_event_at"] = utc_now()
-        worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
-        finalize_queue_event_record(
+        decision = lease_guard_decision or active_worker_governance_lease_decision(
             config,
-            state,
             worker,
-            "completed",
-            worker["last_error"],
+            task,
+            activity_events=governance_activity_events,
         )
-        write_activity_log(
-            config,
-            {
-                "type": "worker_superseded",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": worker["last_error"],
-                "worker_run_id": worker.get("run_id"),
-            },
-        )
-        console_log(
-            f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-            quiet=SUPERVISOR_LOG_QUIET,
-        )
-        return {"changed": True, "stop": True}
+        if alive and decision["action"] != "terminate":
+            changed = record_worker_governance_lease_guard(
+                config,
+                worker,
+                task,
+                decision,
+            ) or changed
+        elif alive and not terminate_worker_process_generation(worker):
+            changed = record_worker_governance_lease_guard(
+                config,
+                worker,
+                task,
+                {
+                    **decision,
+                    "action": "preserve",
+                    "reason_code": (
+                        "authorized_transition_termination_pending_confirmation"
+                        if worker_process_generation_is_current(worker)
+                        else "authorized_transition_process_identity_unproven"
+                    ),
+                },
+            ) or changed
+            return {"changed": changed, "stop": True}
+        else:
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker superseded after exact task responsibility transition."
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "completed",
+                worker["last_error"],
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_superseded",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                    "queue_event_id": worker.get("queue_event_id"),
+                    "process_generation": worker.get("process_generation"),
+                    "governance_reason_code": decision.get("reason_code"),
+                    "source_event_id": decision.get("source_event_id"),
+                },
+            )
+            console_log(
+                f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return {"changed": True, "stop": True}
 
     if (
         worker.get("queue_event_id")
@@ -12703,8 +13269,23 @@ def poll_worker_assignment_stage(
             activity_events=activity_events,
         )
     ):
-        if alive and not terminate_worker_pid(worker.get("pid")):
-            return {"changed": False, "stop": True}
+        if alive and not terminate_worker_process_generation(worker):
+            changed = record_worker_governance_lease_guard(
+                config,
+                worker,
+                task,
+                {
+                    "action": "preserve",
+                    "reason_code": (
+                        "eligible_preemption_termination_pending_confirmation"
+                        if worker_process_generation_is_current(worker)
+                        else "eligible_preemption_process_identity_unproven"
+                    ),
+                    "source_event_id": None,
+                    "source_event_type": None,
+                },
+            ) or changed
+            return {"changed": changed, "stop": True}
         worker["status"] = "superseded"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
@@ -12766,7 +13347,7 @@ def poll_worker_assignment_stage(
         )
         return {"changed": True, "stop": True}
 
-    return {"changed": False, "stop": False}
+    return {"changed": changed, "stop": False}
 
 
 def poll_workers(
@@ -12774,6 +13355,7 @@ def poll_workers(
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
     activity_events: list[dict[str, Any]] | None = None,
+    governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -12840,6 +13422,7 @@ def poll_workers(
             active_worker_statuses=active_worker_statuses,
             alive=alive,
             activity_events=activity_events,
+            governance_activity_events=governance_activity_events,
         )
         changed = bool(assignment["changed"]) or changed
         if assignment["stop"]:
@@ -17021,6 +17604,14 @@ def run_once(
         config,
         github_runtime_snapshot,
     )
+    governance_activity_events = _safe_phase(
+        "worker_governance_activity_snapshot",
+        worker_governance_activity_snapshot,
+        config,
+        quiet=quiet,
+    )
+    if not isinstance(governance_activity_events, list):
+        governance_activity_events = []
     provider_reports = probe_provider_reports(
         config,
         quiet=quiet,
@@ -17089,6 +17680,7 @@ def run_once(
                 once=once,
                 provider_reports=provider_reports,
                 recovery_activity_events=recovery_activity_events,
+                governance_activity_events=governance_activity_events,
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
                 assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
@@ -17294,6 +17886,7 @@ def _run_once_locked(
     once: bool = False,
     provider_reports: tuple[dict[str, Any], dict[str, Any]],
     recovery_activity_events: list[dict[str, Any]],
+    governance_activity_events: list[dict[str, Any]] | None = None,
     ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
     task_state_shadow_snapshot: dict[str, Any] | None = None,
     assistant_dev_bridge_snapshot: dict[str, Any] | None = None,
@@ -17358,6 +17951,7 @@ def _run_once_locked(
             state,
             provider_report=provider_report,
             activity_events=recovery_activity_events,
+            governance_activity_events=governance_activity_events,
             quiet=quiet,
         ) or changed
         changed = _safe_phase(
@@ -17446,6 +18040,7 @@ def _run_once_locked(
             state,
             provider_report=provider_report,
             activity_events=recovery_activity_events,
+            governance_activity_events=governance_activity_events,
             quiet=quiet,
         ) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed

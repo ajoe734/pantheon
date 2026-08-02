@@ -483,6 +483,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        ai_status._clear_status_command_lease_binding()
         self.temporary.cleanup()
 
     def _runtime_state(
@@ -495,6 +496,16 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
     ) -> dict[str, object]:
         worker_task_id = task_id or self.task_id
         worker_status_root = status_root or self.root
+        queue_event_id = "queue-lease-sync"
+        pid = 4242
+        pid_start_ticks = 987654
+        process_generation = ai_status.status_worker_process_generation_id(
+            task_id=worker_task_id,
+            worker_run_id=self.run_id,
+            queue_event_id=queue_event_id,
+            pid=pid,
+            pid_start_ticks=pid_start_ticks,
+        )
         return {
             "workers": {
                 self.run_id: {
@@ -506,6 +517,10 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     "workspace_path": str(self.workspace),
                     "status_root": str(worker_status_root),
                     "status_command_runtime": self.issued_runtime,
+                    "queue_event_id": queue_event_id,
+                    "pid": pid,
+                    "pid_start_ticks": pid_start_ticks,
+                    "process_generation": process_generation,
                 }
             },
             "worker_worktrees": {
@@ -564,6 +579,32 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             actor="Codex",
             env_task_id=self.task_id,
         )
+        owner_binding = ai_status._STATUS_COMMAND_LEASE_LOCAL.binding
+        self.assertEqual(owner_binding["worker_run_id"], self.run_id)
+        self.assertEqual(owner_binding["task_id"], self.task_id)
+        self.assertEqual(owner_binding["queue_event_id"], "queue-lease-sync")
+        self.assertEqual(owner_binding["pid"], 4242)
+        self.assertEqual(owner_binding["pid_start_ticks"], 987654)
+        self.assertTrue(
+            owner_binding["process_generation"].startswith(
+                ai_status.STATUS_WORKER_PROCESS_GENERATION_PREFIX
+            )
+        )
+        with mock.patch.object(
+            ai_status,
+            "status_command_metadata",
+            return_value=self.issued_runtime | {"worker_lease": owner_binding},
+        ):
+            event = ai_status._activity_event(
+                {
+                    "ts": "2026-08-02T09:45:00Z",
+                    "agent": "Codex",
+                    "type": "handoff",
+                    "task_id": self.task_id,
+                    "message": "ready",
+                }
+            )
+        self.assertEqual(event["status_command"]["worker_lease"], owner_binding)
         self._validate(
             "approve",
             [self.task_id, "review approved"],
@@ -571,6 +612,18 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             env_task_id=self.task_id,
             runtime_state=self._runtime_state(logical_agent_id="claude"),
         )
+
+    def test_rejects_invalid_process_generation(self) -> None:
+        runtime_state = self._runtime_state()
+        runtime_state["workers"][self.run_id]["process_generation"] = "forged"
+        with self.assertRaisesRegex(RuntimeError, "invalid process generation"):
+            self._validate(
+                "handoff",
+                [self.task_id, "Claude", "ready for review"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=runtime_state,
+            )
 
     def test_rejects_auto_worker_without_run_lease(self) -> None:
         with (
@@ -884,6 +937,15 @@ class StatusRootRoutingTests(unittest.TestCase):
                 "remote": "ajoe734/pantheon",
                 "base_ref": "origin/dev",
             }
+            worker_pid = 4242
+            worker_pid_start_ticks = 987654
+            worker_process_generation = ai_status.status_worker_process_generation_id(
+                task_id="CENTRAL-ROOT-001",
+                worker_run_id="codex-test-run",
+                queue_event_id="evt-codex-test-run",
+                pid=worker_pid,
+                pid_start_ticks=worker_pid_start_ticks,
+            )
             central_state_path = central / ".orchestrator" / "state.json"
             central_state_path.parent.mkdir(parents=True, exist_ok=True)
             central_state_path.write_text(
@@ -901,6 +963,9 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 "lease_acquired_at": "2026-07-17T00:00:00Z",
                                 "lease_expires_at": "2999-01-01T00:00:00Z",
                                 "queue_event_id": "evt-codex-test-run",
+                                "pid": worker_pid,
+                                "pid_start_ticks": worker_pid_start_ticks,
+                                "process_generation": worker_process_generation,
                                 "workspace_path": str(worktree),
                                 "status_root": str(central),
                                 "status_command_runtime": issued_runtime,
@@ -1085,6 +1150,18 @@ class StatusRootRoutingTests(unittest.TestCase):
                 self.assertEqual(event["status_command"]["source_sha"], command_sha)
                 self.assertEqual(event["status_command"]["status_root"], str(central.resolve()))
                 self.assertEqual(event["status_command"]["delivery_root"], str(worktree.resolve()))
+                self.assertEqual(
+                    event["status_command"]["worker_lease"],
+                    {
+                        "schema_version": 1,
+                        "task_id": "CENTRAL-ROOT-001",
+                        "worker_run_id": "codex-test-run",
+                        "queue_event_id": "evt-codex-test-run",
+                        "pid": worker_pid,
+                        "pid_start_ticks": worker_pid_start_ticks,
+                        "process_generation": worker_process_generation,
+                    },
+                )
             self.assertEqual(
                 archived["task"]["delivery"]["repository_path"],
                 str(worktree.resolve()),
