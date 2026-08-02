@@ -5279,8 +5279,9 @@ def parse_args() -> argparse.Namespace:
         "--promote",
         action="store_true",
         help=(
-            "Explicitly execute the transactional runtime swap. Requires an "
-            "absolute --evidence-path and returns nonzero after any rollback."
+            "Explicitly execute the transactional runtime swap. Uses an "
+            "external durable evidence path by default and returns nonzero "
+            "after any rollback."
         ),
     )
     parser.add_argument(
@@ -5323,7 +5324,10 @@ def main() -> int:
             if args.evidence_path
             else None
         )
-        if args.evidence_path and not Path(args.evidence_path).expanduser().is_absolute():
+        if (
+            args.evidence_path
+            and not Path(args.evidence_path).expanduser().is_absolute()
+        ):
             raise SystemExit("--evidence-path must be absolute")
         result = PromotionTransaction(
             evidence_path=evidence_path,

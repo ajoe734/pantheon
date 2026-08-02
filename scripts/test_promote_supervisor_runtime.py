@@ -4085,6 +4085,22 @@ def test_runtime_admission_lock_is_same_owner_reentrant(tmp_path: Path) -> None:
     assert lock.depth == 0
 
 
+def test_runtime_admission_lock_preserves_bounded_external_contention(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "runtime-admission.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        lock = RuntimeAdmissionLock(lock_path, timeout=0.01)
+
+        with pytest.raises(TimeoutError, match="Timed out acquiring"):
+            lock.acquire()
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def test_runtime_admission_lock_composes_with_watchdog_intent_writer(
     tmp_path: Path,
 ) -> None:
