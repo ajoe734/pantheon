@@ -15,7 +15,10 @@
     "anchor_commits": [
       "7d2463994ee9b4872baf61bac0b24225cea4c35b",
       "d7f802311fdbd5c882ce31f65fa9f0fd95272c42",
-      "12aee3ea4dd8d3ce97b67f15327629a0973ed3ba"
+      "12aee3ea4dd8d3ce97b67f15327629a0973ed3ba",
+      "e5d3cc818864ffbd3996e49515d3309138a85fa9",
+      "de1a084ab546dcc08f11b30a8483c0502b28ae61",
+      "3cdefe4de71a4e6159035e71f9e810721cdb84b2"
     ]
   },
   "cadence_reproduction": {
@@ -69,6 +72,27 @@
       "worker termination confirmation waits",
       "dashboard and runtime-summary rendering"
     ],
+    "reserved_runtime_phases": {
+      "phases": [
+        "poll_workers_pre_dispatch",
+        "process_queue",
+        "poll_workers_post_dispatch",
+        "prune_worktrees"
+      ],
+      "contract": "Each phase publishes a token in one short exclusive transaction, performs marker/process/worktree/git/prune I/O against a detached snapshot with audit/status effects deferred, and commits through a second short whole-state CAS. A concurrent writer wins; a losing phase cannot overwrite it, and any newly launched exact process generation is terminated fail-closed.",
+      "actual_slow_paths": [
+        "prepare_worker_workspace git/worktree allocation or refresh",
+        "worker-tree git status guard",
+        "worker isolated-worktree git rev-parse",
+        "adapter deliver and process launch",
+        "worker marker/log and process observation",
+        "inactive/orphan/chair-review worktree pruning"
+      ],
+      "tests": [
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_actual_queue_poll_and_prune_slow_paths_run_outside_admission",
+        ".orchestrator/test_supervisor.py::ReservedRuntimeSlowIOTests::test_reservation_cas_conflict_preserves_concurrent_runtime_writer"
+      ]
+    },
     "fail_closed_git_fallback": "A worker base ref missing from the prefetch context may use an already-resolving local ref, but dispatch never starts a recovery network fetch while runtime admission is held; an unresolved ref waits for the next pre-admission fetch."
   },
   "batch_contract": {
@@ -103,6 +127,12 @@
       "queue_to_start.max_seconds",
       "batch_counts"
     ],
+    "persistence": "The complete sample is persisted after reserved process/poll/prune phases, deferred activity/status/archive work, dashboard refresh, and runtime summary. The cycle elapsed value therefore covers the whole cycle rather than the former pre-release prefix.",
+    "scheduler_resilience": "A cadence completion telemetry exception is isolated and cannot terminate the deadline scheduler or prevent future cycles.",
+    "tests": [
+      ".orchestrator/test_supervisor.py::BoundedCycleTelemetryTests::test_complete_sample_persists_post_lock_phases_and_elapsed_time",
+      ".orchestrator/test_supervisor.py::FixedCadenceSchedulerTests::test_scheduler_completion_telemetry_failure_does_not_stop_future_cycles"
+    ],
     "privacy": "Only aggregate scalar counts and durations are retained; no task payload, provider output, credentials, or unbounded history is stored."
   },
   "governance_preservation": {
@@ -112,13 +142,13 @@
   },
   "validation": [
     {
-      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
-      "result": "557 passed, 158 subtests passed in 61.77s",
+      "command": ".venv-pantheon/bin/python .orchestrator/test_supervisor.py",
+      "result": "561 tests passed",
       "status": "pass"
     },
     {
-      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py",
-      "result": "165 passed, 31 subtests passed in 29.79s",
+      "command": ".venv-pantheon/bin/python scripts/test_ai_status.py",
+      "result": "165 tests passed",
       "status": "pass"
     },
     {
@@ -127,8 +157,13 @@
       "status": "pass"
     },
     {
-      "command": "git diff --check",
-      "result": "pass",
+      "command": "git diff --check origin/dev...HEAD",
+      "result": "pass on the final evidence head",
+      "status": "pass"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD",
+      "result": "pass on the final evidence head",
       "status": "pass"
     }
   ],
@@ -137,6 +172,6 @@
     "live_restart_or_deployment": false,
     "rollout": "Merge the exact Human/Ops-reviewed PR to dev; the dependent V8 canary owns any live promotion.",
     "rollback": "Revert the merge commit; do not hand-edit runtime, canonical task, or activity state.",
-    "remaining": "Commit evidence, push/open the PR, obtain exact-head Human/Ops review, merge, then perform governed done/archive closeout."
+    "remaining": "Push the repaired PR head, obtain a new exact-head Human/Ops review, merge, then perform governed done/archive closeout."
   }
 }

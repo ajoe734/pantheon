@@ -2,8 +2,8 @@
 
 Task: `SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802`
 
-Owner: Codex2  
-Reviewer: Human/Ops  
+Owner: Codex2
+Reviewer: Human/Ops
 Target: `dev`
 
 ## Result
@@ -24,11 +24,15 @@ The global order remains:
 
 Slow provider/auth work, assistant-bridge subprocesses, GitHub reads, merged-PR metadata, task-shadow reconciliation, remote git fetch, and the local continuation probe run before runtime admission. Activity append, canonical dispatch subprocess, archive subprocess, termination confirmation, and dashboard/evidence rendering run after it.
 
+Worker marker/process/git observation, `process_queue` worktree preparation and adapter launch, and inactive/orphan/chair-review pruning now run in tokenized reservation phases. Each phase reserves in one short transaction, performs slow I/O against a detached snapshot with audit/status effects deferred, then commits in a second short whole-state CAS. If another runtime writer changes the state, that writer wins; the reserved snapshot is discarded and any process generation launched by the losing phase is terminated fail-closed.
+
 Dispatch never performs a recovery network fetch under runtime admission. If a ref was not recorded by the pre-admission fetch, an already-resolving local ref is safe to reuse; an unresolved ref fails closed until a later pre-admission fetch succeeds.
 
 ## Bounded telemetry
 
 Runtime telemetry stores aggregate scalars only: cycle elapsed, per-phase count/total/max, runtime lock hold, cadence overshoot/skips, queue-to-start count/average/max, and batch counts. Phase names and batch keys are source-owned and capped at 64 and 16 rows. No task body, event body, provider output, credentials, or unbounded timing history is retained.
+
+The bounded sample is persisted only after reserved process/poll/prune phases, deferred activity/status/archive work, dashboard refresh, and runtime summary. Its elapsed time therefore covers the complete cycle. Scheduler completion telemetry is exception-isolated so a failed runtime-state read or write cannot terminate the deadline loop or stop later cycles.
 
 ## Governance
 
@@ -38,8 +42,8 @@ No live service was restarted or deployed. Live promotion belongs to the depende
 
 ## Validation
 
-- Supervisor: 557 passed, 158 subtests passed in 61.77s.
-- ai-status: 165 passed, 31 subtests passed in 29.79s.
+- Supervisor: 561 tests passed.
+- ai-status: 165 tests passed.
 - `py_compile`: passed.
 - JSON validation and `git diff --check`: passed.
 
