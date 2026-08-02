@@ -10,7 +10,7 @@
     "title": "Guard bound review identity from auto reassignment",
     "phase": "Supervisor Runtime Repair / Bound Review Identity",
     "owner": "Codex",
-    "reviewer": "Gemini",
+    "reviewer": "Human/Ops",
     "status": "in_progress",
     "review_status": "pending_independent_exact_head_review",
     "repository": "ajoe734/pantheon",
@@ -34,12 +34,19 @@
       "scripts/git/test_task_review_merge_gate.py"
     ],
     "task_files": [
-      ".orchestrator/task-briefs/sup_review_identity_bound_reassign_guard_20260802.md",
       "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.json",
       "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.md"
     ],
+    "excluded_delivery_paths": [
+      ".orchestrator/task-briefs/sup_review_identity_bound_reassign_guard_20260802.md"
+    ],
     "anchors": [
-      "37ff4c59a"
+      "37ff4c59a",
+      "4d6a77c86"
+    ],
+    "composition_commits": [
+      "6097badb5",
+      "8ab9c1772"
     ]
   },
   "historical_evidence_only": [
@@ -108,12 +115,12 @@
       "result": "checkout-scoped .venv-pantheon provisioned; imports and pytest verified"
     },
     {
-      "command": "focused nine-test supervisor/status/merge-gate selection",
+      "command": "five focused supervisor selectors from .orchestrator plus four focused ai-status/merge-gate selectors from repository root",
       "result": "9 passed"
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
-      "result": "490 passed, 74 subtests passed"
+      "result": "495 passed, 102 subtests passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
@@ -134,17 +141,17 @@
   ],
   "review": {
     "decision": "pending",
-    "reviewer": "Gemini",
+    "reviewer": "Human/Ops",
     "reviewed_head": null,
-    "pull_request": null,
+    "pull_request": 4488,
     "recorded_at": null,
     "notes": null
   },
   "delivery": {
-    "base_commit": "71fea47cbe65bb3e07792afa7e9f0134fd0066f5",
+    "base_commit": "5cb03dd5ebe3ce13435c848175c5dab5450e9ea5",
     "implementation_anchor": "37ff4c59a",
     "implementation_head": null,
-    "pull_request": null,
+    "pull_request": 4488,
     "merge_commit": null,
     "rollout": "source merge only",
     "rollback": "revert the follow-up merge commit"

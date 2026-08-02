@@ -1,6 +1,6 @@
 # SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802 Evidence
 
-Status: implementation complete; pending Gemini exact-head review.
+Status: implementation complete; pending Human/Ops exact-head review on PR #4488.
 
 ## Result
 
@@ -17,7 +17,7 @@ Codex and Codex2 are treated as one ChatGPT review identity. A Codex-owned task 
 ## Verification
 
 - Focused identity-bound regression selection: 9 passed.
-- Full supervisor suite: 490 passed, 74 subtests passed.
+- Full supervisor suite: 495 passed, 102 subtests passed.
 - Full `scripts/test_ai_status.py`: 159 passed, 31 subtests passed.
 - Full task review merge-gate suite: 94 passed.
 - Python compilation and `git diff --check`: passed before evidence authoring; both are rerun during finalization.
