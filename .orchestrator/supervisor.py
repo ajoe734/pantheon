@@ -16824,6 +16824,18 @@ def claim_next_task_for_agent(
     release_task_id: str | None = None,
     quiet: bool = False,
 ) -> bool:
+    recovery_activity_events: list[dict[str, Any]] | None = None
+    agent_id = normalize_agent_id(agent_name)
+    if (
+        worker_self_claim_settings(config).get("enabled", False)
+        and agent_id
+        and agent_id in config.get("agents", {})
+    ):
+        recovery_runtime_snapshot = load_runtime_state_snapshot(config)
+        recovery_activity_events = failure_streak_recovery_activity_snapshot(
+            config,
+            recovery_runtime_snapshot,
+        )
     return _run_with_deferred_dispatch_status_syncs(
         config,
         lambda: _claim_next_task_for_agent_locked(
@@ -16831,6 +16843,7 @@ def claim_next_task_for_agent(
             agent_name=agent_name,
             release_task_id=release_task_id,
             quiet=quiet,
+            recovery_activity_events=recovery_activity_events,
         )
     )
 
@@ -16841,6 +16854,7 @@ def _claim_next_task_for_agent_locked(
     agent_name: str,
     release_task_id: str | None = None,
     quiet: bool = False,
+    recovery_activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     settings = worker_self_claim_settings(config)
     if not settings.get("enabled", False):
@@ -16864,10 +16878,6 @@ def _claim_next_task_for_agent_locked(
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed
     if not discussion_planning_is_active(planning_state):
-        recovery_activity_events = failure_streak_recovery_activity_snapshot(
-            config,
-            state,
-        )
         changed = dispatch_ready_tasks(
             config,
             state,

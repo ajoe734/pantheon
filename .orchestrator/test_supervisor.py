@@ -14464,6 +14464,201 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
             "one cycle snapshot plus one fresh atomic-consume revalidation",
         )
 
+    def test_self_claim_prefetches_snapshot_before_lock_and_reuses_it(self) -> None:
+        lock_depth = 0
+        activity_read_depths: list[int] = []
+        snapshots: list[list[dict[str, object]]] = []
+        real_activity_read = supervisor._failure_recovery_activity_events
+        real_snapshot = supervisor.failure_streak_recovery_activity_snapshot
+        real_decision = supervisor.failure_streak_recovery_decision_for_task
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_depth
+            lock_depth += 1
+            try:
+                yield
+            finally:
+                lock_depth -= 1
+
+        def activity_read(config: dict) -> list[dict]:
+            activity_read_depths.append(lock_depth)
+            return real_activity_read(config)
+
+        def snapshot(config: dict, state: dict) -> list[dict]:
+            self.assertEqual(
+                lock_depth,
+                0,
+                "self-claim cycle snapshot must precede exclusive runtime admission",
+            )
+            events = real_snapshot(config, state)
+            snapshots.append(events)
+            return events
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "runtime_state_lock",
+                    side_effect=runtime_lock,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "load_runtime_state_snapshot",
+                    return_value=self.state,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "load_runtime_state",
+                    return_value=self.state,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "failure_streak_recovery_activity_snapshot",
+                    side_effect=snapshot,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "_failure_recovery_activity_events",
+                    side_effect=activity_read,
+                )
+            )
+            decisions = stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "failure_streak_recovery_decision_for_task",
+                    wraps=real_decision,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "worker_self_claim_settings",
+                    return_value={"enabled": True},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "load_discussion_planning_state",
+                    return_value={},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "release_completed_worker_for_claim",
+                    return_value=False,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(supervisor, "load_provider_report", return_value={})
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "agent_auto_dispatch_block_reason",
+                    return_value=None,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "expire_provider_dispatch_pauses",
+                    return_value=False,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "reconcile_queue_records",
+                    return_value=False,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(supervisor, "prune_event_queue", return_value=False)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "normalize_mainline_task_assignment",
+                    return_value=False,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(supervisor, "load_status", return_value=self.status)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "load_event_queue",
+                    side_effect=lambda _config: copy.deepcopy(self.queued_events),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=self._fake_queue,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(supervisor, "process_queue", return_value=False)
+            )
+            stack.enter_context(
+                mock.patch.object(supervisor, "compute_mode_occupancy", return_value={})
+            )
+            stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
+            stack.enter_context(
+                mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts")
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "scan_live_worker_pids_by_agent",
+                    return_value={},
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "utc_now",
+                    return_value="2026-08-02T01:06:30Z",
+                )
+            )
+            changed = supervisor.claim_next_task_for_agent(
+                self.config,
+                agent_name=self.owner,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(
+            activity_read_depths,
+            [0, 2],
+            "one pre-lock cycle read plus one nested in-lock atomic revalidation",
+        )
+        cycle_decisions = [
+            call
+            for call in decisions.call_args_list
+            if call.kwargs.get("activity_events") is snapshots[0]
+        ]
+        atomic_decisions = [
+            call
+            for call in decisions.call_args_list
+            if "activity_events" not in call.kwargs
+        ]
+        self.assertGreaterEqual(len(cycle_decisions), 2)
+        self.assertEqual(len(atomic_decisions), 1)
+
     def test_observed_incident_consumes_once_and_reopens_normal_gates(self) -> None:
         decision = self._decision()
         self.assertIsNotNone(decision)
