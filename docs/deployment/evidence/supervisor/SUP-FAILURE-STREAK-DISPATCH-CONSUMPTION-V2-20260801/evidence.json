@@ -21,8 +21,8 @@
   },
   "contract": {
     "progress_source": "Newest exact governed reviewer reopen from the locked activity stream, normalized against the latest failure generation.",
-    "admission": "Non-mutating checks share one activity snapshot read before runtime admission; the merged pure V2 decision is then re-evaluated from a fresh exact snapshot under runtime_state_lock immediately before the existing governed queue append.",
-    "activity_snapshot": "One cycle-scoped activity snapshot is threaded through poll, reassignment, chair, failure-loop, and dispatch checks; no candidate or phase rereads the growing stream.",
+    "admission": "Both run_once and enabled worker self-claim read one non-mutating activity snapshot before runtime admission; the merged pure V2 decision is then re-evaluated from a fresh exact snapshot under runtime_state_lock immediately before the existing governed queue append.",
+    "activity_snapshot": "One cycle-scoped activity snapshot is threaded through poll, reassignment, chair, failure-loop, dispatch, and self-claim checks; no candidate or phase rereads the growing stream.",
     "one_shot": "Runtime state and durable activity audit both retain the exact failure-recovery token; either source denies replay across loops or processes.",
     "queue_failure": "Queue rejection, exception, or missing exact readback leaves the token consumed with an explicit fail-closed outcome.",
     "dispatch_key": "The exact token extends the existing signed task dispatch key, permitting a newer governed generation without bypassing cooldown or queue identity.",
@@ -35,7 +35,8 @@
     "captured Antigravity/Human-Ops incident",
     "failure-loop, reassignment, and chair-triage gate release",
     "concurrent double consumption",
-    "one activity read per cycle plus one fresh atomic-consume read",
+    "run_once and self-claim each perform one pre-lock activity read plus one fresh atomic-consume read",
+    "self-claim lock ordering and shared-snapshot decision reuse",
     "next-loop replay",
     "queue rejection",
     "worker start and crash-window audit reconstruction",
@@ -49,15 +50,15 @@
   "verification": [
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDispatchConsumptionV2 or FailureStreakRecoveryDecisionV2'",
-      "result": "15 passed, 491 deselected, 45 subtests passed"
+      "result": "16 passed, 491 deselected, 45 subtests passed"
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDispatchConsumptionV2 or FailureStreakRecoveryDecisionV2 or failure_loop'",
-      "result": "21 passed, 485 deselected, 45 subtests passed"
+      "result": "22 passed, 485 deselected, 45 subtests passed"
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-      "result": "506 passed, 147 subtests passed"
+      "result": "507 passed, 147 subtests passed"
     },
     {
       "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
@@ -80,12 +81,18 @@
     "reviewer": "Human/Ops",
     "reviewed_head": null,
     "reviewed_at": null,
-    "note": "Owner-authored evidence only. Independent exact-head Human/Ops review is required before merge."
+    "note": "Owner-authored evidence only. Independent exact-head Human/Ops review is required before merge.",
+    "previous_rejection": {
+      "head": "4f48e52f6997b37038fed49729e6969df3b2f40b",
+      "url": "https://github.com/ajoe734/pantheon/pull/4491#issuecomment-5156324357",
+      "required_correction": "Move enabled worker self-claim recovery snapshot prefetch before exclusive runtime admission while preserving one fresh in-lock atomic-consume read.",
+      "correction_anchor": "369b016062fc6b54bb02b7f9571a1f6f770a6112"
+    }
   },
   "delivery": {
     "base_sha": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
     "implementation_anchor": "25c30277cf79b649f0762c695e10eca64e55329a",
-    "candidate_head": "67dd730b6d1afa17c946b4d42fd0565b24746f12",
+    "candidate_head": "369b016062fc6b54bb02b7f9571a1f6f770a6112",
     "pull_request": "https://github.com/ajoe734/pantheon/pull/4491",
     "superseded_pull_requests": [
       "https://github.com/ajoe734/pantheon/pull/4385",
