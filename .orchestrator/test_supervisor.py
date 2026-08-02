@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import copy
+import hashlib
 import inspect
 import multiprocessing
 import tempfile
@@ -13082,6 +13083,430 @@ class FailureStreakV3Tests(unittest.TestCase):
                         {keyword.arg for keyword in call.keywords}
                     )
                 )
+
+
+class FailureStreakActivityNormalizerV3Tests(unittest.TestCase):
+    def _record(
+        self,
+        *,
+        task_id: str,
+        owner: str,
+        reviewer: str,
+        provider: str,
+        rejected_head: str,
+        recorded_at: str,
+    ) -> dict:
+        state: dict = {}
+        worker = {
+            "task_id": task_id,
+            "provider": provider,
+            "run_id": f"{provider}-captured-run",
+            "request_snapshot": {
+                "task_id": task_id,
+                "metadata": {
+                    "logical_agent_id": provider,
+                    "task": {
+                        "id": task_id,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                    },
+                },
+            },
+        }
+        with mock.patch.object(
+            supervisor,
+            "_failure_streak_timestamp",
+            return_value=recorded_at,
+        ):
+            count = supervisor.record_task_failure_streak(
+                state,
+                worker,
+                "captured generic exit",
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=f".orchestrator/logs/{provider}-captured-run.json",
+                rejected_head=rejected_head,
+            )
+        self.assertEqual(count, 1)
+        return state["provider_guardrails"]["task_failure_streaks"][
+            f"{task_id}:{provider}"
+        ]
+
+    def _ai_status_event(self, **fields: object) -> dict:
+        event = dict(fields)
+        encoded = json.dumps(
+            event,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        event["event_id"] = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+        return event
+
+    def _worker_commit_event(
+        self,
+        *,
+        task_id: str,
+        actor: str,
+        commit: str,
+        ts: str = "2026-08-02T02:00:00Z",
+    ) -> dict:
+        return {
+            "ts": ts,
+            "agent": actor,
+            "event_id": f"worker-commit-{commit}",
+            "type": "worker_commit",
+            "task_id": task_id,
+            "message": f"Worker commit {commit[:12]} recorded 1 staged file(s) for {task_id}.",
+            "commit": commit,
+            "scope": [".orchestrator/supervisor.py"],
+            "staged": [".orchestrator/supervisor.py"],
+            "index_file": "/tmp/git-index-captured",
+            "default_index_refreshed": True,
+            "default_index_refresh_error": None,
+        }
+
+    def test_captured_human_ops_reopen_normalizes_exact_review_binding(self) -> None:
+        rejected_head = "932a87e59e5a2f54e08e60ce57904c76ecf8ba2f"
+        task_id = "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+        record = self._record(
+            task_id=task_id,
+            owner="Codex",
+            reviewer="Human/Ops",
+            provider="codex",
+            rejected_head=rejected_head,
+            recorded_at="2026-08-02T01:40:00.000000Z",
+        )
+        event = {
+            "ts": "2026-08-02T01:44:37Z",
+            "agent": "Human/Ops",
+            "type": "reopen",
+            "task_id": task_id,
+            "message": "Reopen only to renew the exact-head review after the later owner note; implementation head is unchanged.",
+            "github_review_bridge": {
+                "repository": "ajoe734/pantheon",
+                "pr": 4445,
+                "head_sha": rejected_head,
+                "head_branch": "task/SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+                "base": "dev",
+                "decision": "reopen",
+                "actor": "Human/Ops",
+                "mode": "required_commit_status",
+                "status_id": 51493935990,
+                "status_context": "Pantheon canonical review gate",
+                "status_state": "failure",
+                "pr_url": "https://github.com/ajoe734/pantheon/pull/4445",
+                "recorded_at": "2026-08-02T01:44:37Z",
+                "review_error": "gh: Unprocessable Entity (HTTP 422)",
+            },
+            "event_id": "ai-status-event-442bd2862f29ac8b52aa46f84fa2191268a2ea233c17c3a3a268a5fda3f1cd4c",
+        }
+        record_before = copy.deepcopy(record)
+        event_before = copy.deepcopy(event)
+
+        normalized = supervisor.normalize_failure_streak_progress_event(record, event)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["failure_generation_id"], record["generations"][-1]["generation_id"])
+        self.assertEqual(normalized["event_id"], event["event_id"])
+        self.assertEqual(normalized["event_type"], "reopen")
+        self.assertEqual(normalized["event_at"], event["ts"])
+        self.assertEqual(normalized["actor"], "Human/Ops")
+        self.assertEqual(normalized["exact_head"], rejected_head)
+        self.assertRegex(normalized["generation_id"], r"^sha256:[0-9a-f]{64}$")
+        with self.assertRaises(TypeError):
+            normalized["actor"] = "forged"  # type: ignore[index]
+        self.assertEqual(record, record_before)
+        self.assertEqual(event, event_before)
+
+    def test_captured_antigravity_worker_commit_normalizes_new_head(self) -> None:
+        task_id = "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801"
+        record = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head="a" * 40,
+            recorded_at="2026-08-01T22:50:00.000000Z",
+        )
+        event = {
+            "ts": "2026-08-01T22:58:31Z",
+            "agent": "Antigravity",
+            "event_id": "worker-commit-b77ac064341906b0b5b1caaa07606a2cce87bee3",
+            "type": "worker_commit",
+            "task_id": task_id,
+            "message": "Worker commit b77ac0643419 recorded 1 staged file(s) for LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801.",
+            "commit": "b77ac064341906b0b5b1caaa07606a2cce87bee3",
+            "scope": [
+                ".orchestrator/task-briefs/lifecycle_proj_hotfix_composed_head_review_20260801.md"
+            ],
+            "staged": [
+                ".orchestrator/task-briefs/lifecycle_proj_hotfix_composed_head_review_20260801.md"
+            ],
+            "index_file": "/tmp/git-index-task-LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+            "default_index_refreshed": True,
+            "default_index_refresh_error": None,
+        }
+
+        normalized = supervisor.normalize_failure_streak_progress_event(record, event)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["actor"], "Antigravity")
+        self.assertEqual(normalized["exact_head"], event["commit"])
+        self.assertEqual(normalized["provider"], "antigravity")
+
+    def test_governed_reopen_without_pr_binding_remains_identity_bound(self) -> None:
+        task_id = "SUP-FAILURE-NON-PR"
+        record = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head="a" * 40,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        event = self._ai_status_event(
+            ts="2026-08-02T01:05:00Z",
+            agent="Human/Ops",
+            type="reopen",
+            task_id=task_id,
+            message="Captured governed reviewer reopen without a PR target.",
+        )
+
+        normalized = supervisor.normalize_failure_streak_progress_event(record, event)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["exact_head"], supervisor.FAILURE_STREAK_ABSENT_HEAD)
+
+    def test_deny_matrix_rejects_non_governed_or_unbound_activity(self) -> None:
+        task_id = "SUP-FAILURE-DENY"
+        baseline = "a" * 40
+        new_head = "b" * 40
+        record = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head=baseline,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        valid_worker = self._worker_commit_event(
+            task_id=task_id,
+            actor="Antigravity",
+            commit=new_head,
+        )
+        valid_reopen_fields = {
+            "ts": "2026-08-02T02:00:00Z",
+            "agent": "Human/Ops",
+            "type": "reopen",
+            "task_id": task_id,
+            "message": "Reviewer requests changes.",
+        }
+
+        invalid_events: list[tuple[str, dict]] = []
+        for field in ("task_id", "agent", "event_id", "ts", "commit"):
+            candidate = copy.deepcopy(valid_worker)
+            candidate.pop(field)
+            invalid_events.append((f"worker missing {field}", candidate))
+
+        invalid_events.extend(
+            [
+                (
+                    "wrong owner",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Codex",
+                        commit=new_head,
+                    ),
+                ),
+                (
+                    "cross task",
+                    self._worker_commit_event(
+                        task_id="OTHER-TASK",
+                        actor="Antigravity",
+                        commit=new_head,
+                    ),
+                ),
+                (
+                    "stale before failure",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Antigravity",
+                        commit=new_head,
+                        ts="2026-08-02T00:59:59Z",
+                    ),
+                ),
+                (
+                    "same rejected head",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Antigravity",
+                        commit=baseline,
+                    ),
+                ),
+                (
+                    "uppercase commit",
+                    self._worker_commit_event(
+                        task_id=task_id,
+                        actor="Antigravity",
+                        commit="B" * 40,
+                    ),
+                ),
+                (
+                    "malformed worker identity",
+                    {**valid_worker, "event_id": "worker-commit-" + "c" * 40},
+                ),
+                (
+                    "cross provider field",
+                    {**valid_worker, "provider": "codex"},
+                ),
+            ]
+        )
+
+        wrong_reviewer = self._ai_status_event(
+            **{**valid_reopen_fields, "agent": "Codex"}
+        )
+        malformed_reopen_identity = self._ai_status_event(**valid_reopen_fields)
+        malformed_reopen_identity["event_id"] = "ai-status-event-" + "0" * 64
+        malformed_bridge = self._ai_status_event(
+            **valid_reopen_fields,
+            github_review_bridge={
+                "decision": "reopen",
+                "actor": "Human/Ops",
+                "recorded_at": valid_reopen_fields["ts"],
+                "head_sha": "c" * 40,
+            },
+        )
+        invalid_events.extend(
+            [
+                ("wrong reviewer", wrong_reviewer),
+                ("malformed ai-status identity", malformed_reopen_identity),
+                ("review bridge off lineage", malformed_bridge),
+            ]
+        )
+
+        generic_types = (
+            "note",
+            "progress",
+            "last_update",
+            "task_dispatch_synced",
+            "wake_queued",
+            "worker_started",
+            "test_rerun",
+            "github_review_bound",
+        )
+        for event_type in generic_types:
+            invalid_events.append(
+                (
+                    event_type,
+                    self._ai_status_event(
+                        **{
+                            **valid_reopen_fields,
+                            "agent": "Antigravity",
+                            "type": event_type,
+                            "commit": new_head,
+                        }
+                    ),
+                )
+            )
+        invalid_events.append(
+            (
+                "owner to reviewer handoff of same head",
+                self._ai_status_event(
+                    **{
+                        **valid_reopen_fields,
+                        "agent": "Antigravity",
+                        "type": "handoff",
+                        "to": "Human/Ops",
+                        "head_sha": baseline,
+                    }
+                ),
+            )
+        )
+
+        record_before = copy.deepcopy(record)
+        for label, event in invalid_events:
+            with self.subTest(event=label):
+                event_before = copy.deepcopy(event)
+                self.assertIsNone(
+                    supervisor.normalize_failure_streak_progress_event(record, event)
+                )
+                self.assertEqual(event, event_before)
+                self.assertEqual(record, record_before)
+
+        absent_baseline = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        cross_provider = self._record(
+            task_id=task_id,
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="codex",
+            rejected_head=baseline,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        missing_owner = copy.deepcopy(record)
+        missing_owner["generations"][-1].pop("owner_at_failure")
+        same_owner_reviewer = copy.deepcopy(record)
+        same_owner_reviewer["generations"][-1]["reviewer_at_failure"] = "Antigravity"
+        for label, invalid_record in (
+            ("absent failure baseline", absent_baseline),
+            ("cross provider record", cross_provider),
+            ("missing owner record", missing_owner),
+            ("owner equals reviewer", same_owner_reviewer),
+        ):
+            with self.subTest(record=label):
+                self.assertIsNone(
+                    supervisor.normalize_failure_streak_progress_event(
+                        invalid_record,
+                        valid_worker,
+                    )
+                )
+
+    def test_unrelated_event_and_streak_are_preserved(self) -> None:
+        target_record = self._record(
+            task_id="SUP-FAILURE-TARGET",
+            owner="Antigravity",
+            reviewer="Human/Ops",
+            provider="antigravity",
+            rejected_head="a" * 40,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        unrelated_record = self._record(
+            task_id="SUP-FAILURE-OTHER",
+            owner="Codex",
+            reviewer="Codex2",
+            provider="codex",
+            rejected_head="c" * 40,
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        unrelated_event = self._worker_commit_event(
+            task_id="SUP-FAILURE-OTHER",
+            actor="Codex",
+            commit="d" * 40,
+        )
+        target_before = copy.deepcopy(target_record)
+        unrelated_before = copy.deepcopy(unrelated_record)
+        event_before = copy.deepcopy(unrelated_event)
+
+        self.assertIsNone(
+            supervisor.normalize_failure_streak_progress_event(
+                target_record,
+                unrelated_event,
+            )
+        )
+
+        self.assertEqual(target_record, target_before)
+        self.assertEqual(unrelated_record, unrelated_before)
+        self.assertEqual(unrelated_event, event_before)
 
 
 class WorkerReassignmentTests(unittest.TestCase):

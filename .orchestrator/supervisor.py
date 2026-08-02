@@ -21,7 +21,8 @@ from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -6239,11 +6240,16 @@ def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
 FAILURE_STREAK_SCHEMA_VERSION = 3
 FAILURE_STREAK_ABSENT_HEAD = "ABSENT"
 FAILURE_STREAK_GENERATION_PREFIX = "sha256:"
+FAILURE_PROGRESS_SCHEMA_VERSION = 1
 _FAILURE_STREAK_CLASS_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _FAILURE_STREAK_TIMESTAMP_PATTERN = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z"
 )
 _FAILURE_STREAK_GENERATION_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+_FAILURE_PROGRESS_EVENT_ID_PATTERN = re.compile(r"ai-status-event-[0-9a-f]{64}")
+_FAILURE_PROGRESS_EVENT_TIMESTAMP_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z"
+)
 _FAILURE_STREAK_GENERATION_FIELDS = frozenset(
     {
         "schema_version",
@@ -6491,6 +6497,163 @@ def decode_task_failure_streak(record: Any) -> dict[str, Any] | None:
     ):
         return None
     return dict(record)
+
+
+def _failure_progress_event_timestamp(value: Any) -> datetime | None:
+    normalized = _failure_streak_text(value)
+    if (
+        normalized is None
+        or _FAILURE_PROGRESS_EVENT_TIMESTAMP_PATTERN.fullmatch(normalized) is None
+    ):
+        return None
+    timestamp_format = (
+        "%Y-%m-%dT%H:%M:%S.%fZ" if "." in normalized else "%Y-%m-%dT%H:%M:%SZ"
+    )
+    try:
+        return datetime.strptime(normalized, timestamp_format)
+    except ValueError:
+        return None
+
+
+def _canonical_ai_status_event_id(event: dict[str, Any]) -> str | None:
+    event_id = _failure_streak_text(event.get("event_id"))
+    if (
+        event_id is None
+        or _FAILURE_PROGRESS_EVENT_ID_PATTERN.fullmatch(event_id) is None
+    ):
+        return None
+    identity = dict(event)
+    identity.pop("event_id", None)
+    try:
+        encoded = json.dumps(
+            identity,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    expected = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+    return event_id if event_id == expected else None
+
+
+def _failure_progress_generation_id(fields: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(fields),
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return FAILURE_STREAK_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _reviewer_reopen_exact_head(
+    event: dict[str, Any],
+    *,
+    actor: str,
+    event_at: str,
+    rejected_head: str,
+) -> tuple[bool, str]:
+    bridge = event.get("github_review_bridge")
+    if bridge is None:
+        return True, FAILURE_STREAK_ABSENT_HEAD
+    if not isinstance(bridge, dict):
+        return False, FAILURE_STREAK_ABSENT_HEAD
+    head = _failure_streak_text(bridge.get("head_sha"))
+    if (
+        bridge.get("decision") != "reopen"
+        or bridge.get("actor") != actor
+        or bridge.get("recorded_at") != event_at
+        or head is None
+        or re.fullmatch(r"[0-9a-f]{40}", head) is None
+        or head != rejected_head
+    ):
+        return False, FAILURE_STREAK_ABSENT_HEAD
+    return True, head
+
+
+def normalize_failure_streak_progress_event(
+    record: Any,
+    event: Any,
+) -> Mapping[str, Any] | None:
+    """Normalize one governed post-failure activity row without mutating state."""
+    decoded = decode_task_failure_streak(record)
+    if decoded is None or not isinstance(event, dict):
+        return None
+    failure = decoded["generations"][-1]
+    task_id = failure["task_id"]
+    provider = failure["provider"]
+    owner = failure["owner_at_failure"]
+    reviewer = failure["reviewer_at_failure"]
+    rejected_head = failure["rejected_head"]
+    if (
+        owner == reviewer
+        or provider != normalize_agent_id(owner)
+        or re.fullmatch(r"[0-9a-f]{40}", rejected_head) is None
+        or event.get("task_id") != task_id
+    ):
+        return None
+
+    event_type = _failure_streak_text(event.get("type"))
+    event_id = _failure_streak_text(event.get("event_id"))
+    event_at = _failure_streak_text(event.get("ts"))
+    actor = _failure_streak_text(event.get("agent"))
+    event_timestamp = _failure_progress_event_timestamp(event_at)
+    failure_timestamp = _failure_progress_event_timestamp(failure["recorded_at"])
+    if (
+        event_type is None
+        or event_id is None
+        or event_at is None
+        or actor is None
+        or event_timestamp is None
+        or failure_timestamp is None
+        or event_timestamp <= failure_timestamp
+        or "provider" in event
+    ):
+        return None
+
+    exact_head = FAILURE_STREAK_ABSENT_HEAD
+    if event_type == "reopen":
+        if actor != reviewer or _canonical_ai_status_event_id(event) is None:
+            return None
+        binding_valid, exact_head = _reviewer_reopen_exact_head(
+            event,
+            actor=actor,
+            event_at=event_at,
+            rejected_head=rejected_head,
+        )
+        if not binding_valid:
+            return None
+    elif event_type == "worker_commit":
+        commit = _failure_streak_text(event.get("commit"))
+        if (
+            actor != owner
+            or commit is None
+            or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+            or event_id != f"worker-commit-{commit}"
+            or commit == rejected_head
+        ):
+            return None
+        exact_head = commit
+    else:
+        return None
+
+    identity = {
+        "schema_version": FAILURE_PROGRESS_SCHEMA_VERSION,
+        "failure_generation_id": failure["generation_id"],
+        "task_id": task_id,
+        "provider": provider,
+        "event_id": event_id,
+        "event_type": event_type,
+        "event_at": event_at,
+        "actor": actor,
+        "exact_head": exact_head,
+    }
+    generation = {
+        **identity,
+        "generation_id": _failure_progress_generation_id(identity),
+    }
+    return MappingProxyType(generation)
 
 
 def record_task_failure_streak(
