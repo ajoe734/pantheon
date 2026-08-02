@@ -24,7 +24,7 @@
     "policy": "review_before_merge",
     "reviewer": "Human/Ops",
     "pull_request": 4500,
-    "head_before_pr_binding": "74d97f9ecf78e23683b0b2f4c6d48fde53027cfe",
+    "head_before_pr_binding": "b06eb664c538794648f7a8fdfed4865944f03e01",
     "previous_rejected_head": "770dbdafcb3b9ffa966046fe19ce357535acac5c",
     "repair_reason": "three task commit subjects exceeded 72 characters",
     "history_rebuilt": true,
