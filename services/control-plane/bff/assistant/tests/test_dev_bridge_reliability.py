@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import importlib.util
 import json
 import os
@@ -20,6 +21,7 @@ from ..dev_bridge_models import (
     BridgeDispatchRequest,
     BridgeTask,
     DevTaskPacket,
+    MAX_TASKS_PER_PACKET,
     TaskDispatchRecord,
 )
 from ..dev_bridge_signer import (
@@ -153,6 +155,11 @@ def _packet(packet_id: str, *, task_count: int = 1) -> DevTaskPacket:
 
 def _signed(packet_id: str, *, task_count: int = 1) -> DevTaskPacket:
     return sign_packet(_packet(packet_id, task_count=task_count), key_store=KEY_STORE)
+
+
+def test_packet_task_count_is_bounded() -> None:
+    with pytest.raises(ValueError, match="at most 16 items"):
+        _packet("pkt_too_many_tasks", task_count=MAX_TASKS_PER_PACKET + 1)
 
 
 def _fake_repo(tmp_path: Path) -> Path:
@@ -520,13 +527,183 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
     assert readback["status"] == "verified"
     assert readback["taskIds"] == [packet.tasks[0].id]
     final_snapshot = AI_STATUS.load_snapshot(event_log)
-    assert any(
-        task.get("id") == packet.tasks[0].id
+    materialized = next(
+        task
         for task in final_snapshot["state"]["tasks"]
+        if task.get("id") == packet.tasks[0].id
     )
+    assert benchmark.supervisor_module.assistant_dev_bridge_task_is_admitted(
+        config,
+        materialized,
+    ) is True
     assert benchmark.store.sha256_json(
         json.loads(status_path.read_text(encoding="utf-8"))
     ) == final_snapshot["state_sha256"]
+
+
+def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A canonical prefix is inert until the whole signed packet is admitted."""
+
+    benchmark = _load_task_state_latency_benchmark()
+    status_root = tmp_path / "status-root"
+    status_root.mkdir()
+    event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir()
+    initial_state = AI_STATUS.default_state()
+    initial_state["tasks"] = []
+    initial_state["handoffs"] = []
+    initial_state["blockers"] = []
+    initial_state["wave_state"] = {"status": "open"}
+    status_path = status_root / "ai-status.json"
+    status_path.write_text(
+        json.dumps(initial_state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    AI_STATUS.append_state_commit(
+        event_log,
+        initial_state,
+        source="bridge-partial-gate-fixture",
+    )
+    command_binding_fixture = {
+        "command_root": str(REPO_ROOT),
+        "source_sha": _git_stdout(REPO_ROOT, "rev-parse", "HEAD"),
+        "remote": "ajoe734/pantheon",
+        "base_ref": "HEAD",
+    }
+    with patch.object(
+        benchmark,
+        "command_runtime_binding",
+        return_value=command_binding_fixture,
+    ):
+        config, command_binding = benchmark.prepare_full_supervisor_fixture(
+            status_root,
+            event_log,
+            status_path,
+            [],
+        )
+    repository_config = json.loads(
+        (REPO_ROOT / ".orchestrator" / "config.json").read_text(encoding="utf-8")
+    )
+    config["ready_dispatcher"] = copy.deepcopy(repository_config["ready_dispatcher"])
+    config["assistant_dev_bridge"] = {
+        "enabled": True,
+        "max_packets_per_tick": 1,
+    }
+    benchmark.supervisor_module.PLANNING_STATE_FILE = (
+        status_root / ".orchestrator" / "planning-state.json"
+    )
+    runtime_env = {
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "PANTHEON_COMMAND_ROOT": command_binding["command_root"],
+        "PANTHEON_COMMAND_RUNTIME_SHA": command_binding["source_sha"],
+        "PANTHEON_COMMAND_REMOTE": command_binding["remote"],
+        "PANTHEON_COMMAND_BASE_REF": command_binding["base_ref"],
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+    }
+    for name, value in runtime_env.items():
+        monkeypatch.setenv(name, value)
+    for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
+        monkeypatch.delenv(marker, raising=False)
+
+    unsigned_packet = _packet("pkt_full_supervisor_partial_gate", task_count=2)
+    unsigned_packet = unsigned_packet.model_copy(
+        update={
+            "tasks": [
+                task.model_copy(update={"depends_on": []})
+                for task in unsigned_packet.tasks
+            ]
+        }
+    )
+    packet = sign_packet(unsigned_packet, key_store=KEY_STORE)
+    queue_task_packet(packet, repo_root=str(status_root), key_store=KEY_STORE)
+    bff_dir = REPO_ROOT / "services" / "control-plane" / "bff"
+    if str(bff_dir) not in os.sys.path:
+        os.sys.path.insert(0, str(bff_dir))
+    runtime_dispatcher = importlib.import_module("assistant.dev_bridge_dispatcher")
+    real_dispatch = runtime_dispatcher._dispatch_task
+    attempts = 0
+
+    def timeout_second(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        task = args[0]
+        if attempts == 2:
+            return TaskDispatchRecord(
+                taskId=task.id,
+                owner=task.owner,
+                reviewer=task.reviewer,
+                status="retryable",
+                error="ai_status.py assign timed out after 2s",
+            )
+        return real_dispatch(*args, **kwargs)
+
+    with (
+        patch.object(
+            benchmark.supervisor_module,
+            "status_command_runtime_env",
+            return_value=runtime_env,
+        ),
+        patch.object(
+            benchmark.supervisor_module,
+            "weighted_dispatch_agent_ids",
+            return_value=["codex"],
+        ),
+        patch.object(
+            benchmark.supervisor_module,
+            "agent_auto_dispatch_block_reason",
+            return_value=None,
+        ),
+        patch.object(
+            benchmark.supervisor_module,
+            "scan_live_worker_pids_by_agent",
+            return_value={},
+        ),
+        patch.object(
+            benchmark.supervisor_module,
+            "start_worker_for_request",
+            side_effect=AssertionError("unadmitted bridge task reached worker launch"),
+        ),
+        patch.object(
+            runtime_dispatcher,
+            "_dispatch_task",
+            side_effect=timeout_second,
+        ),
+    ):
+        changed = benchmark.supervisor_module.run_once(
+            config,
+            watch=False,
+            quiet=True,
+            once=True,
+        )
+
+    assert changed is True
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    prefix = next(
+        task
+        for task in snapshot["state"]["tasks"]
+        if task.get("id") == packet.tasks[0].id
+    )
+    assert prefix["dev_bridge"]["packet_id"] == packet.packet_id
+    assert dev_bridge_admission.load_admission_record(
+        repo_root=str(status_root),
+        packet_id=packet.packet_id,
+        packet_digest=packet_digest(packet),
+    ) is None
+    eligible_without_bridge = copy.deepcopy(prefix)
+    eligible_without_bridge.pop("dev_bridge")
+    assert benchmark.supervisor_module.task_execution_dispatch_candidate(
+        config,
+        eligible_without_bridge,
+        "Codex",
+        {eligible_without_bridge["id"]: eligible_without_bridge},
+    ) == (benchmark.supervisor_module.REASON_OWNED_READY, 3)
+    assert benchmark.supervisor_module.load_event_queue(config) == []
+    runtime_state = benchmark.supervisor_module.load_runtime_state(config)
+    assert runtime_state.get("workers", {}) == {}
 
 
 def test_activity_log_and_projection_only_dispatch_cannot_create_admission(
@@ -714,6 +891,124 @@ def test_timeout_after_one_task_resumes_exact_packet_without_duplicate_rows(
     materialized_ids = [task["id"] for task in state["tasks"]]
     assert materialized_ids.count(packet.tasks[0].id) == 1
     assert materialized_ids.count(packet.tasks[1].id) == 1
+
+
+def test_timeout_prefix_can_finish_from_archive_without_reusing_task_id(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_timeout_archive_prefix", task_count=2)
+    request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
+    real_dispatch = dev_bridge_dispatcher._dispatch_task
+    attempts = 0
+
+    def timeout_second(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        task = args[0]
+        if attempts == 2:
+            return TaskDispatchRecord(
+                taskId=task.id,
+                owner=task.owner,
+                reviewer=task.reviewer,
+                status="retryable",
+                error="ai_status.py assign timed out after 2s",
+            )
+        return real_dispatch(*args, **kwargs)
+
+    with patch.object(
+        dev_bridge_dispatcher,
+        "_dispatch_task",
+        side_effect=timeout_second,
+    ):
+        first = dispatch_task_packet(request, key_store=KEY_STORE)
+
+    assert first.retryable is True
+    state_path = repo_root / "ai-status.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    prefix = next(item for item in state["tasks"] if item["id"] == packet.tasks[0].id)
+    state["tasks"] = [item for item in state["tasks"] if item["id"] != prefix["id"]]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    archive_path = repo_root / "ai-task-archive" / "tasks" / f"{prefix['id']}.json"
+    archive_path.parent.mkdir(parents=True)
+    archive_path.write_text(
+        json.dumps({"task": {**prefix, "status": "done"}}),
+        encoding="utf-8",
+    )
+    calls_before_retry = len(
+        (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+
+    recovered = dispatch_task_packet(request, key_store=KEY_STORE)
+
+    assert recovered.errors == []
+    assert recovered.admission_status == "admitted"
+    calls = [
+        json.loads(line)
+        for line in (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    retry_assigns = [
+        call
+        for call in calls[calls_before_retry:]
+        if call.get("argv", [None])[0] == "assign"
+    ]
+    assert [call["argv"][1] for call in retry_assigns] == [packet.tasks[1].id]
+    assert json.loads(archive_path.read_text(encoding="utf-8"))["task"] == {
+        **prefix,
+        "status": "done",
+    }
+
+
+def test_live_dispatch_fence_survives_expired_json_claim(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_live_fence_past_ttl")
+    request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
+    entered = threading.Event()
+    release = threading.Event()
+    real_dispatch = dev_bridge_dispatcher._dispatch_task
+    dispatch_calls = 0
+    call_lock = threading.Lock()
+
+    def delayed_dispatch(*args, **kwargs):
+        nonlocal dispatch_calls
+        with call_lock:
+            dispatch_calls += 1
+        entered.set()
+        assert release.wait(5)
+        return real_dispatch(*args, **kwargs)
+
+    with (
+        patch.object(
+            dev_bridge_dispatcher,
+            "_dispatch_task",
+            side_effect=delayed_dispatch,
+        ),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        original = executor.submit(dispatch_task_packet, request, key_store=KEY_STORE)
+        assert entered.wait(5)
+        claim_path = dev_bridge_dispatcher._dispatch_claim_path(
+            str(repo_root),
+            packet.packet_id,
+        )
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["expires_at"] = "2026-08-01T00:00:00Z"
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+        replacement = executor.submit(
+            dispatch_task_packet,
+            request,
+            key_store=KEY_STORE,
+        ).result(timeout=5)
+        assert replacement.retryable is True
+        assert replacement.admission_status == "dispatch_fence_retryable"
+        release.set()
+        admitted = original.result(timeout=5)
+
+    assert dispatch_calls == 1
+    assert admitted.admission_status == "admitted"
 
 
 def test_stale_dispatch_claim_recovers_after_crashed_claimant(
@@ -1330,6 +1625,50 @@ def test_concurrent_drainers_apply_one_processing_claim(tmp_path: Path) -> None:
     inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
     assert (inbox / "processed" / f"{packet.packet_id}.json").is_file()
     assert not (inbox / "processing" / f"{packet.packet_id}.json").exists()
+
+
+def test_live_processing_fence_survives_expired_json_claim(tmp_path: Path) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_live_processing_fence")
+    queue_task_packet(packet, repo_root=str(repo_root), key_store=KEY_STORE)
+    entered_dispatch = threading.Event()
+    release_dispatch = threading.Event()
+    real_dispatch = dev_bridge_inbox.dispatch_task_packet
+
+    def delayed_dispatch(*args, **kwargs):
+        entered_dispatch.set()
+        assert release_dispatch.wait(5)
+        return real_dispatch(*args, **kwargs)
+
+    with (
+        patch.object(
+            dev_bridge_inbox,
+            "dispatch_task_packet",
+            side_effect=delayed_dispatch,
+        ),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        original = executor.submit(
+            drain_task_packet_inbox,
+            repo_root=str(repo_root),
+        )
+        assert entered_dispatch.wait(5)
+        inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
+        claim_path = inbox / "claims" / f"{packet.packet_id}.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["expires_at_epoch"] = 0
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+        replacement = executor.submit(
+            drain_task_packet_inbox,
+            repo_root=str(repo_root),
+        ).result(timeout=5)
+        assert replacement["processedCount"] == 0
+        assert replacement["errorCount"] == 0
+        release_dispatch.set()
+        completed = original.result(timeout=5)
+
+    assert completed["processedCount"] == 1
 
 
 def test_existing_receipt_does_not_suppress_exact_dispatch(tmp_path: Path) -> None:

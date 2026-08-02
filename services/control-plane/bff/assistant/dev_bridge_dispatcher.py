@@ -20,11 +20,13 @@ service path or a repo-local script, never from a raw HTTP request handler.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import subprocess
 import sys
+import stat
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -132,6 +134,57 @@ def _dispatch_claim_path(repo_root: str, packet_id: str) -> Path:
         / "assistant-dev-packet-claims"
         / f"{identity}.json"
     )
+
+
+def _dispatch_fence_path(repo_root: str, packet_id: str) -> Path:
+    identity = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+    return (
+        Path(repo_root)
+        / ".orchestrator"
+        / "assistant-dev-packet-claims"
+        / f"{identity}.lock"
+    )
+
+
+def _try_acquire_dispatch_fence(repo_root: str, packet_id: str) -> int | None:
+    """Hold a crash-released per-packet OS fence across governed work.
+
+    JSON claim expiry is recovery metadata, not permission to overlap a live
+    claimant.  The fence is not used by ai_status and therefore cannot recreate
+    the parent/child lock cycle repaired by this task.
+    """
+
+    path = _dispatch_fence_path(repo_root, packet_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ValueError(f"Bridge dispatch fence is unsafe: {path}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Bridge dispatch fence is not a regular file: {path}")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return None
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _release_dispatch_fence(descriptor: int) -> None:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
@@ -933,6 +986,30 @@ def _dispatch_task(
     if dry_run:
         return record
 
+    # A previous exact attempt may have materialised this row before a later
+    # task timed out.  It may also have completed and moved to the canonical
+    # archive before packet retry.  Validate that immutable signed provenance
+    # and treat it as the successful idempotent prefix; invoking `assign` would
+    # trip the archived-id reuse guard and prevent the remaining tasks from
+    # ever reaching admission.
+    try:
+        existing_candidates = _materialized_task_candidates(
+            repo_root=repo_root,
+            task_id=task.id,
+        )
+        for candidate in existing_candidates:
+            _validate_materialized_task_candidate(packet, task, candidate)
+    except OSError as exc:
+        record.status = "retryable"
+        record.error = f"existing bridge task readback unavailable: {exc}"
+        return record
+    except ValueError as exc:
+        record.status = "error"
+        record.error = str(exc)
+        return record
+    if existing_candidates:
+        return record
+
     try:
         ai_status, status_env, governed = _status_command_context(
             repo_root,
@@ -1104,7 +1181,7 @@ def _replay_dispatch_result(
     )
 
 
-def dispatch_task_packet(
+def _dispatch_task_packet_under_fence(
     request: BridgeDispatchRequest,
     *,
     key_store: Optional[Dict[str, bytes]] = None,
@@ -1419,3 +1496,69 @@ def dispatch_task_packet(
         retryable=retryable,
         errors=errors,
     )
+
+
+def dispatch_task_packet(
+    request: BridgeDispatchRequest,
+    *,
+    key_store: Optional[Dict[str, bytes]] = None,
+    runtime_env: Optional[Mapping[str, str]] = None,
+) -> BridgeDispatchResult:
+    """Fence one verified packet before entering the off-lock dispatcher.
+
+    A JSON claim may expire for crash recovery, but a replacement must never
+    overlap an original claimant that is still executing.  `flock` releases on
+    process death and remains held across assignment, readback, and admission;
+    the governed child never opens this fence.
+    """
+
+    packet = request.packet
+    repo_root = request.repo_root or _find_repo_root()
+    if request.dry_run:
+        return _dispatch_task_packet_under_fence(
+            request,
+            key_store=key_store,
+            runtime_env=runtime_env,
+        )
+
+    verify_packet(packet, key_store=key_store)
+    violations = _check_constraints(packet)
+    if violations:
+        raise ValueError("Packet constraint violation: " + "; ".join(violations))
+
+    descriptor = _try_acquire_dispatch_fence(repo_root, packet.packet_id)
+    if descriptor is None:
+        dispatched_at = _now()
+        audit_refs = _audit_refs(packet, dispatched_at)
+        audit_refs["dispatchFence"] = {
+            "state": "busy",
+            "path": str(_dispatch_fence_path(repo_root, packet.packet_id)),
+        }
+        return BridgeDispatchResult(
+            packetId=packet.packet_id,
+            dispatchedAt=dispatched_at,
+            taskRecords=[
+                TaskDispatchRecord(
+                    taskId=task.id,
+                    owner=task.owner,
+                    reviewer=task.reviewer,
+                    status="already_dispatched",
+                )
+                for task in packet.tasks
+            ],
+            replayRejected=True,
+            dryRun=False,
+            auditRefs=audit_refs,
+            admissionRecord=None,
+            admissionStatus="dispatch_fence_retryable",
+            retryable=True,
+            errors=["packet dispatch is fenced by a live claimant"],
+        )
+    try:
+        return _dispatch_task_packet_under_fence(
+            request,
+            key_store=key_store,
+            runtime_env=runtime_env,
+        )
+    finally:
+        _release_dispatch_fence(descriptor)

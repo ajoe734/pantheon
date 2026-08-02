@@ -139,6 +139,43 @@ def _claim_path(inbox: Path, packet_path: Path) -> Path:
     return inbox / "claims" / packet_path.name
 
 
+def _processing_fence_path(inbox: Path, packet_path: Path) -> Path:
+    return inbox / "claims" / f"{packet_path.name}.lock"
+
+
+def _try_acquire_processing_fence(inbox: Path, packet_path: Path) -> int | None:
+    """Keep an alive drainer authoritative even after JSON claim expiry."""
+
+    path = _processing_fence_path(inbox, packet_path)
+    _ensure_directory(path.parent)
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return None
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _release_processing_fence(descriptor: int | None) -> None:
+    if descriptor is None:
+        return
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def _retry_path(inbox: Path, packet_path: Path) -> Path:
     return inbox / "retries" / packet_path.name
 
@@ -379,7 +416,7 @@ def _receipt_target_dir(inbox: Path, receipt: Mapping[str, Any]) -> Path:
 def _claim_processing_files(
     inbox: Path,
     max_items: Optional[int],
-) -> list[tuple[Path, str]]:
+) -> list[tuple[Path, str, int]]:
     """Claim processing items briefly without holding a lock during dispatch."""
 
     with _file_lock(inbox / ".queue.lock"):
@@ -387,59 +424,68 @@ def _claim_processing_files(
         pending = list(_pending_files(inbox))
         for path in pending:
             processing.append(_move(path, inbox / "processing"))
-        claims: list[tuple[Path, str]] = []
+        claims: list[tuple[Path, str, int]] = []
         now = time.time()
         for path in processing:
             if max_items is not None and len(claims) >= max_items:
                 break
+            fence = _try_acquire_processing_fence(inbox, path)
+            if fence is None:
+                continue
+            claimed = False
             try:
-                _packet, identity = _packet_identity(path)
-            except (OSError, ValueError, json.JSONDecodeError):
-                # Invalid packet content is still claimed so the ordinary
-                # drain error path can durably fail it instead of hot-looping.
-                identity = {
-                    "packet_id": path.stem,
-                    "packet_digest": "invalid",
-                }
-            retry_path = _retry_path(inbox, path)
-            try:
-                retry = _read_optional_json(retry_path)
-            except (OSError, ValueError, json.JSONDecodeError):
-                retry = None
-            if retry is not None:
-                # Unsigned retry metadata is advisory only.  A forged or stale
-                # identity cannot suppress a valid signed packet.
-                if _identity_matches(retry, identity):
-                    next_attempt = _epoch(retry.get("next_attempt_epoch"))
-                    if next_attempt is not None and next_attempt > now:
+                try:
+                    _packet, identity = _packet_identity(path)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    # Invalid packet content is still claimed so the ordinary
+                    # drain error path can durably fail it instead of hot-looping.
+                    identity = {
+                        "packet_id": path.stem,
+                        "packet_digest": "invalid",
+                    }
+                retry_path = _retry_path(inbox, path)
+                try:
+                    retry = _read_optional_json(retry_path)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    retry = None
+                if retry is not None:
+                    # Unsigned retry metadata is advisory only.  A forged or stale
+                    # identity cannot suppress a valid signed packet.
+                    if _identity_matches(retry, identity):
+                        next_attempt = _epoch(retry.get("next_attempt_epoch"))
+                        if next_attempt is not None and next_attempt > now:
+                            continue
+                    else:
+                        retry_path.unlink(missing_ok=True)
+
+                claim_path = _claim_path(inbox, path)
+                try:
+                    existing = _read_optional_json(claim_path)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    existing = None
+                if existing is not None and _identity_matches(existing, identity):
+                    expires_at = _epoch(existing.get("expires_at_epoch"))
+                    if expires_at is not None and expires_at > now:
                         continue
-                else:
-                    retry_path.unlink(missing_ok=True)
 
-            claim_path = _claim_path(inbox, path)
-            try:
-                existing = _read_optional_json(claim_path)
-            except (OSError, ValueError, json.JSONDecodeError):
-                existing = None
-            if existing is not None and _identity_matches(existing, identity):
-                expires_at = _epoch(existing.get("expires_at_epoch"))
-                if expires_at is not None and expires_at > now:
-                    continue
-
-            claim_token = os.urandom(24).hex()
-            _write_json_atomic(
-                claim_path,
-                {
-                    "schema": PROCESSING_CLAIM_SCHEMA,
-                    **identity,
-                    "claim_token": claim_token,
-                    "claimed_at": _now(),
-                    "claimed_at_epoch": now,
-                    "expires_at_epoch": now + PROCESSING_CLAIM_TTL_SECONDS,
-                    "owner_pid": os.getpid(),
-                },
-            )
-            claims.append((path, claim_token))
+                claim_token = os.urandom(24).hex()
+                _write_json_atomic(
+                    claim_path,
+                    {
+                        "schema": PROCESSING_CLAIM_SCHEMA,
+                        **identity,
+                        "claim_token": claim_token,
+                        "claimed_at": _now(),
+                        "claimed_at_epoch": now,
+                        "expires_at_epoch": now + PROCESSING_CLAIM_TTL_SECONDS,
+                        "owner_pid": os.getpid(),
+                    },
+                )
+                claims.append((path, claim_token, fence))
+                claimed = True
+            finally:
+                if not claimed:
+                    _release_processing_fence(fence)
         return claims
 
 
@@ -463,14 +509,14 @@ def drain_task_packet_inbox(
     # runs.  Exact processing claims keep concurrent drainers from applying the
     # same item, and expire so a crashed drainer is recoverable.
     claimed_files = (
-        [(path, "") for path in list(_pending_files(inbox))]
+        [(path, "", None) for path in list(_pending_files(inbox))]
         if dry_run
         else _claim_processing_files(inbox, max_items)
     )
     if dry_run and max_items is not None:
         claimed_files = claimed_files[:max_items]
 
-    for path, claim_token in claimed_files:
+    for path, claim_token, processing_fence in claimed_files:
         receipt_path = inbox / "receipts" / path.name
         existing_receipt = not dry_run and receipt_path.exists()
         identity: Dict[str, str] | None = None
@@ -520,6 +566,11 @@ def drain_task_packet_inbox(
         except Exception as exc:
             receipt["status"] = "error"
             receipt["error"] = str(exc)
+        finally:
+            # Admission/replay is now terminal or retry metadata will retain
+            # the item.  Release the OS fence before local receipt I/O; the
+            # dispatcher's own packet fence covered every canonical mutation.
+            _release_processing_fence(processing_fence)
 
         if dry_run:
             (errors if receipt["status"] == "error" else processed).append(receipt)
