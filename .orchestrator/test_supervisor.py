@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -14147,6 +14148,554 @@ class FailureStreakRecoveryDecisionV2Tests(unittest.TestCase):
                 decision = self._decision(provider_gate={**baseline, **update})
                 self.assertFalse(decision["allowed"])
                 self.assertEqual(decision["reason_code"], reason)
+
+
+class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
+    task_id = "L12-VERIFY-RUNTIME-001"
+    owner = "Antigravity"
+    reviewer = "Human/Ops"
+    provider = "antigravity"
+    rejected_head = "a" * 40
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.status_path = self.root / "ai-status.json"
+        self.activity_path = self.root / "activity-log.jsonl"
+        self.event_queue_path = self.root / "event-queue.jsonl"
+        self.state_path = self.root / "state.json"
+        self.task = {
+            "id": self.task_id,
+            "status": "in_progress",
+            "owner": self.owner,
+            "reviewer": self.reviewer,
+            "depends_on": [],
+            "last_update": "2026-08-02T01:06:00Z",
+            "artifacts": [".orchestrator/supervisor.py"],
+            "next": "Continue the independently reopened owner run.",
+        }
+        self.status = {"tasks": [self.task]}
+        self.status_path.write_text(json.dumps(self.status) + "\n", encoding="utf-8")
+        self.activity_path.write_text("", encoding="utf-8")
+        self.event_queue_path.write_text("", encoding="utf-8")
+        self.state_path.write_text("{}\n", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "status_file": str(self.status_path),
+                "activity_log": str(self.activity_path),
+                "event_queue": str(self.event_queue_path),
+                "state_file": str(self.state_path),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "started",
+                    "waiting_approval",
+                    "manual_pending",
+                    "retry_backoff",
+                    "suspended_approval",
+                    "stalled",
+                    "fallback",
+                ],
+                "owned_statuses": ["in_progress", "todo"],
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "dependency_done_statuses": ["done"],
+                "max_dispatches_per_tick": 1,
+                "worker_os_duplicate_guard": False,
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "eligible_statuses": [
+                    "todo",
+                    "in_progress",
+                    "review",
+                    "review_approved",
+                ],
+                "owner_fallbacks": {self.owner: ["Codex"]},
+                "reviewer_fallbacks": {self.owner: ["Codex2"]},
+            },
+            "chair_review": {
+                "enabled": True,
+                "reassignment_actions_enabled": True,
+                "failure_loop_reassignment_threshold": 2,
+                "candidates": ["Codex"],
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": self.owner,
+                    "provider": self.provider,
+                },
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                },
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                },
+                "human_ops": {
+                    "id": "human_ops",
+                    "display_name": self.reviewer,
+                    "provider": "human_ops",
+                },
+            },
+            "providers": {self.provider: {"delivery_mode": "antigravity"}},
+        }
+        self.state: dict = {"queue": {"events": {}}, "workers": {}}
+        self.queued_events: list[dict] = []
+        self._record_failure(
+            run_id="antigravity-failed-run-1",
+            reason="first generic exit",
+            recorded_at="2026-08-02T01:00:00.000000Z",
+        )
+        self._record_failure(
+            run_id="antigravity-failed-run-2",
+            reason="second generic exit",
+            recorded_at="2026-08-02T01:04:00.000000Z",
+        )
+        self._append_reopen("2026-08-02T01:05:00Z", "Reviewer authorizes one bounded retry.")
+
+    def _worker(self, *, task_id: str, run_id: str, owner: str, reviewer: str) -> dict:
+        return {
+            "task_id": task_id,
+            "provider": supervisor.normalize_agent_id(owner),
+            "agent_id": supervisor.normalize_agent_id(owner),
+            "run_id": run_id,
+            "request_snapshot": {
+                "task_id": task_id,
+                "metadata": {
+                    "logical_agent_id": supervisor.normalize_agent_id(owner),
+                    "task": {
+                        "id": task_id,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                    },
+                },
+            },
+        }
+
+    def _record_failure(
+        self,
+        *,
+        run_id: str,
+        reason: str,
+        recorded_at: str,
+        task_id: str | None = None,
+        owner: str | None = None,
+        reviewer: str | None = None,
+    ) -> int:
+        actual_task_id = task_id or self.task_id
+        actual_owner = owner or self.owner
+        actual_reviewer = reviewer or self.reviewer
+        with mock.patch.object(
+            supervisor,
+            "_failure_streak_timestamp",
+            return_value=recorded_at,
+        ):
+            return supervisor.record_task_failure_streak(
+                self.state,
+                self._worker(
+                    task_id=actual_task_id,
+                    run_id=run_id,
+                    owner=actual_owner,
+                    reviewer=actual_reviewer,
+                ),
+                reason,
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=f".orchestrator/failure-evidence/{run_id}.json",
+                rejected_head=self.rejected_head,
+            )
+
+    def _append_activity(self, event: dict) -> None:
+        with self.activity_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _append_reopen(self, ts: str, message: str) -> dict:
+        event = {
+            "ts": ts,
+            "agent": self.reviewer,
+            "type": "reopen",
+            "task_id": self.task_id,
+            "message": message,
+        }
+        encoded = json.dumps(
+            event,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        event["event_id"] = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+        self._append_activity(event)
+        return event
+
+    def _fake_queue(self, _config: dict, event: dict) -> bool:
+        queue_event = {
+            "event_id": f"evt-recovery-{len(self.queued_events) + 1}",
+            "created_at": "2026-08-02T01:06:30Z",
+            "event_key": event.get("key"),
+            "task_id": event.get("task_id"),
+            "target_agent": self.provider,
+            "target_display_name": self.owner,
+            "provider": self.provider,
+            "reason": event.get("reason"),
+            "metadata": {"task": copy.deepcopy(event.get("task") or {})},
+        }
+        self.queued_events.append(queue_event)
+        return True
+
+    def _decision(self, state: dict | None = None) -> Mapping[str, object] | None:
+        return supervisor.failure_streak_recovery_decision_for_task(
+            self.config,
+            state or self.state,
+            self.task,
+            self.owner,
+        )
+
+    def _dispatch(self, *, queue_side_effect: object | None = None) -> tuple[bool, mock.Mock]:
+        queue_effect = queue_side_effect or self._fake_queue
+        queue_mock = mock.Mock(side_effect=queue_effect)
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(
+                supervisor,
+                "load_event_queue",
+                side_effect=lambda _config: copy.deepcopy(self.queued_events),
+            ),
+            mock.patch.object(supervisor, "queue_delivery_event", queue_mock),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-02T01:06:30Z"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(self.config, self.state)
+        return changed, queue_mock
+
+    def test_observed_incident_consumes_once_and_reopens_normal_gates(self) -> None:
+        decision = self._decision()
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(
+            supervisor.failure_loop_task_agents_for_task_map(
+                self.config,
+                self.state,
+                {self.task_id: self.task},
+            ),
+            set(),
+        )
+        self.assertEqual(
+            supervisor.chair_review_failure_loop_details(self.config, self.state),
+            [],
+        )
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            self.assertFalse(
+                supervisor.maybe_reassign_tasks_from_failure_streaks(
+                    self.config,
+                    self.state,
+                )
+            )
+        persist.assert_not_called()
+
+        changed, queue_mock = self._dispatch()
+
+        self.assertTrue(changed)
+        queue_mock.assert_called_once()
+        self.assertEqual(len(self.queued_events), 1)
+        consumptions = self.state["provider_guardrails"][
+            "failure_recovery_consumptions"
+        ]
+        self.assertEqual(len(consumptions), 1)
+        token, consumption = next(iter(consumptions.items()))
+        self.assertRegex(token, r"^failure-recovery:[0-9a-f]{64}$")
+        self.assertEqual(consumption["reservation_status"], "queued")
+        self.assertEqual(consumption["queue_event_id"], "evt-recovery-1")
+        self.assertEqual(consumption["owner_at_failure"], self.owner)
+        self.assertEqual(consumption["prior_count"], 2)
+        self.assertEqual(consumption["prior_kind"], "generic_exit")
+        self.assertEqual(
+            self.state["provider_guardrails"]["task_failure_streaks"][
+                f"{self.task_id}:{self.provider}"
+            ]["count"],
+            2,
+        )
+
+        self.queued_events.clear()
+        replay = self._decision()
+        self.assertIsNotNone(replay)
+        assert replay is not None
+        self.assertFalse(replay["allowed"])
+        self.assertEqual(replay["reason_code"], "progress_generation_already_consumed")
+        self.assertEqual(
+            supervisor.failure_loop_task_agents_for_task_map(
+                self.config,
+                self.state,
+                {self.task_id: self.task},
+            ),
+            {(self.task_id, self.owner)},
+        )
+        self.assertEqual(
+            supervisor.chair_review_failure_loop_details(self.config, self.state)[0][
+                "task_id"
+            ],
+            self.task_id,
+        )
+        changed, second_queue = self._dispatch()
+        self.assertFalse(changed)
+        second_queue.assert_not_called()
+
+        audits = [
+            event
+            for event in common.load_jsonl(self.activity_path)
+            if str(event.get("type") or "").startswith("failure_streak_recovery_")
+        ]
+        self.assertEqual(
+            [event["type"] for event in audits],
+            [
+                "failure_streak_recovery_consumed",
+                "failure_streak_recovery_queued",
+            ],
+        )
+        required = {
+            "task_id",
+            "provider",
+            "owner_at_failure",
+            "prior_count",
+            "prior_kind",
+            "prior_timestamp",
+            "qualifying_progress_event",
+            "qualifying_progress_head",
+            "decision_reason",
+            "consumed_token",
+            "reservation_status",
+            "queue_event_key",
+            "queue_event_id",
+            "worker_run_id",
+        }
+        self.assertTrue(required.issubset(audits[-1]))
+        self.assertNotIn("raw_ref", audits[-1])
+        self.assertNotIn("last_reason", audits[-1])
+
+    def test_concurrent_double_consumption_queues_exactly_once(self) -> None:
+        resolver = supervisor.task_resolver_for_config(
+            self.config,
+            {self.task_id: self.task},
+        )
+        base_event = supervisor.build_dispatch_event(
+            self.task,
+            self.owner,
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            resolver,
+        )
+
+        def attempt(_index: int) -> bool:
+            return supervisor.queue_failure_streak_recovery_dispatch(
+                self.config,
+                self.state,
+                self.task,
+                self.owner,
+                copy.deepcopy(base_event),
+            )
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_event_queue",
+                side_effect=lambda _config: copy.deepcopy(self.queued_events),
+            ),
+            mock.patch.object(supervisor, "queue_delivery_event", side_effect=self._fake_queue),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-02T01:06:30Z"),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            results = list(executor.map(attempt, range(2)))
+
+        self.assertEqual(sorted(results), [False, True])
+        self.assertEqual(len(self.queued_events), 1)
+        self.assertEqual(
+            len(
+                self.state["provider_guardrails"][
+                    "failure_recovery_consumptions"
+                ]
+            ),
+            1,
+        )
+
+    def test_queue_failure_consumes_generation_fail_closed(self) -> None:
+        changed, queue_mock = self._dispatch(queue_side_effect=lambda *_args: False)
+
+        self.assertTrue(changed)
+        queue_mock.assert_called_once()
+        consumption = next(
+            iter(
+                self.state["provider_guardrails"][
+                    "failure_recovery_consumptions"
+                ].values()
+            )
+        )
+        self.assertEqual(consumption["reservation_status"], "queue_failed")
+        self.assertEqual(consumption["failure_code"], "queue_rejected")
+        replay = self._decision()
+        self.assertIsNotNone(replay)
+        assert replay is not None
+        self.assertEqual(replay["reason_code"], "progress_generation_already_consumed")
+
+        changed, second_queue = self._dispatch()
+        self.assertFalse(changed)
+        second_queue.assert_not_called()
+
+    def test_worker_start_binds_run_without_clearing_streak(self) -> None:
+        changed, _queue_mock = self._dispatch()
+        self.assertTrue(changed)
+        queued_event = self.queued_events[0]
+        # Simulate a supervisor crash after the durable queue/audit append but
+        # before the in-memory runtime state reaches its ordinary cycle save.
+        self.state["provider_guardrails"]["failure_recovery_consumptions"] = {}
+
+        recorded = supervisor.record_failure_streak_recovery_worker_started(
+            self.config,
+            self.state,
+            queued_event,
+            queue_event_id=queued_event["event_id"],
+            worker_run_id="antigravity-recovery-run-1",
+        )
+
+        self.assertTrue(recorded)
+        consumption = next(
+            iter(
+                self.state["provider_guardrails"][
+                    "failure_recovery_consumptions"
+                ].values()
+            )
+        )
+        self.assertEqual(consumption["reservation_status"], "worker_started")
+        self.assertEqual(consumption["worker_run_id"], "antigravity-recovery-run-1")
+        self.assertEqual(
+            self.state["provider_guardrails"]["task_failure_streaks"][
+                f"{self.task_id}:{self.provider}"
+            ]["count"],
+            2,
+        )
+        self.assertFalse(
+            supervisor.record_failure_streak_recovery_worker_started(
+                self.config,
+                self.state,
+                queued_event,
+                queue_event_id=queued_event["event_id"],
+                worker_run_id="antigravity-recovery-run-1",
+            )
+        )
+
+    def test_subsequent_failure_requires_newer_reviewer_generation(self) -> None:
+        unrelated_task = "UNRELATED-FAILURE-STREAK"
+        self._record_failure(
+            task_id=unrelated_task,
+            owner="Codex",
+            reviewer="Codex2",
+            run_id="codex-unrelated-run",
+            reason="unrelated generic exit",
+            recorded_at="2026-08-02T01:02:00.000000Z",
+        )
+        unrelated_before = copy.deepcopy(
+            self.state["provider_guardrails"]["task_failure_streaks"][
+                f"{unrelated_task}:codex"
+            ]
+        )
+        changed, _queue_mock = self._dispatch()
+        self.assertTrue(changed)
+        first_token = next(
+            iter(
+                self.state["provider_guardrails"][
+                    "failure_recovery_consumptions"
+                ]
+            )
+        )
+        self.queued_events.clear()
+
+        self.assertEqual(
+            self._record_failure(
+                run_id="antigravity-recovery-run-1",
+                reason="recovered worker exited without new governed progress",
+                recorded_at="2026-08-02T01:10:00.000000Z",
+            ),
+            3,
+        )
+        stale = self._decision()
+        self.assertIsNotNone(stale)
+        assert stale is not None
+        self.assertFalse(stale["allowed"])
+        self.assertEqual(stale["reason_code"], "invalid_progress_generation")
+        self.assertEqual(
+            self.state["provider_guardrails"]["task_failure_streaks"][
+                f"{self.task_id}:{self.provider}"
+            ]["count"],
+            3,
+        )
+
+        self._append_reopen(
+            "2026-08-02T01:15:00Z",
+            "Reviewer independently authorizes the newer failure generation.",
+        )
+        newer = self._decision()
+        self.assertIsNotNone(newer)
+        assert newer is not None
+        self.assertTrue(newer["allowed"])
+        self.assertNotEqual(newer["proposed_consumption_token"], first_token)
+
+        changed, _second_queue = self._dispatch()
+        self.assertTrue(changed)
+        self.assertEqual(
+            len(
+                self.state["provider_guardrails"][
+                    "failure_recovery_consumptions"
+                ]
+            ),
+            2,
+        )
+        self.assertEqual(
+            self.state["provider_guardrails"]["task_failure_streaks"][
+                f"{unrelated_task}:codex"
+            ],
+            unrelated_before,
+        )
+
+    def test_integration_denies_active_occupancy_and_provider_pause(self) -> None:
+        active_state = copy.deepcopy(self.state)
+        active_state["workers"]["active-run"] = {
+            "run_id": "active-run",
+            "task_id": self.task_id,
+            "status": "running",
+        }
+        active = self._decision(active_state)
+        self.assertIsNotNone(active)
+        assert active is not None
+        self.assertEqual(active["reason_code"], "active_worker")
+
+        paused_state = copy.deepcopy(self.state)
+        paused_state["provider_guardrails"]["dispatch_pauses"] = {
+            self.provider: {
+                "provider": self.provider,
+                "pause_kind": "auth",
+                "failure_kind": "auth",
+                "blocked_until": "9999-12-31T23:59:59Z",
+            }
+        }
+        paused = self._decision(paused_state)
+        self.assertIsNotNone(paused)
+        assert paused is not None
+        self.assertFalse(paused["allowed"])
+        self.assertIn(
+            paused["reason_code"],
+            {"provider_unavailable", "provider_auth_paused"},
+        )
 
 
 class WorkerReassignmentTests(unittest.TestCase):
