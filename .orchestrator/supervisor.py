@@ -12249,12 +12249,30 @@ def resume_claude_worker(
         heartbeat_path=runtime_paths["heartbeat_path"],
         status_path=runtime_paths["status_path"],
     )
+    resumed_pid = process.pid
+    resumed_pid_start_ticks = worker_pid_start_ticks(resumed_pid)
+    resumed_process_generation = (
+        worker_process_generation_id(
+            task_id=str(worker.get("task_id") or ""),
+            worker_run_id=str(worker.get("run_id") or ""),
+            queue_event_id=str(worker.get("queue_event_id") or ""),
+            pid=resumed_pid,
+            pid_start_ticks=resumed_pid_start_ticks,
+        )
+        if worker.get("task_id")
+        and worker.get("run_id")
+        and worker.get("queue_event_id")
+        and resumed_pid_start_ticks is not None
+        else None
+    )
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])
     now_dt = datetime.now(timezone.utc)
     worker["previous_log_paths"] = previous_logs
-    worker["pid"] = process.pid
+    worker["pid"] = resumed_pid
+    worker["pid_start_ticks"] = resumed_pid_start_ticks
+    worker["process_generation"] = resumed_process_generation
     worker["status"] = "running"
     worker["deferred_action"] = None
     worker["last_event_at"] = _isoformat_utc(now_dt)
@@ -12277,7 +12295,9 @@ def resume_claude_worker(
     return {
         "command": command,
         "log_path": str(log_path),
-        "pid": process.pid,
+        "pid": resumed_pid,
+        "pid_start_ticks": resumed_pid_start_ticks,
+        "process_generation": resumed_process_generation,
         "allowed_tools": allowed_tools,
     }
 
@@ -12488,6 +12508,9 @@ def poll_worker_approval_stage(
                         "approval_id": latest.get("approval_id"),
                         "command": resumed.get("command") if resumed else None,
                         "log_path": resumed.get("log_path") if resumed else None,
+                        "pid": resumed.get("pid") if resumed else None,
+                        "pid_start_ticks": resumed.get("pid_start_ticks") if resumed else None,
+                        "process_generation": resumed.get("process_generation") if resumed else None,
                         "allowed_tools": resumed.get("allowed_tools") if resumed else None,
                     },
                 )

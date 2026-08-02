@@ -1,7 +1,7 @@
 # SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802 evidence
 
-Owner: Codex2 · Canonical reviewer: Codex · Independent exact-head gate:
-Human/Ops · Status: **review pending**
+Owner: Codex2 · Canonical reviewer: Human/Ops · Status: **changes requested
+on prior head; corrected head pending re-review**
 
 ## Result
 
@@ -13,10 +13,30 @@ existing eligible priority-preemption path can still terminate work, but only
 after the worker's full task/run/queue/PID/starttime process generation is
 validated.
 
+Approval resume is now covered by the same contract. When a resumed Claude
+process replaces the suspended worker PID, the supervisor reads the new Linux
+starttime, recomputes the task/run/queue/PID/starttime generation, and publishes
+that refreshed identity in both worker state and the `worker_resumed` audit.
+
 `ai_status.py` now attaches the same exact worker-lease identity to canonical
 status-command audit events. This makes the execution producer, reviewer
 provenance, canonical lifecycle transition, and supervisor lease decision
 separately inspectable without copying runtime-only fields into the task row.
+
+## Governed owner/reviewer provenance
+
+The task began with owner Codex and reviewer Human/Ops. Human/Ops approved old
+head `7b268b468ca9` at `13:10:20Z`, then revoked that decision at `13:12:14Z`
+after reviewer fallback drift. A task-scoped Codex2 review rejected that same
+head at `13:38:55Z` for the stale resume generation and inconsistent evidence
+provenance. After corrective PR #4515 merged, Human/Ops governed assignment
+event `ai-status-event-23fe9f2a...` bound the current owner/reviewer pair as
+Codex2/Human/Ops, and Human/Ops reopened the task at `14:12:05Z` with the exact
+correction list recorded in `evidence.json`.
+
+Codex2 is only the task-scoped owner/quota fallback. Codex and Codex2 remain
+distinct configured account and quota identities; no reviewer, account, quota,
+or provider policy is changed by this task.
 
 ## Incident reproduction
 
@@ -55,6 +75,9 @@ healthy process lease.
 - Under runtime admission, termination is deferred until lock release. The
   worker stays nonterminal until identity-bound confirmation runs outside the
   lock, and the deferred decision has its own audit event.
+- A resumed worker replaces all three mutable process fields together: PID,
+  PID starttime, and process-generation digest. Both supervisor identity
+  validation and ai-status command-lease validation cover the replacement.
 
 ## Scope boundary
 
@@ -72,8 +95,10 @@ mutual-review restriction.
 | Focused supervisor active-lease matrix | 13 passed, 513 deselected, 2 subtests |
 | Focused ai-status lease/root matrix | 10 passed, 148 deselected, 2 subtests |
 | Clean exact ai-status lease test | 1 passed |
-| Full supervisor suite | 526 passed, 149 subtests |
-| Full ai-status suite | 158 passed, 31 subtests |
+| Resume generation supervisor regression | 1 passed |
+| Resumed ai-status lease regression | 1 passed |
+| Full supervisor suite after PR #4515 rebase | 543 passed, 154 subtests |
+| Full ai-status suite | 159 passed, 31 subtests |
 | Python compile | passed |
 | Evidence JSON parse | passed |
 | `git diff --check` | passed |
@@ -84,9 +109,13 @@ final evidence commit and before governed handoff.
 
 ## Review, rollout, and rollback
 
-Review remains pending independent Human/Ops inspection of PR #4508's final head.
-The governed handoff and approval bind the GitHub `headRefOid`, since this
-committed manifest cannot self-reference its containing commit. Source merge
-does not authorize a live rollout. A later governed rollout must replace or
-drain workers launched by the older runtime schema. Rollback is a revert of the
-eventual task merge commit; no state, configuration, or data migration exists.
+Human/Ops' current decision is changes requested against prior head
+`7b268b468ca9`; the decision at `14:12:05Z` requires the #4515 rebase, resume
+generation refresh/regression, corrected provenance, and empty generated-task-
+brief history. Those corrections are now implemented and must be handed off for
+a new independent Human/Ops exact-head decision. The governed handoff and
+approval bind GitHub `headRefOid`, since this committed manifest cannot
+self-reference its containing commit. Source merge does not authorize a live
+rollout. A later governed rollout must replace or drain workers launched by the
+older runtime schema. Rollback is a revert of the eventual task merge commit;
+no state, configuration, or data migration exists.

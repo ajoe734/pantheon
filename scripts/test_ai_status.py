@@ -613,6 +613,34 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             runtime_state=self._runtime_state(logical_agent_id="claude"),
         )
 
+    def test_accepts_refreshed_process_generation_after_resume_pid_replacement(self) -> None:
+        runtime_state = self._runtime_state()
+        worker = runtime_state["workers"][self.run_id]
+        old_generation = worker["process_generation"]
+        worker["pid"] = 5252
+        worker["pid_start_ticks"] = 1234567
+        worker["process_generation"] = ai_status.status_worker_process_generation_id(
+            task_id=self.task_id,
+            worker_run_id=self.run_id,
+            queue_event_id=worker["queue_event_id"],
+            pid=worker["pid"],
+            pid_start_ticks=worker["pid_start_ticks"],
+        )
+
+        self._validate(
+            "progress",
+            [self.task_id, "resumed owner progress"],
+            actor="Codex",
+            env_task_id=self.task_id,
+            runtime_state=runtime_state,
+        )
+
+        binding = ai_status._STATUS_COMMAND_LEASE_LOCAL.binding
+        self.assertEqual(binding["pid"], 5252)
+        self.assertEqual(binding["pid_start_ticks"], 1234567)
+        self.assertEqual(binding["process_generation"], worker["process_generation"])
+        self.assertNotEqual(binding["process_generation"], old_generation)
+
     def test_rejects_invalid_process_generation(self) -> None:
         runtime_state = self._runtime_state()
         runtime_state["workers"][self.run_id]["process_generation"] = "forged"

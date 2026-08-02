@@ -10104,6 +10104,105 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_resumed")
 
+    def test_resume_refreshes_exact_process_generation_after_pid_replacement(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="supervisor-resume-generation-") as temp_dir:
+            root = Path(temp_dir)
+            config = {
+                "paths": {
+                    "state_file": str(root / ".orchestrator" / "state.json"),
+                    "status_file": str(root / "ai-status.json"),
+                },
+                "providers": {
+                    "claude": {
+                        "runtime": {
+                            "cli": "claude",
+                            "include_hook_events": False,
+                            "output_format": "stream-json",
+                            "permission_mode": "acceptEdits",
+                        }
+                    }
+                },
+            }
+            worker = {
+                "run_id": "run-resume-generation",
+                "task_id": "TASK-RESUME-GENERATION",
+                "queue_event_id": "evt-resume-generation",
+                "agent_id": "claude",
+                "provider": "claude",
+                "session_id": "session-resume-generation",
+                "status": "suspended_approval",
+                "pid": 1111,
+                "pid_start_ticks": 111,
+                "workspace_path": str(root),
+                "status_root": str(root),
+            }
+            old_generation = supervisor.worker_process_generation_id(
+                task_id=worker["task_id"],
+                worker_run_id=worker["run_id"],
+                queue_event_id=worker["queue_event_id"],
+                pid=worker["pid"],
+                pid_start_ticks=worker["pid_start_ticks"],
+            )
+            worker["process_generation"] = old_generation
+            resumed_process = mock.Mock(pid=2222)
+            command_runtime_env = {
+                "PANTHEON_COMMAND_ROOT": str(root / "command-root"),
+                "PANTHEON_COMMAND_RUNTIME_SHA": "runtime-sha",
+            }
+
+            with (
+                mock.patch.object(supervisor, "command_exists", return_value="/usr/bin/claude"),
+                mock.patch.object(supervisor, "_claude_runtime_env", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "status_command_runtime_env",
+                    return_value=command_runtime_env,
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "spawn_background_process",
+                    return_value=(resumed_process, root / "unused.log"),
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "worker_pid_start_ticks",
+                    return_value=222,
+                ) as worker_pid_start_ticks,
+            ):
+                resumed = supervisor.resume_claude_worker(
+                    config,
+                    worker,
+                    provider_report={"providers": {}},
+                )
+
+        expected_generation = supervisor.worker_process_generation_id(
+            task_id="TASK-RESUME-GENERATION",
+            worker_run_id="run-resume-generation",
+            queue_event_id="evt-resume-generation",
+            pid=2222,
+            pid_start_ticks=222,
+        )
+        worker_pid_start_ticks.assert_called_once_with(2222)
+        self.assertIsNotNone(resumed)
+        self.assertEqual(worker["pid"], 2222)
+        self.assertEqual(worker["pid_start_ticks"], 222)
+        self.assertEqual(worker["process_generation"], expected_generation)
+        self.assertNotEqual(worker["process_generation"], old_generation)
+        self.assertEqual(
+            supervisor.worker_process_identity(worker),
+            {
+                "schema_version": supervisor.WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+                "task_id": "TASK-RESUME-GENERATION",
+                "worker_run_id": "run-resume-generation",
+                "queue_event_id": "evt-resume-generation",
+                "pid": 2222,
+                "pid_start_ticks": 222,
+                "process_generation": expected_generation,
+            },
+        )
+        self.assertEqual(resumed["pid_start_ticks"], 222)
+        self.assertEqual(resumed["process_generation"], expected_generation)
+
     def test_approval_stage_fails_denied_worker(self) -> None:
         worker = {
             "run_id": "run-denied",

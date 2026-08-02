@@ -5,10 +5,9 @@
     "title": "Preserve active worker lease across governance handoff",
     "phase": "Supervisor Governance Handoff / Active Lease Guard / operator V8",
     "owner": "Codex2",
-    "reviewer": "Codex",
-    "independent_review_gate": "Human/Ops",
+    "reviewer": "Human/Ops",
     "status": "in_progress",
-    "review_status": "review_pending",
+    "review_status": "changes_requested_on_prior_head",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802"
@@ -31,6 +30,52 @@
       "merge_commit": "0404ca01ebb6803df6a4b927bacada5739f61de1"
     }
   ],
+  "corrective_dependency": {
+    "task_id": "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "pull_request": 4515,
+    "implementation_head": "eb3c90396495ff9a36faef529a423e07db87246a",
+    "merge_commit": "941b47946fe945feb0d705f773b91bd3153a6715",
+    "purpose": "Preserve an explicit Human/Ops reviewer through fallback and keep owner dispatch separate from reviewer policy."
+  },
+  "governance_provenance": {
+    "initial_assignment": {
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "recorded_at": "2026-08-02T10:16:43Z",
+      "source_event_id": "ai-status-event-5aebf31bc4011a1fd11b7454184d631eb6d8df5b0a2fb31d02f3a3f46d2a6462"
+    },
+    "prior_human_review": {
+      "reviewer": "Human/Ops",
+      "decision": "approved_then_revoked",
+      "reviewed_head": "7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
+      "approved_at": "2026-08-02T13:10:20Z",
+      "approval_event_id": "ai-status-event-0314ee1189467d9481a3ebdc46972527fa14c4fb9646a3d4cc85ebb33eb3e6ba",
+      "revoked_at": "2026-08-02T13:12:14Z",
+      "reopen_event_id": "ai-status-event-7190e1a6bed5e59a887336143fd28c08a64f88816cb52411abc6ca81b88b01b1"
+    },
+    "independent_corrective_review": {
+      "reviewer": "Codex2",
+      "decision": "changes_requested",
+      "reviewed_head": "7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
+      "recorded_at": "2026-08-02T13:38:55Z",
+      "source_event_id": "ai-status-event-16dd32d918a6cf490437fe4d3180cd998259f400f5c4beb2de10037cacbc10d3",
+      "findings": [
+        "Resume replaced pid without refreshing pid_start_ticks/process_generation.",
+        "Committed evidence and trailers did not match the then-current owner/reviewer lifecycle."
+      ]
+    },
+    "current_assignment": {
+      "owner": "Codex2",
+      "reviewer": "Human/Ops",
+      "recorded_at": "2026-08-02T14:11:49Z",
+      "source_event_id": "ai-status-event-23fe9f2a01fe310ff807f8eb38231d69f7e97e29a54be8824298d3d909709a83",
+      "reopen_at": "2026-08-02T14:12:05Z",
+      "reopen_event_id": "ai-status-event-492e52689003e685a459e7682ee327fb65f8704f0fc16ee2b04b49b0e22dd8ef"
+    },
+    "constraint": "Codex2 is a task-scoped owner/quota fallback only. Codex and Codex2 remain distinct configured account/quota identities, while Human/Ops remains the explicit canonical reviewer."
+  },
   "incident_reproduction": [
     {
       "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
@@ -83,8 +128,8 @@
       "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/evidence.json",
       "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/evidence.md"
     ],
-    "base_commit": "0404ca01ebb6803df6a4b927bacada5739f61de1",
-    "anchor_commit": "c737e0a8e5c34dfc8d37e31ac45cfbabb25ccb7c"
+    "base_commit": "941b47946fe945feb0d705f773b91bd3153a6715",
+    "anchor_commit": "eb21508806dbc5b31a9343d5cb0b579e6a93523b"
   },
   "contract": {
     "process_generation": "One deterministic SHA-256 identity binds schema version, task ID, worker run ID, queue event ID, PID, and Linux /proc starttime ticks.",
@@ -137,6 +182,13 @@
         "scripts/test_ai_status.py::StatusRootRoutingTests::test_worktree_status_wrapper_reads_and_writes_only_central_root"
       ]
     },
+    "resume_process_generation_refresh": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_resume_refreshes_exact_process_generation_after_pid_replacement",
+        "scripts/test_ai_status.py::StatusCommandLeaseValidationTests::test_accepts_refreshed_process_generation_after_resume_pid_replacement"
+      ]
+    },
     "stale_and_failure_recovery_regression": {
       "status": "proven",
       "tests": [
@@ -163,12 +215,20 @@
       "result": "1 passed on the rebuilt exact head with command-root/SHA variables removed"
     },
     {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py::PollWorkersRecoveryTests::test_resume_refreshes_exact_process_generation_after_pid_replacement",
+      "result": "1 passed; new PID starttime and process generation replace the suspended worker identity"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py::StatusCommandLeaseValidationTests::test_accepts_refreshed_process_generation_after_resume_pid_replacement",
+      "result": "1 passed; ai-status accepts the refreshed resumed-process lease"
+    },
+    {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest test_supervisor.py -q",
-      "result": "526 passed, 149 subtests passed in 68.82s"
+      "result": "543 passed, 154 subtests passed in 61.08s after rebasing corrective dependency #4515"
     },
     {
       "command": ".venv-pantheon/bin/python -m pytest scripts/test_ai_status.py -q",
-      "result": "158 passed, 31 subtests passed on the rebuilt exact head with command-root/SHA variables removed"
+      "result": "159 passed, 31 subtests passed in 26.09s with command-root/SHA variables removed"
     },
     {
       "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py",
@@ -193,19 +253,24 @@
     "Source merge does not authorize live supervisor rollout or service mutation."
   ],
   "review": {
-    "decision": "pending",
+    "decision": "changes_requested",
     "reviewer": "Human/Ops",
-    "canonical_reviewer": "Codex",
-    "reviewed_head": null,
+    "reviewed_head": "7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
     "pull_request": 4508,
-    "recorded_at": null,
-    "notes": "Awaiting independent Human/Ops exact-head source, tests, incident, scope, and evidence review. Governed handoff will bind the final GitHub headRefOid because a committed manifest cannot self-reference its containing commit."
+    "recorded_at": "2026-08-02T14:12:05Z",
+    "source_event_id": "ai-status-event-492e52689003e685a459e7682ee327fb65f8704f0fc16ee2b04b49b0e22dd8ef",
+    "required_changes": [
+      "Rebase PR #4508 onto the reviewer-preservation correction merged as PR #4515.",
+      "Refresh pid_start_ticks and process_generation after resume PID replacement and add the missing regressions.",
+      "Reconcile owner/reviewer evidence provenance and keep the generated task brief out of history."
+    ],
+    "next_exact_head_decision": "Pending Human/Ops review of the newly handed-off GitHub headRefOid; this committed manifest intentionally does not self-reference its containing commit."
   },
   "delivery": {
     "repository": "ajoe734/pantheon",
     "target_branch": "dev",
-    "base_commit": "0404ca01ebb6803df6a4b927bacada5739f61de1",
-    "anchor_commit": "c737e0a8e5c34dfc8d37e31ac45cfbabb25ccb7c",
+    "base_commit": "941b47946fe945feb0d705f773b91bd3153a6715",
+    "anchor_commit": "eb21508806dbc5b31a9343d5cb0b579e6a93523b",
     "implementation_head": null,
     "exact_head_binding": "GitHub headRefOid supplied by the governed handoff and approval; intentionally not self-referenced in this committed manifest.",
     "pull_request": 4508,
