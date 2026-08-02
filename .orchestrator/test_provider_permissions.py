@@ -986,7 +986,9 @@ EOF
                 ["codex"],
                 1,
                 "",
-                "You've hit your usage limit. reset_at=2026-08-09T05:10:00Z",
+                "2026-08-02T16:01:06Z ERROR: You've hit your usage limit. "
+                "Visit https://chatgpt.com/codex/settings/usage to purchase more credits "
+                "or try again at Aug 9th, 2026 5:10 AM.",
             )
             with (
                 mock.patch.object(provider_permissions, "command_exists", return_value="/usr/bin/codex"),
