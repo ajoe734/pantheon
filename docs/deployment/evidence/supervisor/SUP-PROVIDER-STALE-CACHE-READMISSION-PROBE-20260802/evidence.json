@@ -4,10 +4,12 @@
     "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
     "title": "Recover a freshly reauthenticated provider before stale capability admission rejection",
     "phase": "Supervisor Provider Admission / Recovery Follow-up",
-    "owner": "Codex",
-    "reviewer": "Codex2",
-    "status": "review",
-    "review_status": "pending_independent_exact_head_review",
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "implementation_owner": "Codex",
+    "independent_source_reviewer": "Codex2",
+    "status": "review_approved",
+    "review_status": "approved_exact_head_and_merged",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802"
@@ -148,11 +150,21 @@
     }
   ],
   "review": {
-    "decision": "pending",
+    "decision": "approved",
     "reviewer": "Codex2",
-    "reviewed_head": null,
-    "pull_request": null,
-    "recorded_at": null,
+    "reviewed_head": "ea358fa7c2bfc8e5b9042736d5776cf9421c2ab0",
+    "pull_request": 4510,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4510",
+    "recorded_at": "2026-08-02T13:36:38Z",
+    "canonical_review_status_context": "Pantheon canonical review gate",
+    "canonical_review_status_id": 51504616191,
+    "protected_merge_gate": {
+      "decision": "passed",
+      "reviewer": "Human/Ops",
+      "recorded_at": "2026-08-02T13:37:45Z",
+      "status_context": "Pantheon root merge freeze 2026-07-27",
+      "description": "Human/Ops exact-head review passed; canonical Codex2 review and CI green"
+    },
     "required_checks": [
       "independent code review",
       "exact-head binding",
@@ -163,12 +175,42 @@
   },
   "delivery": {
     "base_commit": "0404ca01ebb6803df6a4b927bacada5739f61de1",
-    "implementation_head": null,
-    "pull_request": null,
-    "merge_commit": null,
+    "implementation_head": "ea358fa7c2bfc8e5b9042736d5776cf9421c2ab0",
+    "pull_request": 4510,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4510",
+    "merge_commit": "71654443b53ba32f66e046aa7dcb12e85127edb2",
+    "merged_at": "2026-08-02T13:37:53Z",
+    "verified_as_ancestor_of_origin_dev": true,
     "repository": "ajoe734/pantheon",
     "target_branch": "dev",
     "merge_order_successor": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802"
+  },
+  "finalization": {
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "assigned_at": "2026-08-02T13:44:25Z",
+    "status": "owner_closeout_prepared",
+    "scope": "Record the already-reviewed source merge and durable evidence only; no source, provider account, quota, reviewer-policy, credential, runtime, or rollout change.",
+    "task_brief_disposition": "The supervisor-generated worker context brief remains outside git, preserving the independently reviewed five-file source PR history.",
+    "terminal_transition": "Run the governed Codex2 done transition only after this closeout evidence commit is reviewed and merged to dev.",
+    "verification": [
+      {
+        "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py -k 'ProviderStaleCacheReadmissionProbeTests or ProviderPauseRecoveryProbeTests'",
+        "result": "11 passed, 512 deselected, 5 subtests passed in 1.48s"
+      },
+      {
+        "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_provider_permissions.py",
+        "result": "83 passed, 7 subtests passed in 6.55s"
+      },
+      {
+        "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
+        "result": "523 passed, 152 subtests passed in 62.42s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/provider_permissions.py && jq empty evidence.json && git diff --check",
+        "result": "passed"
+      }
+    ]
   },
   "rollout": {
     "source_task": "No live supervisor mutation or service restart is authorized by this source task.",
