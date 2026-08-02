@@ -361,6 +361,24 @@ non-catalog prerequisite for the proven 2 GB/full-replay dispatcher timeout.
 9. Allow L12-CLOSE-001 only after all controller, current evidence, hosted and
    verifier truth is accepted.
 
+## Reviewer-correction validation
+
+The zero-delta replacement was validated after the Human/Ops rejection:
+
+- focused catalog, loop-control, BFF inventory/health, and current-dispatch
+  suite: 85 passed, 6 skipped, 11 warnings;
+- guarded catalog validator: valid, 28 tasks, maximum G1 frontier 25, file and
+  semantic SHA-256 unchanged;
+- deterministic machine assertions: zero delta, 12 unique loop rows, 28/25/2/1
+  effective plan, retained BFF task and release-gate edge, non-catalog
+  prerequisite processed/admitted receipt, and canonical event-8421 `todo`
+  readback all pass;
+- JSON parse, loop-registry schema coverage, bound-source digest checks,
+  Markdown/evidence reference path checks, and `git diff --check` pass.
+
+These are owner checks only. Evidence remains `review_pending` until Human/Ops
+independently reviews the replacement exact head.
+
 ## Rollout, rollback, and residual risk
 
 This task's rollout is documentation/evidence merge only. It does not edit

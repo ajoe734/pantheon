@@ -436,6 +436,13 @@
     "Run the real learning verifier and resume the legacy FE, four-verifier, hosted and closeout lanes in dependency order.",
     "Allow L12-CLOSE-001 only after all current hosted/controller/evidence/verifier truth is accepted."
   ],
+  "validation": {
+    "focused_suite": "85 passed, 6 skipped, 11 warnings",
+    "catalog_validator": "valid; 28 tasks; maximum_parallel_frontier_G1=25",
+    "deterministic_assertions": "zero catalog delta; 12 unique loops; 28/25/2/1; BFF task and release-gate edge retained; scaling prerequisite is non-catalog with processed/admitted receipt and canonical event-8421 todo readback",
+    "json_schema_digest_link_diff_checks": "pass",
+    "review_status": "review_pending"
+  },
   "rollout": {
     "this_task": "Documentation and evidence merge only; no runtime or catalog materialization.",
     "future_product_rollout": "Gate-before-dispatch, exact-head review, protected merge, current evidence validation, then staged hosted readback with safe write defaults."

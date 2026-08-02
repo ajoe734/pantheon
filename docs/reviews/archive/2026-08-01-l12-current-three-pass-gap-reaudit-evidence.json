@@ -203,6 +203,24 @@
     "effective_g2": 2,
     "effective_g3": 1
   },
+  "owner_correction_validation": {
+    "focused_suite": "85 passed, 6 skipped, 11 warnings",
+    "catalog_validator": {
+      "status": "valid",
+      "task_count": 28,
+      "maximum_parallel_frontier_g1": 25
+    },
+    "checks": [
+      "JSON parse",
+      "loop registry schema coverage",
+      "deterministic zero-delta, 12-loop, dependency, BFF edge, and event-8421 assertions",
+      "bound source SHA-256",
+      "internal Markdown and machine evidence reference paths",
+      "git diff --check"
+    ],
+    "result": "pass",
+    "review_effect": "none; owner validation does not replace independent Human/Ops exact-head review"
+  },
   "review_boundary": {
     "decision": "review_pending",
     "statement": "This owner cut is not independent Human/Ops exact-head approval and does not authorize catalog materialization, runtime mutation, hosted acceptance, or product closeout."
