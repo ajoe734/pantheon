@@ -1,8 +1,8 @@
-# SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801 — review-pending evidence
+# SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801 — review-approved evidence
 
 Task: Wire immutable failure generations from real supervisor records
 
-Owner: Codex · Reviewer: Human/Ops · Status: **review_pending**
+Owner: Codex · Reviewer: Codex2 · Status: **review_approved**
 
 PR: #4445 into `dev`
 
@@ -48,9 +48,14 @@ extraction, configuration, product tasks, or live services.
 
 ## Review boundary
 
-Human/Ops approved exact head `932a87e59e5a2f54e08e60ce57904c76ecf8ba2f`,
-but that approval was reopened after `dev` advanced. The implementation was
-then composed with base `c43954779aec517ab97916ab3f878ef96fa56c22` and the
-full verification suite above was rerun. No approval of the new pushed head is
-claimed here: `reviewed_head` remains null until Human/Ops reviews it. Approval
-and `done` remain out of scope for this owner handoff.
+The earlier Human/Ops approval of exact head
+`932a87e59e5a2f54e08e60ce57904c76ecf8ba2f` was reopened after `dev`
+advanced. The implementation was then composed with base
+`c43954779aec517ab97916ab3f878ef96fa56c22`, and the full verification suite
+above was rerun. Codex2 independently approved exact implementation head
+`86f1c51f8e30fc166c2b69c0733a64c869041c79` through the Pantheon canonical
+review gate at `2026-08-02T03:20:37Z` (status id `51495241271`).
+
+This closeout-only evidence update changes no implementation. Its new PR head
+must still pass CI and receive a fresh exact-head canonical reviewer gate before
+merge; the prior approval is not being reused as merge authority.
