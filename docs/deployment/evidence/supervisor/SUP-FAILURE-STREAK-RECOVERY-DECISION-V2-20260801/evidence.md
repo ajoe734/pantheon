@@ -2,7 +2,7 @@
 
 Task: Build a pure bounded retry recovery decision matrix
 
-Owner: Codex · Reviewer: Codex2 · Status: **review_pending**
+Owner: Codex · Reviewer: Human/Ops · Status: **review_pending**
 
 ## Scope
 
@@ -56,10 +56,12 @@ owner-equals-reviewer row is explicitly denied.
 ## Review boundary
 
 Implementation anchor: `e84fabefe45f4e53d81d554b56956e45d0ff4e0f`.
+Implementation candidate: `dd819f3f2cf40d4c14d34097a95f7cf064a48202`.
 Base at implementation verification: `5cb03dd5ebe3ce13435c848175c5dab5450e9ea5`
 (`origin/dev`).
+Pull request: `#4489`.
 
-This evidence is owner-authored and remains **review_pending**. Codex2 must
+This evidence is owner-authored and remains **review_pending**. Human/Ops must
 independently review the final exact PR head and bind that head through the
 canonical review gate before merge. No approval, live-runtime outcome, or
 consumption/dispatch behavior is claimed here.

@@ -5,7 +5,7 @@
     "title": "Build a pure bounded retry recovery decision matrix",
     "phase": "Supervisor Retry V2 / 2 Pure Decision",
     "owner": "Codex",
-    "reviewer": "Codex2",
+    "reviewer": "Human/Ops",
     "status": "review_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -79,7 +79,7 @@
   ],
   "review": {
     "decision": "review_pending",
-    "reviewer": "Codex2",
+    "reviewer": "Human/Ops",
     "reviewed_head": null,
     "reviewed_at": null,
     "note": "Owner-authored evidence only. Independent review of the final exact PR head is required before approval or merge."
@@ -87,8 +87,8 @@
   "delivery": {
     "base_sha": "5cb03dd5ebe3ce13435c848175c5dab5450e9ea5",
     "implementation_anchor": "e84fabefe45f4e53d81d554b56956e45d0ff4e0f",
-    "candidate_head": null,
-    "pull_request": null,
+    "candidate_head": "dd819f3f2cf40d4c14d34097a95f7cf064a48202",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4489",
     "rollout": "source merge only",
     "rollback": "revert this task merge commit"
   }
