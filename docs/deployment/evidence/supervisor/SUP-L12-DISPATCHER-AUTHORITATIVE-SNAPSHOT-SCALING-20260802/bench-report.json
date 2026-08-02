@@ -1,0 +1,113 @@
+{
+  "admission_plan": {
+    "message": "live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001",
+    "verdict": "failed_closed"
+  },
+  "baseline": {
+    "checkpoint_prefix_sha256": "903d83718159c9b401cc9bdc682abfe213793396c008cb227581804d8902f656",
+    "elapsed_seconds": 30.52,
+    "event_count": 8632,
+    "implementation": "load_events_then_project_latest_state",
+    "journal_bytes": 2174900966,
+    "observed_at": "2026-08-02T09:13:00Z",
+    "peak_rss_kib": 5604472,
+    "result": "timed_out_before_catalog_admission",
+    "timeout_seconds": 30.0
+  },
+  "candidate": {
+    "branch": "task/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+    "catalog_file_sha256": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+    "dispatcher_sha256": "9677b0512fd7daf1426122280e371d36434f9df421dd138eace5b68ba5658e9a",
+    "implementation_paths_clean_at_candidate": true,
+    "repository": "ajoe734/pantheon",
+    "source_sha": "626631be8a7912cc4e9f9409f2756ce6d59a2c22"
+  },
+  "guarded_dry_run": {
+    "completed": true,
+    "elapsed_seconds": 2.1,
+    "output": null,
+    "peak_rss_kib": 59076,
+    "returncode": 2,
+    "stderr": "dispatch failed closed: live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001",
+    "timed_out": false,
+    "timeout_seconds": 30.0,
+    "verdict": "failed_closed"
+  },
+  "input": {
+    "checkpoint_event_count": 8723,
+    "checkpoint_last_event_id": "task-state-b80a0063d65f911a1e257250835032d5382c3d1dc508daa6293fd32bf84c2109",
+    "checkpoint_last_event_sha256": "b80a0063d65f911a1e257250835032d5382c3d1dc508daa6293fd32bf84c2109",
+    "checkpoint_prefix_bytes": 2232574631,
+    "checkpoint_prefix_sha256": "4396876d36bad566f88d136f7e56213925a18f57398eef429847f0b16c36bb34",
+    "checkpoint_sha256": "02da3b71689134c384a14a792c925f57ab19ba981556de714d9d9fa85c5fd543",
+    "checkpoint_state_sha256": "8d902fadc9f56bc8e6894ede5934cb47154a5cb1f031aa308367d34c5ac655d0",
+    "clone_bytes": 2232574631,
+    "clone_checkpoint_sha256": "02da3b71689134c384a14a792c925f57ab19ba981556de714d9d9fa85c5fd543",
+    "clone_path": "/tmp/pantheon-l12-snapshot-scale-bxj5__p_/task-state-events.jsonl",
+    "clone_strategy": "reflink_auto_physical_fallback",
+    "elapsed_seconds": 4.435,
+    "journal_bytes": 2232574631,
+    "reflink_always_rejection": "cp: failed to clone '/tmp/pantheon-l12-snapshot-scale-bxj5__p_/task-state-events.jsonl' from '/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl': Operation not supported",
+    "source_device": 2049,
+    "source_inode": 2186507,
+    "source_path": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl"
+  },
+  "meets_target": true,
+  "non_interference": {
+    "benchmark_journal": "scratch clone removed after run",
+    "catalog_materialization": "none; dry-run only",
+    "scratch_read_only_surface_after": {
+      "checkpoint": {
+        "exists": true,
+        "sha256": "02da3b71689134c384a14a792c925f57ab19ba981556de714d9d9fa85c5fd543",
+        "size": 644418
+      },
+      "checkpoint_temp_files": [],
+      "journal": {
+        "ctime_ns": 1785663762581711931,
+        "mtime_ns": 1785663762581711931,
+        "size": 2232574631
+      }
+    },
+    "scratch_read_only_surface_before": {
+      "checkpoint": {
+        "exists": true,
+        "sha256": "02da3b71689134c384a14a792c925f57ab19ba981556de714d9d9fa85c5fd543",
+        "size": 644418
+      },
+      "checkpoint_temp_files": [],
+      "journal": {
+        "ctime_ns": 1785663762581711931,
+        "mtime_ns": 1785663762581711931,
+        "size": 2232574631
+      }
+    },
+    "scratch_read_only_surface_preserved": true,
+    "source_checkpoint_opened_for_write": false,
+    "source_event_log_opened_for_write": false
+  },
+  "phases": {
+    "admission_plan_seconds": 0.038,
+    "clone_under_shared_lock_seconds": 4.435,
+    "guarded_dry_run_seconds": 2.1,
+    "validated_snapshot_seconds": 1.776
+  },
+  "schema_version": "l12_dispatcher_snapshot_scale_benchmark.v1",
+  "snapshot": {
+    "byte_size": 2232574631,
+    "checkpoint_used": true,
+    "event_count": 8723,
+    "last_event_id": "task-state-b80a0063d65f911a1e257250835032d5382c3d1dc508daa6293fd32bf84c2109",
+    "last_event_sha256": "b80a0063d65f911a1e257250835032d5382c3d1dc508daa6293fd32bf84c2109",
+    "peak_rss_kib": 43432,
+    "revalidated_tail_events": 0,
+    "state_sha256": "8d902fadc9f56bc8e6894ede5934cb47154a5cb1f031aa308367d34c5ac655d0"
+  },
+  "target": {
+    "maximum_guarded_dry_run_seconds": 30.0,
+    "minimum_bytes": 2030000000,
+    "minimum_events": 8400,
+    "requires_catalog_admission_verdict": true,
+    "requires_checkpoint": true
+  }
+}

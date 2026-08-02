@@ -1,0 +1,147 @@
+{
+  "schema_version": "supervisor_source_repair_evidence.v1",
+  "task": {
+    "id": "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+    "title": "Scale guarded L12 dispatcher authoritative state reads",
+    "phase": "Twelve Loop Current Gap / Dispatcher Prerequisite",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+    "candidate_source_commit": "626631be8a7912cc4e9f9409f2756ce6d59a2c22",
+    "review_status": "review_pending"
+  },
+  "scope": {
+    "owned_layer": "Guarded dispatcher authoritative state/readback snapshots, bounded-memory prefix hashing and record-wise tail replay, deterministic integrity/atomicity regressions, and task-scoped scale evidence.",
+    "not_changing": "No immutable 28-task catalog bytes, config, canonical journal/checkpoint, provider policy, runtime state, worker process, product controller, task materialization, service, or deployment.",
+    "anchors": [
+      "626631be8a7912cc4e9f9409f2756ce6d59a2c22"
+    ]
+  },
+  "baseline": {
+    "observed_at": "2026-08-02T09:13:00Z",
+    "journal_bytes": 2174900966,
+    "event_count": 8632,
+    "checkpoint_prefix_sha256": "903d83718159c9b401cc9bdc682abfe213793396c008cb227581804d8902f656",
+    "command": "/usr/bin/time -v timeout --signal=TERM --kill-after=2s 30s python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --current --dry-run --live-config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --command-root $PANTHEON_COMMAND_ROOT",
+    "elapsed_seconds": 30.52,
+    "peak_rss_kib": 5604472,
+    "exit_status": 124,
+    "result": "timed_out_before_catalog_admission",
+    "root_cause": "Dispatcher materialized every historical event with load_events and then revalidated the event list again through project_latest_state."
+  },
+  "scale_benchmark": {
+    "report": "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/bench-report.json",
+    "input": {
+      "journal_bytes": 2232574631,
+      "event_count": 8723,
+      "checkpoint_sha256": "02da3b71689134c384a14a792c925f57ab19ba981556de714d9d9fa85c5fd543",
+      "checkpoint_prefix_sha256": "4396876d36bad566f88d136f7e56213925a18f57398eef429847f0b16c36bb34",
+      "last_event_id": "task-state-b80a0063d65f911a1e257250835032d5382c3d1dc508daa6293fd32bf84c2109",
+      "state_sha256": "8d902fadc9f56bc8e6894ede5934cb47154a5cb1f031aa308367d34c5ac655d0"
+    },
+    "phases_seconds": {
+      "scratch_clone_under_shared_lock": 4.435,
+      "validated_snapshot": 1.776,
+      "admission_plan": 0.038,
+      "guarded_dry_run": 2.1
+    },
+    "checkpoint_used": true,
+    "revalidated_tail_events": 0,
+    "snapshot_peak_rss_kib": 43432,
+    "guarded_dry_run_peak_rss_kib": 59076,
+    "dry_run_read_only_surface_preserved": true,
+    "admission_verdict": "failed_closed: live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001",
+    "meets_under_30_seconds_target": true,
+    "meets_target": true
+  },
+  "catalog_invariants": {
+    "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+    "file_sha256": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+    "canonical_sha256": "6adf2d2e987d8ebed96689e35db346e9f4eacb3d63a0b635bf8a51426f9ce02f",
+    "task_count": 28,
+    "unique_task_ids": 28,
+    "wave_counts": {
+      "G1": 25,
+      "G2": 2,
+      "G3": 1
+    },
+    "bff_revalidation_task": "L12-EVIDENCE-REVALIDATE-BFF-20260731",
+    "release_gate": "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
+    "release_gate_retains_bff_edge": true,
+    "unique_sink": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+    "byte_delta": 0
+  },
+  "integrity_regressions": [
+    "Warm checkpoint plus empty tail reports checkpoint_used=true and zero revalidated events.",
+    "Warm, stale-tail, missing, and corrupt checkpoint dry-runs preserve journal, projection, checkpoint bytes or absence, and checkpoint temp-file set.",
+    "A mutation-capable snapshot with one appended valid tail validates exactly that event and refreshes the checkpoint.",
+    "A concurrent writer waits for the snapshot reader and both observe whole journal generations.",
+    "Forced full replay matches accelerated event count, head identity, state, and state SHA.",
+    "Edited or truncated history cannot be accepted from a stale checkpoint.",
+    "Unreadable and internally valid forged checkpoints fall back to full replay and cannot substitute state.",
+    "Tail sequence and previous-event hash mismatches raise before projection.",
+    "Short append readback raises instead of accepting partial bytes.",
+    "Injected assign or sync failures leave zero catalog tasks in the canonical journal/projection."
+  ],
+  "validation": {
+    "focused_pytest": {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q .orchestrator/rewrite/test_task_state_store.py scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests",
+      "result": "pass",
+      "conclusion": "107 passed in 16.12s"
+    },
+    "legacy_dispatcher": {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q scripts/test_dispatch_twelve_loop_gap_2026_07_26.py --deselect scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header",
+      "result": "31 passed, 1 deselected; the undeselected suite reports the documented pre-existing failure",
+      "exception": "L12-SIGNOFF-001 legacy human card says owner Codex while origin/dev legacy catalog says owner Claude; both files are unchanged by this task."
+    },
+    "catalog_validator": {
+      "command": ".venv-pantheon/bin/python scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --current",
+      "result": "pass",
+      "conclusion": "valid, 28 tasks, exact file/canonical digests, G1 frontier 25"
+    },
+    "scale_benchmark": {
+      "result": "pass",
+      "conclusion": "2.233GB/8723 events; checkpoint tail 0; 2.100s guarded verdict; 59,076 KiB peak child RSS; scratch read-only surface preserved"
+    },
+    "static": {
+      "result": "pass",
+      "checks": [
+        "python -m py_compile",
+        "python3 -m json.tool bench-report.json",
+        "git diff --check"
+      ]
+    }
+  },
+  "non_interference": {
+    "config_mutation": "none",
+    "canonical_event_log_mutation": "none",
+    "canonical_checkpoint_mutation": "none",
+    "manual_task_state_edit": "none",
+    "provider_policy_change": "none",
+    "worker_signal": "none",
+    "product_catalog_mutation": "none",
+    "catalog_materialization": "none",
+    "live_service_or_deployment_mutation": "none",
+    "benchmark_state": "shared-lock-consistent scratch copy removed after run",
+    "dry_run_checkpoint_mutation": "none across warm, stale-tail, missing, and corrupt checkpoint regressions",
+    "scale_scratch_read_only_surface": "journal stat, checkpoint SHA/size, and checkpoint temp-file set preserved before/after"
+  },
+  "rollout": "Merge source PR to dev, then use a separately governed command-runtime promotion and live canary.",
+  "rollback": "Revert the source PR. No config migration, journal rewrite, truncation, rotation, or destructive operation.",
+  "residual_risks": [
+    {
+      "risk": "Absent, corrupt, stale, or integrity-mismatched checkpoint requires an explicit full historical replay.",
+      "containment": "Full replay remains fail-safe and forced-audit capable; it is never treated as the warm admission path."
+    },
+    {
+      "risk": "The current live state has an unordered BFF artifact overlap, so the catalog is correctly refused after the scaling fix.",
+      "containment": "Resolve LIFECYCLE-PROJ-BFF-001 through its governed owner/dependency lifecycle before separately governed catalog admission."
+    },
+    {
+      "risk": "Independent Human/Ops exact-head review and PR checks are not yet recorded.",
+      "containment": "Evidence remains review_pending and no source merge, runtime promotion, or materialization is claimed."
+    }
+  ]
+}
