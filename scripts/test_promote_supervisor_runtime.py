@@ -1089,32 +1089,36 @@ def _make_candidate_fixture(
     tmp_path: Path,
     *,
     gitlink_path: str = "lean",
+    full_preflight: bool = False,
 ) -> tuple[Path, Path, Path, str, str, bytes]:
     source = tmp_path / "source"
     source.mkdir()
     _git(source, "init", "--initial-branch=dev")
     _git(source, "config", "user.name", "Promotion Test")
     _git(source, "config", "user.email", "promotion@example.test")
-    create_realistic_healthy_fixture(source)
     (source / "README.md").write_text("trusted candidate\n", encoding="utf-8")
-    source_specs = [
-        (source / ".orchestrator" / "supervisor.py", False),
-        (source / ".orchestrator" / "supervisor_watchdog.py", True),
-        (source / "scripts" / "run-supervisor-watchdog.sh", True),
-        (source / "scripts" / "sync-dev-root.sh", True),
-        (source / "scripts" / "ai-status.sh", True),
-        (source / "scripts" / "ai_status.py", False),
-        (source / "scripts" / "provision_live_supervisor_config.py", False),
-    ]
-    for source_path, executable_source in source_specs:
-        source_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path.write_text(
-            f"# persistent launch fixture: {source_path.name}\n",
-            encoding="utf-8",
-        )
-        if executable_source:
-            source_path.chmod(0o755)
-    _git(source, "add", ".")
+    if full_preflight:
+        create_realistic_healthy_fixture(source)
+        source_specs = [
+            (source / ".orchestrator" / "supervisor.py", False),
+            (source / ".orchestrator" / "supervisor_watchdog.py", True),
+            (source / "scripts" / "run-supervisor-watchdog.sh", True),
+            (source / "scripts" / "sync-dev-root.sh", True),
+            (source / "scripts" / "ai-status.sh", True),
+            (source / "scripts" / "ai_status.py", False),
+            (source / "scripts" / "provision_live_supervisor_config.py", False),
+        ]
+        for source_path, executable_source in source_specs:
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text(
+                f"# persistent launch fixture: {source_path.name}\n",
+                encoding="utf-8",
+            )
+            if executable_source:
+                source_path.chmod(0o755)
+        _git(source, "add", ".")
+    else:
+        _git(source, "add", "README.md")
     _git(source, "commit", "-m", "trusted candidate")
     gitlink_commit = _git(source, "rev-parse", "HEAD")
     _git(
@@ -1155,37 +1159,43 @@ def _make_candidate_fixture(
 
     live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
     live_config.parent.mkdir()
-    status_root = tmp_path / "source-status-root"
-    (status_root / ".orchestrator" / "logs").mkdir(parents=True, exist_ok=True)
-    event_log = live_config.parent / "task-state-events.jsonl"
-    event_log.write_text("", encoding="utf-8")
-    worker_worktree_root = tmp_path / "worker-worktrees"
-    worker_worktree_root.mkdir()
-    executable = Path(sys.executable).resolve()
-    live_config_payload = {
-        "watchdog": {
-            "supervisor_command": [
-                str(executable),
-                "-u",
-                str(candidate / ".orchestrator" / "supervisor.py"),
-                "--config",
-                str(live_config),
-                "--verbose",
-            ]
-        },
-        "paths": {
-            "status_file": str(status_root / "ai-status.json"),
-            "state_file": str(status_root / ".orchestrator" / "state.json"),
-        },
-        "task_state_store": {
-            "mode": "authoritative",
-            "event_log": str(event_log),
-        },
-        "worker_worktrees": {"root": str(worker_worktree_root)},
-    }
-    config_bytes = (
-        json.dumps(live_config_payload, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    if full_preflight:
+        status_root = tmp_path / "source-status-root"
+        (status_root / ".orchestrator" / "logs").mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        event_log = live_config.parent / "task-state-events.jsonl"
+        event_log.write_text("", encoding="utf-8")
+        worker_worktree_root = tmp_path / "worker-worktrees"
+        worker_worktree_root.mkdir()
+        executable = Path(sys.executable).resolve()
+        live_config_payload = {
+            "watchdog": {
+                "supervisor_command": [
+                    str(executable),
+                    "-u",
+                    str(candidate / ".orchestrator" / "supervisor.py"),
+                    "--config",
+                    str(live_config),
+                    "--verbose",
+                ]
+            },
+            "paths": {
+                "status_file": str(status_root / "ai-status.json"),
+                "state_file": str(status_root / ".orchestrator" / "state.json"),
+            },
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": str(event_log),
+            },
+            "worker_worktrees": {"root": str(worker_worktree_root)},
+        }
+        config_bytes = (
+            json.dumps(live_config_payload, sort_keys=True) + "\n"
+        ).encode("utf-8")
+    else:
+        config_bytes = b'{"runtime":"immutable","writes":false}\n'
     live_config.write_bytes(config_bytes)
     return candidate, runtime_parent, trusted_remote, commit, tree, config_bytes
 
@@ -1265,7 +1275,7 @@ def test_discover_only_accepts_valid_persistent_command_runtime(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     candidate, parent, remote, _commit, _tree, _config_bytes = (
-        _make_candidate_fixture(tmp_path)
+        _make_candidate_fixture(tmp_path, full_preflight=True)
     )
     live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
     parent_patch, remote_patch, config_patch = _identity_policy_patches(
@@ -1340,7 +1350,7 @@ def test_discover_only_rejects_temporary_reviewer_worktree(
     tmp_path: Path,
 ) -> None:
     candidate, parent, remote, _commit, _tree, _config_bytes = (
-        _make_candidate_fixture(tmp_path)
+        _make_candidate_fixture(tmp_path, full_preflight=True)
     )
     reviewer_worktree = tmp_path / "pantheon-runtime-promotion-review-pr4433"
     subprocess.run(

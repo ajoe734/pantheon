@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+  "title": "Compose governed launch identity and full discover-only preflight",
+  "owner": "Codex",
+  "reviewer": "Human/Ops",
+  "review_decision": "review_pending",
+  "recorded_at": "2026-08-02T08:46:24Z",
+  "repository": "ajoe734/pantheon",
+  "branch": "task/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+  "base_branch": "dev",
+  "task_branch_base": "ec52d6d687732055b75cd6ae441d3c64f00c3240",
+  "pre_evidence_head": "28ce1c8680d1d62a58e7345f5b3624cdfcdd5f04",
+  "pull_request": null,
+  "implementation_commits": [
+    "28ce1c8680d1d62a58e7345f5b3624cdfcdd5f04"
+  ],
+  "dependencies": [
+    {
+      "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
+      "pull_request": 4443,
+      "merge_commit": "11d766efbd8bf81aca447d4ccf213109d7263dac",
+      "is_ancestor": true
+    },
+    {
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "pull_request": 4495,
+      "merge_commit": "ec52d6d687732055b75cd6ae441d3c64f00c3240",
+      "is_ancestor": true
+    }
+  ],
+  "review_binding": {
+    "policy": "review_before_merge",
+    "reviewer": "Human/Ops",
+    "pull_request": null,
+    "required": "REVIEW_PR=<replacement PR> and REVIEW_HEAD_SHA=<final exact head>"
+  },
+  "scope": {
+    "owned": [
+      "descriptor-bound identities for the governed interpreter and real supervisor launch sources",
+      "exact launch argv, cwd identity, command-runtime SHA/remote/base-ref pins, and canonical status root",
+      "scrubbed launch environment with required values and forbidden worker/Git/legacy runtime variables",
+      "authoritative task-state event-log, worker-worktree isolation, intentional-restart, and durable stdout/stderr paths",
+      "immutable config/root/Git revalidation after root discovery, process discovery, launch assembly, and final readback",
+      "complete read-only discover-only CLI and shell wrapper",
+      "persistent command-runtime positive fixture and PR-4433-shaped temporary reviewer-worktree negative fixture"
+    ],
+    "not_changed": [
+      "merged root/config/Git identity implementation from PR #4443",
+      "merged incumbent process identity implementation from PR #4495",
+      "sync-dev-root, watchdog, status-command, supervisor worktree-cleanup, or config-provisioning source behavior",
+      "repository or live supervisor config",
+      "canonical task-state JSON, provider policy, product controllers, or live services",
+      "process signals, process launch, rollback execution, or live runtime promotion"
+    ]
+  },
+  "launch_contract": {
+    "source_roles": {
+      "sync_dev_root": "scripts/sync-dev-root.sh",
+      "command_runtime_config": "scripts/provision_live_supervisor_config.py",
+      "watchdog_intent": ".orchestrator/supervisor_watchdog.py",
+      "watchdog_launcher": "scripts/run-supervisor-watchdog.sh",
+      "status_command_wrapper": "scripts/ai-status.sh",
+      "status_command": "scripts/ai_status.py",
+      "supervisor_and_worktree_cleanup": ".orchestrator/supervisor.py"
+    },
+    "required_environment": [
+      "PANTHEON_COMMAND_BASE_REF",
+      "PANTHEON_COMMAND_REMOTE",
+      "PANTHEON_COMMAND_ROOT",
+      "PANTHEON_COMMAND_RUNTIME_SHA",
+      "PANTHEON_STATUS_ROOT"
+    ],
+    "forbidden_environment": [
+      "ORCH_*",
+      "GIT_*",
+      "PANTHEON_STATUS_COMMAND_*",
+      "PANTHEON_TASK_STATE_EVENT_LOG",
+      "PANTHEON_TASK_STATE_STORE_MODE",
+      "PANTHEON_WORKTREE_ROOT",
+      "CLAUDE_CONFIG_DIR",
+      "GH_CONFIG_DIR",
+      "PYTHONHOME",
+      "PYTHONPATH",
+      "VIRTUAL_ENV"
+    ],
+    "revalidation_stages": [
+      "after_root_git_discovery",
+      "after_process_discovery",
+      "after_launch_contract_assembly",
+      "final_preflight_readback"
+    ],
+    "durable_log": "<status-root>/.orchestrator/logs/supervisor-runtime-<candidate-sha>.log",
+    "stdout_stderr_same_target": true,
+    "full_environment_emitted": false,
+    "full_argv_emitted": false
+  },
+  "acceptance": {
+    "real_launch_sources_captured_and_hashed": "passed",
+    "missing_or_non_executable_interpreter_denied": "passed",
+    "wrong_cwd_identity_denied": "passed",
+    "missing_mismatched_or_forbidden_environment_denied": "passed",
+    "unsafe_or_unwritable_log_denied_with_injected_filesystem": "passed",
+    "unsafe_task_state_worktree_and_intent_paths_denied": "passed",
+    "late_config_identity_drift_makes_snapshot_ineligible": "passed",
+    "temporary_reviewer_worktree_rejected_before_process_discovery": "passed",
+    "persistent_command_runtime_full_discover_only_fixture": "passed",
+    "no_signal_launch_config_write_or_live_mutation": "passed",
+    "full_v2_identity_and_runtime_regressions": "passed"
+  },
+  "verification": [
+    {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "168 tests passed"
+    },
+    {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py scripts/test_sync_dev_root.py scripts/test_status_command_runtime_pin.py .orchestrator/test_supervisor_watchdog.py",
+      "result": "244 tests and 14 subtests passed"
+    },
+    {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH .venv-pantheon/bin/python3 .orchestrator/test_supervisor.py -k worktree",
+      "result": "21 tests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py scripts/supervisor_runtime_health.py",
+      "result": "passed"
+    },
+    {
+      "command": "bash -n scripts/promote-supervisor-runtime.sh scripts/sync-dev-root.sh scripts/run-supervisor-watchdog.sh scripts/ai-status.sh",
+      "result": "passed"
+    },
+    {
+      "command": "scripts/promote-supervisor-runtime.sh --help | rg -- --discover-only",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check HEAD",
+      "result": "passed"
+    }
+  ],
+  "rejected_ancestry": [
+    {
+      "commit": "07316c73b8f9b574d659aa95616680301198392f",
+      "is_ancestor": false
+    },
+    {
+      "commit": "77af55015c5630c18f10670f5cb877ef7c40b115",
+      "is_ancestor": false
+    },
+    {
+      "commit": "94e3b6f34bda69711b16254f7623085bd41eecf5",
+      "is_ancestor": false
+    },
+    {
+      "commit": "d616beaae7249dd76ee32749b7daa5096a9b484d",
+      "is_ancestor": false
+    },
+    {
+      "commit": "35056b716108812d784cf9d902fd0a0d5a07777c",
+      "is_ancestor": false
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "scripts/promote_supervisor_runtime.py",
+      "sha256": "132708704ed284cc7b90d088001c811ff5e571927bb1e7a4488267b457ae37c0"
+    },
+    {
+      "path": "scripts/promote-supervisor-runtime.sh",
+      "sha256": "d0b4a77272034c22257fa551d233e64db224f55ca72e4e39a1f3979d1f652331"
+    },
+    {
+      "path": "scripts/test_promote_supervisor_runtime.py",
+      "sha256": "ca9f39743409e21bba534421f7e02ce011b960bc1329035d8d755a61358272a3"
+    }
+  ],
+  "live_discovery_probe": "not run",
+  "live_claims": [],
+  "rollout": "source merge only; no live runtime promotion in this task",
+  "rollback": "revert the eventual launch-preflight merge, then ec52d6d687732055b75cd6ae441d3c64f00c3240, then 11d766efbd8bf81aca447d4ccf213109d7263dac",
+  "superseded_pull_request": {
+    "pull_request": 4437,
+    "status": "pending replacement PR creation"
+  },
+  "next_gate": "Create the clean replacement PR, bind this manifest to its final exact head, mark PR #4437 superseded, wait for repository checks, and obtain independent Human/Ops approval before merge."
+}
