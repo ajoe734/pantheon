@@ -874,6 +874,8 @@ def _git(repo: Path, *args: str) -> str:
 
 def _make_candidate_fixture(
     tmp_path: Path,
+    *,
+    gitlink_path: str = "lean",
 ) -> tuple[Path, Path, Path, str, str, bytes]:
     source = tmp_path / "source"
     source.mkdir()
@@ -883,6 +885,15 @@ def _make_candidate_fixture(
     (source / "README.md").write_text("trusted candidate\n", encoding="utf-8")
     _git(source, "add", "README.md")
     _git(source, "commit", "-m", "trusted candidate")
+    gitlink_commit = _git(source, "rev-parse", "HEAD")
+    _git(
+        source,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        f"160000,{gitlink_commit},{gitlink_path}",
+    )
+    _git(source, "commit", "-m", "track lean-shaped gitlink")
     commit = _git(source, "rev-parse", "HEAD")
     tree = _git(source, "rev-parse", "HEAD^{tree}")
 

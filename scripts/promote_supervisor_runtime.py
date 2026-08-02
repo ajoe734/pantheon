@@ -114,6 +114,12 @@ class TrustedDevIdentity:
     candidate_commit_tree: str
 
 
+@dataclass(frozen=True, order=True)
+class TrackedGitlinkIdentity:
+    relative_path: str
+    commit: str
+
+
 @dataclass(frozen=True)
 class CandidateRuntimeIdentity:
     candidate_root: Path
@@ -1281,13 +1287,235 @@ def _assert_allowed_generated_untracked_file(
         _close_descriptors(*reversed(descriptors))
 
 
+def _validated_gitlink_path(relative_path: str) -> PurePosixPath:
+    candidate = PurePosixPath(relative_path)
+    if (
+        candidate.is_absolute()
+        or not candidate.parts
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+    ):
+        raise ValueError(f"Invalid tracked gitlink path: {relative_path!r}")
+    return candidate
+
+
+def _parse_tree_gitlinks(output: str) -> tuple[TrackedGitlinkIdentity, ...]:
+    gitlinks: set[TrackedGitlinkIdentity] = set()
+    for record in output.split("\0"):
+        if not record:
+            continue
+        try:
+            metadata, relative_path = record.split("\t", 1)
+            mode, object_type, object_id = metadata.split(" ")
+        except ValueError as exc:
+            raise ValueError(f"Malformed tracked tree record: {record!r}") from exc
+        if mode != "160000":
+            continue
+        if object_type != "commit" or not HEX_40_PATTERN.fullmatch(object_id):
+            raise ValueError(f"Malformed tracked gitlink tree record: {record!r}")
+        _validated_gitlink_path(relative_path)
+        identity = TrackedGitlinkIdentity(relative_path, object_id)
+        if identity in gitlinks:
+            raise ValueError(f"Duplicate tracked gitlink tree record: {relative_path}")
+        gitlinks.add(identity)
+    return tuple(sorted(gitlinks))
+
+
+def _parse_index_gitlinks(output: str) -> tuple[TrackedGitlinkIdentity, ...]:
+    gitlinks: set[TrackedGitlinkIdentity] = set()
+    for record in output.split("\0"):
+        if not record:
+            continue
+        try:
+            metadata, relative_path = record.split("\t", 1)
+            mode, object_id, stage = metadata.split(" ")
+        except ValueError as exc:
+            raise ValueError(f"Malformed candidate index record: {record!r}") from exc
+        if mode != "160000":
+            continue
+        if stage != "0" or not HEX_40_PATTERN.fullmatch(object_id):
+            raise ValueError(f"Malformed tracked gitlink index record: {record!r}")
+        _validated_gitlink_path(relative_path)
+        identity = TrackedGitlinkIdentity(relative_path, object_id)
+        if identity in gitlinks:
+            raise ValueError(f"Duplicate tracked gitlink index record: {relative_path}")
+        gitlinks.add(identity)
+    return tuple(sorted(gitlinks))
+
+
+def _capture_bound_gitlinks(
+    handle: CandidateRootHandle,
+    tracked_tree: str,
+) -> tuple[TrackedGitlinkIdentity, ...]:
+    """Bind every mode-160000 index entry to the accepted tracked tree."""
+    if not HEX_40_PATTERN.fullmatch(tracked_tree):
+        raise ValueError(f"Invalid tracked tree identity: {tracked_tree!r}")
+    tree_gitlinks = _parse_tree_gitlinks(
+        _run_git(
+            handle,
+            "ls-tree",
+            "-r",
+            "-z",
+            "--full-tree",
+            tracked_tree,
+        ).stdout
+    )
+    index_gitlinks = _parse_index_gitlinks(
+        _run_git(handle, "ls-files", "--stage", "-z").stdout
+    )
+    if index_gitlinks != tree_gitlinks:
+        raise ValueError(
+            "Tracked gitlink tree/index identity mismatch: "
+            f"tree={tree_gitlinks!r}, index={index_gitlinks!r}"
+        )
+    return tree_gitlinks
+
+
+def _assert_open_parent_chain_stable(
+    chain: list[tuple[int, str, FilesystemIdentity, str]],
+) -> None:
+    for parent, name, identity, label in chain:
+        _assert_relative_identity(
+            parent,
+            name,
+            identity,
+            label=label,
+            require_directory=True,
+        )
+
+
+def _assert_gitlink_directory_empty(descriptor: int, relative_path: str) -> None:
+    try:
+        with os.scandir(descriptor) as entries:
+            first = next(entries, None)
+    except OSError as exc:
+        raise ValueError(
+            f"Cannot enumerate tracked gitlink worktree {relative_path!r}: {exc}"
+        ) from exc
+    if first is not None:
+        raise ValueError(
+            "Tracked gitlink worktree must be absent or an empty direct directory: "
+            f"{relative_path!r} contains {first.name!r}"
+        )
+
+
+def _assert_tracked_gitlink_worktree(
+    handle: CandidateRootHandle,
+    gitlink: TrackedGitlinkIdentity,
+) -> None:
+    """Reject content hidden below a tracked gitlink using anchored descriptors."""
+    path = _validated_gitlink_path(gitlink.relative_path)
+    descriptors = [os.dup(handle.descriptor)]
+    parent_chain: list[tuple[int, str, FilesystemIdentity, str]] = []
+    try:
+        for position, component in enumerate(path.parts[:-1]):
+            label = (
+                f"Tracked gitlink {gitlink.relative_path!r} "
+                f"path component {component!r}"
+            )
+            try:
+                child = _open_relative_descriptor(
+                    descriptors[-1],
+                    component,
+                    label=label,
+                    require_directory=True,
+                )
+            except FileNotFoundError:
+                _assert_relative_entry_absent(
+                    descriptors[-1],
+                    component,
+                    label=label,
+                )
+                _assert_open_parent_chain_stable(parent_chain)
+                _assert_relative_entry_absent(
+                    descriptors[-1],
+                    component,
+                    label=label,
+                )
+                return
+            identity = _filesystem_identity(child)
+            if identity.device != handle.identity.device:
+                os.close(child)
+                raise ValueError(
+                    f"Tracked gitlink {gitlink.relative_path!r} path escaped "
+                    "the candidate filesystem"
+                )
+            parent_chain.append(
+                (descriptors[-1], component, identity, label)
+            )
+            descriptors.append(child)
+
+        leaf_name = path.parts[-1]
+        leaf_label = f"Tracked gitlink worktree {gitlink.relative_path!r}"
+        try:
+            leaf = _open_relative_descriptor(
+                descriptors[-1],
+                leaf_name,
+                label=leaf_label,
+                require_directory=True,
+            )
+        except FileNotFoundError:
+            _assert_relative_entry_absent(
+                descriptors[-1],
+                leaf_name,
+                label=leaf_label,
+            )
+            _assert_open_parent_chain_stable(parent_chain)
+            _assert_relative_entry_absent(
+                descriptors[-1],
+                leaf_name,
+                label=leaf_label,
+            )
+            return
+
+        try:
+            leaf_identity = _filesystem_identity(leaf)
+            if leaf_identity.device != handle.identity.device:
+                raise ValueError(
+                    f"Tracked gitlink {gitlink.relative_path!r} escaped "
+                    "the candidate filesystem"
+                )
+            _assert_gitlink_directory_empty(leaf, gitlink.relative_path)
+            _assert_relative_identity(
+                descriptors[-1],
+                leaf_name,
+                leaf_identity,
+                label=leaf_label,
+                require_directory=True,
+            )
+            _assert_open_parent_chain_stable(parent_chain)
+            _assert_gitlink_directory_empty(leaf, gitlink.relative_path)
+            _assert_relative_identity(
+                descriptors[-1],
+                leaf_name,
+                leaf_identity,
+                label=leaf_label,
+                require_directory=True,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(
+                f"Tracked gitlink {gitlink.relative_path!r} changed during validation"
+            ) from exc
+        finally:
+            os.close(leaf)
+    finally:
+        _close_descriptors(*reversed(descriptors))
+
+
+def _assert_tracked_gitlink_worktrees(
+    handle: CandidateRootHandle,
+    gitlinks: tuple[TrackedGitlinkIdentity, ...],
+) -> None:
+    for gitlink in gitlinks:
+        _assert_tracked_gitlink_worktree(handle, gitlink)
+
+
 def verify_working_tree_cleanliness(
     candidate_root: Path | CandidateRootHandle,
     *,
     expected_head: str | None = None,
     expected_tree: str | None = None,
 ) -> str:
-    """Reject all tracked dirt and non-enumerated generated untracked files."""
+    """Reject tracked, hidden-gitlink, and non-enumerated generated dirt."""
     handle, close_handle = _candidate_handle(candidate_root)
     try:
         index_flags = _run_git(handle, "ls-files", "-v", "-z").stdout
@@ -1301,6 +1529,18 @@ def verify_working_tree_cleanliness(
                     "Forbidden tracked index flag "
                     f"{record[0]!r}: {record[2:]}"
                 )
+
+        head_before, tree_before = _read_head_tree(handle)
+        if expected_head is not None and head_before != expected_head:
+            raise ValueError(
+                f"Candidate HEAD drift: {head_before} != {expected_head}"
+            )
+        if expected_tree is not None and tree_before != expected_tree:
+            raise ValueError(
+                f"Candidate tree drift: {tree_before} != {expected_tree}"
+            )
+        gitlinks_before = _capture_bound_gitlinks(handle, tree_before)
+        _assert_tracked_gitlink_worktrees(handle, gitlinks_before)
 
         status_output = _run_git(
             handle,
@@ -1343,11 +1583,13 @@ def verify_working_tree_cleanliness(
         except ValueError as exc:
             raise ValueError("Candidate tracked worktree differs from index") from exc
 
+        _assert_tracked_gitlink_worktrees(handle, gitlinks_before)
         head, tree = _read_head_tree(handle)
-        if expected_head is not None and head != expected_head:
-            raise ValueError(f"Candidate HEAD drift: {head} != {expected_head}")
-        if expected_tree is not None and tree != expected_tree:
-            raise ValueError(f"Candidate tree drift: {tree} != {expected_tree}")
+        if (head, tree) != (head_before, tree_before):
+            raise ValueError("Candidate HEAD/tree changed during cleanliness validation")
+        gitlinks_after = _capture_bound_gitlinks(handle, tree)
+        if gitlinks_after != gitlinks_before:
+            raise ValueError("Tracked gitlink identities changed during validation")
         _assert_candidate_handle_path(handle)
         return tree
     finally:
