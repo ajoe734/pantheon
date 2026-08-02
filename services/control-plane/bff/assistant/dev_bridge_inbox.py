@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping, Optional
 
-from .dev_bridge_dispatcher import dispatch_task_packet
+from .dev_bridge_dispatcher import dispatch_task_packet, _open_regular_fence_file
 from .dev_bridge_models import BridgeDispatchRequest, DevTaskPacket
 from .dev_bridge_signer import has_seen_packet, packet_digest, verify_packet
 
@@ -147,14 +147,12 @@ def _try_acquire_processing_fence(inbox: Path, packet_path: Path) -> int | None:
     """Keep an alive drainer authoritative even after JSON claim expiry."""
 
     path = _processing_fence_path(inbox, packet_path)
-    _ensure_directory(path.parent)
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = _open_regular_fence_file(
+        inbox,
+        ("claims",),
+        path.name,
+        description="Bridge inbox processing fence",
     )
-    descriptor = os.open(path, flags, 0o600)
     try:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -566,74 +564,74 @@ def drain_task_packet_inbox(
         except Exception as exc:
             receipt["status"] = "error"
             receipt["error"] = str(exc)
-        finally:
-            # Admission/replay is now terminal or retry metadata will retain
-            # the item.  Release the OS fence before local receipt I/O; the
-            # dispatcher's own packet fence covered every canonical mutation.
-            _release_processing_fence(processing_fence)
+        try:
+            if dry_run:
+                (errors if receipt["status"] == "error" else processed).append(receipt)
+                continue
 
-        if dry_run:
-            (errors if receipt["status"] == "error" else processed).append(receipt)
-            continue
+            if receipt.get("retryable") is True:
+                try:
+                    retry = _schedule_processing_retry(
+                        inbox,
+                        path,
+                        claim_token,
+                        identity or {
+                            "packet_id": path.stem,
+                            "packet_digest": "invalid",
+                        },
+                    )
+                except Exception as exc:
+                    receipt["retryPersistenceError"] = str(exc)
+                    with _file_lock(inbox / ".queue.lock"):
+                        _release_processing_claim(inbox, path, claim_token)
+                else:
+                    if retry is not None:
+                        receipt["retry"] = retry
+                errors.append(receipt)
+                continue
 
-        if receipt.get("retryable") is True:
+            target_dir = _receipt_target_dir(inbox, receipt)
+            receipt["archivedPath"] = str(target_dir / path.name)
             try:
-                retry = _schedule_processing_retry(
-                    inbox,
-                    path,
-                    claim_token,
-                    identity or {
-                        "packet_id": path.stem,
-                        "packet_digest": "invalid",
-                    },
-                )
+                # Receipt durability is the commit point, but recovery still
+                # revalidates admission and canonical readback before trusting it.
+                _write_json_atomic(receipt_path, receipt)
             except Exception as exc:
-                receipt["retryPersistenceError"] = str(exc)
-                with _file_lock(inbox / ".queue.lock"):
-                    _release_processing_claim(inbox, path, claim_token)
-            else:
-                if retry is not None:
-                    receipt["retry"] = retry
-            errors.append(receipt)
-            continue
+                receipt["persistenceError"] = str(exc)
+                try:
+                    _schedule_processing_retry(
+                        inbox,
+                        path,
+                        claim_token,
+                        identity or {
+                            "packet_id": path.stem,
+                            "packet_digest": "invalid",
+                        },
+                    )
+                except Exception:
+                    with _file_lock(inbox / ".queue.lock"):
+                        _release_processing_claim(inbox, path, claim_token)
+                errors.append(receipt)
+                continue
 
-        target_dir = _receipt_target_dir(inbox, receipt)
-        receipt["archivedPath"] = str(target_dir / path.name)
-        try:
-            # Receipt durability is the commit point, but recovery still
-            # revalidates admission and canonical readback before trusting it.
-            _write_json_atomic(receipt_path, receipt)
-        except Exception as exc:
-            receipt["persistenceError"] = str(exc)
             try:
-                _schedule_processing_retry(
-                    inbox,
-                    path,
-                    claim_token,
-                    identity or {
-                        "packet_id": path.stem,
-                        "packet_digest": "invalid",
-                    },
-                )
-            except Exception:
-                with _file_lock(inbox / ".queue.lock"):
-                    _release_processing_claim(inbox, path, claim_token)
-            errors.append(receipt)
-            continue
+                receipt["archivedPath"] = str(_finalize_processing(path, target_dir))
+            except Exception as exc:
+                receipt["recoveryError"] = str(exc)
+                _clear_processing_metadata(inbox, path, claim_token)
+                errors.append(receipt)
+                continue
 
-        try:
-            receipt["archivedPath"] = str(_finalize_processing(path, target_dir))
-        except Exception as exc:
-            receipt["recoveryError"] = str(exc)
             _clear_processing_metadata(inbox, path, claim_token)
-            errors.append(receipt)
-            continue
-
-        _clear_processing_metadata(inbox, path, claim_token)
-        if receipt["status"] == "error":
-            errors.append(receipt)
-        else:
-            processed.append(receipt)
+            if receipt["status"] == "error":
+                errors.append(receipt)
+            else:
+                processed.append(receipt)
+        finally:
+            # Keep the live drainer authoritative through receipt durability,
+            # archive/finalize, and claim/retry metadata cleanup.  JSON claim
+            # expiry is crash recovery metadata, not an overlap permission.
+            _release_processing_fence(processing_fence)
 
     return {
         "status": "drained",

@@ -146,6 +146,67 @@ def _dispatch_fence_path(repo_root: str, packet_id: str) -> Path:
     )
 
 
+def _open_regular_fence_file(
+    root: Path,
+    directory_components: Tuple[str, ...],
+    filename: str,
+    *,
+    description: str,
+) -> int:
+    """Open one fence without following managed parent or leaf symlinks."""
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptors: List[int] = []
+    try:
+        descriptor = os.open(root, directory_flags)
+        descriptors.append(descriptor)
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise ValueError(f"{description} root is not a directory: {root}")
+
+        for component in directory_components:
+            if component in {"", ".", ".."} or "/" in component:
+                raise ValueError(
+                    f"{description} has an unsafe directory component: {component!r}"
+                )
+            try:
+                child = os.open(component, directory_flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, mode=0o775, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                child = os.open(component, directory_flags, dir_fd=descriptor)
+            if not stat.S_ISDIR(os.fstat(child).st_mode):
+                os.close(child)
+                raise ValueError(
+                    f"{description} parent is not a directory: {component}"
+                )
+            descriptors.append(child)
+            descriptor = child
+
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        fence = os.open(filename, flags, 0o600, dir_fd=descriptor)
+        if not stat.S_ISREG(os.fstat(fence).st_mode):
+            os.close(fence)
+            raise ValueError(f"{description} is not a regular file: {filename}")
+        return fence
+    except OSError as exc:
+        raise ValueError(f"{description} is unsafe under {root}") from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
 def _try_acquire_dispatch_fence(repo_root: str, packet_id: str) -> int | None:
     """Hold a crash-released per-packet OS fence across governed work.
 
@@ -155,20 +216,13 @@ def _try_acquire_dispatch_fence(repo_root: str, packet_id: str) -> int | None:
     """
 
     path = _dispatch_fence_path(repo_root, packet_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = _open_regular_fence_file(
+        Path(repo_root),
+        (".orchestrator", "assistant-dev-packet-claims"),
+        path.name,
+        description="Bridge dispatch fence",
     )
     try:
-        descriptor = os.open(path, flags, 0o600)
-    except OSError as exc:
-        raise ValueError(f"Bridge dispatch fence is unsafe: {path}") from exc
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError(f"Bridge dispatch fence is not a regular file: {path}")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

@@ -1011,6 +1011,26 @@ def test_live_dispatch_fence_survives_expired_json_claim(
     assert admitted.admission_status == "admitted"
 
 
+def test_dispatch_fence_parent_symlink_fails_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    outside = tmp_path / "outside-dispatch-fence"
+    outside.mkdir()
+    claims = repo_root / ".orchestrator" / "assistant-dev-packet-claims"
+    claims.parent.mkdir()
+    claims.symlink_to(outside, target_is_directory=True)
+    packet = _signed("pkt_dispatch_fence_parent_symlink")
+
+    with pytest.raises(ValueError, match="Bridge dispatch fence is unsafe"):
+        dispatch_task_packet(
+            BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root)),
+            key_store=KEY_STORE,
+        )
+
+    assert list(outside.iterdir()) == []
+
+
 def test_stale_dispatch_claim_recovers_after_crashed_claimant(
     tmp_path: Path,
 ) -> None:
@@ -1669,6 +1689,86 @@ def test_live_processing_fence_survives_expired_json_claim(tmp_path: Path) -> No
         completed = original.result(timeout=5)
 
     assert completed["processedCount"] == 1
+
+
+def test_inbox_processing_fence_parent_symlink_fails_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_inbox_fence_parent_symlink")
+    queued = queue_task_packet(packet, repo_root=str(repo_root), key_store=KEY_STORE)
+    inbox = Path(queued["path"]).parent.parent
+    outside = tmp_path / "outside-inbox-fence"
+    outside.mkdir()
+    (inbox / "claims").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="Bridge inbox processing fence is unsafe"):
+        drain_task_packet_inbox(repo_root=str(repo_root))
+
+    assert list(outside.iterdir()) == []
+
+
+def test_processing_fence_stays_held_through_receipt_commit(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_processing_fence_receipt_commit")
+    queue_task_packet(packet, repo_root=str(repo_root), key_store=KEY_STORE)
+    entered_receipt = threading.Event()
+    release_receipt = threading.Event()
+    real_dispatch = dev_bridge_inbox.dispatch_task_packet
+    real_write_json_atomic = dev_bridge_inbox._write_json_atomic
+    dispatch_calls = 0
+    call_lock = threading.Lock()
+
+    def counted_dispatch(*args, **kwargs):
+        nonlocal dispatch_calls
+        with call_lock:
+            dispatch_calls += 1
+        return real_dispatch(*args, **kwargs)
+
+    def pause_first_receipt(path: Path, payload: dict) -> None:
+        if path.parent.name == "receipts" and not entered_receipt.is_set():
+            entered_receipt.set()
+            assert release_receipt.wait(5)
+        real_write_json_atomic(path, payload)
+
+    with (
+        patch.object(
+            dev_bridge_inbox,
+            "dispatch_task_packet",
+            side_effect=counted_dispatch,
+        ),
+        patch.object(
+            dev_bridge_inbox,
+            "_write_json_atomic",
+            side_effect=pause_first_receipt,
+        ),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        original = executor.submit(
+            drain_task_packet_inbox,
+            repo_root=str(repo_root),
+        )
+        assert entered_receipt.wait(5)
+        inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
+        claim_path = inbox / "claims" / f"{packet.packet_id}.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["expires_at_epoch"] = 0
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+        replacement = executor.submit(
+            drain_task_packet_inbox,
+            repo_root=str(repo_root),
+        ).result(timeout=5)
+        assert replacement["processedCount"] == 0
+        assert replacement["errorCount"] == 0
+        release_receipt.set()
+        completed = original.result(timeout=5)
+
+    assert dispatch_calls == 1
+    assert completed["processedCount"] == 1
+    assert completed["errorCount"] == 0
 
 
 def test_existing_receipt_does_not_suppress_exact_dispatch(tmp_path: Path) -> None:
