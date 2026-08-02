@@ -148,6 +148,17 @@ class PolicyResolutionTests(unittest.TestCase):
 
         self.assertEqual(contract.policy, gate.POLICY_MERGE_THEN_REVIEW)
         self.assertTrue(contract.declaration_honored)
+        self.assertTrue(contract.permits_merge_then_review)
+
+    def test_declared_merge_then_review_rejects_equivalent_distinct_aliases(self) -> None:
+        contract = gate.contract_from_task_row(
+            task_row(merge_policy="merge_then_review", reviewer="Codex2")
+        )
+
+        self.assertEqual(contract.policy, gate.POLICY_REVIEW_BEFORE_MERGE)
+        self.assertFalse(contract.declaration_honored)
+        self.assertFalse(contract.permits_merge_then_review)
+        self.assertIn("equivalent aliases", contract.declaration_detail)
 
     def test_codex_and_codex2_are_not_independent_review_identities(self) -> None:
         contract = gate.contract_from_task_row(task_row(reviewer="Codex2"))
@@ -168,6 +179,40 @@ class PolicyResolutionTests(unittest.TestCase):
         self.assertTrue(decision.allow_merge)
         self.assertTrue(decision.allow_auto_merge)
         self.assertEqual(decision.reason, "merge_then_review_permitted")
+
+    def test_equivalent_alias_merge_then_review_fails_closed(self) -> None:
+        decision = decide(
+            tasks=[
+                task_row(
+                    status="in_progress",
+                    reviewer="Codex2",
+                    merge_policy="merge_then_review",
+                )
+            ],
+            events=[],
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "no_independent_reviewer")
+
+    def test_evaluate_gate_rejects_a_forged_alias_merge_then_review_contract(self) -> None:
+        contract = gate.TaskContract(
+            task_id="ABC-001",
+            source="active",
+            owner="Codex",
+            reviewer="Codex2",
+            status="in_progress",
+            policy=gate.POLICY_MERGE_THEN_REVIEW,
+            declared_policy=gate.POLICY_MERGE_THEN_REVIEW,
+            declaration_honored=True,
+        )
+
+        decision = gate.evaluate_gate(contract, None, open_pr())
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "invalid_merge_then_review_contract")
 
     def test_unknown_declaration_falls_back_to_gated_default(self) -> None:
         contract = gate.contract_from_task_row(task_row(merge_policy="merge_whenever"))
@@ -1841,6 +1886,41 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--merge"]])
 
+    def test_equivalent_alias_merge_then_review_never_reaches_merge(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Codex2",
+            branch="task/ABC-001",
+        )
+        runner = self._runner(
+            open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"})
+        )
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(
+                tasks=[
+                    task_row(
+                        status="in_progress",
+                        reviewer="Codex2",
+                        merge_policy="merge_then_review",
+                    )
+                ],
+                events=[],
+            ),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("no_independent_reviewer", result.detail)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertFalse(any("--auto" in command for command in runner.commands))
+
 
 class RealGitExactHeadIntegrationTests(unittest.TestCase):
     """Exercise the approved merge path against a merge-rich real git graph."""
@@ -2251,6 +2331,37 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertIn("--label auto-merge", calls)
         self.assertIn("pr merge task/ABC-001 --auto --merge", calls)
         self.assertNotIn("--disable-auto", calls)
+
+    def test_task_finalize_withholds_auto_merge_for_equivalent_aliases(self) -> None:
+        proc, calls = self._run_finalize(
+            task_row(
+                id="ABC-001",
+                status="in_progress",
+                reviewer="Codex2",
+                merge_policy="merge_then_review",
+            )
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("canonical merge policy: review_before_merge", proc.stdout)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
+        self.assertIn("auto-merge withheld", proc.stdout)
+
+    def test_safe_pr_withholds_auto_merge_for_equivalent_aliases(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(
+                id="ABC-001",
+                status="in_progress",
+                reviewer="Codex2",
+                merge_policy="merge_then_review",
+            )
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
+        self.assertIn("withhold auto-merge", proc.stdout)
 
     def test_safe_pr_revokes_a_standing_request_and_verifies_it_off(self) -> None:
         proc, calls = self._run_safe_pr(

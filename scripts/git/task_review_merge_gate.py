@@ -223,6 +223,24 @@ class TaskContract:
         return review_identities_are_independent(self.owner, self.reviewer)
 
     @property
+    def owner_reviewer_labels_match(self) -> bool:
+        """Whether the row explicitly uses one label for both task roles."""
+
+        owner = normalize_agent(self.owner)
+        return bool(owner) and owner == normalize_agent(self.reviewer)
+
+    @property
+    def permits_merge_then_review(self) -> bool:
+        """Whether this is the intentional same-label no-review contract."""
+
+        return bool(
+            self.policy == POLICY_MERGE_THEN_REVIEW
+            and self.declared_policy == POLICY_MERGE_THEN_REVIEW
+            and self.declaration_honored
+            and self.owner_reviewer_labels_match
+        )
+
+    @property
     def gated(self) -> bool:
         return self.policy == POLICY_REVIEW_BEFORE_MERGE
 
@@ -240,6 +258,8 @@ class TaskContract:
             "declared_head_sha": self.declared_head_sha,
             "declared_head_branch": self.declared_head_branch,
             "requires_independent_review": self.requires_independent_review,
+            "owner_reviewer_labels_match": self.owner_reviewer_labels_match,
+            "permits_merge_then_review": self.permits_merge_then_review,
             "ignored_waiver_claims": list(self.ignored_waiver_claims),
         }
 
@@ -305,6 +325,9 @@ def contract_from_task_row(
     honored = False
     detail = ""
     independent = review_identities_are_independent(owner, reviewer)
+    owner_reviewer_labels_match = bool(normalize_agent(owner)) and normalize_agent(
+        owner
+    ) == normalize_agent(reviewer)
 
     if declared == POLICY_MERGE_THEN_REVIEW:
         if independent:
@@ -313,12 +336,19 @@ def contract_from_task_row(
                 f"contract assigns independent reviewer {reviewer!r} against owner "
                 f"{owner!r}; the declaration is not honored"
             )
-        else:
+        elif owner_reviewer_labels_match:
             policy = POLICY_MERGE_THEN_REVIEW
             honored = True
             detail = (
                 f"task {task_id or '?'} declares merge_then_review and its canonical "
-                "contract requires no independent review"
+                "contract explicitly assigns the same owner/reviewer label"
+            )
+        else:
+            detail = (
+                f"task {task_id or '?'} declares merge_then_review but owner "
+                f"{owner!r} and reviewer {reviewer!r} are distinct labels without "
+                "independent review identities; equivalent aliases are not an "
+                "intentional same-label no-review contract"
             )
     elif declared and declared != POLICY_REVIEW_BEFORE_MERGE:
         detail = f"unknown declared merge policy {declared!r}; defaulting to review_before_merge"
@@ -798,6 +828,16 @@ def evaluate_gate(
     """Decide whether this exact PR head may merge under this contract."""
 
     if contract.policy == POLICY_MERGE_THEN_REVIEW:
+        if not contract.permits_merge_then_review:
+            return _blocked(
+                contract,
+                approval,
+                "invalid_merge_then_review_contract",
+                f"{contract.task_id} cannot use merge_then_review without an explicit "
+                "same-label owner/reviewer contract",
+                head_oid=pr_head_oid(pr) if pr else "",
+                auto_merge_request=pr_auto_merge_summary(pr),
+            )
         return GateDecision(
             task_id=contract.task_id,
             policy=contract.policy,
