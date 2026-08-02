@@ -14,6 +14,7 @@ import json
 import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -16309,8 +16310,341 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Copilot")
         self.assertNotEqual(kwargs["new_owner"], "Copilot (legacy alias)")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
+class ExplicitHumanReviewerPreservationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["todo", "in_progress"],
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "owner_fallbacks": {
+                    "Codex": ["Codex2", "Claude"],
+                    "Codex2": ["Codex", "Claude"],
+                },
+                "reviewer_fallbacks": {
+                    "Human/Ops": ["Codex2", "Claude"],
+                    "Codex": ["Codex2", "Claude"],
+                    "Codex2": ["Codex", "Claude"],
+                },
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        self.ready_report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+            }
+        }
+        self.codex_paused_state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "pause_kind": "quota_terminal",
+                    }
+                }
+            }
+        }
 
+    def test_mainline_normalization_awaits_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-REVIEW-READY",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
 
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(self.config, task)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Human/Ops"))
+
+    def test_mainline_owner_fallback_preserves_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-OWNER-FALLBACK",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["expected_reviewer"], "Human/Ops")
+
+    def test_helper_claim_preserves_explicit_human_reviewer(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-HELPER",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "_cached_provider_capabilities",
+            return_value=self.ready_report,
+        ):
+            planned = supervisor.plan_helper_claim_assignment(
+                self.config,
+                task=task,
+                owner_name="Codex",
+                reviewer_name="Human/Ops",
+                idle_agent_name="Codex2",
+                agent_loads={"Codex": [1]},
+                helper_settings={
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                },
+            )
+
+        self.assertEqual(planned, ("Codex2", "Human/Ops"))
+
+    def test_explicit_human_reviewer_failure_fails_closed(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["agents"]["human_ops"] = {
+            "id": "human_ops",
+            "display_name": "Human/Ops",
+            "provider": "human_ops",
+        }
+        worker = {
+            "task_id": "SUP-HUMAN-REVIEW-FAILURE",
+            "agent_id": "human_ops",
+            "retry_count": 1,
+            "run_id": "human-review-run",
+        }
+        task = {
+            "id": "SUP-HUMAN-REVIEW-FAILURE",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                {},
+                worker,
+                "terminal reviewer provider failure",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_owner_failure_preserves_explicit_human_reviewer(self) -> None:
+        worker = {
+            "task_id": "SUP-HUMAN-OWNER-FAILURE",
+            "agent_id": "codex",
+            "retry_count": 1,
+            "run_id": "codex-owner-failure",
+        }
+        task = {
+            "id": "SUP-HUMAN-OWNER-FAILURE",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                {},
+                worker,
+                "terminal owner provider failure",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Codex2")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["new_status"], "todo")
+
+    def test_bound_review_approved_identity_is_not_normalized(self) -> None:
+        task = {
+            "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "review_binding": {
+                "pr": 4508,
+                "head_sha": "7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
+                "head_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+                "base": "dev",
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Human/Ops"))
+
+    def test_unbound_review_approved_owner_recovery_keeps_human_gate(self) -> None:
+        task = {
+            "id": "SUP-HUMAN-UNBOUND-FINALIZE",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=self.ready_report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                state=self.codex_paused_state,
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+
+    def test_persistence_rejects_supervisor_human_reviewer_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            original = {
+                "tasks": [
+                    {
+                        "id": "SUP-HUMAN-PERSIST-GUARD",
+                        "status": "todo",
+                        "owner": "Codex",
+                        "reviewer": "Human/Ops",
+                    }
+                ]
+            }
+            status_path.write_text(json.dumps(original), encoding="utf-8")
+            config = {**self.config, "paths": {"status_file": str(status_path)}}
+
+            with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+                applied = supervisor.persist_task_reassignment(
+                    config,
+                    task_id="SUP-HUMAN-PERSIST-GUARD",
+                    new_owner="Codex2",
+                    new_reviewer="Claude",
+                    message="Availability fallback must retain the human gate.",
+                    expected_owner="Codex",
+                    expected_reviewer="Human/Ops",
+                    expected_status="todo",
+                )
+
+            self.assertFalse(applied)
+            sync.assert_not_called()
+            self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), original)
+
+    def test_concurrent_stale_owner_plans_apply_once_and_keep_human_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "SUP-HUMAN-CONCURRENT-CAS",
+                                "status": "todo",
+                                "owner": "Codex",
+                                "reviewer": "Human/Ops",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {**self.config, "paths": {"status_file": str(status_path)}}
+            plans_ready = threading.Barrier(2)
+            first_synced = threading.Event()
+
+            def drain_outbox(_config: dict) -> bool:
+                payload = json.loads(status_path.read_text(encoding="utf-8"))
+                payload.pop("status_activity_outbox", None)
+                status_path.write_text(json.dumps(payload), encoding="utf-8")
+                first_synced.set()
+                return True
+
+            def apply_stale_plan(new_owner: str, wait_for_winner: bool) -> bool:
+                plans_ready.wait(timeout=5)
+                if wait_for_winner:
+                    self.assertTrue(first_synced.wait(timeout=5))
+                return supervisor.persist_task_reassignment(
+                    config,
+                    task_id="SUP-HUMAN-CONCURRENT-CAS",
+                    new_owner=new_owner,
+                    new_reviewer="Human/Ops",
+                    message=f"Concurrent fallback candidate {new_owner}.",
+                    expected_owner="Codex",
+                    expected_reviewer="Human/Ops",
+                    expected_status="todo",
+                )
+
+            with (
+                mock.patch.object(supervisor, "sync_status_pipeline", side_effect=drain_outbox),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                winner = executor.submit(apply_stale_plan, "Codex2", False)
+                stale = executor.submit(apply_stale_plan, "Claude", True)
+                results = [winner.result(timeout=10), stale.result(timeout=10)]
+
+            self.assertEqual(results, [True, False])
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["tasks"][0]["owner"], "Codex2")
+            self.assertEqual(saved["tasks"][0]["reviewer"], "Human/Ops")
 
 
 class MissingHandoffBlockerTests(unittest.TestCase):
@@ -19105,6 +19439,340 @@ class ProviderPauseRecoveryProbeTests(unittest.TestCase):
             now=datetime(2026, 8, 2, 6, 4, 59, tzinfo=timezone.utc),
         )
         self.assertEqual(targets, [])
+
+
+class ProviderStaleCacheReadmissionProbeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.status_path = self.root / "ai-status.json"
+        self.capabilities_path = self.root / "provider-capabilities.json"
+        self.event_queue_path = self.root / "event-queue.jsonl"
+        self.event_queue_path.write_text("", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "status_file": str(self.status_path),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "event_queue": str(self.event_queue_path),
+                "provider_capabilities": str(self.capabilities_path),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"auto_refresh_provider_capabilities": False},
+            "provider_auth": {
+                "enabled": True,
+                "probe_interval_seconds": 900,
+                "failed_probe_interval_seconds": 60,
+            },
+            "provider_guardrails": {
+                "stale_cache_readmission_probe_max_per_cycle": 1,
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "worker_os_duplicate_guard": False,
+                "unchanged_task_cooldown_seconds": 0,
+                "active_worker_statuses": ["running", "retry_backoff"],
+                "max_tasks_per_agent_by_agent": {"Codex2": 4},
+                "dependency_done_statuses": ["done"],
+            },
+            "agents": {
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                }
+            },
+            "providers": {
+                "codex2": {
+                    "delivery_mode": "codex",
+                    "account": "codex2",
+                }
+            },
+        }
+        self.status = {
+            "agents": [{"name": "Codex2"}, {"name": "Codex"}],
+            "tasks": [
+                {
+                    "id": "RECOVER-CODEX2",
+                    "status": "todo",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    "last_update": "2026-08-02T12:00:00Z",
+                }
+            ],
+        }
+        self.cached = self._capabilities(
+            "codex2",
+            checked_at="2026-08-02T05:21:10Z",
+        )
+        self._write_fixture(self.status, self.cached)
+
+    @staticmethod
+    def _capabilities(
+        provider: str,
+        *,
+        checked_at: str,
+        ready: bool = False,
+        status: str = "refresh_token_revoked",
+        source: str = "live",
+    ) -> dict[str, object]:
+        return {
+            "providers": {
+                provider: {
+                    "auth_ready": ready,
+                    "local_cli_worker_supported": ready,
+                    "supports_auto_approve": ready,
+                    "auth_probe": {
+                        "provider": provider,
+                        "ready": ready,
+                        "status": status,
+                        "method": "codex_exec_oauth",
+                        "error": None if ready else status,
+                        "checked_at": checked_at,
+                        "last_auth_probe_at": checked_at,
+                        "source": source,
+                    },
+                }
+            }
+        }
+
+    def _write_fixture(self, status: dict[str, object], capabilities: dict[str, object]) -> None:
+        self.status_path.write_text(json.dumps(status), encoding="utf-8")
+        self.capabilities_path.write_text(json.dumps(capabilities), encoding="utf-8")
+        supervisor._PROVIDER_CAPS_MTIME_CACHE.pop(str(self.capabilities_path), None)
+
+    @staticmethod
+    def _live_probe(
+        *,
+        ready: bool | None,
+        status: str,
+        provider: str = "codex2",
+    ) -> dict[str, object]:
+        return {
+            "provider": provider,
+            "ready": ready,
+            "status": status,
+            "method": "codex_exec_oauth",
+            "error": None if ready is True else status,
+            "checked_at": "2026-08-02T12:38:30Z",
+            "last_auth_probe_at": "2026-08-02T12:38:30Z",
+            "source": "live",
+        }
+
+    def test_auto_refresh_false_recovers_stale_false_before_admission(self) -> None:
+        live = self._live_probe(ready=True, status="ready")
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(self.cached)),
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=live) as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot={},
+            )
+
+        self.assertFalse(previous["providers"]["codex2"]["auth_ready"])
+        probe.assert_called_once_with(self.config, "codex2", force=True)
+        write_caps.assert_called_once_with(self.config, report=current)
+        capability = current["providers"]["codex2"]
+        self.assertTrue(capability["auth_ready"])
+        self.assertEqual(capability["account_health"], "healthy")
+        self.assertIsNone(
+            supervisor.agent_auto_dispatch_block_reason(
+                self.config,
+                {},
+                "codex2",
+                current,
+            )
+        )
+
+    def test_failed_ambiguous_and_exception_probes_stay_fail_closed(self) -> None:
+        cases = [
+            ("revoked", self._live_probe(ready=False, status="refresh_token_revoked")),
+            ("quota", self._live_probe(ready=False, status="quota_reached")),
+            ("timeout", self._live_probe(ready=False, status="probe_timeout")),
+            ("error", self._live_probe(ready=False, status="probe_error")),
+            ("unsupported", self._live_probe(ready=None, status="unsupported_probe")),
+        ]
+        for label, outcome in cases:
+            with self.subTest(label=label):
+                with (
+                    mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(self.cached)),
+                    mock.patch.object(supervisor, "probe_provider_auth", return_value=outcome),
+                    mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+                ):
+                    _previous, current = supervisor.probe_provider_reports(
+                        self.config,
+                        quiet=True,
+                        runtime_snapshot={},
+                    )
+                capability = current["providers"]["codex2"]
+                self.assertFalse(capability["auth_ready"])
+                self.assertFalse(capability["local_cli_worker_supported"])
+                self.assertEqual(capability["auth_probe"]["status"], outcome["status"])
+                write_caps.assert_called_once_with(self.config, report=current)
+
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(self.cached)),
+            mock.patch.object(supervisor, "probe_provider_auth", side_effect=RuntimeError("boom")),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot={},
+            )
+        capability = current["providers"]["codex2"]
+        self.assertFalse(capability["auth_ready"])
+        self.assertEqual(capability["auth_probe"]["status"], "probe_error")
+        write_caps.assert_called_once_with(self.config, report=current)
+
+    def test_recent_failed_probe_rate_limits_repeat_attempt(self) -> None:
+        recent = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        cached = self._capabilities("codex2", checked_at=recent)
+        self._write_fixture(self.status, cached)
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(cached)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot={},
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+        self.assertFalse(current["providers"]["codex2"]["auth_ready"])
+
+    def test_no_eligible_task_does_not_probe(self) -> None:
+        no_work = copy.deepcopy(self.status)
+        no_work["tasks"][0]["status"] = "done"
+        self._write_fixture(no_work, self.cached)
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(self.cached)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot={},
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+
+    def test_concurrent_candidates_are_bounded_to_one_account_probe(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["agents"]["codex"] = {
+            "id": "codex",
+            "display_name": "Codex",
+            "provider": "codex",
+        }
+        config["providers"]["codex"] = {
+            "delivery_mode": "codex",
+            "account": "codex1",
+        }
+        status = copy.deepcopy(self.status)
+        status["tasks"].append(
+            {
+                "id": "RECOVER-CODEX1",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "depends_on": [],
+                "last_update": "2026-08-02T12:00:00Z",
+            }
+        )
+        cached = copy.deepcopy(self.cached)
+        cached["providers"].update(
+            self._capabilities("codex", checked_at="2026-08-02T05:21:10Z")["providers"]
+        )
+        self._write_fixture(status, cached)
+
+        targets = supervisor.provider_stale_cache_readmission_probe_targets(
+            config,
+            {},
+            cached,
+            status=status,
+        )
+
+        self.assertEqual(targets, ["codex2"])
+
+    def test_logical_agent_coalesces_hyphenated_slots_by_account(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["agents"]["codex2"].update(
+            {"provider": "codex2", "worker_slots": ["codex2_1", "codex2_2"]}
+        )
+        config["agents"].update(
+            {
+                "codex2_1": {
+                    "id": "codex2_1",
+                    "display_name": "Codex2",
+                    "provider": "codex2-1",
+                    "dispatch_slot_for": "codex2",
+                },
+                "codex2_2": {
+                    "id": "codex2_2",
+                    "display_name": "Codex2",
+                    "provider": "codex2-2",
+                    "dispatch_slot_for": "codex2",
+                },
+            }
+        )
+        config["providers"] = {
+            "codex2": {"delivery_mode": "codex", "account": "codex2"},
+            "codex2-1": {"delivery_mode": "codex", "account": "codex2"},
+            "codex2-2": {"delivery_mode": "codex", "account": "codex2"},
+        }
+        cached = {"providers": {}}
+        for provider in ("codex2-1", "codex2-2"):
+            cached["providers"].update(
+                self._capabilities(provider, checked_at="2026-08-02T05:21:10Z")["providers"]
+            )
+        self._write_fixture(self.status, cached)
+
+        targets = supervisor.provider_stale_cache_readmission_probe_targets(
+            config,
+            {},
+            cached,
+            status=self.status,
+        )
+
+        self.assertEqual(targets, ["codex2-1"])
+
+    def test_auto_refresh_live_result_avoids_duplicate_readmission_probe(self) -> None:
+        self.config["supervisor"]["auto_refresh_provider_capabilities"] = True
+        live_report = self._capabilities(
+            "codex2",
+            checked_at="2026-08-02T12:38:30Z",
+            ready=True,
+            status="ready",
+        )
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(live_report)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot={},
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+        self.assertTrue(current["providers"]["codex2"]["auth_ready"])
 
 
 class OwnerlessInProgressReconciliationTests(unittest.TestCase):
