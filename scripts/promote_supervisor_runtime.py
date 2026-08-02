@@ -18,7 +18,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
 from supervisor_runtime_health import (
@@ -49,6 +49,50 @@ PROCESS_ENVIRONMENT_ALLOWLIST = (
     "PANTHEON_COMMAND_ROOT",
     "PANTHEON_COMMAND_RUNTIME_SHA",
     "PANTHEON_STATUS_ROOT",
+)
+GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT = (
+    "PANTHEON_COMMAND_BASE_REF",
+    "PANTHEON_COMMAND_REMOTE",
+    "PANTHEON_COMMAND_ROOT",
+    "PANTHEON_COMMAND_RUNTIME_SHA",
+    "PANTHEON_STATUS_ROOT",
+)
+GOVERNED_LAUNCH_FORBIDDEN_ENVIRONMENT = frozenset(
+    {
+        "CLAUDE_CONFIG_DIR",
+        "GH_CONFIG_DIR",
+        "PANTHEON_STATUS_COMMAND_BASE_REF",
+        "PANTHEON_STATUS_COMMAND_REMOTE",
+        "PANTHEON_STATUS_COMMAND_ROOT",
+        "PANTHEON_STATUS_COMMAND_SHA",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_WORKTREE_ROOT",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+    }
+)
+GOVERNED_LAUNCH_FORBIDDEN_PREFIXES = (
+    "GIT_",
+    "ORCH_",
+)
+GOVERNED_LAUNCH_SOURCES = (
+    ("supervisor", PurePosixPath(".orchestrator/supervisor.py"), False),
+    (
+        "watchdog_intent",
+        PurePosixPath(".orchestrator/supervisor_watchdog.py"),
+        True,
+    ),
+    ("watchdog_launcher", PurePosixPath("scripts/run-supervisor-watchdog.sh"), True),
+    ("sync_dev_root", PurePosixPath("scripts/sync-dev-root.sh"), True),
+    ("status_command_wrapper", PurePosixPath("scripts/ai-status.sh"), True),
+    ("status_command", PurePosixPath("scripts/ai_status.py"), False),
+    (
+        "command_runtime_config",
+        PurePosixPath("scripts/provision_live_supervisor_config.py"),
+        False,
+    ),
 )
 
 # These files are created by the supervisor/status machinery even when its
@@ -191,6 +235,58 @@ class SupervisorProcessIdentity:
     cwd_tree: str
     environment_contract: tuple[tuple[str, str], ...]
     admission_lock: SupervisorAdmissionLockIdentity
+
+
+@dataclass(frozen=True)
+class LaunchFileIdentity:
+    role: str
+    path: Path
+    device: int
+    inode: int
+    mode: int
+    byte_length: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class GovernedSupervisorLaunchContract:
+    interpreter: LaunchFileIdentity
+    argv: tuple[str, ...]
+    cwd: Path
+    cwd_device: int
+    cwd_inode: int
+    required_environment: tuple[tuple[str, str], ...]
+    scrubbed_environment_names_sha256: str
+    scrubbed_environment_variable_count: int
+    source_identities: tuple[LaunchFileIdentity, ...]
+    status_command_root: Path
+    status_command_runtime_sha: str
+    status_command_remote: str
+    status_command_base_ref: str
+    status_root: Path
+    task_state_event_log: Path
+    worker_worktree_root: Path
+    intentional_restart_path: Path
+    stdout_log_path: Path
+    stderr_log_path: Path
+
+
+class LaunchFilesystem(Protocol):
+    def capture_regular_file(
+        self,
+        path: Path,
+        *,
+        role: str,
+        require_executable: bool,
+    ) -> LaunchFileIdentity: ...
+
+    def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity: ...
+
+    def directory_is_writable(self, path: Path) -> bool: ...
+
+    def path_exists(self, path: Path) -> bool: ...
+
+    def file_is_writable(self, path: Path) -> bool: ...
 
 
 class RuntimeProcessReader(Protocol):
@@ -1762,6 +1858,383 @@ def _capture_config_bytes(
     return content, file_identity, path_components
 
 
+class OSLaunchFilesystem:
+    """Descriptor-bound, read-only filesystem checks for launch preflight."""
+
+    def capture_regular_file(
+        self,
+        path: Path,
+        *,
+        role: str,
+        require_executable: bool,
+    ) -> LaunchFileIdentity:
+        parent_components = _capture_directory_component_identities(
+            path.parent,
+            label=f"Governed launch {role}",
+        )
+        descriptor = _open_path_descriptor(
+            path,
+            label=f"Governed launch {role}",
+            require_directory=False,
+        )
+        try:
+            before = os.fstat(descriptor)
+            with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                content = handle.read()
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        stable_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        stable_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if stable_before != stable_after or len(content) != before.st_size:
+            raise ValueError(f"Governed launch {role} changed during capture: {path}")
+        if require_executable and (
+            before.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) == 0
+            or not os.access(path, os.X_OK)
+        ):
+            raise ValueError(f"Governed launch {role} is not executable: {path}")
+        file_identity = _identity_from_stat(before)
+        _assert_path_component_identities(
+            parent_components
+            + (PathComponentIdentity(path=path, identity=file_identity),),
+            label=f"Governed launch {role}",
+        )
+        return LaunchFileIdentity(
+            role=role,
+            path=path,
+            device=before.st_dev,
+            inode=before.st_ino,
+            mode=before.st_mode,
+            byte_length=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+
+    def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity:
+        components = _capture_directory_component_identities(path, label=label)
+        identity = components[-1].identity
+        if not stat.S_ISDIR(identity.mode):
+            raise ValueError(f"{label} is not a directory: {path}")
+        _assert_path_component_identities(components, label=label)
+        return identity
+
+    def directory_is_writable(self, path: Path) -> bool:
+        return os.access(path, os.W_OK | os.X_OK)
+
+    def path_exists(self, path: Path) -> bool:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return False
+        return True
+
+    def file_is_writable(self, path: Path) -> bool:
+        return os.access(path, os.W_OK)
+
+
+def _path_is_within(path: Path, parent: Path) -> bool:
+    return path == parent or parent in path.parents
+
+
+def _is_forbidden_launch_environment_name(name: str) -> bool:
+    return (
+        name in GOVERNED_LAUNCH_FORBIDDEN_ENVIRONMENT
+        or any(name.startswith(prefix) for prefix in GOVERNED_LAUNCH_FORBIDDEN_PREFIXES)
+    )
+
+
+def _expected_governed_launch_environment(
+    identity: CandidateRuntimeIdentity,
+    *,
+    status_root: Path,
+) -> dict[str, str]:
+    return {
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+        "PANTHEON_COMMAND_REMOTE": identity.repository_slug,
+        "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
+        "PANTHEON_STATUS_ROOT": str(status_root),
+    }
+
+
+def build_scrubbed_launch_environment(
+    identity: CandidateRuntimeIdentity,
+    *,
+    status_root: Path,
+    inherited_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    source = os.environ if inherited_environment is None else inherited_environment
+    environment = {
+        str(name): str(value)
+        for name, value in source.items()
+        if not _is_forbidden_launch_environment_name(str(name))
+    }
+    environment.update(
+        _expected_governed_launch_environment(identity, status_root=status_root)
+    )
+    return environment
+
+
+def _validate_governed_launch_environment(
+    environment: Mapping[str, str],
+    *,
+    expected: Mapping[str, str],
+) -> None:
+    forbidden = sorted(
+        name for name in environment if _is_forbidden_launch_environment_name(str(name))
+    )
+    if forbidden:
+        raise ValueError(
+            "Governed launch environment retains forbidden inherited variables: "
+            + ",".join(forbidden)
+        )
+    for name in GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT:
+        if name not in environment:
+            raise ValueError(f"Governed launch environment is missing {name}")
+        actual = str(environment[name])
+        if actual != expected[name]:
+            raise ValueError(
+                f"Governed launch environment {name} mismatch: "
+                f"{actual!r} != {expected[name]!r}"
+            )
+
+
+def _environment_names_sha256(environment: Mapping[str, str]) -> str:
+    digest = hashlib.sha256()
+    for name in sorted(str(item) for item in environment):
+        encoded = name.encode("utf-8", errors="strict")
+        digest.update(len(encoded).to_bytes(8, byteorder="big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _strict_absolute_path_from_config(raw: Any, *, label: str) -> Path:
+    if not isinstance(raw, str) or not raw or raw != raw.strip():
+        raise ValueError(f"Captured live config {label} is invalid")
+    path = Path(raw)
+    _validate_absolute_identity_path(path, label=f"Captured live config {label}")
+    return path
+
+
+def _capture_optional_safe_file(
+    filesystem: LaunchFilesystem,
+    path: Path,
+    *,
+    role: str,
+    require_writable: bool,
+) -> None:
+    if not filesystem.path_exists(path):
+        return
+    filesystem.capture_regular_file(
+        path,
+        role=role,
+        require_executable=False,
+    )
+    if require_writable and not filesystem.file_is_writable(path):
+        raise ValueError(f"Governed launch {role} is not writable: {path}")
+
+
+def build_governed_supervisor_launch_contract(
+    identity: CandidateRuntimeIdentity,
+    *,
+    filesystem: LaunchFilesystem | None = None,
+    inherited_environment: Mapping[str, str] | None = None,
+    launch_environment: Mapping[str, str] | None = None,
+    launch_cwd: Path | None = None,
+    stdout_log_path: Path | None = None,
+    stderr_log_path: Path | None = None,
+) -> GovernedSupervisorLaunchContract:
+    """Assemble and validate the exact next-launch contract without mutation."""
+    fs = filesystem or OSLaunchFilesystem()
+    expected_process = _expected_supervisor_process_contract(identity)
+    config = _strict_live_config(identity)
+
+    if expected_process.argv[0] != str(expected_process.executable):
+        raise ValueError(
+            "Governed interpreter path is not canonical: "
+            f"{expected_process.argv[0]} != {expected_process.executable}"
+        )
+    interpreter = fs.capture_regular_file(
+        expected_process.executable,
+        role="interpreter",
+        require_executable=True,
+    )
+
+    cwd = launch_cwd or identity.candidate_root
+    if cwd != identity.candidate_root:
+        raise ValueError(
+            f"Governed launch cwd mismatch: {cwd} != {identity.candidate_root}"
+        )
+    cwd_identity = fs.capture_directory(cwd, label="Governed launch cwd")
+    if (
+        cwd_identity.device != identity.candidate_root_device
+        or cwd_identity.inode != identity.candidate_root_inode
+    ):
+        raise ValueError("Governed launch cwd identity differs from candidate root")
+
+    source_identities = tuple(
+        fs.capture_regular_file(
+            identity.candidate_root / Path(relative),
+            role=role,
+            require_executable=require_executable,
+        )
+        for role, relative, require_executable in GOVERNED_LAUNCH_SOURCES
+    )
+    source_by_role = {source.role: source for source in source_identities}
+    if source_by_role["supervisor"].path != expected_process.entrypoint:
+        raise ValueError("Governed supervisor source does not match configured entrypoint")
+
+    task_state_store = config.get("task_state_store")
+    if not isinstance(task_state_store, dict):
+        raise ValueError("Captured live config task_state_store object is missing")
+    if task_state_store.get("mode") != "authoritative":
+        raise ValueError("Captured live config task_state_store.mode is not authoritative")
+    task_state_event_log = _strict_absolute_path_from_config(
+        task_state_store.get("event_log"),
+        label="task_state_store.event_log",
+    )
+    fs.capture_regular_file(
+        task_state_event_log,
+        role="task_state_event_log",
+        require_executable=False,
+    )
+    fs.capture_directory(
+        task_state_event_log.parent,
+        label="Governed task-state event-log directory",
+    )
+    if not fs.directory_is_writable(task_state_event_log.parent):
+        raise ValueError(
+            "Governed task-state event-log directory is not writable: "
+            f"{task_state_event_log.parent}"
+        )
+    if not fs.file_is_writable(task_state_event_log):
+        raise ValueError(
+            f"Governed task-state event log is not writable: {task_state_event_log}"
+        )
+    if _path_is_within(task_state_event_log, identity.candidate_root):
+        raise ValueError("Task-state event log must remain outside the command runtime")
+
+    worker_worktrees = config.get("worker_worktrees")
+    if not isinstance(worker_worktrees, dict):
+        raise ValueError("Captured live config worker_worktrees object is missing")
+    worker_worktree_root = _strict_absolute_path_from_config(
+        worker_worktrees.get("root"),
+        label="worker_worktrees.root",
+    )
+    fs.capture_directory(
+        worker_worktree_root,
+        label="Governed worker worktree root",
+    )
+    if not fs.directory_is_writable(worker_worktree_root):
+        raise ValueError(
+            f"Governed worker worktree root is not writable: {worker_worktree_root}"
+        )
+    if _path_is_within(identity.candidate_root, worker_worktree_root):
+        raise ValueError("Command runtime cannot be a worker task worktree")
+    if _path_is_within(worker_worktree_root, identity.candidate_root):
+        raise ValueError("Worker worktree root cannot be inside the command runtime")
+
+    status_root = Path(expected_process.status_root)
+    expected_environment = _expected_governed_launch_environment(
+        identity,
+        status_root=status_root,
+    )
+    final_environment = (
+        dict(launch_environment)
+        if launch_environment is not None
+        else build_scrubbed_launch_environment(
+            identity,
+            status_root=status_root,
+            inherited_environment=inherited_environment,
+        )
+    )
+    _validate_governed_launch_environment(
+        final_environment,
+        expected=expected_environment,
+    )
+
+    if _path_is_within(status_root, identity.candidate_root):
+        raise ValueError("Canonical status root must remain outside the command runtime")
+    log_directory = status_root / ".orchestrator" / "logs"
+    fs.capture_directory(log_directory, label="Governed durable log directory")
+    if not fs.directory_is_writable(log_directory):
+        raise ValueError(
+            f"Governed durable log directory is not writable: {log_directory}"
+        )
+    default_log_path = (
+        log_directory / f"supervisor-runtime-{identity.head_commit}.log"
+    )
+    stdout_path = stdout_log_path or default_log_path
+    stderr_path = stderr_log_path or default_log_path
+    if stdout_path != default_log_path or stderr_path != default_log_path:
+        raise ValueError(
+            "Governed stdout/stderr must use the exact durable supervisor log target"
+        )
+    _capture_optional_safe_file(
+        fs,
+        default_log_path,
+        role="durable_stdout_stderr_log",
+        require_writable=True,
+    )
+
+    intentional_restart = status_root / ".orchestrator" / "supervisor-restart-intent.json"
+    fs.capture_directory(
+        intentional_restart.parent,
+        label="Governed intentional-restart directory",
+    )
+    if not fs.directory_is_writable(intentional_restart.parent):
+        raise ValueError(
+            "Governed intentional-restart directory is not writable: "
+            f"{intentional_restart.parent}"
+        )
+    _capture_optional_safe_file(
+        fs,
+        intentional_restart,
+        role="intentional_restart_record",
+        require_writable=True,
+    )
+
+    return GovernedSupervisorLaunchContract(
+        interpreter=interpreter,
+        argv=expected_process.argv,
+        cwd=cwd,
+        cwd_device=cwd_identity.device,
+        cwd_inode=cwd_identity.inode,
+        required_environment=tuple(
+            (name, expected_environment[name])
+            for name in GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT
+        ),
+        scrubbed_environment_names_sha256=_environment_names_sha256(
+            final_environment
+        ),
+        scrubbed_environment_variable_count=len(final_environment),
+        source_identities=source_identities,
+        status_command_root=identity.candidate_root,
+        status_command_runtime_sha=identity.head_commit,
+        status_command_remote=identity.repository_slug,
+        status_command_base_ref="origin/dev",
+        status_root=status_root,
+        task_state_event_log=task_state_event_log,
+        worker_worktree_root=worker_worktree_root,
+        intentional_restart_path=intentional_restart,
+        stdout_log_path=stdout_path,
+        stderr_log_path=stderr_path,
+    )
+
+
 class ProcfsRuntimeProcessReader:
     """Read the minimum allowlisted process identity surface from procfs."""
 
@@ -2582,6 +3055,57 @@ def _supervisor_process_identity_summary(
     }
 
 
+def _governed_launch_contract_summary(
+    contract: GovernedSupervisorLaunchContract,
+) -> dict[str, Any]:
+    return {
+        "interpreter": {
+            "path": str(contract.interpreter.path),
+            "device": contract.interpreter.device,
+            "inode": contract.interpreter.inode,
+            "mode": contract.interpreter.mode,
+            "byte_length": contract.interpreter.byte_length,
+            "sha256": contract.interpreter.sha256,
+        },
+        "argv_count": len(contract.argv),
+        "argv_sha256": _argv_sha256(contract.argv),
+        "cwd": str(contract.cwd),
+        "cwd_device": contract.cwd_device,
+        "cwd_inode": contract.cwd_inode,
+        "required_environment": dict(contract.required_environment),
+        "scrubbed_environment_names_sha256": (
+            contract.scrubbed_environment_names_sha256
+        ),
+        "scrubbed_environment_variable_count": (
+            contract.scrubbed_environment_variable_count
+        ),
+        "sources": [
+            {
+                "role": source.role,
+                "path": str(source.path),
+                "device": source.device,
+                "inode": source.inode,
+                "mode": source.mode,
+                "byte_length": source.byte_length,
+                "sha256": source.sha256,
+            }
+            for source in contract.source_identities
+        ],
+        "status_command": {
+            "root": str(contract.status_command_root),
+            "runtime_sha": contract.status_command_runtime_sha,
+            "remote": contract.status_command_remote,
+            "base_ref": contract.status_command_base_ref,
+        },
+        "status_root": str(contract.status_root),
+        "task_state_event_log": str(contract.task_state_event_log),
+        "worker_worktree_root": str(contract.worker_worktree_root),
+        "intentional_restart_path": str(contract.intentional_restart_path),
+        "stdout_log_path": str(contract.stdout_log_path),
+        "stderr_log_path": str(contract.stderr_log_path),
+    }
+
+
 def build_candidate_runtime_identity(
     candidate_path: Path,
     config_path: Path | None = None,
@@ -2714,6 +3238,12 @@ def capture_promotion_snapshot(
     *,
     config_path_arg: Path | None = None,
     now: datetime | None = None,
+    launch_filesystem: LaunchFilesystem | None = None,
+    inherited_environment: Mapping[str, str] | None = None,
+    launch_environment: Mapping[str, str] | None = None,
+    launch_cwd: Path | None = None,
+    stdout_log_path: Path | None = None,
+    stderr_log_path: Path | None = None,
 ) -> dict[str, Any]:
     """Capture live-schema supervisor runtime state and evaluate promotion invariants."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -2721,13 +3251,30 @@ def capture_promotion_snapshot(
 
     candidate_identity: CandidateRuntimeIdentity | None = None
     identity_error: str | None = None
+    identity_revalidation_stages: list[str] = []
     supervisor_process_identity: SupervisorProcessIdentity | None = None
     supervisor_process_error: str | None = None
+    governed_launch_contract: GovernedSupervisorLaunchContract | None = None
+    governed_launch_error: str | None = None
+
+    def revalidate_candidate(stage: str) -> bool:
+        nonlocal identity_error
+        if candidate_identity is None:
+            return False
+        try:
+            candidate_identity.verify_immutable_snapshot()
+        except Exception as exc:
+            identity_error = f"{stage}: {exc}"
+            return False
+        identity_revalidation_stages.append(stage)
+        return True
+
     try:
         candidate_identity = build_candidate_runtime_identity(repo_root)
-        candidate_identity.verify_immutable_snapshot()
     except Exception as exc:
         identity_error = str(exc)
+    if candidate_identity is not None and identity_error is None:
+        revalidate_candidate("after_root_git_discovery")
     if candidate_identity is not None and identity_error is None:
         try:
             supervisor_process_identity = discover_incumbent_supervisor_process(
@@ -2738,8 +3285,32 @@ def capture_promotion_snapshot(
             )
         except Exception as exc:
             supervisor_process_error = str(exc)
+        else:
+            revalidate_candidate("after_process_discovery")
     else:
         supervisor_process_error = "Candidate runtime identity is unavailable"
+    if (
+        candidate_identity is not None
+        and identity_error is None
+        and supervisor_process_identity is not None
+        and supervisor_process_error is None
+    ):
+        try:
+            governed_launch_contract = build_governed_supervisor_launch_contract(
+                candidate_identity,
+                filesystem=launch_filesystem,
+                inherited_environment=inherited_environment,
+                launch_environment=launch_environment,
+                launch_cwd=launch_cwd,
+                stdout_log_path=stdout_log_path,
+                stderr_log_path=stderr_log_path,
+            )
+        except Exception as exc:
+            governed_launch_error = str(exc)
+        else:
+            revalidate_candidate("after_launch_contract_assembly")
+    else:
+        governed_launch_error = "Candidate/process identity is unavailable"
 
     file_errors: list[dict[str, str]] = []
 
@@ -2816,6 +3387,11 @@ def capture_promotion_snapshot(
     coord_root = resolved_coordinator_status_root(repo_root, config)
     lock_path = coord_root / ".orchestrator" / "supervisor.lock"
 
+    if candidate_identity is not None and identity_error is None:
+        revalidate_candidate("final_preflight_readback")
+    if identity_error is not None and governed_launch_error is None:
+        governed_launch_error = identity_error
+
     # Evaluate promotion invariants
     invariants = evaluate_promotion_invariants(
         health_report=health_report,
@@ -2862,6 +3438,25 @@ def capture_promotion_snapshot(
             },
         },
     )
+    invariants.insert(
+        2,
+        {
+            "name": "governed_supervisor_launch_contract_immutable",
+            "ok": (
+                governed_launch_contract is not None
+                and governed_launch_error is None
+                and identity_error is None
+            ),
+            "details": {
+                "error": governed_launch_error,
+                "contract": (
+                    _governed_launch_contract_summary(governed_launch_contract)
+                    if governed_launch_contract is not None
+                    else None
+                ),
+            },
+        },
+    )
 
     all_invariants_pass = all(inv["ok"] for inv in invariants)
 
@@ -2869,6 +3464,8 @@ def capture_promotion_snapshot(
         "timestamp": now.isoformat().replace("+00:00", "Z"),
         "repo_root": str(repo_root),
         "config_path": str(config_path_resolved),
+        "preflight_mode": "discover_only",
+        "identity_revalidation_stages": identity_revalidation_stages,
         "candidate_runtime_identity": (
             _candidate_identity_summary(candidate_identity)
             if candidate_identity is not None
@@ -2879,6 +3476,11 @@ def capture_promotion_snapshot(
                 supervisor_process_identity
             )
             if supervisor_process_identity is not None
+            else None
+        ),
+        "governed_supervisor_launch_contract": (
+            _governed_launch_contract_summary(governed_launch_contract)
+            if governed_launch_contract is not None
             else None
         ),
         "health_report": health_report,
@@ -3344,6 +3946,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture supervisor promotion snapshot & check invariants.")
     parser.add_argument("--repo", default=".", help="Pantheon repository root. Defaults to cwd.")
     parser.add_argument("--config-path", default=None, help="Path to .orchestrator/config.json.")
+    parser.add_argument(
+        "--discover-only",
+        action="store_true",
+        help=(
+            "Run the complete read-only identity, incumbent, launch-contract, "
+            "and runtime-health preflight. This command never signals or launches a process."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON snapshot.")
     return parser.parse_args()
 

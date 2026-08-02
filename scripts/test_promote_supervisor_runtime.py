@@ -17,13 +17,15 @@ from unittest.mock import Mock, patch
 from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
     FilesystemIdentity,
-    PathComponentIdentity,
+    GovernedSupervisorLaunchContract,
     ProcessCwdIdentity,
     ProcessGeneration,
     ProcfsRuntimeProcessReader,
     SupervisorAdmissionLockIdentity,
     SupervisorProcessIdentity,
     build_candidate_runtime_identity,
+    build_governed_supervisor_launch_contract,
+    build_scrubbed_launch_environment,
     capture_promotion_snapshot,
     discover_incumbent_supervisor_process,
     evaluate_promotion_invariants,
@@ -42,11 +44,15 @@ def write_json(path: Path, payload: object) -> None:
 
 
 def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    status_root = repo.parent / f"{repo.name}-status-root"
+    state_path = status_root / ".orchestrator" / "state.json"
+    status_path = status_root / "ai-status.json"
+    capabilities_path = status_root / ".orchestrator" / "provider_capabilities.json"
     config = {
         "paths": {
-            "state_file": ".orchestrator/state.json",
-            "status_file": "ai-status.json",
-            "provider_capabilities": ".orchestrator/provider_capabilities.json",
+            "state_file": str(state_path),
+            "status_file": str(status_path),
+            "provider_capabilities": str(capabilities_path),
         },
         "watchdog": {"heartbeat_stale_seconds": 900},
         "supervisor": {"stall_after_seconds": 900},
@@ -99,19 +105,69 @@ def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[s
     }
 
     write_json(repo / ".orchestrator" / "config.json", config)
-    write_json(repo / ".orchestrator" / "state.json", state)
-    (repo / ".orchestrator" / "supervisor.pid").write_text("12345\n", encoding="utf-8")
-    write_json(repo / "ai-status.json", ai_status)
-    write_json(repo / ".orchestrator" / "provider_capabilities.json", provider_capabilities)
+    write_json(state_path, state)
+    (status_root / ".orchestrator" / "supervisor.pid").write_text(
+        "12345\n", encoding="utf-8"
+    )
+    write_json(status_path, ai_status)
+    write_json(capabilities_path, provider_capabilities)
 
     return config, state, ai_status, provider_capabilities
 
 
 def _verified_identity_dependency(repo: Path) -> Mock:
+    status_root = repo.parent / f"{repo.name}-status-root"
+    runtime_root = repo.parent / f"{repo.name}-runtime"
+    worker_worktree_root = repo.parent / f"{repo.name}-worker-worktrees"
+    live_config_path = runtime_root / "live-supervisor-mainroot-config.json"
+    event_log = runtime_root / "task-state-events.jsonl"
+    (status_root / ".orchestrator" / "logs").mkdir(parents=True, exist_ok=True)
+    worker_worktree_root.mkdir(parents=True, exist_ok=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    event_log.write_text("", encoding="utf-8")
+    executable = Path(sys.executable).resolve()
+    argv = (
+        str(executable),
+        "-u",
+        str(repo / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(live_config_path),
+        "--verbose",
+    )
+    source_specs = [
+        (repo / ".orchestrator" / "supervisor.py", False),
+        (repo / ".orchestrator" / "supervisor_watchdog.py", True),
+        (repo / "scripts" / "run-supervisor-watchdog.sh", True),
+        (repo / "scripts" / "sync-dev-root.sh", True),
+        (repo / "scripts" / "ai-status.sh", True),
+        (repo / "scripts" / "ai_status.py", False),
+        (repo / "scripts" / "provision_live_supervisor_config.py", False),
+    ]
+    for path, executable_source in source_specs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# fixture: {path.name}\n", encoding="utf-8")
+        if executable_source:
+            path.chmod(0o755)
+    live_config = {
+        "watchdog": {"supervisor_command": list(argv)},
+        "paths": {
+            "status_file": str(status_root / "ai-status.json"),
+            "state_file": str(status_root / ".orchestrator" / "state.json"),
+        },
+        "task_state_store": {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        },
+        "worker_worktrees": {"root": str(worker_worktree_root)},
+    }
+    config_bytes = (json.dumps(live_config, sort_keys=True) + "\n").encode("utf-8")
+    live_config_path.write_bytes(config_bytes)
+    root_stat = repo.stat()
+    config_stat = live_config_path.stat()
     identity = Mock(spec=CandidateRuntimeIdentity)
     identity.candidate_root = repo
-    identity.candidate_root_device = 1
-    identity.candidate_root_inode = 2
+    identity.candidate_root_device = root_stat.st_dev
+    identity.candidate_root_inode = root_stat.st_ino
     identity.git_directory_device = 3
     identity.git_directory_inode = 4
     identity.git_objects_device = 5
@@ -129,24 +185,22 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.remote_url = "https://github.com/ajoe734/pantheon.git"
     identity.canonical_remote = "github.com/ajoe734/pantheon"
     identity.repository_slug = "ajoe734/pantheon"
-    identity.config_path = promotion.LIVE_SUPERVISOR_CONFIG_PATH
-    identity.config_device = 13
-    identity.config_inode = 14
-    identity.config_path_components = (
-        PathComponentIdentity(
-            path=promotion.LIVE_SUPERVISOR_CONFIG_PATH,
-            identity=FilesystemIdentity(device=13, inode=14, mode=0),
-        ),
-    )
-    identity.config_byte_length = 2
-    identity.config_sha256 = "d" * 64
+    identity.config_path = live_config_path
+    identity.config_device = config_stat.st_dev
+    identity.config_inode = config_stat.st_ino
+    identity.config_path_components = ()
+    identity.config_bytes = config_bytes
+    identity.config_byte_length = len(config_bytes)
+    identity.config_sha256 = promotion.hashlib.sha256(config_bytes).hexdigest()
     return identity
 
 
 def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdentity:
+    status_root = repo.parent / f"{repo.name}-status-root"
+    live_config_path = repo.parent / f"{repo.name}-runtime" / "live-supervisor-mainroot-config.json"
     generation = ProcessGeneration(pid=12345, starttime_ticks=67890, state="S")
     lock = SupervisorAdmissionLockIdentity(
-        path=repo / ".orchestrator" / "supervisor.lock",
+        path=status_root / ".orchestrator" / "supervisor.lock",
         device=20,
         inode=21,
         byte_length=6,
@@ -162,19 +216,33 @@ def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdenti
         owner_pid=generation.pid,
         owner_starttime_ticks=generation.starttime_ticks,
     )
+    executable = Path(sys.executable).resolve()
+    argv = (
+        str(executable),
+        "-u",
+        str(repo / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(live_config_path),
+        "--verbose",
+    )
+    repo_stat = repo.stat()
     return SupervisorProcessIdentity(
         generation=generation,
-        executable=Path(sys.executable).resolve(),
-        argv=(sys.executable, "supervisor.py"),
+        executable=executable,
+        argv=argv,
         entrypoint=repo / ".orchestrator" / "supervisor.py",
-        config_path=promotion.LIVE_SUPERVISOR_CONFIG_PATH,
-        cwd=ProcessCwdIdentity(path=repo, device=1, inode=2),
+        config_path=live_config_path,
+        cwd=ProcessCwdIdentity(
+            path=repo,
+            device=repo_stat.st_dev,
+            inode=repo_stat.st_ino,
+        ),
         cwd_commit="a" * 40,
         cwd_tree="b" * 40,
         environment_contract=(
             ("PANTHEON_COMMAND_ROOT", str(repo)),
             ("PANTHEON_COMMAND_RUNTIME_SHA", "a" * 40),
-            ("PANTHEON_STATUS_ROOT", str(repo)),
+            ("PANTHEON_STATUS_ROOT", str(status_root)),
         ),
         admission_lock=lock,
     )
@@ -204,9 +272,16 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     assert len(snapshot["file_errors"]) == 0
     assert all(inv["ok"] for inv in snapshot["invariants"])
     identity_builder.assert_called_once_with(repo)
-    identity.verify_immutable_snapshot.assert_called_once_with()
+    assert identity.verify_immutable_snapshot.call_count == 4
     process_discovery.assert_called_once()
     assert snapshot["incumbent_supervisor_process_identity"]["pid"] == 12345
+    assert snapshot["governed_supervisor_launch_contract"]["cwd"] == str(repo)
+    assert snapshot["identity_revalidation_stages"] == [
+        "after_root_git_discovery",
+        "after_process_discovery",
+        "after_launch_contract_assembly",
+        "final_preflight_readback",
+    ]
 
 
 @patch("promote_supervisor_runtime.lock_held", return_value=True)
@@ -274,6 +349,58 @@ def test_promotion_snapshot_requires_exact_process_identity(
     assert snapshot["eligible_for_promotion"] is False
     assert process_invariant["ok"] is False
     assert process_invariant["details"]["error"] == "zero exact incumbents"
+
+
+@patch("promote_supervisor_runtime.lock_held", return_value=True)
+@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
+@patch("supervisor_runtime_health.lock_held", return_value=True)
+@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
+def test_promotion_snapshot_rejects_final_config_identity_drift(
+    mock_matches: Any,
+    mock_sup_lock: Any,
+    mock_alive: Any,
+    mock_lock: Any,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    create_realistic_healthy_fixture(repo)
+    identity = _verified_identity_dependency(repo)
+    process_identity = _verified_process_identity_dependency(repo)
+    identity.verify_immutable_snapshot.side_effect = [
+        None,
+        None,
+        None,
+        ValueError("config bytes drift after launch assembly"),
+    ]
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=process_identity,
+    ):
+        snapshot = capture_promotion_snapshot(repo, now=now)
+
+    identity_invariant = next(
+        invariant
+        for invariant in snapshot["invariants"]
+        if invariant["name"] == "candidate_runtime_identity_immutable"
+    )
+    launch_invariant = next(
+        invariant
+        for invariant in snapshot["invariants"]
+        if invariant["name"] == "governed_supervisor_launch_contract_immutable"
+    )
+    assert snapshot["eligible_for_promotion"] is False
+    assert "final_preflight_readback" in identity_invariant["details"]["error"]
+    assert "config bytes drift" in launch_invariant["details"]["error"]
+    assert snapshot["identity_revalidation_stages"] == [
+        "after_root_git_discovery",
+        "after_process_discovery",
+        "after_launch_contract_assembly",
+    ]
 
 
 def test_capture_promotion_snapshot_fail_closed_on_missing_files(tmp_path: Path) -> None:
@@ -968,8 +1095,26 @@ def _make_candidate_fixture(
     _git(source, "init", "--initial-branch=dev")
     _git(source, "config", "user.name", "Promotion Test")
     _git(source, "config", "user.email", "promotion@example.test")
+    create_realistic_healthy_fixture(source)
     (source / "README.md").write_text("trusted candidate\n", encoding="utf-8")
-    _git(source, "add", "README.md")
+    source_specs = [
+        (source / ".orchestrator" / "supervisor.py", False),
+        (source / ".orchestrator" / "supervisor_watchdog.py", True),
+        (source / "scripts" / "run-supervisor-watchdog.sh", True),
+        (source / "scripts" / "sync-dev-root.sh", True),
+        (source / "scripts" / "ai-status.sh", True),
+        (source / "scripts" / "ai_status.py", False),
+        (source / "scripts" / "provision_live_supervisor_config.py", False),
+    ]
+    for source_path, executable_source in source_specs:
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            f"# persistent launch fixture: {source_path.name}\n",
+            encoding="utf-8",
+        )
+        if executable_source:
+            source_path.chmod(0o755)
+    _git(source, "add", ".")
     _git(source, "commit", "-m", "trusted candidate")
     gitlink_commit = _git(source, "rev-parse", "HEAD")
     _git(
@@ -1008,9 +1153,39 @@ def _make_candidate_fixture(
         "https://github.com/ajoe734/pantheon.git",
     )
 
-    config_bytes = b'{"runtime":"immutable","writes":false}\n'
     live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
     live_config.parent.mkdir()
+    status_root = tmp_path / "source-status-root"
+    (status_root / ".orchestrator" / "logs").mkdir(parents=True, exist_ok=True)
+    event_log = live_config.parent / "task-state-events.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    worker_worktree_root = tmp_path / "worker-worktrees"
+    worker_worktree_root.mkdir()
+    executable = Path(sys.executable).resolve()
+    live_config_payload = {
+        "watchdog": {
+            "supervisor_command": [
+                str(executable),
+                "-u",
+                str(candidate / ".orchestrator" / "supervisor.py"),
+                "--config",
+                str(live_config),
+                "--verbose",
+            ]
+        },
+        "paths": {
+            "status_file": str(status_root / "ai-status.json"),
+            "state_file": str(status_root / ".orchestrator" / "state.json"),
+        },
+        "task_state_store": {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        },
+        "worker_worktrees": {"root": str(worker_worktree_root)},
+    }
+    config_bytes = (
+        json.dumps(live_config_payload, sort_keys=True) + "\n"
+    ).encode("utf-8")
     live_config.write_bytes(config_bytes)
     return candidate, runtime_parent, trusted_remote, commit, tree, config_bytes
 
@@ -1034,6 +1209,182 @@ def _identity_policy_patches(
             live_config,
         ),
     )
+
+
+def _persistent_process_reader(
+    identity: CandidateRuntimeIdentity,
+) -> InjectedRuntimeProcessReader:
+    config = json.loads(identity.config_bytes)
+    argv = tuple(config["watchdog"]["supervisor_command"])
+    status_root = Path(config["paths"]["status_file"]).parent
+    generation = ProcessGeneration(pid=7171, starttime_ticks=818181, state="S")
+    root_stat = identity.candidate_root.stat()
+    lock = SupervisorAdmissionLockIdentity(
+        path=status_root / ".orchestrator" / "supervisor.lock",
+        device=91,
+        inode=92,
+        byte_length=5,
+        sha256="d" * 64,
+        mtime_ns=93,
+        ctime_ns=94,
+        kernel_lock_id="95",
+        kernel_lock_kind="FLOCK",
+        kernel_lock_class="ADVISORY",
+        kernel_lock_mode="WRITE",
+        kernel_lock_start="0",
+        kernel_lock_end="EOF",
+        owner_pid=generation.pid,
+        owner_starttime_ticks=generation.starttime_ticks,
+    )
+    return InjectedRuntimeProcessReader(
+        pids=(generation.pid,),
+        generations={generation.pid: generation},
+        argv={generation.pid: argv},
+        executable={generation.pid: Path(argv[0]).resolve()},
+        cwd={
+            generation.pid: ProcessCwdIdentity(
+                path=identity.candidate_root,
+                device=root_stat.st_dev,
+                inode=root_stat.st_ino,
+            )
+        },
+        environment={
+            generation.pid: {
+                "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
+                "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
+                "PANTHEON_STATUS_ROOT": str(status_root),
+            }
+        },
+        locks=[lock, lock],
+    )
+
+
+def test_discover_only_accepts_valid_persistent_command_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent,
+        remote,
+        live_config,
+    )
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    config_before = live_config.read_bytes()
+    state_path = tmp_path / "source-status-root" / ".orchestrator" / "state.json"
+    state_before = state_path.read_bytes()
+
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+        reader = _persistent_process_reader(identity)
+        with patch(
+            "promote_supervisor_runtime.ProcfsRuntimeProcessReader",
+            return_value=reader,
+        ), patch(
+            "promote_supervisor_runtime.lock_held",
+            return_value=True,
+        ), patch(
+            "promote_supervisor_runtime.pid_is_alive",
+            return_value=True,
+        ), patch(
+            "supervisor_runtime_health.lock_held",
+            return_value=True,
+        ), patch(
+            "supervisor_runtime_health.pid_matches_supervisor",
+            return_value=True,
+        ), patch(
+            "promote_supervisor_runtime.datetime"
+        ) as datetime_mock:
+            datetime_mock.now.return_value = now
+            datetime_mock.side_effect = lambda *args, **kwargs: datetime(
+                *args, **kwargs
+            )
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                [
+                    "promote_supervisor_runtime.py",
+                    "--discover-only",
+                    "--json",
+                    "--repo",
+                    str(candidate),
+                    "--config-path",
+                    str(candidate / ".orchestrator" / "config.json"),
+                ],
+            )
+            exit_code = promotion.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["preflight_mode"] == "discover_only"
+    assert payload["eligible_for_promotion"] is True
+    assert payload["candidate_runtime_identity"]["candidate_root"] == str(candidate)
+    assert payload["incumbent_supervisor_process_identity"]["pid"] == 7171
+    assert payload["governed_supervisor_launch_contract"]["cwd"] == str(candidate)
+    assert payload["identity_revalidation_stages"] == [
+        "after_root_git_discovery",
+        "after_process_discovery",
+        "after_launch_contract_assembly",
+        "final_preflight_readback",
+    ]
+    assert live_config.read_bytes() == config_before
+    assert state_path.read_bytes() == state_before
+    assert _git(candidate, "status", "--porcelain") == ""
+
+
+def test_discover_only_rejects_temporary_reviewer_worktree(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    reviewer_worktree = tmp_path / "pantheon-runtime-promotion-review-pr4433"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(candidate),
+            "worktree",
+            "add",
+            "--detach",
+            str(reviewer_worktree),
+            "HEAD",
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent,
+        remote,
+        live_config,
+    )
+
+    with parent_patch, remote_patch, config_patch, patch(
+        "promote_supervisor_runtime.ProcfsRuntimeProcessReader"
+    ) as proc_reader:
+        snapshot = capture_promotion_snapshot(
+            reviewer_worktree,
+            config_path_arg=reviewer_worktree
+            / ".orchestrator"
+            / "config.json",
+            now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
+        )
+
+    identity_invariant = next(
+        invariant
+        for invariant in snapshot["invariants"]
+        if invariant["name"] == "candidate_runtime_identity_immutable"
+    )
+    assert snapshot["eligible_for_promotion"] is False
+    assert "direct child" in identity_invariant["details"]["error"]
+    assert snapshot["governed_supervisor_launch_contract"] is None
+    proc_reader.assert_not_called()
 
 
 def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
@@ -2236,6 +2587,22 @@ def _injected_process_fixture(
     (candidate / ".orchestrator").mkdir(parents=True)
     entrypoint = candidate / ".orchestrator" / "supervisor.py"
     entrypoint.write_text("# test entrypoint\n", encoding="utf-8")
+    source_specs = [
+        (candidate / ".orchestrator" / "supervisor_watchdog.py", True),
+        (candidate / "scripts" / "run-supervisor-watchdog.sh", True),
+        (candidate / "scripts" / "sync-dev-root.sh", True),
+        (candidate / "scripts" / "ai-status.sh", True),
+        (candidate / "scripts" / "ai_status.py", False),
+        (candidate / "scripts" / "provision_live_supervisor_config.py", False),
+    ]
+    for source_path, executable_source in source_specs:
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            f"# test launch source: {source_path.name}\n",
+            encoding="utf-8",
+        )
+        if executable_source:
+            source_path.chmod(0o755)
     candidate_stat = candidate.stat()
     config_path = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
     config_path.parent.mkdir()
@@ -2243,8 +2610,14 @@ def _injected_process_fixture(
     (status_root / ".orchestrator").mkdir(parents=True)
     status_file = status_root / "ai-status.json"
     state_file = status_root / ".orchestrator" / "state.json"
+    log_directory = status_root / ".orchestrator" / "logs"
+    log_directory.mkdir(parents=True)
     status_file.write_text("{}\n", encoding="utf-8")
     state_file.write_text("{}\n", encoding="utf-8")
+    event_log = config_path.parent / "task-state-events.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    worker_worktree_root = tmp_path / "worker-worktrees"
+    worker_worktree_root.mkdir()
     executable = Path(sys.executable).resolve()
     argv = (
         str(executable),
@@ -2261,6 +2634,11 @@ def _injected_process_fixture(
                 "status_file": str(status_file),
                 "state_file": str(state_file),
             },
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": str(event_log),
+            },
+            "worker_worktrees": {"root": str(worker_worktree_root)},
         },
         sort_keys=True,
     ).encode("utf-8")
@@ -2354,6 +2732,358 @@ def _discover_injected(
             else (identity.head_commit, identity.tracked_tree_identity)
         ),
     )
+
+
+def _replace_identity_live_config(
+    identity: CandidateRuntimeIdentity,
+    update: Any,
+) -> CandidateRuntimeIdentity:
+    payload = json.loads(identity.config_bytes)
+    update(payload)
+    config_bytes = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+    identity.config_path.write_bytes(config_bytes)
+    config_stat = identity.config_path.stat()
+    return replace(
+        identity,
+        config_device=config_stat.st_dev,
+        config_inode=config_stat.st_ino,
+        config_bytes=config_bytes,
+        config_byte_length=len(config_bytes),
+        config_sha256=promotion.hashlib.sha256(config_bytes).hexdigest(),
+    )
+
+
+class InjectedLaunchFilesystem(promotion.OSLaunchFilesystem):
+    def __init__(
+        self,
+        *,
+        unwritable_directories: set[Path] | None = None,
+        unwritable_files: set[Path] | None = None,
+    ) -> None:
+        self.unwritable_directories = unwritable_directories or set()
+        self.unwritable_files = unwritable_files or set()
+
+    def directory_is_writable(self, path: Path) -> bool:
+        if path in self.unwritable_directories:
+            return False
+        return super().directory_is_writable(path)
+
+    def file_is_writable(self, path: Path) -> bool:
+        if path in self.unwritable_files:
+            return False
+        return super().file_is_writable(path)
+
+
+def test_governed_launch_contract_composes_real_sources_and_safe_values(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, argv = _injected_process_fixture(tmp_path)
+
+    contract = build_governed_supervisor_launch_contract(
+        candidate,
+        inherited_environment={
+            "PATH": os.environ.get("PATH", ""),
+            "SECRET_TOKEN": "must-not-escape",
+            "ORCH_TASK_ID": "stale-task",
+            "PANTHEON_WORKTREE_ROOT": "/tmp/stale-worktree",
+            "GIT_DIR": "/tmp/attacker-git-dir",
+        },
+    )
+
+    assert isinstance(contract, GovernedSupervisorLaunchContract)
+    assert contract.argv == argv
+    assert contract.cwd == candidate.candidate_root
+    assert contract.stdout_log_path == contract.stderr_log_path
+    assert contract.status_command_root == candidate.candidate_root
+    assert contract.status_command_runtime_sha == candidate.head_commit
+    assert {source.role for source in contract.source_identities} == {
+        "supervisor",
+        "watchdog_intent",
+        "watchdog_launcher",
+        "sync_dev_root",
+        "status_command_wrapper",
+        "status_command",
+        "command_runtime_config",
+    }
+    summary = promotion._governed_launch_contract_summary(contract)
+    encoded = json.dumps(summary, sort_keys=True)
+    assert "must-not-escape" not in encoded
+    assert "stale-task" not in encoded
+    assert "attacker-git-dir" not in encoded
+
+
+def test_governed_launch_contract_is_read_only(tmp_path: Path) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    config_before = candidate.config_path.read_bytes()
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_before = event_log.read_bytes()
+    expected_log = (
+        tmp_path
+        / "status-root"
+        / ".orchestrator"
+        / "logs"
+        / f"supervisor-runtime-{candidate.head_commit}.log"
+    )
+
+    with patch.object(promotion.os, "kill") as process_signal, patch.object(
+        promotion.subprocess,
+        "Popen",
+    ) as process_launch:
+        build_governed_supervisor_launch_contract(candidate)
+
+    process_signal.assert_not_called()
+    process_launch.assert_not_called()
+    assert candidate.config_path.read_bytes() == config_before
+    assert event_log.read_bytes() == event_before
+    assert not expected_log.exists()
+
+
+def test_governed_launch_contract_rejects_missing_interpreter(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    missing = tmp_path / "missing-python"
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"]["supervisor_command"].__setitem__(
+            0, str(missing)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="executable cannot be resolved"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_governed_launch_contract_rejects_non_executable_interpreter(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    interpreter = tmp_path / "governed-python"
+    interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+    interpreter.chmod(0o644)
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"]["supervisor_command"].__setitem__(
+            0, str(interpreter)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="interpreter is not executable"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_governed_launch_contract_rejects_wrong_cwd(tmp_path: Path) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    wrong_cwd = tmp_path / "reviewer-worktree"
+    wrong_cwd.mkdir()
+
+    with pytest.raises(ValueError, match="cwd mismatch"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            launch_cwd=wrong_cwd,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda environment: environment.pop("PANTHEON_COMMAND_RUNTIME_SHA"),
+            "missing PANTHEON_COMMAND_RUNTIME_SHA",
+        ),
+        (
+            lambda environment: environment.__setitem__(
+                "PANTHEON_COMMAND_ROOT", "/tmp/wrong-root"
+            ),
+            "PANTHEON_COMMAND_ROOT mismatch",
+        ),
+        (
+            lambda environment: environment.__setitem__(
+                "ORCH_WORKSPACE_PATH", "/tmp/reviewer-worktree"
+            ),
+            "forbidden inherited variables: ORCH_WORKSPACE_PATH",
+        ),
+        (
+            lambda environment: environment.__setitem__(
+                "PANTHEON_STATUS_COMMAND_SHA", "f" * 40
+            ),
+            "forbidden inherited variables: PANTHEON_STATUS_COMMAND_SHA",
+        ),
+        (
+            lambda environment: environment.__setitem__(
+                "GIT_OBJECT_DIRECTORY", "/tmp/forged-objects"
+            ),
+            "forbidden inherited variables: GIT_OBJECT_DIRECTORY",
+        ),
+    ],
+)
+def test_governed_launch_contract_rejects_invalid_final_environment(
+    tmp_path: Path,
+    mutation: Any,
+    message: str,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    environment = build_scrubbed_launch_environment(
+        candidate,
+        status_root=tmp_path / "status-root",
+        inherited_environment={"PATH": os.environ.get("PATH", "")},
+    )
+    mutation(environment)
+
+    with pytest.raises(ValueError, match=message):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            launch_environment=environment,
+        )
+
+
+def test_governed_launch_contract_rejects_unwritable_log_directory(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    log_directory = tmp_path / "status-root" / ".orchestrator" / "logs"
+    filesystem = InjectedLaunchFilesystem(
+        unwritable_directories={log_directory},
+    )
+
+    with pytest.raises(ValueError, match="log directory is not writable"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            filesystem=filesystem,
+        )
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "message"),
+    [
+        ("runtime", "event-log directory is not writable"),
+        ("worker-worktrees", "worker worktree root is not writable"),
+        ("status-root/.orchestrator", "intentional-restart directory is not writable"),
+    ],
+)
+def test_governed_launch_contract_rejects_unwritable_runtime_directories(
+    tmp_path: Path,
+    relative_path: str,
+    message: str,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    filesystem = InjectedLaunchFilesystem(
+        unwritable_directories={tmp_path / relative_path},
+    )
+
+    with pytest.raises(ValueError, match=message):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            filesystem=filesystem,
+        )
+
+
+def test_governed_launch_contract_rejects_unwritable_task_state_log(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    filesystem = InjectedLaunchFilesystem(unwritable_files={event_log})
+
+    with pytest.raises(ValueError, match="task-state event log is not writable"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            filesystem=filesystem,
+        )
+
+
+def test_governed_launch_contract_rejects_unsafe_existing_log_leaf(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    log_path = (
+        tmp_path
+        / "status-root"
+        / ".orchestrator"
+        / "logs"
+        / f"supervisor-runtime-{candidate.head_commit}.log"
+    )
+    attacker_file = tmp_path / "attacker.log"
+    attacker_file.write_text("attacker\n", encoding="utf-8")
+    log_path.symlink_to(attacker_file)
+
+    with pytest.raises(ValueError, match="symlink"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_governed_launch_contract_rejects_unwritable_existing_log_leaf(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    log_path = (
+        tmp_path
+        / "status-root"
+        / ".orchestrator"
+        / "logs"
+        / f"supervisor-runtime-{candidate.head_commit}.log"
+    )
+    log_path.write_text("prior launch\n", encoding="utf-8")
+    filesystem = InjectedLaunchFilesystem(unwritable_files={log_path})
+
+    with pytest.raises(ValueError, match="log is not writable"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            filesystem=filesystem,
+        )
+
+
+def test_governed_launch_contract_rejects_split_stdout_stderr(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    other_log = tmp_path / "status-root" / ".orchestrator" / "logs" / "other.log"
+
+    with pytest.raises(ValueError, match="exact durable supervisor log target"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            stderr_log_path=other_log,
+        )
+
+
+def test_governed_launch_contract_rejects_missing_or_non_executable_source(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    sync_script = candidate.candidate_root / "scripts" / "sync-dev-root.sh"
+    sync_script.chmod(0o644)
+
+    with pytest.raises(ValueError, match="sync_dev_root is not executable"):
+        build_governed_supervisor_launch_contract(candidate)
+
+    sync_script.unlink()
+    with pytest.raises(FileNotFoundError, match="sync_dev_root.*does not exist"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_governed_launch_contract_rejects_unsafe_runtime_roots(
+    tmp_path: Path,
+) -> None:
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["worker_worktrees"].__setitem__(
+            "root", str(tmp_path)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cannot be a worker task worktree"):
+        build_governed_supervisor_launch_contract(candidate)
+
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path / "second")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["task_state_store"].__setitem__(
+            "event_log", str(candidate.candidate_root / "event-log.jsonl")
+        ),
+    )
+    (candidate.candidate_root / "event-log.jsonl").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="outside the command runtime"):
+        build_governed_supervisor_launch_contract(candidate)
 
 
 def test_process_identity_binds_exact_generation_argv_cwd_git_env_and_lock(
