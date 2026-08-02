@@ -19872,6 +19872,30 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
         write_caps.assert_called_once_with(self.config, report=report)
 
+    def test_in_lock_pre_dispatch_probe_never_requests_cache_quarantine(self) -> None:
+        state: dict[str, object] = {}
+        report = {"providers": {"codex2": {"auth_ready": True}}}
+        live = {
+            "provider": "codex2",
+            "ready": True,
+            "status": "ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=live) as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities"),
+        ):
+            supervisor.refresh_provider_auth_before_dispatch(
+                self.config,
+                report,
+                "codex2",
+                state,
+            )
+
+        probe.assert_called_once_with(self.config, "codex2", force=True)
+
     def test_live_quota_probe_is_degraded_and_never_creates_an_auth_pause(self) -> None:
         state: dict[str, object] = {}
         probe = {
@@ -19933,6 +19957,221 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
         self.assertTrue(pause["requires_live_recovery_probe"])
         self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+
+class CodexCacheQuotaRoutingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.reset_at = (
+            datetime.now(timezone.utc) + timedelta(days=7)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        self.config = {
+            "paths": {"activity_log": "/tmp/test-codex-cache-quota-activity.jsonl"},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "owner_fallbacks": {"Codex": ["Codex2"]},
+                "reviewer_fallbacks": {"Codex": ["Codex2"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+            },
+            "providers": {
+                "codex": {"delivery_mode": "codex", "account": "codex"},
+                "codex2": {"delivery_mode": "codex", "account": "codex2"},
+            },
+            "provider_guardrails": {
+                "quota_terminal_pause_seconds": 900,
+                "capacity_pause_seconds": 900,
+            },
+        }
+
+    def _quota_report(self) -> dict[str, object]:
+        return {
+            "providers": {
+                "codex": {
+                    "auth_ready": False,
+                    "account_health": "degraded",
+                    "probe_failure_kind": "quota_terminal",
+                    "auth_probe": {
+                        "provider": "codex",
+                        "ready": False,
+                        "status": "quota_reached",
+                        "error": "Codex usage limit reached.",
+                        "quota_reset_at": self.reset_at,
+                        "checked_at": "2026-08-02T13:50:00Z",
+                        "source": "live",
+                    },
+                },
+                "codex2": {
+                    "auth_ready": True,
+                    "account_health": "healthy",
+                    "auth_probe": {
+                        "provider": "codex2",
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T13:50:00Z",
+                        "source": "live",
+                    },
+                },
+            }
+        }
+
+    def test_live_usage_limit_pauses_only_codex_and_rebinds_exact_pair_to_codex2(self) -> None:
+        previous = {
+            "providers": {
+                "codex": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T12:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+        current = self._quota_report()
+        state: dict[str, object] = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_fresh_provider_probe_failures(
+                self.config,
+                state,
+                previous,
+                current,
+            )
+
+        self.assertTrue(changed)
+        pauses = state["provider_guardrails"]["dispatch_pauses"]
+        self.assertEqual(set(pauses), {"codex"})
+        self.assertEqual(pauses["codex"]["pause_kind"], "quota_terminal")
+        self.assertEqual(pauses["codex"]["quota_reset_at"], self.reset_at)
+        self.assertEqual(pauses["codex"]["blocked_until"], self.reset_at)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex"))
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+        task = {
+            "id": "CODEX-QUOTA-AFFECTED",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "depends_on": [],
+        }
+        unaffected = {
+            "id": "CODEX2-HEALTHY",
+            "status": "todo",
+            "owner": "Codex2",
+            "reviewer": "Human/Ops",
+            "depends_on": [],
+        }
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=current),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.normalize_mainline_task_assignment(self.config, task, state=state))
+            self.assertFalse(
+                supervisor.normalize_mainline_task_assignment(
+                    self.config,
+                    unaffected,
+                    state=state,
+                )
+            )
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Human/Ops"))
+        self.assertEqual(kwargs["expected_owner"], "Codex")
+        self.assertEqual(kwargs["expected_reviewer"], "Human/Ops")
+        self.assertEqual(kwargs["expected_status"], "todo")
+
+    def test_models_cache_probe_failure_is_degraded_not_credential_revocation(self) -> None:
+        report = {"providers": {"codex": {"auth_ready": True}}}
+        probe = {
+            "provider": "codex",
+            "ready": False,
+            "status": "models_cache_recovery_failed",
+            "error": "Codex models cache recovery was not safe to perform.",
+            "checked_at": "2026-08-02T13:50:00Z",
+            "source": "live",
+        }
+
+        health = supervisor.apply_provider_probe_to_report(report, "codex", probe)
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.DEGRADED)
+        self.assertEqual(report["providers"]["codex"]["probe_failure_kind"], "capacity_retryable")
+        state: dict[str, object] = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_fresh_provider_probe_failures(
+                self.config,
+                state,
+                {"providers": {}},
+                report,
+            )
+        self.assertTrue(changed)
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex"]
+        self.assertEqual(pause["pause_kind"], "capacity_retryable")
+        self.assertNotIn("requires_live_auth_probe", pause)
+
+    def test_fresh_success_clears_only_the_affected_distinct_quota_group(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "trigger_provider": "codex",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "2026-08-02T05:00:00Z",
+                        "requires_live_recovery_probe": True,
+                        "recovery_probe_not_before": "2026-08-02T05:00:00Z",
+                    },
+                    "codex2": {
+                        "provider": "codex2",
+                        "trigger_provider": "codex2",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "2026-08-02T05:00:00Z",
+                        "requires_live_recovery_probe": True,
+                        "recovery_probe_not_before": "2026-08-02T05:00:00Z",
+                    },
+                }
+            }
+        }
+        report = {
+            "providers": {
+                "codex": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T14:00:00Z",
+                        "source": "live",
+                    },
+                },
+                "codex2": {
+                    "auth_ready": False,
+                    "probe_failure_kind": "quota_terminal",
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T14:00:00Z",
+                        "source": "live",
+                    },
+                },
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, report)
+
+        self.assertTrue(changed)
+        pauses = state["provider_guardrails"]["dispatch_pauses"]
+        self.assertNotIn("codex", pauses)
+        self.assertIn("codex2", pauses)
 
 
 class ProviderPauseRecoveryProbeTests(unittest.TestCase):
@@ -20257,7 +20496,12 @@ class ProviderStaleCacheReadmissionProbeTests(unittest.TestCase):
             )
 
         self.assertFalse(previous["providers"]["codex2"]["auth_ready"])
-        probe.assert_called_once_with(self.config, "codex2", force=True)
+        probe.assert_called_once_with(
+            self.config,
+            "codex2",
+            force=True,
+            recover_incompatible_models_cache=True,
+        )
         write_caps.assert_called_once_with(self.config, report=current)
         capability = current["providers"]["codex2"]
         self.assertTrue(capability["auth_ready"])
@@ -20330,6 +20574,39 @@ class ProviderStaleCacheReadmissionProbeTests(unittest.TestCase):
         probe.assert_not_called()
         write_caps.assert_not_called()
         self.assertFalse(current["providers"]["codex2"]["auth_ready"])
+
+    def test_fresh_exact_models_cache_failure_bypasses_failed_probe_interval_once(self) -> None:
+        recent = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        incompatible = self._capabilities(
+            "codex2",
+            checked_at=recent,
+            status="models_cache_incompatible",
+        )
+        self._write_fixture(self.status, incompatible)
+        live = self._live_probe(ready=True, status="ready")
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_provider_report",
+                return_value=copy.deepcopy(incompatible),
+            ),
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=live) as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot={},
+            )
+
+        probe.assert_called_once_with(
+            self.config,
+            "codex2",
+            force=True,
+            recover_incompatible_models_cache=True,
+        )
+        write_caps.assert_called_once_with(self.config, report=current)
+        self.assertTrue(current["providers"]["codex2"]["auth_ready"])
 
     def test_no_eligible_task_does_not_probe(self) -> None:
         no_work = copy.deepcopy(self.status)
