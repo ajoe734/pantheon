@@ -665,9 +665,8 @@ def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str
     auth_path = _codex_auth_path(config, provider_id)
     api_key_env = str(((config.get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}).get("api_key_env") or "").strip()
     metadata = {
-        "auth_file": str(auth_path),
         "auth_file_exists": auth_path.exists(),
-        "api_key_env": api_key_env or None,
+        "api_key_env_configured": bool(api_key_env),
         "api_key_env_present": bool(api_key_env and env.get("OPENAI_API_KEY")),
     }
     return metadata
@@ -696,8 +695,8 @@ def _codex_auth_probe(
         )
     if not metadata.get("api_key_env_present") and not metadata.get("auth_file_exists"):
         api_key_note = (
-            f" Configured API key env {metadata.get('api_key_env')} is not present."
-            if metadata.get("api_key_env")
+            " A configured API key environment variable is not present."
+            if metadata.get("api_key_env_configured")
             else ""
         )
         return _auth_probe_record(
@@ -2050,7 +2049,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "extension": str(openai_path) if openai_path else None,
                 "config": str(config_path_for_provider),
                 "home": str(_codex_home(config, provider_id)),
-                "auth": str(_codex_auth_path(config, provider_id)),
                 "binary": provider_binary,
             },
             "settings": {

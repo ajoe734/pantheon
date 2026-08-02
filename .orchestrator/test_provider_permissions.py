@@ -875,6 +875,10 @@ EOF
                 )
 
             self.assertTrue(probe["ready"])
+            self.assertNotIn("auth_file", probe["metadata"])
+            self.assertNotIn("api_key_env", probe["metadata"])
+            self.assertNotIn("has_access_token", probe["metadata"])
+            self.assertNotIn("has_refresh_token", probe["metadata"])
             self.assertTrue(cache.exists())
             self.assertEqual(list(home.glob("models_cache.json.quarantine.*")), [])
             run_command.assert_called_once()
