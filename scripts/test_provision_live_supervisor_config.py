@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,59 @@ from provision_live_supervisor_config import (
     validated_immutable_command_root,
     write_json_atomic,
 )
+
+
+def _git(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _immutable_runtime_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, Path, str, str]:
+    remote = tmp_path / "accepted.git"
+    seed = tmp_path / "seed"
+    parent = tmp_path / "command-runtimes"
+    remote.mkdir()
+    seed.mkdir()
+    parent.mkdir()
+    _git(remote, "init", "--bare")
+    _git(seed, "init", "-b", "dev")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    _git(seed, "config", "user.name", "Pantheon Test")
+    (seed / ".orchestrator").mkdir()
+    (seed / "scripts").mkdir()
+    (seed / ".orchestrator" / "supervisor.py").write_text("", encoding="utf-8")
+    for name in ("run-supervisor-watchdog.sh", "promote-supervisor-runtime.sh"):
+        path = seed / "scripts" / name
+        path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        path.chmod(0o755)
+    (seed / "version.txt").write_text("one\n", encoding="utf-8")
+    _git(seed, "add", ".orchestrator", "scripts", "version.txt")
+    _git(seed, "commit", "-m", "first")
+    first = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "dev")
+    (seed / "version.txt").write_text("two\n", encoding="utf-8")
+    _git(seed, "add", "version.txt")
+    _git(seed, "commit", "-m", "second")
+    second = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "push", "origin", "dev")
+
+    candidate = parent / second
+    _git(tmp_path, "clone", "--no-local", str(seed), str(candidate))
+    _git(candidate, "checkout", "--detach", second)
+    _git(candidate, "remote", "set-url", "origin", "https://github.com/ajoe734/pantheon.git")
+    monkeypatch.setattr(provision.runtime_promotion, "ALLOWED_COMMAND_RUNTIMES_PREFIX", parent)
+    monkeypatch.setattr(provision.runtime_promotion, "TRUSTED_ORIGIN_DEV_URL", str(remote))
+    return remote, seed, candidate, first, second
 
 
 def test_apply_provider_account_schema_removes_stale_live_aliases() -> None:
@@ -474,6 +528,8 @@ def test_validated_immutable_command_root_composes_promotion_identity_layers(
         "scripts/promote-supervisor-runtime.sh",
     ):
         (root / relative).write_text("safe\n", encoding="utf-8")
+    (root / "scripts" / "run-supervisor-watchdog.sh").chmod(0o755)
+    (root / "scripts" / "promote-supervisor-runtime.sh").chmod(0o755)
     calls: list[tuple[object, ...]] = []
 
     monkeypatch.setattr(
@@ -521,6 +577,85 @@ def test_validated_immutable_command_root_composes_promotion_identity_layers(
         "ancestry",
         "clean",
     ]
+
+
+def test_immutable_command_root_uses_fresh_accepted_dev_not_stale_local_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, _seed, candidate, first, second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    _git(candidate, "update-ref", "refs/remotes/origin/dev", first)
+
+    identity = validated_immutable_command_root(candidate)
+
+    assert identity["head"] == second
+    assert identity["repository"] == "ajoe734/pantheon"
+    assert _git(candidate, "rev-parse", "origin/dev") == first
+
+
+def test_immutable_command_root_rejects_unaccepted_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, seed, accepted, _first, _second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    parent = accepted.parent
+    (seed / "version.txt").write_text("unaccepted\n", encoding="utf-8")
+    _git(seed, "add", "version.txt")
+    _git(seed, "commit", "-m", "unaccepted")
+    unaccepted_sha = _git(seed, "rev-parse", "HEAD")
+    unaccepted = parent / unaccepted_sha
+    _git(tmp_path, "clone", "--no-local", str(seed), str(unaccepted))
+    _git(unaccepted, "checkout", "--detach", unaccepted_sha)
+    _git(
+        unaccepted,
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+
+    with pytest.raises(ValueError, match="cat-file|Not a valid object"):
+        validated_immutable_command_root(unaccepted)
+
+
+def test_immutable_command_root_rejects_mutable_and_symlink_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, seed, candidate, _first, second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    mutable = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--no-local", str(seed), str(mutable))
+    _git(mutable, "checkout", "--detach", second)
+    mutable_alias = candidate.parent / ("f" * 40)
+    mutable_alias.symlink_to(mutable, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="not a direct child"):
+        validated_immutable_command_root(mutable)
+    with pytest.raises(ValueError, match="symlink"):
+        validated_immutable_command_root(mutable_alias)
+
+
+def test_immutable_command_root_rejects_dirty_tracked_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, _seed, candidate, _first, _second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    (candidate / "version.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="dirty|differs"):
+        validated_immutable_command_root(candidate)
 
 
 def test_main_bootstraps_split_root_approval_queue_before_watchdog_config(

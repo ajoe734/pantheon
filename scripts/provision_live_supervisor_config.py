@@ -456,10 +456,10 @@ def validated_immutable_command_root(path: Path) -> dict[str, str]:
         root,
         expected_head=head,
     )
-    for relative in (
-        ".orchestrator/supervisor.py",
-        "scripts/run-supervisor-watchdog.sh",
-        "scripts/promote-supervisor-runtime.sh",
+    for relative, require_executable in (
+        (".orchestrator/supervisor.py", False),
+        ("scripts/run-supervisor-watchdog.sh", True),
+        ("scripts/promote-supervisor-runtime.sh", True),
     ):
         candidate = root / relative
         symlink = first_symlink_component(candidate)
@@ -468,6 +468,8 @@ def validated_immutable_command_root(path: Path) -> dict[str, str]:
                 f"immutable command root is missing regular non-symlink path "
                 f"{relative}: {candidate}"
             )
+        if require_executable and not candidate.stat().st_mode & stat.S_IXUSR:
+            raise ValueError(f"immutable command root path is not executable: {candidate}")
     return {
         "root": str(root),
         "head": head,

@@ -2043,6 +2043,49 @@ print(entrypoints[0].parent.parent)
 PY
 }
 
+assert_no_live_supervisor_incumbent() {
+  local status_root="$1"
+  local pid_file="${PANTHEON_SUPERVISOR_PID:-${status_root}/.orchestrator/supervisor.pid}"
+  python3 - "$pid_file" <<'PY'
+import os
+import sys
+from pathlib import Path, PurePosixPath
+
+pid_file = Path(sys.argv[1])
+if pid_file.exists() or pid_file.is_symlink():
+    if pid_file.is_symlink() or not pid_file.is_file():
+        raise SystemExit(f"supervisor PID marker must be regular and non-symlink: {pid_file}")
+    raw_pid = pid_file.read_text(encoding="utf-8").strip()
+    if raw_pid:
+        try:
+            os.kill(int(raw_pid), 0)
+        except (ProcessLookupError, ValueError):
+            pass
+        except PermissionError:
+            raise SystemExit(f"cannot disprove live incumbent PID {raw_pid}")
+        else:
+            raise SystemExit(f"live supervisor incumbent PID {raw_pid} exists")
+
+for cmdline_path in Path("/proc").glob("[0-9]*/cmdline"):
+    try:
+        arguments = tuple(
+            item.decode("utf-8", errors="surrogateescape")
+            for item in cmdline_path.read_bytes().split(b"\0")
+            if item
+        )
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        continue
+    if any(
+        PurePosixPath(argument).name == "supervisor.py"
+        and PurePosixPath(argument).parent.name == ".orchestrator"
+        for argument in arguments
+    ):
+        raise SystemExit(
+            f"live supervisor incumbent discovered at PID {cmdline_path.parent.name}"
+        )
+PY
+}
+
 provision_dev_supervisor_watchdog() {
   local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
   local staging_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
@@ -2062,6 +2105,7 @@ provision_dev_supervisor_watchdog() {
 
   if [[ ! -e "$live_config" ]]; then
     info "performing first-install supervisor config provisioning with no incumbent"
+    assert_no_live_supervisor_incumbent "${PANTHEON_STATUS_ROOT_HOST}"
     python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
       --repo-config "${command_root}/.orchestrator/config.json" \
       --live-config "$live_config" \
