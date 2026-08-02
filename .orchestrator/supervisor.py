@@ -6424,6 +6424,27 @@ FAILURE_STREAK_SCHEMA_VERSION = 3
 FAILURE_STREAK_ABSENT_HEAD = "ABSENT"
 FAILURE_STREAK_GENERATION_PREFIX = "sha256:"
 FAILURE_PROGRESS_SCHEMA_VERSION = 1
+FAILURE_RECOVERY_DECISION_SCHEMA_VERSION = 1
+FAILURE_RECOVERY_ABSENT = "ABSENT"
+FAILURE_RECOVERY_CONSUMPTION_PREFIX = "failure-recovery:"
+FAILURE_RECOVERY_OWNER_STATUSES = frozenset({"todo", "in_progress"})
+FAILURE_RECOVERY_ALLOWED_KINDS = frozenset({"generic_exit", "missing_process"})
+FAILURE_RECOVERY_ACTIVE_WORKER_STATUSES = frozenset(
+    {
+        "running",
+        "started",
+        "waiting_approval",
+        "suspended_approval",
+        "manual_pending",
+        "retry_backoff",
+        "stalled",
+        "fallback",
+    }
+)
+FAILURE_RECOVERY_ACTIVE_QUEUE_STATUSES = frozenset({"pending", "started"})
+FAILURE_RECOVERY_RELEASED_LEASE_STATUSES = frozenset(
+    {"completed", "failed", "inactive", "released"}
+)
 _FAILURE_STREAK_CLASS_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _FAILURE_STREAK_TIMESTAMP_PATTERN = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z"
@@ -6432,6 +6453,9 @@ _FAILURE_STREAK_GENERATION_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 _FAILURE_PROGRESS_EVENT_ID_PATTERN = re.compile(r"ai-status-event-[0-9a-f]{64}")
 _FAILURE_PROGRESS_EVENT_TIMESTAMP_PATTERN = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z"
+)
+_FAILURE_RECOVERY_CONSUMPTION_PATTERN = re.compile(
+    r"failure-recovery:[0-9a-f]{64}"
 )
 _FAILURE_STREAK_GENERATION_FIELDS = frozenset(
     {
@@ -6462,6 +6486,29 @@ _FAILURE_STREAK_RECORD_FIELDS = frozenset(
         "last_raw_ref",
         "last_worker_run_id",
         "generations",
+    }
+)
+_FAILURE_PROGRESS_GENERATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "generation_id",
+        "failure_generation_id",
+        "task_id",
+        "provider",
+        "event_id",
+        "event_type",
+        "event_at",
+        "actor",
+        "exact_head",
+    }
+)
+_FAILURE_RECOVERY_PROVIDER_GATE_FIELDS = frozenset(
+    {
+        "provider",
+        "ready",
+        "auth_paused",
+        "quota_paused",
+        "policy_paused",
     }
 )
 
@@ -6837,6 +6884,418 @@ def normalize_failure_streak_progress_event(
         "generation_id": _failure_progress_generation_id(identity),
     }
     return MappingProxyType(generation)
+
+
+def decode_failure_streak_progress_generation(value: Any) -> dict[str, Any] | None:
+    """Decode one exact progress generation emitted by the V3 normalizer."""
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != _FAILURE_PROGRESS_GENERATION_FIELDS
+        or value.get("schema_version") != FAILURE_PROGRESS_SCHEMA_VERSION
+    ):
+        return None
+    generation_id = _failure_streak_text(value.get("generation_id"))
+    failure_generation_id = _failure_streak_text(value.get("failure_generation_id"))
+    task_id = _failure_streak_text(value.get("task_id"))
+    provider = _failure_streak_text(value.get("provider"))
+    event_id = _failure_streak_text(value.get("event_id"))
+    event_type = _failure_streak_text(value.get("event_type"))
+    event_at = _failure_streak_text(value.get("event_at"))
+    actor = _failure_streak_text(value.get("actor"))
+    exact_head = _failure_streak_text(value.get("exact_head"))
+    if (
+        generation_id is None
+        or _FAILURE_STREAK_GENERATION_PATTERN.fullmatch(generation_id) is None
+        or failure_generation_id is None
+        or _FAILURE_STREAK_GENERATION_PATTERN.fullmatch(failure_generation_id) is None
+        or task_id is None
+        or provider is None
+        or provider != normalize_agent_id(provider)
+        or event_id is None
+        or event_type not in {"reopen", "worker_commit"}
+        or event_at is None
+        or _failure_progress_event_timestamp(event_at) is None
+        or actor is None
+        or exact_head is None
+    ):
+        return None
+    if event_type == "reopen":
+        if (
+            _FAILURE_PROGRESS_EVENT_ID_PATTERN.fullmatch(event_id) is None
+            or (
+                exact_head != FAILURE_STREAK_ABSENT_HEAD
+                and re.fullmatch(r"[0-9a-f]{40}", exact_head) is None
+            )
+        ):
+            return None
+    elif (
+        re.fullmatch(r"[0-9a-f]{40}", exact_head) is None
+        or event_id != f"worker-commit-{exact_head}"
+    ):
+        return None
+    identity = {
+        "schema_version": FAILURE_PROGRESS_SCHEMA_VERSION,
+        "failure_generation_id": failure_generation_id,
+        "task_id": task_id,
+        "provider": provider,
+        "event_id": event_id,
+        "event_type": event_type,
+        "event_at": event_at,
+        "actor": actor,
+        "exact_head": exact_head,
+    }
+    if generation_id != _failure_progress_generation_id(identity):
+        return None
+    return dict(value)
+
+
+def _failure_recovery_consumption_token(
+    *,
+    task_id: str,
+    provider: str,
+    failure_generation_id: str,
+    progress_generation_id: str,
+) -> str:
+    identity = {
+        "schema_version": FAILURE_RECOVERY_DECISION_SCHEMA_VERSION,
+        "task_id": task_id,
+        "provider": provider,
+        "failure_generation_id": failure_generation_id,
+        "progress_generation_id": progress_generation_id,
+    }
+    encoded = json.dumps(
+        identity,
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return FAILURE_RECOVERY_CONSUMPTION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _failure_recovery_event_snapshot(progress: Mapping[str, Any] | None) -> Mapping[str, str]:
+    if progress is None:
+        return MappingProxyType(
+            {
+                "event_id": FAILURE_RECOVERY_ABSENT,
+                "event_type": FAILURE_RECOVERY_ABSENT,
+                "event_at": FAILURE_RECOVERY_ABSENT,
+                "actor": FAILURE_RECOVERY_ABSENT,
+                "exact_head": FAILURE_RECOVERY_ABSENT,
+            }
+        )
+    return MappingProxyType(
+        {
+            "event_id": str(progress["event_id"]),
+            "event_type": str(progress["event_type"]),
+            "event_at": str(progress["event_at"]),
+            "actor": str(progress["actor"]),
+            "exact_head": str(progress["exact_head"]),
+        }
+    )
+
+
+def _failure_recovery_decision(
+    *,
+    allowed: bool,
+    reason_code: str,
+    target_agent: str | None,
+    failure: Mapping[str, Any] | None,
+    progress: Mapping[str, Any] | None,
+    prior_count: int | None,
+    proposed_consumption_token: str | None = None,
+) -> Mapping[str, Any]:
+    return MappingProxyType(
+        {
+            "schema_version": FAILURE_RECOVERY_DECISION_SCHEMA_VERSION,
+            "allowed": allowed,
+            "reason_code": reason_code,
+            "task_id": str(failure["task_id"]) if failure is not None else FAILURE_RECOVERY_ABSENT,
+            "target_agent": target_agent or FAILURE_RECOVERY_ABSENT,
+            "provider": str(failure["provider"]) if failure is not None else FAILURE_RECOVERY_ABSENT,
+            "failure_generation_id": (
+                str(failure["generation_id"])
+                if failure is not None
+                else FAILURE_RECOVERY_ABSENT
+            ),
+            "progress_generation_id": (
+                str(progress["generation_id"])
+                if progress is not None
+                else FAILURE_RECOVERY_ABSENT
+            ),
+            "prior_count": prior_count if prior_count is not None else 0,
+            "prior_kind": (
+                str(failure["failure_kind"])
+                if failure is not None
+                else FAILURE_RECOVERY_ABSENT
+            ),
+            "prior_timestamp": (
+                str(failure["recorded_at"])
+                if failure is not None
+                else FAILURE_RECOVERY_ABSENT
+            ),
+            "qualifying_event": _failure_recovery_event_snapshot(progress),
+            "proposed_consumption_token": (
+                proposed_consumption_token or FAILURE_RECOVERY_ABSENT
+            ),
+        }
+    )
+
+
+def _failure_recovery_records(value: Any) -> list[tuple[str | None, Mapping[str, Any]]] | None:
+    if isinstance(value, Mapping):
+        if "task_id" in value or "workspace_task_id" in value:
+            return [(None, value)]
+        records: list[tuple[str | None, Mapping[str, Any]]] = []
+        for key, record in value.items():
+            if not isinstance(record, Mapping):
+                return None
+            records.append((str(key), record))
+        return records
+    if isinstance(value, (list, tuple)):
+        if not all(isinstance(record, Mapping) for record in value):
+            return None
+        return [(None, record) for record in value]
+    return None
+
+
+def _failure_recovery_record_task_matches(
+    key: str | None,
+    record: Mapping[str, Any],
+    task_id: str,
+) -> bool:
+    candidates = {
+        str(value)
+        for value in (
+            key,
+            record.get("task_id"),
+            record.get("workspace_task_id"),
+            (record.get("request_snapshot") or {}).get("task_id")
+            if isinstance(record.get("request_snapshot"), Mapping)
+            else None,
+        )
+        if value not in (None, "")
+    }
+    return task_id in candidates
+
+
+def _failure_recovery_has_active_worker(records: Any, task_id: str) -> bool | None:
+    decoded = _failure_recovery_records(records)
+    if decoded is None:
+        return None
+    return any(
+        _failure_recovery_record_task_matches(key, record, task_id)
+        and str(record.get("status") or "").strip().lower()
+        in FAILURE_RECOVERY_ACTIVE_WORKER_STATUSES
+        for key, record in decoded
+    )
+
+
+def _failure_recovery_has_pending_queue(records: Any, task_id: str) -> bool | None:
+    decoded = _failure_recovery_records(records)
+    if decoded is None:
+        return None
+    return any(
+        _failure_recovery_record_task_matches(key, record, task_id)
+        and str(record.get("status") or "").strip().lower()
+        in FAILURE_RECOVERY_ACTIVE_QUEUE_STATUSES
+        for key, record in decoded
+    )
+
+
+def _failure_recovery_has_reservation(records: Any, task_id: str) -> bool | None:
+    decoded = _failure_recovery_records(records)
+    if decoded is None:
+        return None
+    for key, record in decoded:
+        if not _failure_recovery_record_task_matches(key, record, task_id):
+            continue
+        status = str(record.get("status") or "").strip().lower()
+        if status not in FAILURE_RECOVERY_RELEASED_LEASE_STATUSES:
+            return True
+    return False
+
+
+def decide_failure_streak_recovery(
+    *,
+    task: Any,
+    target_agent: Any,
+    failure_record: Any,
+    progress_generation: Any,
+    consumed_recovery_tokens: Any,
+    workers: Any,
+    queue_events: Any,
+    delivery_reservations: Any,
+    worktree_leases: Any,
+    provider_gate: Any,
+) -> Mapping[str, Any]:
+    """Return a pure, fail-closed one-shot retry decision without consuming it."""
+    decoded_streak = decode_task_failure_streak(failure_record)
+    if decoded_streak is None:
+        return _failure_recovery_decision(
+            allowed=False,
+            reason_code="invalid_failure_record",
+            target_agent=_failure_streak_text(target_agent),
+            failure=None,
+            progress=None,
+            prior_count=None,
+        )
+    failure = decoded_streak["generations"][-1]
+    target = _failure_streak_text(target_agent)
+    progress = decode_failure_streak_progress_generation(progress_generation)
+    if failure["failure_kind"] not in FAILURE_RECOVERY_ALLOWED_KINDS:
+        return _failure_recovery_decision(
+            allowed=False,
+            reason_code="failure_kind_not_recoverable",
+            target_agent=target,
+            failure=failure,
+            progress=progress,
+            prior_count=decoded_streak["count"],
+        )
+
+    if progress is None:
+        return _failure_recovery_decision(
+            allowed=False,
+            reason_code="invalid_progress_generation",
+            target_agent=target,
+            failure=failure,
+            progress=None,
+            prior_count=decoded_streak["count"],
+        )
+    if progress["failure_generation_id"] != failure["generation_id"]:
+        reason = "progress_failure_generation_mismatch"
+    elif progress["task_id"] != failure["task_id"]:
+        reason = "progress_task_mismatch"
+    elif progress["provider"] != failure["provider"]:
+        reason = "progress_provider_mismatch"
+    elif (
+        _failure_progress_event_timestamp(progress["event_at"])
+        <= _failure_progress_event_timestamp(failure["recorded_at"])
+    ):
+        reason = "progress_not_newer_than_failure"
+    else:
+        reason = ""
+    if reason:
+        return _failure_recovery_decision(
+            allowed=False,
+            reason_code=reason,
+            target_agent=target,
+            failure=failure,
+            progress=progress,
+            prior_count=decoded_streak["count"],
+        )
+
+    if not isinstance(task, Mapping):
+        reason = "invalid_task"
+    else:
+        task_id = _failure_streak_text(task.get("id"))
+        owner = _failure_streak_text(task.get("owner"))
+        reviewer = _failure_streak_text(task.get("reviewer"))
+        status = _failure_streak_class(task.get("status"))
+        if task_id != failure["task_id"]:
+            reason = "task_identity_mismatch"
+        elif status not in FAILURE_RECOVERY_OWNER_STATUSES:
+            reason = "task_status_not_owner_eligible"
+        elif owner is None or reviewer is None or owner == reviewer:
+            reason = "owner_reviewer_not_independent"
+        elif owner != failure["owner_at_failure"]:
+            reason = "owner_changed_since_failure"
+        elif reviewer != failure["reviewer_at_failure"]:
+            reason = "reviewer_changed_since_failure"
+        elif target != owner:
+            reason = "target_agent_not_owner"
+        elif failure["provider"] != normalize_agent_id(owner):
+            reason = "provider_owner_mismatch"
+        elif (
+            progress["event_type"] == "reopen"
+            and progress["exact_head"]
+            not in {FAILURE_STREAK_ABSENT_HEAD, failure["rejected_head"]}
+        ):
+            reason = "reviewer_progress_head_mismatch"
+        elif (
+            progress["event_type"] == "worker_commit"
+            and progress["exact_head"] == failure["rejected_head"]
+        ):
+            reason = "progress_replays_rejected_head"
+        elif progress["event_type"] != "reopen" or progress["actor"] != reviewer:
+            reason = "independent_reviewer_progress_required"
+        else:
+            reason = ""
+    if reason:
+        return _failure_recovery_decision(
+            allowed=False,
+            reason_code=reason,
+            target_agent=target,
+            failure=failure,
+            progress=progress,
+            prior_count=decoded_streak["count"],
+        )
+
+    token = _failure_recovery_consumption_token(
+        task_id=failure["task_id"],
+        provider=failure["provider"],
+        failure_generation_id=failure["generation_id"],
+        progress_generation_id=progress["generation_id"],
+    )
+    if isinstance(consumed_recovery_tokens, Mapping):
+        consumed = list(consumed_recovery_tokens)
+    elif isinstance(consumed_recovery_tokens, (list, tuple, set, frozenset)):
+        consumed = list(consumed_recovery_tokens)
+    else:
+        consumed = []
+        reason = "invalid_consumption_state"
+    if not reason and any(
+        not isinstance(item, str)
+        or _FAILURE_RECOVERY_CONSUMPTION_PATTERN.fullmatch(item) is None
+        for item in consumed
+    ):
+        reason = "invalid_consumption_state"
+    if not reason and token in consumed:
+        reason = "progress_generation_already_consumed"
+
+    occupancy_checks = (
+        ("invalid_worker_snapshot", "active_worker", _failure_recovery_has_active_worker(workers, failure["task_id"])),
+        ("invalid_queue_snapshot", "pending_or_started_queue_event", _failure_recovery_has_pending_queue(queue_events, failure["task_id"])),
+        ("invalid_reservation_snapshot", "delivery_reservation_active", _failure_recovery_has_reservation(delivery_reservations, failure["task_id"])),
+        ("invalid_worktree_lease_snapshot", "worktree_lease_active", _failure_recovery_has_reservation(worktree_leases, failure["task_id"])),
+    )
+    if not reason:
+        for invalid_reason, active_reason, result in occupancy_checks:
+            if result is None:
+                reason = invalid_reason
+                break
+            if result:
+                reason = active_reason
+                break
+
+    if not reason:
+        if (
+            not isinstance(provider_gate, Mapping)
+            or set(provider_gate) != _FAILURE_RECOVERY_PROVIDER_GATE_FIELDS
+            or provider_gate.get("provider") != failure["provider"]
+            or any(
+                not isinstance(provider_gate.get(field), bool)
+                for field in ("ready", "auth_paused", "quota_paused", "policy_paused")
+            )
+        ):
+            reason = "invalid_provider_gate"
+        elif provider_gate["ready"] is not True:
+            reason = "provider_unavailable"
+        elif provider_gate["auth_paused"]:
+            reason = "provider_auth_paused"
+        elif provider_gate["quota_paused"]:
+            reason = "provider_quota_paused"
+        elif provider_gate["policy_paused"]:
+            reason = "provider_policy_paused"
+
+    return _failure_recovery_decision(
+        allowed=not reason,
+        reason_code=reason or "allow_recovery",
+        target_agent=target,
+        failure=failure,
+        progress=progress,
+        prior_count=decoded_streak["count"],
+        proposed_consumption_token=token,
+    )
 
 
 def record_task_failure_streak(

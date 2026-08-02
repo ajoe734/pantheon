@@ -13743,6 +13743,522 @@ class FailureStreakActivityNormalizerV3Tests(unittest.TestCase):
         self.assertEqual(unrelated_event, event_before)
 
 
+class FailureStreakRecoveryDecisionV2Tests(unittest.TestCase):
+    task_id = "L12-VERIFY-RUNTIME-001"
+    owner = "Antigravity"
+    reviewer = "Human/Ops"
+    provider = "antigravity"
+    rejected_head = "a" * 40
+    failure_at = "2026-08-02T01:00:00.000000Z"
+
+    def _record(
+        self,
+        *,
+        failure_kind: str = "generic_exit",
+        task_id: str | None = None,
+        owner: str | None = None,
+        reviewer: str | None = None,
+        provider: str | None = None,
+        recorded_at: str | None = None,
+    ) -> dict:
+        actual_task_id = task_id or self.task_id
+        actual_owner = owner or self.owner
+        actual_reviewer = reviewer or self.reviewer
+        actual_provider = provider or self.provider
+        state: dict = {}
+        worker = {
+            "task_id": actual_task_id,
+            "provider": actual_provider,
+            "run_id": f"{actual_provider}-failed-run",
+            "request_snapshot": {
+                "task_id": actual_task_id,
+                "metadata": {
+                    "logical_agent_id": actual_provider,
+                    "task": {
+                        "id": actual_task_id,
+                        "owner": actual_owner,
+                        "reviewer": actual_reviewer,
+                    },
+                },
+            },
+        }
+        with mock.patch.object(
+            supervisor,
+            "_failure_streak_timestamp",
+            return_value=recorded_at or self.failure_at,
+        ):
+            count = supervisor.record_task_failure_streak(
+                state,
+                worker,
+                f"captured {failure_kind}",
+                failure_kind=failure_kind,
+                reason_class=failure_kind,
+                raw_ref=f".orchestrator/logs/{actual_provider}-failed-run.json",
+                rejected_head=self.rejected_head,
+            )
+        self.assertEqual(count, 1)
+        return state["provider_guardrails"]["task_failure_streaks"][
+            f"{actual_task_id}:{actual_provider}"
+        ]
+
+    def _review_progress(
+        self,
+        record: dict,
+        *,
+        event_at: str = "2026-08-02T01:05:00Z",
+    ) -> Mapping[str, object]:
+        event = {
+            "ts": event_at,
+            "agent": record["generations"][-1]["reviewer_at_failure"],
+            "type": "reopen",
+            "task_id": record["task_id"],
+            "message": "Independent reviewer confirms a bounded retry may be reconsidered.",
+        }
+        encoded = json.dumps(
+            event,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        event["event_id"] = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+        progress = supervisor.normalize_failure_streak_progress_event(record, event)
+        self.assertIsNotNone(progress)
+        assert progress is not None
+        return progress
+
+    def _progress_with(self, progress: Mapping[str, object], **updates: object) -> dict:
+        candidate = dict(progress)
+        candidate.update(updates)
+        identity = dict(candidate)
+        identity.pop("generation_id")
+        candidate["generation_id"] = supervisor._failure_progress_generation_id(identity)
+        return candidate
+
+    def _worker_progress(self, record: dict, *, head: str) -> dict:
+        failure = record["generations"][-1]
+        identity = {
+            "schema_version": supervisor.FAILURE_PROGRESS_SCHEMA_VERSION,
+            "failure_generation_id": failure["generation_id"],
+            "task_id": failure["task_id"],
+            "provider": failure["provider"],
+            "event_id": f"worker-commit-{head}",
+            "event_type": "worker_commit",
+            "event_at": "2026-08-02T01:05:00Z",
+            "actor": failure["owner_at_failure"],
+            "exact_head": head,
+        }
+        return {
+            **identity,
+            "generation_id": supervisor._failure_progress_generation_id(identity),
+        }
+
+    def _decision(self, **overrides: object) -> Mapping[str, object]:
+        record = (
+            overrides.pop("failure_record")
+            if "failure_record" in overrides
+            else self._record()
+        )
+        progress = (
+            overrides.pop("progress_generation")
+            if "progress_generation" in overrides
+            else self._review_progress(record)
+        )
+        arguments: dict[str, object] = {
+            "task": {
+                "id": self.task_id,
+                "owner": self.owner,
+                "reviewer": self.reviewer,
+                "status": "in_progress",
+            },
+            "target_agent": self.owner,
+            "failure_record": record,
+            "progress_generation": progress,
+            "consumed_recovery_tokens": [],
+            "workers": {},
+            "queue_events": {},
+            "delivery_reservations": {},
+            "worktree_leases": {},
+            "provider_gate": {
+                "provider": self.provider,
+                "ready": True,
+                "auth_paused": False,
+                "quota_paused": False,
+                "policy_paused": False,
+            },
+        }
+        arguments.update(overrides)
+        return supervisor.decide_failure_streak_recovery(**arguments)
+
+    def test_actual_antigravity_human_ops_incident_allows_pure_one_shot(self) -> None:
+        record = self._record()
+        progress = self._review_progress(record)
+        task = {
+            "id": self.task_id,
+            "owner": self.owner,
+            "reviewer": self.reviewer,
+            "status": "in_progress",
+        }
+        inputs_before = copy.deepcopy(
+            {
+                "record": record,
+                "progress": dict(progress),
+                "task": task,
+                "consumed": [],
+                "workers": {},
+                "queue_events": {},
+                "reservations": {},
+                "leases": {},
+                "provider_gate": {
+                    "provider": self.provider,
+                    "ready": True,
+                    "auth_paused": False,
+                    "quota_paused": False,
+                    "policy_paused": False,
+                },
+            }
+        )
+
+        decision = self._decision(
+            failure_record=record,
+            progress_generation=progress,
+            task=task,
+            consumed_recovery_tokens=inputs_before["consumed"],
+            workers=inputs_before["workers"],
+            queue_events=inputs_before["queue_events"],
+            delivery_reservations=inputs_before["reservations"],
+            worktree_leases=inputs_before["leases"],
+            provider_gate=inputs_before["provider_gate"],
+        )
+
+        failure = record["generations"][-1]
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["reason_code"], "allow_recovery")
+        self.assertEqual(decision["task_id"], self.task_id)
+        self.assertEqual(decision["target_agent"], self.owner)
+        self.assertEqual(decision["provider"], self.provider)
+        self.assertEqual(decision["failure_generation_id"], failure["generation_id"])
+        self.assertEqual(decision["progress_generation_id"], progress["generation_id"])
+        self.assertEqual(decision["prior_count"], 1)
+        self.assertEqual(decision["prior_kind"], "generic_exit")
+        self.assertEqual(decision["prior_timestamp"], self.failure_at)
+        self.assertEqual(decision["qualifying_event"]["actor"], self.reviewer)
+        self.assertRegex(
+            decision["proposed_consumption_token"],
+            r"^failure-recovery:[0-9a-f]{64}$",
+        )
+        with self.assertRaises(TypeError):
+            decision["allowed"] = False  # type: ignore[index]
+        with self.assertRaises(TypeError):
+            decision["qualifying_event"]["actor"] = self.owner  # type: ignore[index]
+        self.assertEqual(record, inputs_before["record"])
+        self.assertEqual(dict(progress), inputs_before["progress"])
+        self.assertEqual(task, inputs_before["task"])
+        self.assertEqual(inputs_before["consumed"], [])
+        self.assertEqual(inputs_before["workers"], {})
+        self.assertEqual(inputs_before["queue_events"], {})
+        self.assertEqual(inputs_before["reservations"], {})
+        self.assertEqual(inputs_before["leases"], {})
+        self.assertEqual(
+            inputs_before["provider_gate"],
+            {
+                "provider": self.provider,
+                "ready": True,
+                "auth_paused": False,
+                "quota_paused": False,
+                "policy_paused": False,
+            },
+        )
+
+    def test_both_explicit_nonterminal_kinds_allow(self) -> None:
+        for failure_kind in ("generic_exit", "missing_process"):
+            with self.subTest(failure_kind=failure_kind):
+                record = self._record(failure_kind=failure_kind)
+                decision = self._decision(
+                    failure_record=record,
+                    progress_generation=self._review_progress(record),
+                )
+                self.assertTrue(decision["allowed"])
+                self.assertEqual(decision["prior_kind"], failure_kind)
+
+    def test_every_excluded_failure_kind_denies(self) -> None:
+        excluded = (
+            "unknown",
+            "terminal",
+            "quota_terminal",
+            "timeout",
+            "parse_error",
+            "exit_code",
+            "auth",
+            "quota",
+            "policy",
+            "overlap",
+            "dirty_worktree",
+            "wrong_branch",
+            "wrong_task",
+            "provider_unready",
+        )
+        for failure_kind in excluded:
+            with self.subTest(failure_kind=failure_kind):
+                record = self._record(failure_kind=failure_kind)
+                decision = self._decision(
+                    failure_record=record,
+                    progress_generation=self._review_progress(record),
+                )
+                self.assertFalse(decision["allowed"])
+                self.assertEqual(decision["reason_code"], "failure_kind_not_recoverable")
+                self.assertNotEqual(
+                    decision["progress_generation_id"],
+                    supervisor.FAILURE_RECOVERY_ABSENT,
+                )
+
+        empty = self._record()
+        empty["generations"][-1]["failure_kind"] = ""
+        decision = self._decision(failure_record=empty, progress_generation={})
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason_code"], "invalid_failure_record")
+
+    def test_owner_lane_status_matrix(self) -> None:
+        for status in ("todo", "in_progress"):
+            with self.subTest(status=status):
+                task = {
+                    "id": self.task_id,
+                    "owner": self.owner,
+                    "reviewer": self.reviewer,
+                    "status": status,
+                }
+                self.assertTrue(self._decision(task=task)["allowed"])
+        for status in (
+            "review",
+            "review_approved",
+            "blocked",
+            "done",
+            "superseded",
+            "failed",
+            "",
+        ):
+            with self.subTest(status=status):
+                task = {
+                    "id": self.task_id,
+                    "owner": self.owner,
+                    "reviewer": self.reviewer,
+                    "status": status,
+                }
+                decision = self._decision(task=task)
+                self.assertFalse(decision["allowed"])
+                self.assertEqual(decision["reason_code"], "task_status_not_owner_eligible")
+
+    def test_identity_and_progress_binding_deny_matrix(self) -> None:
+        record = self._record()
+        progress = self._review_progress(record)
+        cases: list[tuple[str, dict[str, object], str]] = [
+            (
+                "changed owner",
+                {
+                    "task": {
+                        "id": self.task_id,
+                        "owner": "Codex",
+                        "reviewer": self.reviewer,
+                        "status": "in_progress",
+                    }
+                },
+                "owner_changed_since_failure",
+            ),
+            (
+                "changed reviewer",
+                {
+                    "task": {
+                        "id": self.task_id,
+                        "owner": self.owner,
+                        "reviewer": "Codex2",
+                        "status": "in_progress",
+                    }
+                },
+                "reviewer_changed_since_failure",
+            ),
+            (
+                "owner equals reviewer",
+                {
+                    "task": {
+                        "id": self.task_id,
+                        "owner": self.owner,
+                        "reviewer": self.owner,
+                        "status": "in_progress",
+                    }
+                },
+                "owner_reviewer_not_independent",
+            ),
+            (
+                "target is not owner",
+                {"target_agent": self.reviewer},
+                "target_agent_not_owner",
+            ),
+            (
+                "cross failure generation",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        failure_generation_id="sha256:" + "0" * 64,
+                    )
+                },
+                "progress_failure_generation_mismatch",
+            ),
+            (
+                "cross task progress",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        task_id="OTHER-TASK",
+                    )
+                },
+                "progress_task_mismatch",
+            ),
+            (
+                "cross provider progress",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        provider="codex",
+                    )
+                },
+                "progress_provider_mismatch",
+            ),
+            (
+                "stale progress",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        event_at="2026-08-02T00:59:59Z",
+                    )
+                },
+                "progress_not_newer_than_failure",
+            ),
+            (
+                "reviewer progress bound to another head",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        exact_head="c" * 40,
+                    )
+                },
+                "reviewer_progress_head_mismatch",
+            ),
+            (
+                "same rejected head replay",
+                {
+                    "progress_generation": self._worker_progress(
+                        record,
+                        head=self.rejected_head,
+                    )
+                },
+                "progress_replays_rejected_head",
+            ),
+            (
+                "owner commit is not independent reviewer progress",
+                {
+                    "progress_generation": self._worker_progress(
+                        record,
+                        head="b" * 40,
+                    )
+                },
+                "independent_reviewer_progress_required",
+            ),
+        ]
+        for label, overrides, reason in cases:
+            with self.subTest(case=label):
+                arguments = {
+                    "failure_record": record,
+                    "progress_generation": progress,
+                    **overrides,
+                }
+                decision = self._decision(**arguments)
+                self.assertFalse(decision["allowed"])
+                self.assertEqual(decision["reason_code"], reason)
+
+    def test_exact_progress_generation_is_one_shot(self) -> None:
+        allowed = self._decision()
+        token = allowed["proposed_consumption_token"]
+
+        replay = self._decision(consumed_recovery_tokens=[token])
+
+        self.assertFalse(replay["allowed"])
+        self.assertEqual(replay["reason_code"], "progress_generation_already_consumed")
+        self.assertEqual(replay["proposed_consumption_token"], token)
+
+    def test_exact_task_occupancy_deny_matrix_and_unrelated_preservation(self) -> None:
+        blockers: list[tuple[str, dict[str, object], str]] = [
+            (
+                "active worker",
+                {"workers": {"run-1": {"task_id": self.task_id, "status": "running"}}},
+                "active_worker",
+            ),
+            (
+                "pending queue",
+                {"queue_events": [{"task_id": self.task_id, "status": "pending"}]},
+                "pending_or_started_queue_event",
+            ),
+            (
+                "started queue",
+                {"queue_events": [{"task_id": self.task_id, "status": "started"}]},
+                "pending_or_started_queue_event",
+            ),
+            (
+                "delivery reservation",
+                {
+                    "delivery_reservations": {
+                        self.task_id: {"task_id": self.task_id, "status": "reserved"}
+                    }
+                },
+                "delivery_reservation_active",
+            ),
+            (
+                "worktree lease",
+                {
+                    "worktree_leases": {
+                        self.task_id: {
+                            "task_id": self.task_id,
+                            "workspace_task_id": self.task_id,
+                            "path": f"/tmp/{self.task_id}",
+                        }
+                    }
+                },
+                "worktree_lease_active",
+            ),
+        ]
+        for label, overrides, reason in blockers:
+            with self.subTest(case=label):
+                decision = self._decision(**overrides)
+                self.assertFalse(decision["allowed"])
+                self.assertEqual(decision["reason_code"], reason)
+
+        unrelated = self._decision(
+            workers={"run-other": {"task_id": "OTHER-TASK", "status": "running"}},
+            queue_events=[{"task_id": "OTHER-TASK", "status": "pending"}],
+            delivery_reservations={"OTHER-TASK": {"status": "reserved"}},
+            worktree_leases={"OTHER-TASK": {"path": "/tmp/other"}},
+        )
+        self.assertTrue(unrelated["allowed"])
+
+    def test_provider_ready_and_pause_deny_matrix(self) -> None:
+        cases = (
+            ("unavailable", {"ready": False}, "provider_unavailable"),
+            ("auth pause", {"auth_paused": True}, "provider_auth_paused"),
+            ("quota pause", {"quota_paused": True}, "provider_quota_paused"),
+            ("policy pause", {"policy_paused": True}, "provider_policy_paused"),
+        )
+        baseline = {
+            "provider": self.provider,
+            "ready": True,
+            "auth_paused": False,
+            "quota_paused": False,
+            "policy_paused": False,
+        }
+        for label, update, reason in cases:
+            with self.subTest(case=label):
+                decision = self._decision(provider_gate={**baseline, **update})
+                self.assertFalse(decision["allowed"])
+                self.assertEqual(decision["reason_code"], reason)
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
