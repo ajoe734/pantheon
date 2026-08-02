@@ -352,9 +352,51 @@ def test_current_dry_run_materializes_only_safe_g1_and_records_fallbacks(
     ]
 
 
-def test_current_dry_run_cli_is_read_only(tmp_path: Path) -> None:
+def file_identity(path: Path) -> tuple[bool, bytes | None]:
+    return path.exists(), path.read_bytes() if path.exists() else None
+
+
+def checkpoint_temp_files(checkpoint: Path) -> tuple[str, ...]:
+    return tuple(
+        sorted(path.name for path in checkpoint.parent.glob(f"{checkpoint.name}.*.tmp"))
+    )
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_case", "checkpoint_used", "revalidated_tail_events"),
+    [
+        ("warm", True, 0),
+        ("stale_tail", True, 1),
+        ("missing", False, 1),
+        ("corrupt", False, 1),
+    ],
+)
+def test_current_dry_run_cli_is_read_only(
+    checkpoint_case: str,
+    checkpoint_used: bool,
+    revalidated_tail_events: int,
+    tmp_path: Path,
+) -> None:
     state = active_state()
     authority = write_authority(tmp_path, state)
+    checkpoint = authority["event_log"].with_name(
+        f"{authority['event_log'].name}.checkpoint.json"
+    )
+    if checkpoint_case == "stale_tail":
+        stale_checkpoint = checkpoint.read_bytes()
+        tail_state = deepcopy(state)
+        tail_state["updated_at"] = "2026-08-02T09:40:00Z"
+        append_state_commit(
+            authority["event_log"],
+            tail_state,
+            source="test-stale-tail",
+        )
+        checkpoint.write_bytes(stale_checkpoint)
+    elif checkpoint_case == "missing":
+        checkpoint.unlink()
+    elif checkpoint_case == "corrupt":
+        checkpoint.write_bytes(b"not-json")
+
     live_config = tmp_path / "live-config.json"
     live_config.write_text(
         json.dumps(
@@ -369,8 +411,16 @@ def test_current_dry_run_cli_is_read_only(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
-    before_status = (tmp_path / "ai-status.json").read_bytes()
-    before_journal = authority["event_log"].read_bytes()
+    expected_snapshot = load_snapshot(
+        authority["event_log"],
+        refresh_checkpoint=False,
+    )
+    before_files = {
+        "projection": file_identity(tmp_path / "ai-status.json"),
+        "journal": file_identity(authority["event_log"]),
+        "checkpoint": file_identity(checkpoint),
+    }
+    before_temp_files = checkpoint_temp_files(checkpoint)
     env = {**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)}
     result = subprocess.run(
         [
@@ -398,8 +448,73 @@ def test_current_dry_run_cli_is_read_only(tmp_path: Path) -> None:
     assert body["status"] == "dry_run"
     assert len(body["create"]) == 25
     assert len(body["deferred"]) == 3
-    assert (tmp_path / "ai-status.json").read_bytes() == before_status
-    assert authority["event_log"].read_bytes() == before_journal
+    assert body["task_state_store"]["snapshot"] == {
+        "byte_size": authority["event_log"].stat().st_size,
+        "checkpoint_used": checkpoint_used,
+        "event_count": expected_snapshot["event_count"],
+        "last_event_id": expected_snapshot["last_event_id"],
+        "last_event_sha256": expected_snapshot["last_event_sha256"],
+        "revalidated_tail_events": revalidated_tail_events,
+        "state_sha256": expected_snapshot["state_sha256"],
+    }
+    assert {
+        "projection": file_identity(tmp_path / "ai-status.json"),
+        "journal": file_identity(authority["event_log"]),
+        "checkpoint": file_identity(checkpoint),
+    } == before_files
+    assert checkpoint_temp_files(checkpoint) == before_temp_files
+
+
+def test_authority_uses_one_validated_snapshot_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = active_state()
+    snapshot = {
+        "event_count": 8632,
+        "byte_size": 2_174_900_966,
+        "last_event_id": "task-state-head",
+        "last_event_sha256": "a" * 64,
+        "state": state,
+        "state_sha256": "b" * 64,
+        "resumed_from_checkpoint": True,
+        "revalidated_events": 0,
+    }
+    calls: list[tuple[Path, bool]] = []
+
+    def one_snapshot(path: Path, *, refresh_checkpoint: bool = True) -> dict:
+        calls.append((path, refresh_checkpoint))
+        return snapshot
+
+    monkeypatch.setattr(module, "load_snapshot", one_snapshot)
+    authority = {"event_log": tmp_path / "task-state-events.jsonl"}
+
+    loaded = module.load_authoritative_task_snapshot(authority)
+
+    assert loaded is snapshot
+    assert calls == [(authority["event_log"], True)]
+    assert module.load_authoritative_task_state(authority) == state
+    assert calls == [
+        (authority["event_log"], True),
+        (authority["event_log"], True),
+    ]
+    assert (
+        module.load_authoritative_task_snapshot(
+            authority,
+            refresh_checkpoint=False,
+        )
+        is snapshot
+    )
+    assert calls[-1] == (authority["event_log"], False)
+    assert module.authoritative_snapshot_evidence(loaded) == {
+        "event_count": 8632,
+        "byte_size": 2_174_900_966,
+        "last_event_id": "task-state-head",
+        "last_event_sha256": "a" * 64,
+        "state_sha256": "b" * 64,
+        "checkpoint_used": True,
+        "revalidated_tail_events": 0,
+    }
 
 
 def test_current_plan_accepts_archived_dependency(tmp_path: Path) -> None:
@@ -824,6 +939,17 @@ def test_current_exact_canonical_readback_and_mismatch(tmp_path: Path) -> None:
     )
     assert readback["state_sha256"] == readback["projection_sha256"]
     assert readback["exact"] == task_ids
+    assert readback["task_state_snapshot"] == {
+        "byte_size": authority["event_log"].stat().st_size,
+        "checkpoint_used": True,
+        "event_count": 1,
+        "last_event_id": load_snapshot(authority["event_log"])["last_event_id"],
+        "last_event_sha256": load_snapshot(authority["event_log"])[
+            "last_event_sha256"
+        ],
+        "revalidated_tail_events": 0,
+        "state_sha256": load_snapshot(authority["event_log"])["state_sha256"],
+    }
 
     projection = json.loads((tmp_path / "ai-status.json").read_text(encoding="utf-8"))
     projection["tasks"][0]["status"] = "blocked"

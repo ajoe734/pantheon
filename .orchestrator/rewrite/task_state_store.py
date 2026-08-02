@@ -33,6 +33,7 @@ EVENT_TYPE_STATE_COMMITTED = "task_state_committed"
 CHECKPOINT_VERSION = 1
 CHECKPOINT_SUFFIX = ".checkpoint.json"
 FULL_REPLAY_ENV = "PANTHEON_TASK_STATE_STORE_FULL_REPLAY"
+SNAPSHOT_HASH_CHUNK_BYTES = 16 * 1024 * 1024
 _SNAPSHOT_CACHE_LOCK = threading.RLock()
 _SNAPSHOT_CACHE: dict[
     Path,
@@ -357,7 +358,8 @@ def _resume_point(
     prefix_bytes = int(checkpoint["prefix_bytes"])
     if prefix_bytes > len(payload) or payload[prefix_bytes - 1 : prefix_bytes] != b"\n":
         return None
-    prefix_digest = hashlib.sha256(memoryview(payload)[:prefix_bytes])
+    prefix_digest = hashlib.sha256()
+    _update_payload_digest(prefix_digest, payload, start=0, end=prefix_bytes)
     if prefix_digest.hexdigest() != checkpoint["prefix_sha256"]:
         return None
     last_event = checkpoint["last_event"]
@@ -390,6 +392,58 @@ def _resume_point(
     }
 
 
+def _update_payload_digest(
+    digest: Any,
+    payload: bytes | memoryview,
+    *,
+    start: int,
+    end: int,
+) -> None:
+    """Hash a journal range with bounded resident memory.
+
+    A single ``hashlib.update`` over a multi-gigabyte mmap makes the whole
+    mapping resident even though no heap copy is created. Feed fixed-size views
+    instead and release completed mmap pages where the platform supports it.
+    """
+
+    mapped = payload.obj if isinstance(payload, memoryview) else None
+    for offset in range(start, end, SNAPSHOT_HASH_CHUNK_BYTES):
+        chunk_end = min(offset + SNAPSHOT_HASH_CHUNK_BYTES, end)
+        digest.update(memoryview(payload)[offset:chunk_end])
+        if (
+            isinstance(mapped, mmap.mmap)
+            and hasattr(mapped, "madvise")
+            and hasattr(mmap, "MADV_DONTNEED")
+            and offset % mmap.PAGESIZE == 0
+        ):
+            try:
+                mapped.madvise(mmap.MADV_DONTNEED, offset, chunk_end - offset)
+            except (OSError, ValueError):
+                # Page eviction is a memory bound optimization, not integrity.
+                pass
+
+
+def _payload_lines(
+    payload: bytes | memoryview,
+    *,
+    start: int,
+) -> Iterable[bytes]:
+    """Yield JSONL records without materializing the remaining journal."""
+
+    source = payload.obj if isinstance(payload, memoryview) else payload
+    if isinstance(source, (bytes, bytearray, mmap.mmap)):
+        cursor = start
+        limit = len(payload)
+        while cursor < limit:
+            newline = source.find(b"\n", cursor, limit)
+            if newline < 0:
+                newline = limit
+            yield bytes(memoryview(payload)[cursor:newline])
+            cursor = newline + 1
+        return
+    yield from bytes(memoryview(payload)[start:]).splitlines()
+
+
 def _snapshot_from_payload(
     payload: bytes | memoryview,
     checkpoint: dict[str, Any] | None,
@@ -410,13 +464,13 @@ def _snapshot_from_payload(
     # Extending the prefix hasher keeps the whole-journal digest to a single
     # pass over the bytes even when the checkpoint already covered most of them.
     digest = digest.copy()
-    digest.update(memoryview(payload)[offset:])
+    _update_payload_digest(digest, payload, start=offset, end=len(payload))
     replayed_from_checkpoint = resume is not None
     revalidated = 0
 
     # Only the unvalidated tail is materialized; when the checkpoint already
     # covers the whole journal this is empty.
-    for raw_line in bytes(payload[offset:]).splitlines():
+    for raw_line in _payload_lines(payload, start=offset):
         if not raw_line.strip():
             continue
         try:
@@ -490,11 +544,15 @@ def _journal_view(path: Path):
         os.close(descriptor)
 
 
-def _load_snapshot_unlocked(event_path: Path) -> dict[str, Any]:
+def _load_snapshot_unlocked(
+    event_path: Path,
+    *,
+    refresh_checkpoint: bool = True,
+) -> dict[str, Any]:
     checkpoint = _read_checkpoint(event_path)
     with _journal_view(event_path) as payload:
         snapshot = _snapshot_from_payload(payload, checkpoint)
-    if snapshot["revalidated_events"]:
+    if refresh_checkpoint and snapshot["revalidated_events"]:
         _write_checkpoint(
             event_path,
             prefix_bytes=int(snapshot["byte_size"]),
@@ -532,7 +590,11 @@ def _journal_fingerprint(
         os.close(descriptor)
 
 
-def load_snapshot(path: str | Path) -> dict[str, Any]:
+def load_snapshot(
+    path: str | Path,
+    *,
+    refresh_checkpoint: bool = True,
+) -> dict[str, Any]:
     """Validate the journal once and return its head as one consistent snapshot.
 
     Callers that need both the projected state and a projection report must use
@@ -541,6 +603,11 @@ def load_snapshot(path: str | Path) -> dict[str, Any]:
     windows, so a commit landing between them produced the observed transient
     report where ``event_count`` came from one journal generation and the
     compared digest from another.
+
+    ``refresh_checkpoint=False`` keeps an observational caller from creating,
+    replacing, or repairing the derived checkpoint. The journal and any usable
+    checkpoint are still fully validated, including the complete prefix hash and
+    every uncheckpointed event. Mutation paths retain the default refresh mode.
     """
 
     event_path = _prepare_parent(Path(path))
@@ -551,8 +618,15 @@ def load_snapshot(path: str | Path) -> dict[str, Any]:
                 cached = _SNAPSHOT_CACHE.get(event_path)
                 if cached is not None and cached[0] == fingerprint:
                     return _public_snapshot(cached[1])
-        snapshot = _load_snapshot_unlocked(event_path)
-        if not _full_replay_forced():
+        snapshot = _load_snapshot_unlocked(
+            event_path,
+            refresh_checkpoint=refresh_checkpoint,
+        )
+        # A read-only replay with a stale, missing, or corrupt checkpoint has
+        # not made its accelerated resume point durable. Do not cache that
+        # result as though a later mutation-capable caller had refreshed it.
+        cacheable = refresh_checkpoint or snapshot["revalidated_events"] == 0
+        if not _full_replay_forced() and cacheable:
             with _SNAPSHOT_CACHE_LOCK:
                 _SNAPSHOT_CACHE[event_path] = (fingerprint, snapshot)
     return _public_snapshot(snapshot)

@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -743,6 +744,37 @@ def _replays(monkeypatch) -> list[str]:
     return seen
 
 
+def _append_tail_without_checkpoint(
+    path: Path,
+    snapshot: dict,
+    next_state: dict,
+    *,
+    mutation: str | None = None,
+) -> dict:
+    """Append one test event while intentionally leaving the checkpoint stale."""
+
+    event = {
+        "version": store.EVENT_VERSION,
+        "type": store.EVENT_TYPE_STATE_COMMITTED,
+        "sequence": int(snapshot["event_count"]) + 1,
+        "committed_at": "2026-08-02T00:00:00Z",
+        "source": "uncheckpointed-test-tail",
+        "previous_event_sha256": snapshot["last_event_sha256"],
+        "state_sha256": store.sha256_json(next_state),
+        "state": next_state,
+    }
+    if mutation == "sequence":
+        event["sequence"] += 1
+    elif mutation == "previous_hash":
+        event["previous_event_sha256"] = "0" * 64
+    event_sha256 = store.sha256_json(event)
+    event["event_sha256"] = event_sha256
+    event["event_id"] = f"task-state-{event_sha256}"
+    with path.open("ab") as stream:
+        stream.write(store.canonical_json_bytes(event) + b"\n")
+    return event
+
+
 def test_snapshot_reuses_the_checkpointed_prefix_and_only_parses_the_tail(
     tmp_path: Path,
 ) -> None:
@@ -758,13 +790,112 @@ def test_snapshot_reuses_the_checkpointed_prefix_and_only_parses_the_tail(
     # no new events left to revalidate.
     assert warm["revalidated_events"] == 0
 
-    store.append_state_commit(path, growing_board(6), source="test")
-    incremental = store.load_snapshot(path)
+    _append_tail_without_checkpoint(path, warm, growing_board(6))
+    checkpoint = store._checkpoint_path(path)
+    checkpoint_before = checkpoint.read_bytes()
+    temp_files_before = sorted(checkpoint.parent.glob(f"{checkpoint.name}.*.tmp"))
+    observed = store.load_snapshot(path, refresh_checkpoint=False)
 
+    assert observed["event_count"] == 6
+    assert observed["resumed_from_checkpoint"] is True
+    assert observed["revalidated_events"] == 1
+    assert observed["state"] == growing_board(6)
+    assert checkpoint.read_bytes() == checkpoint_before
+    assert sorted(checkpoint.parent.glob(f"{checkpoint.name}.*.tmp")) == temp_files_before
+
+    incremental = store.load_snapshot(path)
     assert incremental["event_count"] == 6
     assert incremental["resumed_from_checkpoint"] is True
-    assert incremental["revalidated_events"] == 0
+    assert incremental["revalidated_events"] == 1
     assert incremental["state"] == growing_board(6)
+    assert checkpoint.read_bytes() != checkpoint_before
+
+    with store._SNAPSHOT_CACHE_LOCK:
+        store._SNAPSHOT_CACHE.pop(path, None)
+    refreshed = store.load_snapshot(path)
+    assert refreshed["resumed_from_checkpoint"] is True
+    assert refreshed["revalidated_events"] == 0
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("sequence", "sequence mismatch"),
+        ("previous_hash", "previous hash mismatch"),
+    ],
+)
+def test_snapshot_rejects_invalid_checkpoint_tail_chain(
+    mutation: str,
+    message: str,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, growing_board(1), source="test")
+    warm = store.load_snapshot(path)
+    _append_tail_without_checkpoint(
+        path,
+        warm,
+        growing_board(2),
+        mutation=mutation,
+    )
+
+    with pytest.raises(store.TaskStateStoreError, match=message):
+        store.load_snapshot(path)
+
+
+def test_snapshot_and_concurrent_append_observe_whole_generations(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    first_state = growing_board(1)
+    second_state = growing_board(2)
+    store.append_state_commit(path, first_state, source="test")
+    reader_inside_validation = threading.Event()
+    release_reader = threading.Event()
+    writer_finished = threading.Event()
+    original = store._snapshot_from_payload
+    results: dict[str, object] = {}
+
+    def pausing_snapshot(payload, checkpoint):
+        snapshot = original(payload, checkpoint)
+        if threading.current_thread().name == "snapshot-reader":
+            reader_inside_validation.set()
+            assert release_reader.wait(timeout=5)
+        return snapshot
+
+    def read_once() -> None:
+        results["reader"] = store.load_snapshot(path)
+
+    def append_once() -> None:
+        try:
+            results["writer"] = store.append_state_commit(
+                path,
+                second_state,
+                source="concurrent-writer",
+            )
+        finally:
+            writer_finished.set()
+
+    monkeypatch.setattr(store, "_snapshot_from_payload", pausing_snapshot)
+    reader = threading.Thread(target=read_once, name="snapshot-reader")
+    writer = threading.Thread(target=append_once, name="snapshot-writer")
+    reader.start()
+    assert reader_inside_validation.wait(timeout=5)
+    writer.start()
+    assert not writer_finished.wait(timeout=0.1)
+    release_reader.set()
+    reader.join(timeout=5)
+    writer.join(timeout=5)
+
+    assert not reader.is_alive()
+    assert not writer.is_alive()
+    assert results["reader"]["event_count"] == 1
+    assert results["reader"]["state"] == first_state
+    assert results["writer"]["sequence"] == 2
+    final = store.load_snapshot(path)
+    assert final["event_count"] == 2
+    assert final["state"] == second_state
 
 
 def test_unchanged_generation_reuses_the_process_snapshot_cache(
