@@ -1,8 +1,8 @@
 # L12 current three-pass gap re-audit — 2026-08-01
 
 Task: L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801  
-Evidence cut: 2026-08-01T15:02:57Z  
-Pantheon source cut: origin/dev at 76bbb04b569331a81916330d1cf713d068527c89  
+Evidence cut: 2026-08-02T07:49:00Z
+Pantheon source cut: origin/dev at 79ba3f431127bf9718697d2ba9e9ddce97969ec3
 Evidence status: review_pending; no independent exact-head approval has been recorded
 
 ## Executive verdict
@@ -23,13 +23,15 @@ boundaries:
 3. The supervisor/DAG pass confirms that the authored 28-task catalog is
    structurally valid as 25 G1 + 2 G2 + 1 G3. Fresh evidence, however, supersedes
    one BFF revalidation task, making the effective plan 27 tasks with a 24-task
-   G1 frontier. A live dry-run fails closed on a current supervisor artifact
-   overlap, and canonical active/archive state contains zero of the 28 catalog
-   task IDs.
+   G1 frontier. A live dry-run fails closed because authoritative event replay
+   does not finish within 30 seconds, and canonical active/archive state
+   contains zero of the 28 catalog task IDs.
 
 This is a non-zero re-audit delta. It does not authorize this documentation-only
 task to rewrite the guarded catalog or materialize product tasks. The machine
-record is [reaudit-delta.json](../../bff/execution-tasks/2026-08-01-l12-current-gap-reaudit/reaudit-delta.json).
+record is [reaudit-delta.json](../../bff/execution-tasks/2026-08-01-l12-current-gap-reaudit/reaudit-delta.json),
+with the owner-cut observations preserved in
+[the evidence snapshot](2026-08-01-l12-current-three-pass-gap-reaudit-evidence.json).
 
 ## Evidence boundary and method
 
@@ -45,7 +47,8 @@ used these independent authorities:
   ten-rule validator, and its companion checksum;
 - execution truth: canonical active/archive task state, targeted receipts,
   current PR heads/checks, branches, worktrees, and the guarded dispatcher;
-- runtime truth: the supervisor state sampled at 15:02:57Z, the Pantheon-owned
+- runtime truth: the supervisor state sampled between 07:44:39Z and 07:49:00Z,
+  the Pantheon-owned
   frontend deployment manifest, and public BFF health/readback requests.
 
 Historical done state is reported as history, not current product proof. A
@@ -106,13 +109,13 @@ against the provisioned repository interpreter:
       services/control-plane/bff/test_loop_health_read_model_contract.py \
       scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py
 
-Result: 85 passed, 6 skipped, 11 warnings in 29.87 seconds. This proves current
+Result: 85 passed, 6 skipped, 11 warnings in 31.35 seconds. This proves current
 source contracts and guarded-dispatch tests, not hosted product completion.
 
 ### Fresh evidence replay
 
 The prior [2026-07-31 baseline](../../deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json)
-reported 2 of 18 rows passing both validator and checksum. The 2026-08-01 replay
+reported 2 of 18 rows passing both validator and checksum. The 2026-08-02 replay
 used each archived row's canonical review_file and correctly resolved both
 repository-relative and checksum-directory-relative checksum entries.
 
@@ -141,11 +144,11 @@ That frontend is not current dev: execute-plans dev was
 3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f at the cut. L12-FE-TRUTH-001 remains
 blocked and has not completed independent governed closeout.
 
-At 14:43:02Z the public BFF health endpoint was live but degraded and not ready;
-the lifecycle projector's last poll was 09:16:27Z and stale. Loop-inventory and
-loop-health requests returned 401 without a valid JWT. VM readback could not be
-obtained because gcloud required interactive reauthentication and direct SSH
-rejected the available public key. No per-loop hosted truth is claimed.
+At 07:41:44Z the public BFF health endpoint was live but degraded and not ready;
+`/readyz` returned 503, and the lifecycle projector's last poll remained
+2026-08-01T09:16:27Z and stale. Loop-inventory and loop-health requests returned
+401 without a valid JWT. Those protected routes are unverified, and no per-loop
+hosted truth is claimed.
 
 The legacy verifier/hosted lanes are also incomplete:
 
@@ -224,32 +227,35 @@ The current live dry-run was:
       --command-sha "$PANTHEON_COMMAND_RUNTIME_SHA" \
       --runtime-state /home/lupin/pantheon/.orchestrator/state.json
 
-It exited 2 with:
+It was bounded by a 30-second timeout and exited 124 after 32.45 seconds. The
+last frame was authoritative event validation and canonical JSON hashing in
+`task_state_store.py`; the dry-run never reached an admission decision. The
+event log contained 8,392 events at that attempt. Separate governed status
+reads also returned `status_task_lock_busy` during the cut.
 
-    live nonterminal artifact overlap is not dependency-ordered:
-    L12-CONTROLLER-BFF-20260731 <->
-    SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801
-
-The overlap is current and real. The supervisor task owns BFF assistant bridge
-files and currently records a processed/admitted packet whose four dispatched
-task records disappear from authoritative projection. Product dispatch must
-remain fail closed until processed receipt, admission, replay row, and
-active/archive readback agree.
+The final supervisor shadow snapshot was nevertheless caught up at 8,402
+events, with last event
+`task-state-70bc63b4ffef81c4a728fb2befc0bd0c62068a18c142b4a99c0977fda573b62c`
+and projected state SHA-256
+`e40750401eb8630eb57e92486c2e5689a30126f41b4a1f03dc085c68187e7601`.
+That does not turn a timed-out guarded dry-run into admission. Product dispatch
+must remain fail closed until the dry-run completes and processed receipt,
+admission, replay row, and active/archive readback agree.
 
 ### Structural parallelism versus live capacity
 
-At 15:02:57Z the supervisor sample contained 9 running workers across only 3
-quota groups:
+At 07:44:39Z the supervisor sample contained 4 running workers, all in one
+quota group:
 
 | Quota group | Running workers | Run IDs |
 |---|---:|---|
-| codex1 | 4 | codex-…f7e54309, codex-…d58e22be, codex-…f07b6acd, codex-…d65918cc |
-| codex2 | 4 | codex-…ff435874, codex-…cb9fee63, codex-…1205ef88, codex-…8cc1b389 |
-| antigravity | 1 | antigravity1-1-…ff201743 |
-| claude | 0 | none |
+| codex1 | 4 | codex-20260802T071754Z-248c8fb2, codex-20260802T073304Z-17fe7cc9, codex-20260802T073713Z-f2ed0230, codex-20260802T074436Z-8aa50f93 |
+| codex2 | 0 | none |
+| antigravity | 0 | none; provider dispatch paused for quota/auth readiness |
+| claude / claude2 | 0 | none |
 
 The catalog's Antigravity/Claude-first preferences remain assignment intent,
-but only one Antigravity worker and no Claude workers were running at this cut.
+but no Antigravity or Claude workers were running at this cut.
 A 25-task authored frontier—or the effective 24-task frontier—means those tasks
 are dependency/artifact independent. It does not create 24 or 25 simultaneous
 accounts, quota groups, or worker slots.
@@ -282,23 +288,24 @@ The exact task IDs and full rejection-rule arrays are in the machine delta.
 | Required sequence element | Exact current evidence | Verdict |
 |---|---|---|
 | #4397 merge/live | PR head fd67904e…, merge cf6a8fed… at 2026-07-31T14:10:14Z, required checks green; archived row reports live runtime promotion | pass |
-| #4399 scheduler canary | PR head 6f391cfd…, merge 894eb813… at 15:05:06Z; 344-second accepted post-merge canary and >7-minute worker run pass technical preemption proof | partial: technical pass, governed canary closeout metadata still blocked |
-| Antigravity dispatcher bootstrap | Guarded dispatcher V2 is merged/done and static validation passes; current live dry-run fails on the assign-lock-timeout overlap | fail closed; bootstrap source exists but safe live admission does not |
-| 25-task frontier | Authored G1=25 is structurally disjoint. Fresh BFF evidence supersedes one row, so effective G1=24. Live capacity sampled 9 workers/3 quota groups | structural pass as authored; executable count changed; not materialized |
+| #4399 scheduler canary | PR head 6f391cfd…, merge 894eb813…; archived canonical row is done/live with bound canary evidence | pass |
+| Antigravity dispatcher bootstrap | Guarded dispatcher V2 is merged/done and static validation passes; current live dry-run times out during authoritative event replay before admission | fail closed; bootstrap source exists but safe live admission does not |
+| 25-task frontier | Authored G1=25 is structurally disjoint. Fresh BFF evidence supersedes one row, so effective G1=24. Live capacity sampled 4 workers/1 quota group | structural pass as authored; executable count changed; not materialized |
 | 28-task DAG completion | 28/28 authored IDs absent from canonical active/archive; one receipt-only verifier claim rejected | fail: 0/28 materialized, 0/28 complete |
 | Hosted/verifier | Hosted FE is stale relative to execute-plans dev; BFF degraded/not-ready; authenticated loop readback unavailable; verifier lanes incomplete | fail |
 | L12-CLOSE-001 | Canonical row is todo and its prerequisites are incomplete | fail/not runnable |
 
 ## Foundation and PR reconciliation
 
-| PR | Current state at 15:02Z | Consequence |
+| PR | Current state at 07:48Z | Consequence |
 |---:|---|---|
 | #4397 | merged, exact head fd67904e…, checks green | seen-event key foundation accepted |
-| #4399 | merged, exact head 6f391cfd…, checks green | source repair accepted; technical canary passes, governed canary metadata remains unresolved |
-| #4425 | open, behind; exact head dfdcd07f…; trailer and canonical review checks failing | held-close overlap guard remains a source prerequisite |
-| #4443 | open, behind; exact head 4cd85c7a…; canonical review gate failing | runtime identity root/config/git prerequisite remains open |
-| #4445 | open, behind; exact head 52cd7902…; trailer/review checks failing | code half of failure-streak wiring is not accepted |
-| #4447 | open, behind; exact head c640b6fa…; mechanical checks green, review gate failing | evidence half duplicates #4445's Task ID; compose into one exact reviewed head or retire duplicate |
+| #4399 | merged, exact head 6f391cfd…, checks green; canonical row done/live | source repair and bound scheduler canary accepted |
+| #4425 | open, behind; exact head dfdcd07f…; trailer and canonical review checks failing | original held-close overlap-guard PR is not accepted |
+| #4455 | replacement open, behind; exact head 717b9cfa…; mechanical checks green, no exact-head review binding | held-close replacement still requires current rebase and independent binding |
+| #4443 | open, clean; exact head e83dd7ae…; all visible checks green; canonical task in_progress | runtime identity prerequisite still requires owner handoff, independent approval, and merge |
+| #4445 | merged, exact head 50a3b080…, merge 2350e4e8…; canonical task done | failure-streak record wiring implementation accepted |
+| #4447 | open, dirty/conflicting; exact head c640b6fa…; review gate failing | stale duplicate of the accepted #4445 task must be retired |
 
 PR #4417 merged the guarded dispatcher itself, but its evidence correctly did
 not claim live materialization. The earlier bridge materialization prerequisite
@@ -308,8 +315,9 @@ dependency chain.
 
 ## Required execution order
 
-1. Finish and independently review the held-close, runtime-identity and
-   failure-streak prerequisite chain; compose or retire duplicate #4445/#4447.
+1. Rebase and independently review the held-close replacement #4455, complete
+   exact-head review/merge for runtime-identity #4443, and retire stale duplicate
+   #4447; the #4445 failure-streak record-wiring implementation is accepted.
 2. Repair the assistant bridge assign/materialization lock boundary and prove a
    processed receipt agrees with authoritative active/archive projection.
 3. Apply this audited catalog delta before dispatch: supersede
@@ -334,7 +342,7 @@ revert of this task's merge commit; no runtime rollback is permitted or needed.
 Blocking residual risks remain outside this audit's owned layer:
 
 - false processed/false materialization at the assistant bridge boundary;
-- two open PRs for the same failure-streak Task ID;
+- one stale open duplicate PR for an already accepted failure-streak Task ID;
 - guarded catalog effective delta not yet applied;
 - nine missing controllers and fifteen current evidence revalidations;
 - old frontend/BFF hosted deployment identity and degraded BFF readiness;
