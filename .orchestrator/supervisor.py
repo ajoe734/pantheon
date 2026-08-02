@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -169,6 +170,10 @@ _RUNTIME_PHASE_RESERVATION: ContextVar[str | None] = ContextVar(
     "supervisor_runtime_phase_reservation",
     default=None,
 )
+_RUNTIME_PHASE_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "supervisor_runtime_phase_context",
+    default=None,
+)
 
 
 CYCLE_PHASE_METRICS_MAX = 64
@@ -234,6 +239,24 @@ def _record_cycle_runtime_lock_hold(elapsed_seconds: float) -> None:
         float(metrics.get("runtime_lock_hold_seconds", 0.0)),
         max(0.0, float(elapsed_seconds)),
     )
+
+
+@contextmanager
+def _measured_runtime_state_lock(config: dict[str, Any]):
+    """Acquire runtime admission and measure only the exclusive hold.
+
+    ``runtime_lock_hold_seconds`` is canary evidence about the time other
+    writers are excluded.  Starting the clock before the blocking acquisition
+    conflates contention with ownership and can report an arbitrarily long
+    hold even when the critical section is bounded.
+    """
+
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        acquired_at = time.monotonic()
+        try:
+            yield
+        finally:
+            _record_cycle_runtime_lock_hold(time.monotonic() - acquired_at)
 
 
 def _bounded_cycle_metrics_snapshot(*, finished_monotonic: float) -> dict[str, Any] | None:
@@ -2955,6 +2978,18 @@ def start_worker_for_request(
     issued_command_env = status_command_runtime_env(config)
     issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
     request.metadata["status_command_runtime"] = issued_command_runtime
+    _persist_runtime_phase_launch_intent(
+        config,
+        state,
+        request=request,
+        queue_event_id=queue_event_id,
+        attempt_count=attempt_count,
+        event_id_for_log=event_id_for_log,
+        parent_run_id=parent_run_id,
+        adapter_name=str(adapter_name),
+        activity_type=activity_type,
+        activity_message=activity_message,
+    )
     result = adapter.deliver(request)
     if not result.ok:
         failure_run_id = (
@@ -3012,7 +3047,7 @@ def start_worker_for_request(
     now_dt = datetime.now(timezone.utc)
     now = _isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    state.setdefault("workers", {})[worker_run_id] = {
+    worker_record = {
         "run_id": worker_run_id,
         "provider": request.provider,
         "agent_id": agent["id"],
@@ -3063,6 +3098,7 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    state.setdefault("workers", {})[worker_run_id] = worker_record
     record_worker_runtime_measurement(
         config,
         state,
@@ -3084,14 +3120,14 @@ def start_worker_for_request(
         },
         emit_activity=False,
     )
-    # Persist immediately after launch so a supervisor crash cannot orphan
-    # a live worker before the end-of-tick state save.
-    # A reserved slow phase owns a detached state snapshot. Publishing that
-    # snapshot here would bypass the phase's exact whole-state CAS. The caller
-    # persists the worker and queue lease in the short commit transaction after
-    # adapter/process I/O returns.
+    # Direct callers retain the immediate whole-state save. Reserved slow
+    # phases instead publish an exact-token launch receipt into their durable
+    # reservation. A restart can adopt that receipt (or the runner marker tied
+    # to the pre-launch intent) without bypassing the phase's whole-state CAS.
     if _RUNTIME_PHASE_RESERVATION.get() is None:
         save_runtime_state(config, state)
+    else:
+        _persist_runtime_phase_launch_receipt(config, state, worker_record)
     write_activity_log(
         config,
         {
@@ -10316,6 +10352,453 @@ def _runtime_state_cas_digest(state: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _runtime_phase_reservation_record(
+    state: Mapping[str, Any],
+    phase_name: str,
+    reservation_token: str,
+) -> dict[str, Any] | None:
+    supervisor_state = state.get("supervisor")
+    if not isinstance(supervisor_state, Mapping):
+        return None
+    reservations = supervisor_state.get("runtime_phase_reservations")
+    if not isinstance(reservations, Mapping):
+        return None
+    reservation = reservations.get(phase_name)
+    if not isinstance(reservation, dict):
+        return None
+    if str(reservation.get("token") or "") != reservation_token:
+        return None
+    return reservation
+
+
+def _persist_runtime_phase_launch_intent(
+    config: dict[str, Any],
+    scratch: dict[str, Any],
+    *,
+    request: DeliveryRequest,
+    queue_event_id: str | None,
+    attempt_count: int,
+    event_id_for_log: str | None,
+    parent_run_id: str | None,
+    adapter_name: str,
+    activity_type: str,
+    activity_message: str | None,
+) -> None:
+    """Publish an exact-token intent before an adapter may create a process."""
+
+    context = _RUNTIME_PHASE_CONTEXT.get()
+    if not isinstance(context, dict):
+        return
+    phase_name = str(context.get("phase_name") or "")
+    reservation_token = str(context.get("reservation_token") or "")
+    expected_digest = str(context.get("expected_digest") or "")
+    if not phase_name or not reservation_token or not expected_digest:
+        raise RuntimeError("reserved runtime phase launch context is incomplete")
+
+    prepared_at = utc_now()
+    intent = {
+        "schema_version": 1,
+        "status": "prepared",
+        "prepared_at": prepared_at,
+        "prepared_epoch_seconds": time.time(),
+        "task_id": request.task_id,
+        "queue_event_id": queue_event_id,
+        "event_id_for_log": event_id_for_log,
+        "agent_id": request.agent_id,
+        "provider": request.provider,
+        "attempt_count": max(1, int(attempt_count)),
+        "parent_run_id": parent_run_id,
+        "adapter_name": adapter_name,
+        "activity_type": activity_type,
+        "activity_message": activity_message,
+        "request_snapshot": request_snapshot(request),
+        "event": {
+            "event_id": queue_event_id,
+            "task_id": request.task_id,
+            "target_agent": request.agent_id,
+            "target_display_name": request.metadata.get("target_display_name")
+            or display_name_for(config, request.agent_id),
+            "provider": request.provider,
+            "reason": request.reason,
+        },
+    }
+
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if reservation is None or _runtime_state_cas_digest(current) != expected_digest:
+            raise RuntimeError(
+                "runtime phase changed before durable worker launch intent"
+            )
+        reservation["launch_intent"] = deepcopy(intent)
+        save_runtime_state(config, current)
+        context["expected_digest"] = _runtime_state_cas_digest(current)
+
+    scratch_reservation = _runtime_phase_reservation_record(
+        scratch,
+        phase_name,
+        reservation_token,
+    )
+    if scratch_reservation is None:
+        raise RuntimeError("detached runtime phase lost its worker launch reservation")
+    scratch_reservation["launch_intent"] = deepcopy(intent)
+
+
+def _persist_runtime_phase_launch_receipt(
+    config: dict[str, Any],
+    scratch: dict[str, Any],
+    worker: Mapping[str, Any],
+) -> None:
+    """Durably bind a launched worker to its reservation before phase CAS."""
+
+    context = _RUNTIME_PHASE_CONTEXT.get()
+    if not isinstance(context, dict):
+        return
+    phase_name = str(context.get("phase_name") or "")
+    reservation_token = str(context.get("reservation_token") or "")
+    expected_digest = str(context.get("expected_digest") or "")
+    receipt = {
+        "schema_version": 1,
+        "recorded_at": utc_now(),
+        "worker": deepcopy(dict(worker)),
+    }
+    conflict = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if reservation is None or _runtime_state_cas_digest(current) != expected_digest:
+            conflict = True
+        else:
+            reservation["launch_receipt"] = deepcopy(receipt)
+            save_runtime_state(config, current)
+            context["expected_digest"] = _runtime_state_cas_digest(current)
+
+    if conflict:
+        # The detached snapshot no longer has commit authority. Termination is
+        # deliberately outside runtime admission and is generation-bound.
+        terminate_worker_process_generation(worker)
+        raise RuntimeError(
+            "runtime phase changed before durable worker launch receipt"
+        )
+
+    scratch_reservation = _runtime_phase_reservation_record(
+        scratch,
+        phase_name,
+        reservation_token,
+    )
+    if scratch_reservation is None:
+        terminate_worker_process_generation(worker)
+        raise RuntimeError("detached runtime phase lost its worker launch reservation")
+    scratch_reservation["launch_receipt"] = deepcopy(receipt)
+
+
+def _runtime_launch_marker_candidate(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+) -> tuple[dict[str, Any], Path] | None:
+    """Find the one runner marker created after a durable launch intent."""
+
+    task_id = str(intent.get("task_id") or "")
+    agent_ids = {
+        normalize_agent_id(str(intent.get("agent_id") or "")),
+        normalize_agent_id(str(intent.get("provider") or "")),
+    }
+    agent_ids.discard("")
+    try:
+        prepared_epoch = float(intent.get("prepared_epoch_seconds") or 0.0)
+    except (TypeError, ValueError):
+        prepared_epoch = 0.0
+    status_dir = worker_runtime_paths(config, "launch-recovery-probe")[
+        "status_path"
+    ].parent
+    if not status_dir.is_dir():
+        return None
+
+    candidates: list[tuple[dict[str, Any], Path]] = []
+    for path in sorted(status_dir.glob("*.json")):
+        try:
+            if path.is_symlink() or path.stat().st_mtime + 1.0 < prepared_epoch:
+                continue
+        except OSError:
+            continue
+        marker = _load_runtime_marker(path)
+        if not isinstance(marker, dict):
+            continue
+        if str(marker.get("task_id") or "") != task_id:
+            continue
+        marker_agent = normalize_agent_id(str(marker.get("agent") or ""))
+        if agent_ids and marker_agent and marker_agent not in agent_ids:
+            continue
+        if not str(marker.get("run_id") or ""):
+            continue
+        candidates.append((marker, path))
+
+    # More than one post-intent marker is ambiguous evidence. Retaining the
+    # reservation is safer than adopting one and redispatching the other.
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _worker_record_from_runtime_launch_marker(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+    marker: Mapping[str, Any],
+    status_path: Path,
+) -> dict[str, Any] | None:
+    snapshot = intent.get("request_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    run_id = str(marker.get("run_id") or "")
+    task_id = str(intent.get("task_id") or snapshot.get("task_id") or "")
+    queue_event_id = str(intent.get("queue_event_id") or "") or None
+    raw_pid = marker.get("pid")
+    pid = raw_pid if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) else None
+    pid_start_ticks = worker_pid_start_ticks(pid) if pid_is_alive(pid) else None
+    if pid_start_ticks is None:
+        pid = None
+    marker_status = str(marker.get("status") or "").lower()
+    if marker_status == "completed":
+        worker_status = "completed"
+    elif marker_status in {"failed", "terminated", "cancelled"}:
+        worker_status = "failed"
+    elif pid is not None:
+        worker_status = "running"
+    else:
+        worker_status = "failed"
+    started_at = str(marker.get("started_at") or intent.get("prepared_at") or utc_now())
+    started_dt = _parse_iso_utc(started_at) or datetime.now(timezone.utc)
+    metadata = snapshot.get("metadata")
+    metadata = deepcopy(metadata) if isinstance(metadata, dict) else {}
+    runtime_paths = worker_runtime_paths(config, run_id)
+    metadata.update(
+        {
+            "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+            "runner_status_path": str(status_path),
+            "launch_recovered": True,
+        }
+    )
+    provider = str(intent.get("provider") or snapshot.get("provider") or "")
+    agent_id = str(intent.get("agent_id") or snapshot.get("agent_id") or provider)
+    process_generation = (
+        worker_process_generation_id(
+            task_id=task_id,
+            worker_run_id=run_id,
+            queue_event_id=str(queue_event_id or ""),
+            pid=pid,
+            pid_start_ticks=pid_start_ticks,
+        )
+        if task_id and queue_event_id and pid is not None and pid_start_ticks is not None
+        else None
+    )
+    return {
+        "run_id": run_id,
+        "provider": provider,
+        "agent_id": agent_id,
+        "logical_agent_id": str(metadata.get("logical_agent_id") or agent_id),
+        "dispatch_slot_id": metadata.get("dispatch_slot_id"),
+        "dispatch_slot": metadata.get("dispatch_slot"),
+        "account": provider_dispatch_group_id(config, provider),
+        "quota_group": provider_dispatch_group_id(config, provider),
+        "task_id": task_id,
+        "session_id": None,
+        "mode": snapshot.get("delivery_mode"),
+        "status": worker_status,
+        "last_event_at": utc_now(),
+        "last_heartbeat_at": marker.get("last_heartbeat_at"),
+        "lease_acquired_at": _isoformat_utc(started_dt),
+        "lease_expires_at": worker_lease_expiry(config, started_dt),
+        "deferred_action": None,
+        "resume_token": None,
+        "pr_url": None,
+        "session_url": None,
+        "attempt_count": max(1, int(intent.get("attempt_count") or 1)),
+        "queue_event_id": queue_event_id,
+        "command": deepcopy(marker.get("command") or []),
+        "log_path": None,
+        "payload_path": None,
+        "workspace_mode": metadata.get("workspace_mode"),
+        "workspace_path": metadata.get("workspace_path"),
+        "workspace_branch": metadata.get("workspace_branch"),
+        "work_progress_snapshot": {},
+        "last_commit_progress_at": None,
+        "last_work_progress_at": None,
+        "commit_progress_count": 0,
+        "status_root": metadata.get("status_root"),
+        "status_command_runtime": metadata.get("status_command_runtime"),
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+        "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+        "runner_status_path": str(status_path),
+        "notes": "Recovered from a durable pre-launch reservation intent.",
+        "metadata": metadata,
+        "request_snapshot": deepcopy(snapshot),
+        "parent_run_id": intent.get("parent_run_id"),
+        "retry_count": max(0, int(intent.get("attempt_count") or 1) - 1),
+        "next_retry_at": None,
+        "last_error": (
+            None
+            if worker_status != "failed"
+            else "Reserved launch marker was terminal or its exact process generation was no longer live."
+        ),
+    }
+
+
+def _recover_runtime_phase_reservation(
+    config: dict[str, Any],
+    phase_name: str,
+) -> bool | None:
+    """Adopt a launched worker before allowing a reserved phase to repeat.
+
+    ``None`` means there is no recoverable prior reservation and the caller may
+    start a new phase. ``False`` retains an unresolved launch intent fail
+    closed. ``True`` means the exact worker/queue lease was adopted.
+    """
+
+    cleared_legacy = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservations = current.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservation = reservations.get(phase_name)
+        if not isinstance(reservation, dict):
+            return None
+        reservation_snapshot = deepcopy(reservation)
+        intent = reservation_snapshot.get("launch_intent")
+        if not isinstance(intent, Mapping):
+            # Older/non-launch reservations have no external side effect to
+            # adopt. A singleton restart may safely discard that stale token.
+            reservations.pop(phase_name, None)
+            if not reservations:
+                current["supervisor"].pop("runtime_phase_reservations", None)
+            save_runtime_state(config, current)
+            cleared_legacy = True
+
+    if cleared_legacy:
+        return None
+
+    receipt = reservation_snapshot.get("launch_receipt")
+    receipt_worker = receipt.get("worker") if isinstance(receipt, Mapping) else None
+    worker = deepcopy(receipt_worker) if isinstance(receipt_worker, Mapping) else None
+    if worker is None:
+        marker_candidate = _runtime_launch_marker_candidate(config, intent)
+        if marker_candidate is None:
+            # The worker runner may not have written its first atomic marker
+            # yet. Keeping the token prevents a second launch on every cadence.
+            return False
+        marker, status_path = marker_candidate
+        worker = _worker_record_from_runtime_launch_marker(
+            config,
+            intent,
+            marker,
+            status_path,
+        )
+        if worker is None:
+            return False
+    else:
+        update_worker_runtime_markers(worker)
+
+    run_id = str(worker.get("run_id") or "")
+    event_id = str(worker.get("queue_event_id") or intent.get("queue_event_id") or "")
+    if not run_id or not event_id:
+        return False
+
+    reservation_token = str(reservation_snapshot.get("token") or "")
+    adopted = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        current_reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if current_reservation is None:
+            return False
+        current.setdefault("workers", {}).setdefault(run_id, deepcopy(worker))
+        persisted_worker = current["workers"][run_id]
+        queue_record = queue_status(current, event_id)
+        worker_status = str(persisted_worker.get("status") or "running")
+        if worker_status in {"manual_pending", "waiting_approval"}:
+            queue_record["status"] = "manual_pending"
+        elif worker_status == "completed":
+            queue_record["status"] = "completed"
+        elif worker_status in {"failed", "terminated", "cancelled"}:
+            queue_record["status"] = "failed"
+        else:
+            queue_record["status"] = "started"
+        queue_record["run_id"] = run_id
+        queue_record["lease_owner"] = run_id
+        queue_record["lease_acquired_at"] = persisted_worker.get("lease_acquired_at") or utc_now()
+        queue_record["lease_expires_at"] = persisted_worker.get("lease_expires_at") or queue_lease_expiry(config)
+        queue_record["processed_at"] = queue_record.get("processed_at") or utc_now()
+        queue_record["attempt_count"] = max(
+            int(queue_record.get("attempt_count", 0) or 0),
+            int(intent.get("attempt_count", 1) or 1),
+        )
+        record_worker_runtime_measurement(
+            config,
+            current,
+            "worker_launch_recovered",
+            {"workers_started": 1, "queue_leases_started": 1},
+            details={
+                "worker_run_id": run_id,
+                "queue_event_id": event_id,
+                "task_id": persisted_worker.get("task_id"),
+                "agent_id": persisted_worker.get("agent_id"),
+                "provider": persisted_worker.get("provider"),
+            },
+            emit_activity=False,
+        )
+        reservations = current.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservations.pop(phase_name, None)
+        if not reservations:
+            current["supervisor"].pop("runtime_phase_reservations", None)
+        save_runtime_state(config, current)
+        adopted = True
+
+    if adopted:
+        write_activity_log(
+            config,
+            {
+                "type": "worker_launch_recovered",
+                "task_id": worker.get("task_id"),
+                "target_agent": display_name_for(config, str(worker.get("agent_id") or "")),
+                "provider": worker.get("provider"),
+                "message": (
+                    "Adopted the exact worker process/queue lease from a durable "
+                    "reserved-phase launch intent after supervisor interruption."
+                ),
+                "queue_event_id": event_id,
+                "worker_run_id": run_id,
+                "pid": worker.get("pid"),
+                "pid_start_ticks": worker.get("pid_start_ticks"),
+                "process_generation": worker.get("process_generation"),
+            },
+        )
+        event = intent.get("event")
+        if isinstance(event, dict):
+            sync_dispatched_task_status(
+                config,
+                event,
+                run_id=run_id,
+                workspace_path=worker.get("workspace_path")
+                or config_path(config, "status_file").parent,
+            )
+    return adopted
+
+
 def _terminate_processes_started_by_failed_phase(
     before: Mapping[str, Any],
     after: Mapping[str, Any],
@@ -10356,22 +10839,36 @@ def _run_reserved_runtime_phase(
     """
 
     reservation_token = new_runtime_id(f"phase-{phase_name}")
-    reserve_started = time.monotonic()
-    with runtime_state_lock(config, shared=False, nonblocking=False):
+    existing_reservation = False
+    with _measured_runtime_state_lock(config):
         baseline = load_runtime_state(config)
-        reserved = deepcopy(baseline)
-        reservations = reserved.setdefault("supervisor", {}).setdefault(
+        reservations = baseline.setdefault("supervisor", {}).setdefault(
             "runtime_phase_reservations",
             {},
         )
-        reservations[phase_name] = {
-            "token": reservation_token,
-            "reserved_at": utc_now(),
-        }
-        save_runtime_state(config, reserved)
-    _record_cycle_runtime_lock_hold(time.monotonic() - reserve_started)
+        existing_reservation = isinstance(reservations.get(phase_name), dict)
+        if not existing_reservation:
+            reserved = deepcopy(baseline)
+            reserved_reservations = reserved.setdefault("supervisor", {}).setdefault(
+                "runtime_phase_reservations",
+                {},
+            )
+            reserved_reservations[phase_name] = {
+                "token": reservation_token,
+                "reserved_at": utc_now(),
+            }
+            save_runtime_state(config, reserved)
+    if existing_reservation:
+        recovery_result = _recover_runtime_phase_reservation(config, phase_name)
+        return bool(recovery_result)
+
     reserved_digest = _runtime_state_cas_digest(reserved)
     scratch = deepcopy(reserved)
+    phase_context = {
+        "phase_name": phase_name,
+        "reservation_token": reservation_token,
+        "expected_digest": reserved_digest,
+    }
 
     deferred_dispatches: list[tuple[dict[str, Any], str | None, str | None]] = []
     deferred_terminations: list[tuple[int, int]] = []
@@ -10382,6 +10879,7 @@ def _run_reserved_runtime_phase(
     archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
     activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
     phase_token = _RUNTIME_PHASE_RESERVATION.set(reservation_token)
+    phase_context_token = _RUNTIME_PHASE_CONTEXT.set(phase_context)
     phase_error: BaseException | None = None
     changed = False
     try:
@@ -10389,6 +10887,7 @@ def _run_reserved_runtime_phase(
     except BaseException as exc:  # the reservation must be cleared before isolation
         phase_error = exc
     finally:
+        _RUNTIME_PHASE_CONTEXT.reset(phase_context_token)
         _RUNTIME_PHASE_RESERVATION.reset(phase_token)
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(dispatch_token)
         _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
@@ -10396,8 +10895,8 @@ def _run_reserved_runtime_phase(
         _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
 
     committed = False
-    commit_started = time.monotonic()
-    with runtime_state_lock(config, shared=False, nonblocking=False):
+    launch_recovery_pending = False
+    with _measured_runtime_state_lock(config):
         current = load_runtime_state(config)
         current_reservation = (
             ((current.get("supervisor") or {}).get("runtime_phase_reservations") or {})
@@ -10406,7 +10905,8 @@ def _run_reserved_runtime_phase(
         cas_matches = (
             isinstance(current_reservation, Mapping)
             and current_reservation.get("token") == reservation_token
-            and _runtime_state_cas_digest(current) == reserved_digest
+            and _runtime_state_cas_digest(current)
+            == str(phase_context.get("expected_digest") or "")
         )
         if phase_error is None and cas_matches:
             phase_reservations = (
@@ -10422,18 +10922,23 @@ def _run_reserved_runtime_phase(
             isinstance(current_reservation, Mapping)
             and current_reservation.get("token") == reservation_token
         ):
-            reservations = (
-                current.setdefault("supervisor", {})
-                .setdefault("runtime_phase_reservations", {})
+            launch_recovery_pending = bool(
+                phase_error is not None
+                and isinstance(current_reservation.get("launch_intent"), Mapping)
             )
-            reservations.pop(phase_name, None)
-            if not reservations:
-                current["supervisor"].pop("runtime_phase_reservations", None)
-            save_runtime_state(config, current)
-    _record_cycle_runtime_lock_hold(time.monotonic() - commit_started)
+            if not launch_recovery_pending:
+                reservations = (
+                    current.setdefault("supervisor", {})
+                    .setdefault("runtime_phase_reservations", {})
+                )
+                reservations.pop(phase_name, None)
+                if not reservations:
+                    current["supervisor"].pop("runtime_phase_reservations", None)
+                save_runtime_state(config, current)
 
     if not committed:
-        _terminate_processes_started_by_failed_phase(reserved, scratch)
+        if not launch_recovery_pending:
+            _terminate_processes_started_by_failed_phase(reserved, scratch)
         if phase_error is not None:
             raise phase_error
         write_activity_log(
@@ -10473,12 +10978,14 @@ def _run_with_deferred_dispatch_status_syncs(
     termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
     archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
     activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
-    lock_started = time.monotonic()
+    changed = False
+    operation_error: BaseException | None = None
     try:
-        with runtime_state_lock(config, shared=False, nonblocking=False):
+        with _measured_runtime_state_lock(config):
             changed = bool(operation())
+    except BaseException as exc:
+        operation_error = exc
     finally:
-        _record_cycle_runtime_lock_hold(time.monotonic() - lock_started)
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
         _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
         _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
@@ -10491,6 +10998,8 @@ def _run_with_deferred_dispatch_status_syncs(
         auto_commit_archives=deferred_archives,
         activity_events=deferred_activity_events,
     )
+    if operation_error is not None:
+        raise operation_error
     return changed or side_effect_changed
 
 
@@ -19009,8 +19518,7 @@ def _finalize_runtime_cycle_locked(
 def persist_complete_cycle_metrics(config: dict[str, Any]) -> bool:
     """Persist the complete post-lock cycle sample in one short transaction."""
 
-    lock_started = time.monotonic()
-    with runtime_state_lock(config, shared=False, nonblocking=False):
+    with _measured_runtime_state_lock(config):
         state = load_runtime_state(config)
         snapshot = publish_cycle_metrics_to_state(
             state,
@@ -19035,7 +19543,6 @@ def persist_complete_cycle_metrics(config: dict[str, Any]) -> bool:
             3,
         )
         save_runtime_state(config, state)
-    _record_cycle_runtime_lock_hold(time.monotonic() - lock_started)
     return True
 
 

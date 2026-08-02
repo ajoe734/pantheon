@@ -133,6 +133,84 @@ def _prune_queue_after_runtime_lock(
         connection.close()
 
 
+def _stop_test_process(process: multiprocessing.Process) -> None:
+    if process.is_alive():
+        process.kill()
+    process.join(timeout=5)
+
+
+def _hard_crash_reserved_worker_after_launch(
+    config: dict[str, object],
+    connection: object,
+) -> None:
+    """Exit after an external process exists but before a launch receipt/CAS."""
+
+    class CrashAfterLaunchAdapter:
+        def deliver(self, request: object) -> object:
+            run_id = "codex-hard-crash-run"
+            runtime_paths = common.worker_runtime_paths(config, run_id)
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                start_new_session=True,
+            )
+            common.write_json(
+                runtime_paths["status_path"],
+                {
+                    "run_id": run_id,
+                    "agent": "codex",
+                    "task_id": "SLOW-IO-1",
+                    "status": "running",
+                    "pid": process.pid,
+                    "child_pid": None,
+                    "command": ["codex", "exec"],
+                    "started_at": supervisor.utc_now(),
+                    "last_heartbeat_at": supervisor.utc_now(),
+                },
+            )
+            connection.send(("launched", process.pid, run_id))
+            os._exit(77)
+
+    request = supervisor.DeliveryRequest(
+        agent_id="codex",
+        provider="codex",
+        delivery_mode="codex",
+        message="wake SLOW-IO-1",
+        task_id="SLOW-IO-1",
+        reason="manual_dispatch",
+        context_files=[],
+        target_files=[],
+        metadata={"workspace_path": str(Path(str(config["paths"]["status_file"])).parent)},
+    )
+
+    def operation(state: dict[str, object]) -> bool:
+        supervisor.start_worker_for_request(
+            config,
+            state,
+            {},
+            request,
+            queue_event_id="evt-hard-crash",
+            attempt_count=1,
+            event_id_for_log="evt-hard-crash",
+        )
+        return True
+
+    with (
+        mock.patch.object(supervisor, "build_adapter", return_value=CrashAfterLaunchAdapter()),
+        mock.patch.object(supervisor, "worker_commit_progress_snapshot", return_value={}),
+        mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+        mock.patch.object(
+            supervisor,
+            "status_command_runtime_record_from_env",
+            return_value={},
+        ),
+    ):
+        supervisor._run_reserved_runtime_phase(
+            config,
+            "process_queue",
+            operation,
+        )
+
+
 class RuntimeConfigTests(unittest.TestCase):
     def test_load_provider_report_can_skip_refresh_for_one_shot_claims(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6442,6 +6520,32 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(call_order, [])
         confirm_kill.assert_not_called()
 
+    def test_deferred_termination_flushes_before_locked_error_is_reraised(self) -> None:
+        """Exception cleanup cannot be skipped after a termination is queued."""
+
+        def failing_locked_cycle() -> bool:
+            self.assertFalse(supervisor.terminate_worker_pid(4242))
+            raise RuntimeError("injected locked operation failure")
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
+            mock.patch.object(
+                supervisor,
+                "_confirm_deferred_worker_terminations",
+            ) as confirm_terminations,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected locked operation failure",
+            ):
+                supervisor._run_with_deferred_dispatch_status_syncs(
+                    self.config,
+                    failing_locked_cycle,
+                )
+
+        confirm_terminations.assert_called_once_with([(4242, 777)])
+
     def test_deferred_termination_without_start_ticks_fails_closed(self) -> None:
         """An unreadable /proc identity never authorizes a signal."""
 
@@ -6662,6 +6766,49 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
 class RuntimeLockHoldTests(unittest.TestCase):
     """The exclusive hold is the ceiling on every worker status command's wait."""
+
+    def test_cycle_metric_excludes_blocking_acquisition_wait(self) -> None:
+        clock = [0.0]
+        metrics = {"started_monotonic": 0.0, "phases": {}, "batch_counts": {}}
+
+        @contextlib.contextmanager
+        def contended_runtime_lock(*_args: object, **_kwargs: object):
+            clock[0] += 12.0
+            yield
+
+        def locked_operation() -> bool:
+            clock[0] += 0.25
+            return True
+
+        metrics_token = supervisor._CYCLE_METRICS.set(metrics)
+        try:
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "runtime_state_lock",
+                    side_effect=contended_runtime_lock,
+                ),
+                mock.patch.object(
+                    supervisor.time,
+                    "monotonic",
+                    side_effect=lambda: clock[0],
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "_flush_deferred_runtime_side_effects",
+                    return_value=False,
+                ),
+            ):
+                self.assertTrue(
+                    supervisor._run_with_deferred_dispatch_status_syncs(
+                        {},
+                        locked_operation,
+                    )
+                )
+        finally:
+            supervisor._CYCLE_METRICS.reset(metrics_token)
+
+        self.assertEqual(metrics["runtime_lock_hold_seconds"], 0.25)
 
     def test_hold_within_budget_is_published_without_a_warning(self) -> None:
         state: dict[str, object] = {}
@@ -7207,6 +7354,83 @@ class ReservedRuntimeSlowIOTests(unittest.TestCase):
             "runtime_phase_reservations",
             state.get("supervisor", {}),
         )
+
+    def test_hard_crash_after_launch_adopts_worker_before_redispatch(self) -> None:
+        """The exact launch-before-CAS death boundary retains adoption proof."""
+
+        self.event_queue_path.write_text(
+            json.dumps(
+                {
+                    "event_id": "evt-hard-crash",
+                    "task_id": "SLOW-IO-1",
+                    "target_agent": "codex",
+                    "provider": "codex",
+                    "reason": "manual_dispatch",
+                    "message": "wake SLOW-IO-1",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = context.Pipe()
+        crashing_supervisor = context.Process(
+            target=_hard_crash_reserved_worker_after_launch,
+            args=(self.config, child_connection),
+        )
+        crashing_supervisor.start()
+        child_connection.close()
+        self.addCleanup(parent_connection.close)
+        self.addCleanup(_stop_test_process, crashing_supervisor)
+
+        self.assertTrue(
+            parent_connection.poll(5),
+            "crash injector did not launch the external worker",
+        )
+        message, worker_pid, run_id = parent_connection.recv()
+        self.assertEqual(message, "launched")
+        crashing_supervisor.join(timeout=5)
+        self.assertEqual(crashing_supervisor.exitcode, 77)
+        self.assertTrue(supervisor.pid_is_alive(worker_pid))
+
+        try:
+            interrupted = runtime_state.load_runtime_state(self.config)
+            reservation = interrupted["supervisor"]["runtime_phase_reservations"][
+                "process_queue"
+            ]
+            self.assertEqual(
+                reservation["launch_intent"]["queue_event_id"],
+                "evt-hard-crash",
+            )
+            self.assertNotIn("launch_receipt", reservation)
+            self.assertNotIn(run_id, interrupted["workers"])
+
+            forbidden_redispatch = mock.Mock(return_value=True)
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    forbidden_redispatch,
+                )
+            )
+            forbidden_redispatch.assert_not_called()
+
+            recovered = runtime_state.load_runtime_state(self.config)
+            self.assertIn(run_id, recovered["workers"])
+            self.assertEqual(recovered["workers"][run_id]["pid"], worker_pid)
+            self.assertEqual(
+                recovered["queue"]["events"]["evt-hard-crash"]["status"],
+                "started",
+            )
+            self.assertNotIn(
+                "runtime_phase_reservations",
+                recovered.get("supervisor", {}),
+            )
+        finally:
+            try:
+                os.killpg(worker_pid, signal.SIGKILL)
+            except OSError:
+                pass
 
 
 class TaskStateShadowCatchupTests(unittest.TestCase):
