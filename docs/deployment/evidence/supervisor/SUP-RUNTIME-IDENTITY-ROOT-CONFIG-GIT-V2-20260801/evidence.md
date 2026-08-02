@@ -61,7 +61,7 @@ blanket `.orchestrator/**` family.
 |---|---|
 | `.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py` | 108 passed in 25.80s |
 | `.venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py` | passed |
-| `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge` | passed through composed pre-evidence head `cdfbf7b75a2db6eda5fdf5b7eba4a738904824ee` |
+| `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge` | passed through the composed task history before this evidence refresh |
 | `git diff --check origin/dev...HEAD` | passed |
 | `git merge-base --is-ancestor <rejected-head> HEAD` | exit 1 for `07316c73`, `77af55015`, `853a1778e`, and `4cd85c7a8` |
 
@@ -79,8 +79,8 @@ family, and an external symlinked loose-object fanout.
 
 The merged snapshot-invariant dependency `cd770e5dc` is an ancestor. The branch
 now composes `origin/dev` commit
-`5cb03dd5ebe3ce13435c848175c5dab5450e9ea5` through merge commit
-`cdfbf7b75a2db6eda5fdf5b7eba4a738904824ee`, without rewriting reviewed
+`79ba3f431127bf9718697d2ba9e9ddce97969ec3` through merge commit
+`03e167cda5932fd5b1637e90d674e74d42b27c3c`, without rewriting reviewed
 history or importing rejected implementation ancestry. The delivery diff
 against that base remains exactly the two promotion scripts and these two
 task-scoped evidence files.
