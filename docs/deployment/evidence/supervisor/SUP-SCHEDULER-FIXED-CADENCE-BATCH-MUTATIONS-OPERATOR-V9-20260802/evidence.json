@@ -13,9 +13,9 @@
     "owned_layer": "Supervisor cadence, slow-I/O lock boundaries, bounded cycle telemetry, and lease-bound dispatch-status batching.",
     "not_changing": "Dispatch eligibility, dependency or priority policy, worker limits, provider account/quota grouping, reviewer policy, live runtime, deployment, or product services.",
     "anchor_commits": [
-      "d83fd8acb79ab7aa3f38e2c033705a53d46985d3",
-      "0717f04723da313c8faaf1586dc01504a547ed86",
-      "dbd589d8111652e95f2e53208113be9b4223ab87"
+      "7d2463994ee9b4872baf61bac0b24225cea4c35b",
+      "d7f802311fdbd5c882ce31f65fa9f0fd95272c42",
+      "12aee3ea4dd8d3ce97b67f15327629a0973ed3ba"
     ]
   },
   "cadence_reproduction": {
