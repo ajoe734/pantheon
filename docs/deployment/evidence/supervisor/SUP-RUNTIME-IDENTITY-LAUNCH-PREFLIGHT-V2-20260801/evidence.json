@@ -11,7 +11,7 @@
   "base_branch": "dev",
   "task_branch_base": "ec52d6d687732055b75cd6ae441d3c64f00c3240",
   "pre_evidence_head": "28ce1c8680d1d62a58e7345f5b3624cdfcdd5f04",
-  "pull_request": null,
+  "pull_request": 4497,
   "implementation_commits": [
     "28ce1c8680d1d62a58e7345f5b3624cdfcdd5f04"
   ],
@@ -32,8 +32,9 @@
   "review_binding": {
     "policy": "review_before_merge",
     "reviewer": "Human/Ops",
-    "pull_request": null,
-    "required": "REVIEW_PR=<replacement PR> and REVIEW_HEAD_SHA=<final exact head>"
+    "pull_request": 4497,
+    "head_before_evidence_refresh": "8b19f5597854ea9cfec3f5e98974d955495d2a75",
+    "required": "REVIEW_PR=4497 and REVIEW_HEAD_SHA=<final exact head after this evidence refresh>"
   },
   "scope": {
     "owned": [
@@ -180,7 +181,13 @@
   "rollback": "revert the eventual launch-preflight merge, then ec52d6d687732055b75cd6ae441d3c64f00c3240, then 11d766efbd8bf81aca447d4ccf213109d7263dac",
   "superseded_pull_request": {
     "pull_request": 4437,
-    "status": "pending replacement PR creation"
+    "status": "closed as superseded after replacement PR #4497 opened",
+    "rejected_head": "77af55015c5630c18f10670f5cb877ef7c40b115",
+    "replacement_chain": [
+      4443,
+      4495,
+      4497
+    ]
   },
-  "next_gate": "Create the clean replacement PR, bind this manifest to its final exact head, mark PR #4437 superseded, wait for repository checks, and obtain independent Human/Ops approval before merge."
+  "next_gate": "Push this evidence refresh, wait for PR #4497 repository checks, and obtain independent Human/Ops approval bound to its final exact head before merge."
 }

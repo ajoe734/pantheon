@@ -6,7 +6,7 @@ Owner: Codex
 
 Reviewer: Human/Ops
 
-Repository / PR: `ajoe734/pantheon` / replacement PR pending
+Repository / PR: `ajoe734/pantheon` / `#4497`
 
 ## Result
 
@@ -97,8 +97,9 @@ canonical JSON, provider policy, product controller, or service. Rollout is
 source merge only. Rollback reverts the three V2 identity merge commits in
 reverse order.
 
-This manifest deliberately remains `review_pending`. After the replacement PR
-exists, it will be bound to the final exact PR head and PR #4437 will be marked
-superseded with links to all three V2 tasks. Independent exact-head Human/Ops
-approval and green repository checks are required before merge; no live runtime
-promotion is claimed or authorized here.
+This manifest deliberately remains `review_pending`. Replacement PR #4497 is
+open with auto-merge disabled. Rejected PR #4437 is closed as superseded and its
+closing note links the three V2 PRs: #4443, #4495, and #4497. Independent
+Human/Ops approval must bind `REVIEW_PR=4497` and the final head created by this
+evidence refresh. Green repository checks and that exact-head approval are both
+required before merge; no live runtime promotion is claimed or authorized here.
