@@ -165,6 +165,10 @@ _SCHEDULED_CYCLE_SAMPLE: ContextVar[dict[str, Any] | None] = ContextVar(
     "supervisor_scheduled_cycle_sample",
     default=None,
 )
+_RUNTIME_PHASE_RESERVATION: ContextVar[str | None] = ContextVar(
+    "supervisor_runtime_phase_reservation",
+    default=None,
+)
 
 
 CYCLE_PHASE_METRICS_MAX = 64
@@ -218,6 +222,18 @@ def _record_cycle_batch_count(name: str, count: int) -> None:
     if name not in batches and len(batches) >= CYCLE_BATCH_COUNT_MAX - 1:
         name = "other"
     batches[name] = int(batches.get(name, 0)) + max(0, int(count))
+
+
+def _record_cycle_runtime_lock_hold(elapsed_seconds: float) -> None:
+    """Retain the longest *transaction* hold, never slow reserved phase work."""
+
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return
+    metrics["runtime_lock_hold_seconds"] = max(
+        float(metrics.get("runtime_lock_hold_seconds", 0.0)),
+        max(0.0, float(elapsed_seconds)),
+    )
 
 
 def _bounded_cycle_metrics_snapshot(*, finished_monotonic: float) -> dict[str, Any] | None:
@@ -3070,7 +3086,12 @@ def start_worker_for_request(
     )
     # Persist immediately after launch so a supervisor crash cannot orphan
     # a live worker before the end-of-tick state save.
-    save_runtime_state(config, state)
+    # A reserved slow phase owns a detached state snapshot. Publishing that
+    # snapshot here would bypass the phase's exact whole-state CAS. The caller
+    # persists the worker and queue lease in the short commit transaction after
+    # adapter/process I/O returns.
+    if _RUNTIME_PHASE_RESERVATION.get() is None:
+        save_runtime_state(config, state)
     write_activity_log(
         config,
         {
@@ -10232,18 +10253,217 @@ def sync_dispatched_task_status_batch(
     return False
 
 
+def _confirm_deferred_worker_terminations(
+    deferred_terminations: list[tuple[int, int]],
+) -> None:
+    """Confirm exact process generations only after runtime admission is free."""
+
+    for pid, expected_start_ticks in deferred_terminations:
+        if worker_pid_start_ticks(pid) != expected_start_ticks:
+            continue
+
+        def deferred_worker_is_alive(candidate_pid: int) -> bool:
+            if not pid_is_alive(candidate_pid):
+                return False
+            return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
+
+        rewrite_worker_lifecycle.confirm_kill(
+            pid,
+            is_alive=deferred_worker_is_alive,
+            send_signal=os.kill,
+            sleep=time.sleep,
+            monotonic=time.monotonic,
+        )
+
+
+def _flush_deferred_runtime_side_effects(
+    config: dict[str, Any],
+    *,
+    dispatch_status_syncs: list[tuple[dict[str, Any], str | None, str | None]],
+    worker_terminations: list[tuple[int, int]],
+    auto_commit_archives: list[dict[str, Any]],
+    activity_events: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> bool:
+    """Run all subprocess/audit side effects after the short state commit."""
+
+    _confirm_deferred_worker_terminations(worker_terminations)
+    for activity_config, activity_event in activity_events:
+        _write_activity_log_immediate(activity_config, activity_event)
+    _record_cycle_batch_count("runtime_activity_events", len(activity_events))
+
+    archive_changed = False
+    for action in auto_commit_archives:
+        result = execute_auto_commit_archive(config, action)
+        archive_changed = (
+            apply_auto_commit_archive_result(config, action, result)
+            or archive_changed
+        )
+
+    sync_changed = sync_dispatched_task_status_batch(
+        config,
+        dispatch_status_syncs,
+    )
+    return archive_changed or sync_changed
+
+
+def _runtime_state_cas_digest(state: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        state,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _terminate_processes_started_by_failed_phase(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> None:
+    """Fail closed if a slow phase launched a process but lost its state CAS."""
+
+    prior_workers = before.get("workers") if isinstance(before, Mapping) else {}
+    prior_workers = prior_workers if isinstance(prior_workers, Mapping) else {}
+    next_workers = after.get("workers") if isinstance(after, Mapping) else {}
+    next_workers = next_workers if isinstance(next_workers, Mapping) else {}
+    for run_id, worker in next_workers.items():
+        if not isinstance(worker, Mapping):
+            continue
+        prior = prior_workers.get(run_id)
+        prior_generation = (
+            str(prior.get("process_generation") or "")
+            if isinstance(prior, Mapping)
+            else ""
+        )
+        next_generation = str(worker.get("process_generation") or "")
+        if next_generation and next_generation != prior_generation:
+            terminate_worker_process_generation(worker)
+
+
+def _run_reserved_runtime_phase(
+    config: dict[str, Any],
+    phase_name: str,
+    operation: Any,
+) -> bool:
+    """Run slow runtime I/O between a token reservation and whole-state CAS.
+
+    The singleton supervisor first publishes a bounded reservation in a short
+    exclusive transaction. Slow process, worktree, git, marker, and prune I/O
+    then mutates a detached snapshot with activity/status side effects deferred.
+    A second short transaction commits that snapshot only when the reservation
+    and every runtime byte still match. A concurrent writer therefore wins; a
+    process launched by the losing phase is terminated by exact PID generation.
+    """
+
+    reservation_token = new_runtime_id(f"phase-{phase_name}")
+    reserve_started = time.monotonic()
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        baseline = load_runtime_state(config)
+        reserved = deepcopy(baseline)
+        reservations = reserved.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservations[phase_name] = {
+            "token": reservation_token,
+            "reserved_at": utc_now(),
+        }
+        save_runtime_state(config, reserved)
+    _record_cycle_runtime_lock_hold(time.monotonic() - reserve_started)
+    reserved_digest = _runtime_state_cas_digest(reserved)
+    scratch = deepcopy(reserved)
+
+    deferred_dispatches: list[tuple[dict[str, Any], str | None, str | None]] = []
+    deferred_terminations: list[tuple[int, int]] = []
+    deferred_archives: list[dict[str, Any]] = []
+    deferred_activity_events: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    dispatch_token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred_dispatches)
+    termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
+    archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
+    activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
+    phase_token = _RUNTIME_PHASE_RESERVATION.set(reservation_token)
+    phase_error: BaseException | None = None
+    changed = False
+    try:
+        changed = bool(operation(scratch))
+    except BaseException as exc:  # the reservation must be cleared before isolation
+        phase_error = exc
+    finally:
+        _RUNTIME_PHASE_RESERVATION.reset(phase_token)
+        _DEFERRED_DISPATCH_STATUS_SYNCS.reset(dispatch_token)
+        _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
+        _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
+        _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
+
+    committed = False
+    commit_started = time.monotonic()
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        current = load_runtime_state(config)
+        current_reservation = (
+            ((current.get("supervisor") or {}).get("runtime_phase_reservations") or {})
+            .get(phase_name, {})
+        )
+        cas_matches = (
+            isinstance(current_reservation, Mapping)
+            and current_reservation.get("token") == reservation_token
+            and _runtime_state_cas_digest(current) == reserved_digest
+        )
+        if phase_error is None and cas_matches:
+            phase_reservations = (
+                scratch.setdefault("supervisor", {})
+                .setdefault("runtime_phase_reservations", {})
+            )
+            phase_reservations.pop(phase_name, None)
+            if not phase_reservations:
+                scratch["supervisor"].pop("runtime_phase_reservations", None)
+            save_runtime_state(config, scratch)
+            committed = True
+        elif (
+            isinstance(current_reservation, Mapping)
+            and current_reservation.get("token") == reservation_token
+        ):
+            reservations = (
+                current.setdefault("supervisor", {})
+                .setdefault("runtime_phase_reservations", {})
+            )
+            reservations.pop(phase_name, None)
+            if not reservations:
+                current["supervisor"].pop("runtime_phase_reservations", None)
+            save_runtime_state(config, current)
+    _record_cycle_runtime_lock_hold(time.monotonic() - commit_started)
+
+    if not committed:
+        _terminate_processes_started_by_failed_phase(reserved, scratch)
+        if phase_error is not None:
+            raise phase_error
+        write_activity_log(
+            config,
+            {
+                "type": "runtime_phase_cas_conflict",
+                "phase": phase_name,
+                "message": (
+                    f"Discarded reserved runtime phase {phase_name}: runtime "
+                    "state changed before its exact CAS commit."
+                ),
+            },
+        )
+        return False
+
+    side_effect_changed = _flush_deferred_runtime_side_effects(
+        config,
+        dispatch_status_syncs=deferred_dispatches,
+        worker_terminations=deferred_terminations,
+        auto_commit_archives=deferred_archives,
+        activity_events=deferred_activity_events,
+    )
+    return changed or side_effect_changed
+
+
 def _run_with_deferred_dispatch_status_syncs(
     config: dict[str, Any],
     operation: Any,
 ) -> bool:
-    """Run one supervisor mutation, then sync task status after its lock is free.
-
-    The status command validates the worker lease under a shared runtime lock. Running
-    it synchronously from ``process_queue`` while the supervisor owns the exclusive
-    runtime lock deadlocks the parent and child. Queueing only for the duration of the
-    locked operation preserves that validation while keeping subprocess work outside
-    the critical section.
-    """
+    """Run one short supervisor mutation and flush slow side effects post-lock."""
 
     deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
     deferred_terminations: list[tuple[int, int]] = []
@@ -10253,48 +10473,25 @@ def _run_with_deferred_dispatch_status_syncs(
     termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
     archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
     activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
+    lock_started = time.monotonic()
     try:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             changed = bool(operation())
     finally:
+        _record_cycle_runtime_lock_hold(time.monotonic() - lock_started)
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
         _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
         _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
         _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
-        # Keep confirmation outside runtime admission. The start-time token is
-        # checked before the first signal and throughout confirmation, so PID
-        # reuse can only turn the request into a fail-closed no-op.
-        for pid, expected_start_ticks in deferred_terminations:
-            if worker_pid_start_ticks(pid) != expected_start_ticks:
-                continue
 
-            def deferred_worker_is_alive(candidate_pid: int) -> bool:
-                if not pid_is_alive(candidate_pid):
-                    return False
-                return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
-
-            rewrite_worker_lifecycle.confirm_kill(
-                pid,
-                is_alive=deferred_worker_is_alive,
-                send_signal=os.kill,
-                sleep=time.sleep,
-                monotonic=time.monotonic,
-            )
-
-    for activity_config, activity_event in deferred_activity_events:
-        _write_activity_log_immediate(activity_config, activity_event)
-    _record_cycle_batch_count("runtime_activity_events", len(deferred_activity_events))
-
-    archive_changed = False
-    for action in deferred_archives:
-        result = execute_auto_commit_archive(config, action)
-        archive_changed = (
-            apply_auto_commit_archive_result(config, action, result)
-            or archive_changed
-        )
-
-    sync_changed = sync_dispatched_task_status_batch(config, deferred)
-    return changed or archive_changed or sync_changed
+    side_effect_changed = _flush_deferred_runtime_side_effects(
+        config,
+        dispatch_status_syncs=deferred,
+        worker_terminations=deferred_terminations,
+        auto_commit_archives=deferred_archives,
+        activity_events=deferred_activity_events,
+    )
+    return changed or side_effect_changed
 
 
 def _prepare_preempted_task_status_locked(
@@ -17577,9 +17774,7 @@ def record_runtime_lock_hold(
     """
 
     held_seconds = round(max(0.0, time.monotonic() - held_since), 3)
-    metrics = _CYCLE_METRICS.get()
-    if isinstance(metrics, dict):
-        metrics["runtime_lock_hold_seconds"] = held_seconds
+    _record_cycle_runtime_lock_hold(held_seconds)
     supervisor_state = state.setdefault("supervisor", {})
     supervisor_state["runtime_lock_hold_seconds"] = held_seconds
     peak = supervisor_state.get("runtime_lock_hold_peak_seconds")
@@ -18189,6 +18384,26 @@ def run_once(
         frozenset(prefetched_worker_base_refs)
     )
     try:
+        # Worker marker/log, /proc, git progress, retry delivery, and lifecycle
+        # cleanup I/O run on a reserved snapshot before dispatch decisions. The
+        # exact CAS commit makes those observations visible to the following
+        # short core transaction without holding runtime admission during I/O.
+        pre_poll_changed = bool(
+            _safe_phase(
+                "poll_workers_pre_dispatch_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "poll_workers_pre_dispatch",
+                lambda state: poll_workers(
+                    config,
+                    state,
+                    provider_report=provider_reports[1],
+                    activity_events=recovery_activity_events,
+                    governance_activity_events=governance_activity_events,
+                ),
+                quiet=quiet,
+            )
+        )
         changed = _run_with_deferred_dispatch_status_syncs(
             config,
             lambda: _run_once_locked(
@@ -18207,6 +18422,68 @@ def run_once(
                 prelock_changed=github_bus_changed,
             )
         )
+        changed = changed or pre_poll_changed
+        process_changed = bool(
+            _safe_phase(
+                "process_queue_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "process_queue",
+                lambda state: (
+                    False
+                    if watchdog_safe_mode_active(state)
+                    else process_queue(
+                        config,
+                        state,
+                        provider_reports[1],
+                    )
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = process_changed or changed
+        post_poll_changed = bool(
+            _safe_phase(
+                "poll_workers_post_dispatch_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "poll_workers_post_dispatch",
+                lambda state: poll_workers(
+                    config,
+                    state,
+                    provider_report=provider_reports[1],
+                    activity_events=recovery_activity_events,
+                    governance_activity_events=governance_activity_events,
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = post_poll_changed or changed
+        prune_changed = bool(
+            _safe_phase(
+                "prune_worktrees_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "prune_worktrees",
+                lambda state: _run_reserved_worktree_prunes(config, state),
+                quiet=quiet,
+            )
+        )
+        changed = prune_changed or changed
+        finalized = bool(
+            _safe_phase(
+                "finalize_runtime_cycle",
+                _run_with_deferred_dispatch_status_syncs,
+                config,
+                lambda: _finalize_runtime_cycle_locked(
+                    config,
+                    planning_state=load_discussion_planning_state(),
+                    quiet=quiet,
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = finalized or changed
         postlock_state = _safe_phase(
             "load_postlock_runtime_snapshot",
             load_runtime_state_snapshot,
@@ -18243,6 +18520,12 @@ def run_once(
                 ),
                 once=once,
             )
+        _safe_phase(
+            "persist_complete_cycle_metrics",
+            persist_complete_cycle_metrics,
+            config,
+            quiet=quiet,
+        )
         return changed
     finally:
         _PREFETCHED_WORKER_BASE_REFS.reset(base_ref_token)
@@ -18514,16 +18797,6 @@ def _run_once_locked(
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
         changed = _safe_phase(
-            "poll_workers",
-            poll_workers,
-            config,
-            state,
-            provider_report=provider_report,
-            activity_events=recovery_activity_events,
-            governance_activity_events=governance_activity_events,
-            quiet=quiet,
-        ) or changed
-        changed = _safe_phase(
             "maybe_reassign_tasks_from_failure_streaks",
             maybe_reassign_tasks_from_failure_streaks,
             config,
@@ -18600,24 +18873,8 @@ def _run_once_locked(
                     activity_events=recovery_activity_events,
                     quiet=quiet,
                 ) or changed
-        if not dispatch_suppressed_by_watchdog:
-            changed = _safe_phase("process_queue", process_queue, config, state, provider_report, quiet=quiet) or changed
-        changed = _safe_phase(
-            "poll_workers",
-            poll_workers,
-            config,
-            state,
-            provider_report=provider_report,
-            activity_events=recovery_activity_events,
-            governance_activity_events=governance_activity_events,
-            quiet=quiet,
-        ) or changed
-        changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
-        changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
-        _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
-        _safe_phase("trim_seen_events", trim_seen_events, state, int(config.get("watcher", {}).get("max_seen_events", 2000)), quiet=quiet)
-        changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
-        changed = _safe_phase("prune_chair_review_worktrees", prune_chair_review_worktrees, config, state, quiet=quiet) or changed
+        # process_queue, the post-dispatch poll, and git/worktree pruning are
+        # reservation/CAS phases owned by run_once after this short transaction.
         changed = _safe_phase("maybe_auto_commit_archive", maybe_auto_commit_archive, config, state, quiet=quiet) or changed
         if isinstance(task_state_shadow_snapshot, dict):
             report = task_state_shadow_snapshot.get("report")
@@ -18627,16 +18884,6 @@ def _run_once_locked(
                 )
                 changed = bool(task_state_shadow_snapshot.get("changed")) or changed
 
-        loop_finished_at = utc_now()
-        stamp_supervisor_runtime_state(
-            config,
-            state,
-            planning_state=planning_state,
-            heartbeat_at=loop_finished_at,
-            lifecycle="running",
-            loop_finished_at=loop_finished_at,
-            loop_error=None,
-        )
         record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         _record_cycle_batch_count(
             "dispatch_status_mutations",
@@ -18646,7 +18893,6 @@ def _run_once_locked(
             "runtime_activity_events",
             len(_DEFERRED_ACTIVITY_EVENTS.get() or []),
         )
-        publish_cycle_metrics_to_state(state)
         save_runtime_state(config, state)
         return changed
     except Exception as exc:
@@ -18690,6 +18936,105 @@ def run_supervisor_cycle(
             quiet=quiet,
         )
         return False
+
+
+def _run_reserved_worktree_prunes(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Run both independent prune paths even when the first one changes state."""
+
+    orphan_changed = prune_orphan_worktrees(config, state)
+    chair_changed = prune_chair_review_worktrees(config, state)
+    return orphan_changed or chair_changed
+
+
+def _finalize_runtime_cycle_locked(
+    config: dict[str, Any],
+    *,
+    planning_state: dict[str, Any],
+    quiet: bool,
+) -> bool:
+    """Commit post-I/O queue reconciliation and the truthful cycle heartbeat."""
+
+    state = load_runtime_state(config)
+    changed = bool(
+        _safe_phase(
+            "reconcile_queue_records_post_io",
+            reconcile_queue_records,
+            config,
+            state,
+            quiet=quiet,
+        )
+    )
+    changed = bool(
+        _safe_phase(
+            "prune_event_queue_post_io",
+            prune_event_queue,
+            config,
+            state,
+            quiet=quiet,
+        )
+    ) or changed
+    _safe_phase(
+        "trim_worker_history",
+        trim_worker_history,
+        state,
+        int(config.get("supervisor", {}).get("max_worker_history", 200)),
+        quiet=quiet,
+    )
+    _safe_phase(
+        "trim_seen_events",
+        trim_seen_events,
+        state,
+        int(config.get("watcher", {}).get("max_seen_events", 2000)),
+        quiet=quiet,
+    )
+    loop_finished_at = utc_now()
+    stamp_supervisor_runtime_state(
+        config,
+        state,
+        planning_state=planning_state,
+        heartbeat_at=loop_finished_at,
+        lifecycle="running",
+        loop_finished_at=loop_finished_at,
+        loop_error=None,
+    )
+    save_runtime_state(config, state)
+    return changed
+
+
+def persist_complete_cycle_metrics(config: dict[str, Any]) -> bool:
+    """Persist the complete post-lock cycle sample in one short transaction."""
+
+    lock_started = time.monotonic()
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        snapshot = publish_cycle_metrics_to_state(
+            state,
+            finished_monotonic=time.monotonic(),
+        )
+        if snapshot is None:
+            return False
+        supervisor_state = state.setdefault("supervisor", {})
+        longest_hold = round(
+            max(
+                0.0,
+                float(snapshot.get("runtime_lock_hold_seconds", 0.0)),
+            ),
+            3,
+        )
+        supervisor_state["runtime_lock_hold_seconds"] = longest_hold
+        supervisor_state["runtime_lock_hold_peak_seconds"] = round(
+            max(
+                longest_hold,
+                float(supervisor_state.get("runtime_lock_hold_peak_seconds", 0.0)),
+            ),
+            3,
+        )
+        save_runtime_state(config, state)
+    _record_cycle_runtime_lock_hold(time.monotonic() - lock_started)
+    return True
 
 
 def run_deadline_scheduler(
@@ -18750,7 +19095,14 @@ def run_deadline_scheduler(
             "next_deadline": next_deadline,
         }
         if on_cycle_complete is not None:
-            on_cycle_complete(completion)
+            try:
+                on_cycle_complete(completion)
+            except Exception as exc:  # telemetry must never terminate scheduling
+                console_log(
+                    "scheduler completion telemetry failed: "
+                    f"{type(exc).__name__}: {exc}; future cycles continue",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
         deadline = next_deadline
         skipped_before_start = skipped
         completed += 1

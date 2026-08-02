@@ -79,8 +79,10 @@ def _run_supervisor_writer_transaction_until_released(
         return True
 
     try:
-        with mock.patch.object(supervisor, "_run_once_locked", side_effect=transaction):
-            changed = supervisor.run_once(config, watch=False)
+        changed = supervisor._run_with_deferred_dispatch_status_syncs(
+            config,
+            lambda: transaction(config),
+        )
         connection.send(("completed", changed))
     except BaseException as exc:  # pragma: no cover - reported to the parent
         connection.send(("error", f"{type(exc).__name__}: {exc}"))
@@ -5888,10 +5890,10 @@ class DispatchStatusSyncTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertTrue(changed)
-        self.assertEqual(
-            call_order,
-            ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
-        )
+        locked_index = call_order.index("locked_cycle")
+        self.assertEqual(call_order[locked_index - 1], "lock_enter")
+        self.assertEqual(call_order[locked_index + 1], "lock_exit")
+        self.assertGreater(call_order.index("status_command"), locked_index + 1)
         self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
         self.assertEqual(captured_payload["schema_version"], 1)
         self.assertEqual(
@@ -6038,10 +6040,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
         ):
             supervisor.run_once(self.config, watch=False)
 
-        self.assertEqual(
-            call_order,
-            ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
-        )
+        self.assertLess(call_order.index("provider_probe"), call_order.index("lock_enter"))
+        locked_index = call_order.index("locked_cycle")
+        self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 
     def test_injected_slow_prelock_phase_does_not_extend_runtime_hold(self) -> None:
         """A 60s external phase leaves only the 250ms mutation transaction locked."""
@@ -6073,7 +6074,8 @@ class DispatchStatusSyncTests(unittest.TestCase):
         ):
             supervisor.run_once(self.config, watch=False)
 
-        self.assertEqual(lock_holds, [0.25])
+        self.assertEqual(max(lock_holds), 0.25)
+        self.assertNotIn(60.0, lock_holds)
 
     def test_run_once_drains_assistant_bridge_before_runtime_lock(self) -> None:
         """Governed bridge assignment must not run under runtime admission."""
@@ -6135,10 +6137,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertTrue(changed)
-        self.assertEqual(
-            call_order,
-            ["bridge_drain", "lock_enter", "locked_cycle", "lock_exit"],
-        )
+        self.assertLess(call_order.index("bridge_drain"), call_order.index("lock_enter"))
+        locked_index = call_order.index("locked_cycle")
+        self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 
     def test_run_once_fetches_worker_base_before_taking_runtime_lock(self) -> None:
         """The exact origin/dev network refresh must precede admission."""
@@ -6178,10 +6179,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertFalse(changed)
-        self.assertEqual(
-            call_order,
-            ["fetch_base", "lock_enter", "locked_cycle", "lock_exit"],
-        )
+        self.assertLess(call_order.index("fetch_base"), call_order.index("lock_enter"))
+        locked_index = call_order.index("locked_cycle")
+        self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 
     def test_run_once_syncs_github_bus_before_taking_the_runtime_lock(self) -> None:
         """No gh/API subprocess may extend the exclusive admission hold."""
@@ -6223,10 +6223,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertTrue(changed)
-        self.assertEqual(
-            call_order,
-            ["github_sync", "lock_enter", "locked_cycle", "lock_exit"],
-        )
+        self.assertLess(call_order.index("github_sync"), call_order.index("lock_enter"))
+        locked_index = call_order.index("locked_cycle")
+        self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 
     def test_run_once_prefetches_ownerless_pr_metadata_before_runtime_lock(self) -> None:
         task_id = "SUP-SQUASH-PREFETCH"
@@ -6347,10 +6346,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertFalse(changed)
-        self.assertEqual(
-            call_order,
-            ["gh_lookup", "lock_enter", "locked_cycle", "lock_exit"],
-        )
+        self.assertLess(call_order.index("gh_lookup"), call_order.index("lock_enter"))
+        locked_index = call_order.index("locked_cycle")
+        self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 
     def test_run_once_confirms_worker_termination_after_runtime_lock_release(self) -> None:
         """Both the signal and confirm/poll path run after admission."""
@@ -6813,6 +6811,33 @@ class FixedCadenceSchedulerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             supervisor.run_deadline_scheduler(lambda: None, 1, max_cycles=-1)
 
+    def test_scheduler_completion_telemetry_failure_does_not_stop_future_cycles(self) -> None:
+        clock = self.FakeClock()
+        starts: list[float] = []
+        callback_attempts = 0
+
+        def cycle() -> None:
+            starts.append(clock.now)
+            clock.now += 1.0
+
+        def flaky_completion(_sample: dict[str, float]) -> None:
+            nonlocal callback_attempts
+            callback_attempts += 1
+            if callback_attempts == 1:
+                raise OSError("injected telemetry write failure")
+
+        supervisor.run_deadline_scheduler(
+            cycle,
+            5.0,
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            on_cycle_complete=flaky_completion,
+            max_cycles=3,
+        )
+
+        self.assertEqual(starts, [0.0, 5.0, 10.0])
+        self.assertEqual(callback_attempts, 3)
+
 
 class BoundedCycleTelemetryTests(unittest.TestCase):
     def test_phase_queue_lock_and_batch_metrics_are_bounded_aggregates(self) -> None:
@@ -6872,6 +6897,316 @@ class BoundedCycleTelemetryTests(unittest.TestCase):
             supervisor.CYCLE_PHASE_METRICS_MAX,
         )
         self.assertIn("other", snapshot["phase_elapsed"])
+
+    def test_complete_sample_persists_post_lock_phases_and_elapsed_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "runtime-state.json"
+            event_queue_path = root / "event-queue.jsonl"
+            state_path.write_text(
+                json.dumps(runtime_state.default_state()) + "\n",
+                encoding="utf-8",
+            )
+            event_queue_path.write_text("", encoding="utf-8")
+            config = {
+                "paths": {
+                    "state_file": str(state_path),
+                    "event_queue": str(event_queue_path),
+                }
+            }
+            clock = [10.0]
+            metrics = {
+                "started_monotonic": 10.0,
+                "phases": {},
+                "batch_counts": {},
+            }
+            token = supervisor._CYCLE_METRICS.set(metrics)
+            try:
+                supervisor._record_cycle_phase_elapsed("locked_core", 0.25)
+                clock[0] = 17.0
+                supervisor._record_cycle_phase_elapsed("postlock_dispatch_batch", 6.0)
+                with mock.patch.object(
+                    supervisor.time,
+                    "monotonic",
+                    side_effect=lambda: clock[0],
+                ):
+                    self.assertTrue(supervisor.persist_complete_cycle_metrics(config))
+            finally:
+                supervisor._CYCLE_METRICS.reset(token)
+
+            persisted = runtime_state.load_runtime_state(config)["supervisor"][
+                "last_cycle_metrics"
+            ]
+            self.assertEqual(persisted["cycle_elapsed_seconds"], 7.0)
+            self.assertIn("locked_core", persisted["phase_elapsed"])
+            self.assertIn("postlock_dispatch_batch", persisted["phase_elapsed"])
+
+
+class ReservedRuntimeSlowIOTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.state_path = self.root / "runtime-state.json"
+        self.status_path = self.root / "ai-status.json"
+        self.event_queue_path = self.root / "event-queue.jsonl"
+        self.approval_path = self.root / "approval-queue.json"
+        self.activity_path = self.root / "ai-activity-log.jsonl"
+        self.state_path.write_text(
+            json.dumps(runtime_state.default_state()) + "\n",
+            encoding="utf-8",
+        )
+        self.status_path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "SLOW-IO-1",
+                            "status": "todo",
+                            "owner": "Codex",
+                            "reviewer": "Human/Ops",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.approval_path.write_text(
+            json.dumps({"version": 2, "pending": [], "history": []}) + "\n",
+            encoding="utf-8",
+        )
+        self.event_queue_path.write_text("", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "state_file": str(self.state_path),
+                "status_file": str(self.status_path),
+                "event_queue": str(self.event_queue_path),
+                "approval_queue": str(self.approval_path),
+                "activity_log": str(self.activity_path),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                }
+            },
+            "providers": {"codex": {"delivery_mode": "codex"}},
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+        }
+
+    def _traced_runtime_lock(self, depths: list[int]):
+        real_lock = runtime_state.runtime_state_lock
+        depth = 0
+
+        @contextlib.contextmanager
+        def traced(*args: object, **kwargs: object):
+            nonlocal depth
+            with real_lock(*args, **kwargs):
+                depth += 1
+                depths.append(depth)
+                try:
+                    yield
+                finally:
+                    depth -= 1
+
+        return traced, lambda: depth
+
+    def test_actual_queue_poll_and_prune_slow_paths_run_outside_admission(self) -> None:
+        event = {
+            "event_id": "evt-slow-io",
+            "event_key": "evt-slow-io-key",
+            "created_at": supervisor.utc_now(),
+            "task_id": "SLOW-IO-1",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": "manual_dispatch",
+            "message": "wake",
+        }
+        self.event_queue_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        lock_entries: list[int] = []
+        traced_lock, lock_depth = self._traced_runtime_lock(lock_entries)
+        slow_calls: list[str] = []
+
+        def outside(name: str, result: object):
+            self.assertEqual(lock_depth(), 0, f"{name} ran under runtime admission")
+            slow_calls.append(name)
+            return result
+
+        delivery = mock.Mock(
+            ok=True,
+            mode="codex",
+            run_id="run-slow-io",
+            pid=None,
+            session_id=None,
+            resume_token=None,
+            pr_url=None,
+            session_url=None,
+            command=["codex"],
+            log_path=None,
+            payload_path=None,
+            manual_confirmation_required=False,
+            auto_delivered=True,
+            notes="started",
+            adapter="codex",
+            metadata={},
+        )
+        delivery.as_dict.return_value = {"auto_delivered": True}
+        adapter = mock.Mock()
+        adapter.deliver.side_effect = lambda _request: outside("adapter.deliver", delivery)
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=traced_lock),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
+            mock.patch.object(supervisor, "refresh_provider_auth_before_dispatch"),
+            mock.patch.object(
+                supervisor,
+                "prepare_worker_workspace",
+                side_effect=lambda *_args, **_kwargs: outside("prepare_worker_workspace", (True, None)),
+            ),
+            mock.patch.object(
+                supervisor,
+                "check_worker_tree_clean",
+                side_effect=lambda *_args, **_kwargs: outside("git_status_guard", (True, None)),
+            ),
+            mock.patch.object(
+                supervisor,
+                "worker_commit_progress_snapshot",
+                side_effect=lambda *_args, **_kwargs: outside("worker_git_rev_parse", {}),
+            ),
+            mock.patch.object(supervisor, "build_adapter", return_value=adapter),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+            mock.patch.object(supervisor, "status_command_runtime_record_from_env", return_value={}),
+            mock.patch.object(
+                common,
+                "task_brief_path",
+                return_value=self.root / "slow-io-task-brief.md",
+            ),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue_test",
+                    lambda state: supervisor.process_queue(self.config, state, {}),
+                )
+            )
+
+        state = runtime_state.load_runtime_state(self.config)
+        self.assertIn("run-slow-io", state["workers"])
+        self.assertEqual(
+            slow_calls,
+            [
+                "prepare_worker_workspace",
+                "git_status_guard",
+                "worker_git_rev_parse",
+                "adapter.deliver",
+            ],
+        )
+        self.assertTrue(lock_entries)
+
+        worker = state["workers"]["run-slow-io"]
+        worker.update(
+            {
+                "status": "running",
+                "pid": 991,
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": str(self.root),
+                "lease_expires_at": "9999-01-01T00:00:00Z",
+            }
+        )
+        runtime_state.save_runtime_state(self.config, state)
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=traced_lock),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "update_from_log"),
+            mock.patch.object(
+                supervisor,
+                "isolated_workspace_commit_sha",
+                side_effect=lambda *_args, **_kwargs: outside("poll_worker_git_rev_parse", "a" * 40),
+            ),
+            mock.patch.object(supervisor, "worker_process_activity_snapshot", return_value={}),
+            mock.patch.object(
+                supervisor,
+                "poll_worker_assignment_stage",
+                return_value={"changed": False, "stop": True},
+            ),
+            mock.patch.object(
+                supervisor,
+                "cleanup_inactive_worker_worktrees",
+                side_effect=lambda *_args, **_kwargs: outside("poll_worktree_cleanup", False),
+            ),
+        ):
+            supervisor._run_reserved_runtime_phase(
+                self.config,
+                "poll_workers_test",
+                lambda current: supervisor.poll_workers(self.config, current, {}),
+            )
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=traced_lock),
+            mock.patch.object(
+                supervisor,
+                "prune_orphan_worktrees",
+                side_effect=lambda *_args, **_kwargs: outside("prune_orphan_worktrees", False),
+            ),
+            mock.patch.object(
+                supervisor,
+                "prune_chair_review_worktrees",
+                side_effect=lambda *_args, **_kwargs: outside("prune_chair_review_worktrees", False),
+            ),
+        ):
+            supervisor._run_reserved_runtime_phase(
+                self.config,
+                "prune_test",
+                lambda current: supervisor._run_reserved_worktree_prunes(
+                    self.config,
+                    current,
+                ),
+            )
+
+        self.assertIn("poll_worker_git_rev_parse", slow_calls)
+        self.assertIn("poll_worktree_cleanup", slow_calls)
+        self.assertIn("prune_orphan_worktrees", slow_calls)
+        self.assertIn("prune_chair_review_worktrees", slow_calls)
+
+    def test_reservation_cas_conflict_preserves_concurrent_runtime_writer(self) -> None:
+        def operation(scratch: dict[str, object]) -> bool:
+            scratch.setdefault("workers", {})["losing-phase"] = {"status": "running"}
+            with runtime_state.runtime_state_lock(
+                self.config,
+                shared=False,
+                nonblocking=False,
+            ):
+                current = runtime_state.load_runtime_state(self.config)
+                current.setdefault("workers", {})["concurrent-writer"] = {"status": "running"}
+                runtime_state.save_runtime_state(self.config, current)
+            return True
+
+        self.assertFalse(
+            supervisor._run_reserved_runtime_phase(
+                self.config,
+                "cas_conflict_test",
+                operation,
+            )
+        )
+        state = runtime_state.load_runtime_state(self.config)
+        self.assertIn("concurrent-writer", state["workers"])
+        self.assertNotIn("losing-phase", state["workers"])
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            state.get("supervisor", {}),
+        )
 
 
 class TaskStateShadowCatchupTests(unittest.TestCase):
@@ -7793,7 +8128,8 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.addCleanup(self._stop_process, process)
 
         self.assertTrue(parent_connection.poll(5), "supervisor transaction did not reach its midpoint")
-        self.assertEqual(parent_connection.recv()[0], "mid-transaction")
+        midpoint = parent_connection.recv()
+        self.assertEqual(midpoint[0], "mid-transaction", midpoint)
         lock_path = runtime_state.runtime_admission_lock_path(self.config)
         lock_inode = lock_path.stat().st_ino
 
@@ -7828,7 +8164,7 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             ],
         )
 
-    def test_process_queue_builds_full_task_brief_inside_run_once_lock_context(self) -> None:
+    def test_process_queue_builds_full_task_brief_outside_runtime_admission(self) -> None:
         task_id = "OPS-TASK-BRIEF-LOCK-ORDER-TEST"
         dependency_id = "OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY"
         task = {
@@ -7918,22 +8254,11 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             captured_requests.append(request)
             return request
 
-        def process_queue_under_nested_runtime_lock(
-            request_config: dict[str, object],
-            **_kwargs: object,
-        ) -> bool:
-            with runtime_state.runtime_state_lock(
-                request_config,
-                shared=True,
-                nonblocking=False,
-            ):
-                return supervisor.process_queue(request_config, state, {})
-
         with (
             mock.patch.object(
                 supervisor,
                 "_run_once_locked",
-                side_effect=process_queue_under_nested_runtime_lock,
+                return_value=False,
             ),
             mock.patch.object(
                 supervisor,
@@ -7979,10 +8304,19 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             [entry for entry in lock_trace if entry == ["acquire", "task_state"]],
             [["acquire", "task_state"]],
         )
-        self.assertLess(
-            lock_trace.index(["acquire", "runtime_admission"]),
-            lock_trace.index(["acquire", "task_state"]),
+        task_acquire = lock_trace.index(["acquire", "task_state"])
+        prior_runtime_release = max(
+            index
+            for index, entry in enumerate(lock_trace[:task_acquire])
+            if entry == ["release", "runtime_admission"]
         )
+        next_runtime_acquire = next(
+            index
+            for index, entry in enumerate(lock_trace[task_acquire + 1 :], task_acquire + 1)
+            if entry == ["acquire", "runtime_admission"]
+        )
+        self.assertLess(prior_runtime_release, task_acquire)
+        self.assertLess(task_acquire, next_runtime_acquire)
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
         original_events = [
@@ -8118,13 +8452,19 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             "with runtime_state_lock(config, shared=False",
             locked_operation_source,
         )
+        deferred_flush_source = inspect.getsource(
+            supervisor._flush_deferred_runtime_side_effects
+        )
+        termination_source = inspect.getsource(
+            supervisor._confirm_deferred_worker_terminations
+        )
         self.assertIn(
             "for pid, expected_start_ticks in deferred_terminations",
-            locked_operation_source,
+            termination_source,
         )
         self.assertIn(
             "execute_auto_commit_archive(config, action)",
-            locked_operation_source,
+            deferred_flush_source,
         )
         self.assertNotIn(
             "execute_auto_commit_archive",
