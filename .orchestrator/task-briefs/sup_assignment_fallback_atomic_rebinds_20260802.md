@@ -6,8 +6,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Title: Atomically rebind owner and reviewer across fallback dead ends
 - Status: review_pending
 - Owner: Codex
-- Reviewer: Codex2
-- Next: Codex2 independent exact-head review of the task PR and committed evidence manifest.
+- Reviewer: Human/Ops
+- Next: Human/Ops independent exact-head review of the task PR and committed evidence manifest.
 
 ## Summary
 讓 unavailable owner 的 fallback 同時計算合法 owner/reviewer pair，避免唯一 fallback 已是 reviewer 時整批卡死。

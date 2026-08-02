@@ -2,7 +2,7 @@
 
 Task: Atomically rebind owner and reviewer across fallback dead ends
 
-Owner: Codex · Reviewer: Codex2 · Status: **review pending**
+Owner: Codex · Reviewer: Human/Ops · Status: **review pending**
 
 ## Delivered contract
 
@@ -47,11 +47,11 @@ the full suite were restored/removed and are not part of the task diff.
 
 - Checkout-scoped Python distribution provisioned and verified.
 - Focused assignment regression: 38 passed, 475 deselected.
-- Full supervisor regression: 513 passed, 147 subtests passed in 53.39s.
+- Full supervisor regression: 513 passed, 147 subtests passed in 53.27s.
 - Python compile and `git diff --check` passed.
 
 ## Review and delivery
 
-Review is pending independent Codex2 inspection of the exact task PR head.
+Review is pending independent Human/Ops inspection of the exact task PR head.
 Delivery targets `ajoe734/pantheon` branch `dev`; merge and exact-head review
 identities will be recorded after the governed review gate completes.

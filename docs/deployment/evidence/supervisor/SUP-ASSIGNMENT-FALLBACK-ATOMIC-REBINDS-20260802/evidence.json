@@ -5,7 +5,7 @@
     "title": "Atomically rebind owner and reviewer across fallback dead ends",
     "phase": "Supervisor reliability / assignment fallback topology",
     "owner": "Codex",
-    "reviewer": "Codex2",
+    "reviewer": "Human/Ops",
     "status": "review",
     "review_status": "review_pending",
     "repository": "ajoe734/pantheon",
@@ -117,7 +117,7 @@
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
-      "result": "513 passed, 147 subtests passed in 53.39s"
+      "result": "513 passed, 147 subtests passed in 53.27s"
     },
     {
       "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
@@ -130,11 +130,11 @@
   ],
   "review": {
     "decision": "pending",
-    "reviewer": "Codex2",
+    "reviewer": "Human/Ops",
     "reviewed_head": null,
     "pull_request": null,
     "recorded_at": null,
-    "notes": "Awaiting independent exact-head code, test, and scope review."
+    "notes": "Awaiting independent Human/Ops exact-head code, test, and scope review after governed reviewer reassignment."
   },
   "delivery": {
     "repository": "ajoe734/pantheon",
