@@ -732,6 +732,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             "scripts/ai-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
+            ".orchestrator/review_identity.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
@@ -1462,6 +1463,36 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
+
+    def test_same_account_codex2_reviewer_cannot_approve_codex_owner(self) -> None:
+        task = self.state["tasks"][0]
+        task["reviewer"] = "Codex2"
+        self.state["handoffs"][0]["to"] = "Codex2"
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex2"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "not independent"),
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Forged same-account approval."],
+            )
+
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("review_binding", task)
+        self.assertFalse(self._approval_events())
+
+    def test_assign_rejects_same_account_owner_reviewer_pair(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "equivalent account identities"),
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["REG-SAME-ACCOUNT", "Codex", "Codex2", "Invalid review pair"],
+            )
+
+        self.assertIsNone(ai_status.get_task(self.state, "REG-SAME-ACCOUNT"))
 
     def _approval_events(self) -> list[dict]:
         lines = self._test_log_file.read_text(encoding="utf-8").splitlines()

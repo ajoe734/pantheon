@@ -1,0 +1,152 @@
+{
+  "schema_version": "supervisor_review_identity_guard.v1",
+  "schema_status": {
+    "status": "task_scoped",
+    "product_level_required": false,
+    "note": "Source-only supervisor and delivery-governance repair. This manifest claims no live rollout, deployment activation, or product-task delivery."
+  },
+  "task": {
+    "id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+    "title": "Guard bound review identity from auto reassignment",
+    "phase": "Supervisor Runtime Repair / Bound Review Identity",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "in_progress",
+    "review_status": "pending_independent_exact_head_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.md"
+  },
+  "scope": {
+    "owned_layer": "Reviewer identity equivalence, supervisor recovery reassignment, governed approval admission, and review-before-merge independence gating.",
+    "not_changing": "V3 failure-record behavior or schema, retry thresholds, provider readiness, provider/account configuration, live runtime JSON, deployment configuration, product tasks, or service rollout.",
+    "implementation_files": [
+      ".orchestrator/review_identity.py",
+      ".orchestrator/supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/git/task_review_merge_gate.py"
+    ],
+    "test_files": [
+      ".orchestrator/test_supervisor.py",
+      "scripts/test_ai_status.py",
+      "scripts/git/test_task_review_merge_gate.py"
+    ],
+    "task_files": [
+      ".orchestrator/task-briefs/sup_review_identity_bound_reassign_guard_20260802.md",
+      "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.md"
+    ],
+    "anchors": [
+      "37ff4c59a"
+    ]
+  },
+  "historical_evidence_only": [
+    {
+      "pull_request": 4414,
+      "merge_commit": "dc5136394eb1041ceea1dcc066e55ac2179ca0e5",
+      "use": "Existing exact owner/reviewer handoff continuity behavior; not rewritten by this task."
+    },
+    {
+      "pull_request": 4445,
+      "merge_commit": "2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+      "use": "Incident shape and V3 baseline only. Human/Ops was replaced by Codex2 before exact-head approval; V3 failure generation behavior remains unchanged."
+    }
+  ],
+  "contract": {
+    "bound_reviewer_continuity": "A structurally exact reviewed-head binding or pending reviewer handoff binds the current reviewer label. Automatic provider/lane recovery returns without rewriting that reviewer or its pending handoff.",
+    "independent_fallback": "Unbound recovery may still select a replacement, but candidate selection and the canonical persistence boundary both require a reviewer identity independent from the owner.",
+    "identity_equivalence": "Codex, Codex2, and their canonical Codex lane aliases resolve to one ChatGPT review identity even though their dispatch labels differ.",
+    "approval_gate": "assign, approve, and merged-done reconciliation reject owner/reviewer pairs whose review identities are equivalent.",
+    "merge_gate": "The review-before-merge contract treats equivalent identities as no independent reviewer, so neither merge nor auto-merge becomes authorized even if an exact-head approval record is forged for the alternate label.",
+    "persistence_gate": "Supervisor reassignment persistence refuses any non-independent owner/reviewer pair, covering automatic and chair-driven callers at the canonical write boundary."
+  },
+  "acceptance": {
+    "bound_exact_head_reviewer_preserved": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_normalize_preserves_exact_head_human_ops_reviewer",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_bound_pending_review_handoff_preserves_unavailable_reviewer",
+        ".orchestrator/test_supervisor.py::ChairReviewDispatchTests::test_chair_reassignment_skips_exact_head_bound_reviewer"
+      ]
+    },
+    "same_account_pair_rejected": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassign_review_skips_codex2_when_codex_is_owner",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassignment_persistence_rejects_same_account_pair",
+        "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_assign_rejects_same_account_owner_reviewer_pair",
+        "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_same_account_codex2_reviewer_cannot_approve_codex_owner",
+        "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_codex_and_codex2_are_not_independent_review_identities",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_same_account_exact_head_approval_never_becomes_merge_ready"
+      ]
+    },
+    "unbound_independent_reassignment_preserved": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassigns_review_task_to_new_reviewer_after_repeated_failure",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_failure_streak_sweep_reassigns_claude_weekly_limit_review"
+      ]
+    },
+    "forged_or_stale_binding_fails_closed": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::ReviewApprovedWorkflowTests::test_same_account_codex2_reviewer_cannot_approve_codex_owner",
+        "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests",
+        "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_same_account_exact_head_approval_never_becomes_merge_ready"
+      ]
+    },
+    "no_out_of_scope_runtime_or_v3_change": {
+      "status": "proven",
+      "detail": "No .orchestrator/config.json, runtime-state JSON, retry/provider settings, deployment files, product tasks, or V3 generation/decoder fields changed."
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned; imports and pytest verified"
+    },
+    {
+      "command": "focused nine-test supervisor/status/merge-gate selection",
+      "result": "9 passed"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
+      "result": "490 passed, 74 subtests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+      "result": "159 passed, 31 subtests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
+      "result": "94 passed"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/review_identity.py .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed before evidence authoring; rerun required at finalization"
+    }
+  ],
+  "review": {
+    "decision": "pending",
+    "reviewer": "Gemini",
+    "reviewed_head": null,
+    "pull_request": null,
+    "recorded_at": null,
+    "notes": null
+  },
+  "delivery": {
+    "base_commit": "71fea47cbe65bb3e07792afa7e9f0134fd0066f5",
+    "implementation_anchor": "37ff4c59a",
+    "implementation_head": null,
+    "pull_request": null,
+    "merge_commit": null,
+    "rollout": "source merge only",
+    "rollback": "revert the follow-up merge commit"
+  }
+}

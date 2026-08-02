@@ -4347,6 +4347,17 @@ def apply_chair_review_reassignment_actions(
         message = ""
 
         if role == "reviewer":
+            if task_reviewer_identity_is_bound(config, task, status=status):
+                log_chair_reassignment_skip(
+                    config,
+                    review_path=review_path,
+                    action=action,
+                    message=(
+                        f"Chair reviewer reassignment skipped because task {task_id} "
+                        "has a bound reviewer identity."
+                    ),
+                )
+                continue
             if task_status not in review_statuses:
                 log_chair_reassignment_skip(
                     config,
@@ -4363,7 +4374,9 @@ def apply_chair_review_reassignment_actions(
                     message=f"Chair reviewer reassignment skipped because reviewer moved from {from_agent} to {reviewer}.",
                 )
                 continue
-            if to_agent in {owner, reviewer}:
+            if to_agent == reviewer or not review_identities_are_independent(
+                owner, to_agent
+            ):
                 log_chair_reassignment_skip(
                     config,
                     review_path=review_path,
@@ -4402,7 +4415,7 @@ def apply_chair_review_reassignment_actions(
                     message=f"Chair owner reassignment skipped because owner moved from {from_agent} to {owner}.",
                 )
                 continue
-            if to_agent == reviewer:
+            if not review_identities_are_independent(to_agent, reviewer):
                 log_chair_reassignment_skip(
                     config,
                     review_path=review_path,
@@ -4724,10 +4737,18 @@ def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, A
             candidates = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), agent_name)
         if not role:
             continue
+        counterpart = owner if role == "reviewer" else reviewer
+        if role == "reviewer" and task_reviewer_identity_is_bound(
+            config,
+            task,
+            status=status,
+        ):
+            candidates = []
         viable_candidates = [
             candidate
             for candidate in candidates
             if first_viable_agent(config, [candidate], exclude=exclude, state=state, task=task) == candidate
+            and review_identities_are_independent(counterpart, candidate)
         ]
         loops.append(
             {

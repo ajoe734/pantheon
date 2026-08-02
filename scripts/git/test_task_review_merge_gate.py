@@ -149,6 +149,11 @@ class PolicyResolutionTests(unittest.TestCase):
         self.assertEqual(contract.policy, gate.POLICY_MERGE_THEN_REVIEW)
         self.assertTrue(contract.declaration_honored)
 
+    def test_codex_and_codex2_are_not_independent_review_identities(self) -> None:
+        contract = gate.contract_from_task_row(task_row(reviewer="Codex2"))
+
+        self.assertFalse(contract.requires_independent_review)
+
     def test_merge_then_review_task_may_merge_without_approval(self) -> None:
         decision = decide(
             tasks=[task_row(status="in_progress", reviewer="Codex", merge_policy="merge_then_review")],
@@ -451,6 +456,16 @@ class FailClosedTests(unittest.TestCase):
         decision = decide(tasks=[task_row(reviewer="Codex")])
 
         self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "no_independent_reviewer")
+
+    def test_same_account_exact_head_approval_never_becomes_merge_ready(self) -> None:
+        decision = decide(
+            tasks=[task_row(reviewer="Codex2")],
+            events=[approval_event(agent="Codex2")],
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
         self.assertEqual(decision.reason, "no_independent_reviewer")
 
     def test_future_approval_timestamp_blocks(self) -> None:
@@ -2024,6 +2039,12 @@ class TaskFinalizeShellTests(unittest.TestCase):
         orchestrator.mkdir()
         (orchestrator / "common.py").write_text(
             (source.parents[1] / ".orchestrator" / "common.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (orchestrator / "review_identity.py").write_text(
+            (source.parents[1] / ".orchestrator" / "review_identity.py").read_text(
+                encoding="utf-8"
+            ),
             encoding="utf-8",
         )
         (helpers / "safe_pr.sh").chmod(0o755)

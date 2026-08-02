@@ -5007,6 +5007,74 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Antigravity")
         self.assertEqual(kwargs["new_reviewer"], "Antigravity2")
 
+    def test_normalize_preserves_exact_head_human_ops_reviewer(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["review", "review_approved"],
+                "owner_fallbacks": {},
+                "reviewer_fallbacks": {"Human/Ops": ["Codex2", "Claude"]},
+            },
+            "agents": {
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "human_ops": {
+                    "display_name": "Human/Ops",
+                    "provider": "human_ops",
+                },
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+                "human_ops": {"auth_ready": False},
+            }
+        }
+        task = {
+            "id": "SUP-REVIEW-IDENTITY",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "depends_on": [],
+            "review_binding": {
+                "pr": 4445,
+                "head_sha": "b" * 40,
+                "head_branch": "task/SUP-REVIEW-IDENTITY",
+                "base": "dev",
+            },
+        }
+        status = {"tasks": [task], "handoffs": []}
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_cached_provider_capabilities",
+                return_value=report,
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                config,
+                task,
+                state={},
+                status=status,
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(task["reviewer"], "Human/Ops")
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
     def test_dispatcher_reassigns_mainline_qwen_reviewer_before_dispatch(self) -> None:
         config = {
             "schema": {
@@ -8819,7 +8887,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Claude", "reviewer": "Codex2"}]}
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -8854,7 +8922,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Gemini", "reviewer": "Codex2"}]}
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -8881,7 +8949,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Claude", "reviewer": "Codex2"}]}
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -8910,8 +8978,8 @@ class ChairReviewDispatchTests(unittest.TestCase):
         }
         status = {
             "tasks": [
-                {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"},
-                {"id": "T-FINALIZE", "status": "review_approved", "owner": "Codex2", "reviewer": "Codex"},
+                {"id": "T-REVIEW", "status": "review", "owner": "Claude", "reviewer": "Codex2"},
+                {"id": "T-FINALIZE", "status": "review_approved", "owner": "Codex2", "reviewer": "Claude"},
             ]
         }
 
@@ -9260,7 +9328,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 "pending_review_agent": "Codex",
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Gemini", "reviewer": "Codex2"}]}
 
         with (
             mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:15:00Z"),
@@ -9276,11 +9344,53 @@ class ChairReviewDispatchTests(unittest.TestCase):
         persist_task_reassignment.assert_called_once_with(
             self.config,
             task_id="T-REVIEW",
-            new_owner="Codex",
+            new_owner="Gemini",
             new_reviewer="Claude",
             message="Chair reassigned review from Codex2 to Claude: Codex2 repeatedly exits without approve/reject.",
             handoff_to="Claude",
             handoff_from="Codex2",
+        )
+
+    def test_chair_reassignment_skips_exact_head_bound_reviewer(self) -> None:
+        review_path = self.root / "chair-reviews" / "bound-review.md"
+        task = {
+            "id": "T-BOUND-REVIEW",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "review_binding": {
+                "pr": 4445,
+                "head_sha": "a" * 40,
+                "head_branch": "task/T-BOUND-REVIEW",
+                "base": "dev",
+            },
+        }
+        status = {"tasks": [task], "handoffs": []}
+        action = {
+            "task_id": task["id"],
+            "role": "reviewer",
+            "from": "Human/Ops",
+            "to": "Claude",
+            "reason": "Reviewer lane is unavailable.",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            supervisor.apply_chair_review_reassignment_actions(
+                self.config,
+                {},
+                [action],
+                review_path=review_path,
+            )
+
+        self.assertEqual(task["reviewer"], "Human/Ops")
+        persist.assert_not_called()
+        self.assertIn(
+            "bound reviewer identity",
+            write_activity_log.call_args.args[1]["message"],
         )
 
     def test_refresh_chair_review_applies_blocked_owner_rescue_action(self) -> None:
@@ -13269,6 +13379,76 @@ class WorkerReassignmentTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
 
+    def test_bound_pending_review_handoff_preserves_unavailable_reviewer(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "reviewer_fallbacks": {
+                    "Human/Ops": ["Codex2", "Claude"],
+                },
+            },
+            "agents": {
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "human_ops": {
+                    "display_name": "Human/Ops",
+                    "provider": "human_ops",
+                },
+            },
+        }
+        worker = {
+            "task_id": "SUP-BOUND-REVIEW",
+            "agent_id": "human_ops",
+            "retry_count": 1,
+            "run_id": "human-ops-review-run",
+        }
+        task = {
+            "id": "SUP-BOUND-REVIEW",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Human/Ops",
+            "review_binding": {
+                "pr": 4445,
+                "head_sha": "a" * 40,
+                "head_branch": "task/SUP-BOUND-REVIEW",
+                "base": "dev",
+            },
+        }
+        status = {
+            "tasks": [task],
+            "handoffs": [
+                {
+                    "task_id": task["id"],
+                    "from": "Codex",
+                    "to": "Human/Ops",
+                    "status": "pending",
+                    "created_at": "2026-08-02T05:30:00Z",
+                }
+            ],
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                {},
+                worker,
+                "reviewer provider is unavailable",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        self.assertEqual(task["reviewer"], "Human/Ops")
+        self.assertEqual(status["handoffs"][0]["to"], "Human/Ops")
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
     def test_reassign_review_skips_paused_reviewer_candidates(self) -> None:
         config = {
             "worker_reassignment": {
@@ -13330,8 +13510,9 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(reassigned_to, "Copilot")
         self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Copilot")
 
-    def test_reassign_review_can_fall_back_to_codex2_when_codex_is_owner(self) -> None:
+    def test_reassign_review_skips_codex2_when_codex_is_owner(self) -> None:
         config = {
+            "ready_dispatcher": {"sidecar_only_agents": ["Qwen"]},
             "worker_reassignment": {
                 "enabled": True,
                 "after_attempts": 2,
@@ -13378,8 +13559,44 @@ class WorkerReassignmentTests(unittest.TestCase):
                 terminal=True,
             )
 
-        self.assertEqual(reassigned_to, "Codex2")
-        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
+        self.assertEqual(reassigned_to, "Copilot")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Copilot")
+
+    def test_reassignment_persistence_rejects_same_account_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status_path = Path(temp_dir) / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "P3-SAME-ACCOUNT",
+                                "status": "review",
+                                "owner": "Claude",
+                                "reviewer": "Gemini",
+                            }
+                        ],
+                        "handoffs": [],
+                        "blockers": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {"paths": {"status_file": str(status_path)}}
+
+            applied = supervisor._persist_task_reassignment_locked(
+                config,
+                task_id="P3-SAME-ACCOUNT",
+                new_owner="Codex",
+                new_reviewer="Codex2",
+                message="Invalid same-account reassignment.",
+            )
+
+            persisted = json.loads(status_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(applied)
+        self.assertEqual(persisted["tasks"][0]["owner"], "Claude")
+        self.assertEqual(persisted["tasks"][0]["reviewer"], "Gemini")
 
     def test_failure_streak_sweep_reassigns_claude_weekly_limit_review(self) -> None:
         config = {
@@ -13387,13 +13604,14 @@ class WorkerReassignmentTests(unittest.TestCase):
                 "enabled": True,
                 "after_attempts": 2,
                 "reviewer_fallbacks": {
-                    "Claude": ["Codex", "Codex2"],
+                    "Claude": ["Codex", "Codex2", "Gemini"],
                 },
             },
             "agents": {
                 "claude": {"display_name": "Claude", "provider": "claude"},
                 "codex": {"display_name": "Codex", "provider": "codex"},
                 "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "gemini": {"display_name": "Gemini", "provider": "gemini"},
             },
         }
         state = {
@@ -13429,7 +13647,7 @@ class WorkerReassignmentTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex")
-        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Gemini")
         self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
     def test_failure_streak_sweep_waits_for_threshold(self) -> None:
