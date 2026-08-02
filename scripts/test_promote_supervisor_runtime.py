@@ -3759,6 +3759,88 @@ def test_transaction_promotes_only_after_three_distinct_candidate_loops(
     assert json.loads(evidence_path.read_text(encoding="utf-8")) == result
 
 
+def test_transaction_default_evidence_stays_outside_executable_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _FakePromotionBackend(tmp_path)
+    evidence_root = tmp_path / "runtime-evidence"
+    monkeypatch.setattr(
+        promotion,
+        "DEFAULT_PROMOTION_EVIDENCE_ROOT",
+        evidence_root,
+    )
+    transaction = PromotionTransaction(
+        backend=backend,
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        result = transaction.run(backend.candidate_identity.candidate_root)
+
+    kill.assert_not_called()
+    evidence_path = Path(result["evidence_path"])
+    assert result["outcome"] == "promoted"
+    assert result["requested_evidence_path"] is None
+    assert result["evidence_path_rejection"] is None
+    assert evidence_path.parent == evidence_root
+    assert evidence_path.is_file()
+    assert not evidence_path.is_relative_to(
+        backend.candidate_identity.candidate_root
+    )
+    assert not evidence_path.is_relative_to(
+        backend.incumbent_identity.candidate_root
+    )
+
+
+@pytest.mark.parametrize("root_kind", ["candidate", "incumbent"])
+def test_transaction_rejects_evidence_inside_executable_root_before_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_kind: str,
+) -> None:
+    backend = _FakePromotionBackend(tmp_path)
+    evidence_root = tmp_path / "safe-runtime-evidence"
+    monkeypatch.setattr(
+        promotion,
+        "DEFAULT_PROMOTION_EVIDENCE_ROOT",
+        evidence_root,
+    )
+    executable_root = (
+        backend.candidate_identity.candidate_root
+        if root_kind == "candidate"
+        else backend.incumbent_identity.candidate_root
+    )
+    requested_path = executable_root / "promotion-evidence.json"
+    transaction = PromotionTransaction(
+        evidence_path=requested_path,
+        backend=backend,
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        result = transaction.run(backend.candidate_identity.candidate_root)
+
+    kill.assert_not_called()
+    assert result["outcome"] == "aborted"
+    assert "outside executable command roots" in result["original_failure"]
+    assert result["requested_evidence_path"] == str(requested_path)
+    assert "outside executable command roots" in result["evidence_path_rejection"]
+    assert backend.intents == []
+    assert backend.terminated == []
+    assert backend.launches == []
+    assert not requested_path.exists()
+    persisted_path = Path(result["evidence_path"])
+    assert persisted_path.parent == evidence_root
+    assert json.loads(persisted_path.read_text(encoding="utf-8"))["outcome"] == "aborted"
+
+
 @pytest.mark.parametrize(
     "fault,expected_fragment",
     [
@@ -4001,6 +4083,38 @@ def test_runtime_admission_lock_is_same_owner_reentrant(tmp_path: Path) -> None:
         assert lock.depth == 1
 
     assert lock.depth == 0
+
+
+def test_runtime_admission_lock_composes_with_watchdog_intent_writer(
+    tmp_path: Path,
+) -> None:
+    status_root = tmp_path / "status"
+    state_path = status_root / ".orchestrator" / "state.json"
+    status_path = status_root / "ai-status.json"
+    write_json(state_path, {})
+    config = {
+        "paths": {
+            "state_file": str(state_path),
+            "status_file": str(status_path),
+        }
+    }
+    lock_path = status_root / ".orchestrator" / "runtime-admission.lock"
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    with patch.object(promotion, "_strict_live_config", return_value=config):
+        with RuntimeAdmissionLock(lock_path, timeout=1.0).held():
+            backend.record_intent(
+                identity,
+                old_pid=4321,
+                target_sha="a" * 40,
+            )
+
+    intent_path = status_root / ".orchestrator" / "supervisor-restart-intent.json"
+    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    assert intent["kind"] == "intentional_deploy_restart"
+    assert intent["old_pid"] == 4321
+    assert intent["target_sha"] == "a" * 40
 
 
 def test_os_backend_termination_signals_only_captured_generation(

@@ -8,7 +8,6 @@ three-loop acceptance, and automatic rollback with durable evidence.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
@@ -43,6 +42,9 @@ ALLOWED_COMMAND_RUNTIMES_PREFIX = Path(
 )
 LIVE_SUPERVISOR_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
+)
+DEFAULT_PROMOTION_EVIDENCE_ROOT = (
+    LIVE_SUPERVISOR_CONFIG_PATH.parent / "promotion-evidence"
 )
 TRUSTED_GITHUB_OWNER = "ajoe734"
 TRUSTED_GITHUB_REPOSITORY = "pantheon"
@@ -1964,6 +1966,35 @@ class OSLaunchFilesystem:
 
 def _path_is_within(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
+
+
+def _default_promotion_evidence_path(
+    *,
+    now: datetime | None = None,
+) -> Path:
+    recorded_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    stamp = recorded_at.strftime("%Y%m%dT%H%M%S%fZ")
+    return DEFAULT_PROMOTION_EVIDENCE_ROOT / (
+        f"supervisor-runtime-promotion-{stamp}-{os.getpid()}.json"
+    )
+
+
+def _validate_transaction_evidence_path(
+    path: Path,
+    *,
+    plan: "PromotionPlan",
+) -> None:
+    _validate_absolute_identity_path(path, label="Transaction evidence path")
+    executable_roots = (
+        plan.candidate_identity.candidate_root,
+        plan.incumbent_identity.candidate_root,
+    )
+    for executable_root in executable_roots:
+        if _path_is_within(path, executable_root):
+            raise ValueError(
+                "Transaction evidence path must remain outside executable "
+                f"command roots: {path} is within {executable_root}"
+            )
 
 
 def _is_forbidden_launch_environment_name(name: str) -> bool:
@@ -4309,14 +4340,20 @@ def _discover_supervisor_seed(
 
 
 class RuntimeAdmissionLock:
-    """Exclusive, owner-reentrant runtime-admission flock."""
+    """Exclusive runtime-admission lock shared with supervisor/watchdog I/O.
+
+    The supervisor runtime modules use ``common.stable_sidecar_lock`` for this
+    plane.  Promotion must enter through the same process-local registry so a
+    watchdog intentional-restart write is genuinely re-entrant instead of
+    opening a second flock descriptor and deadlocking against itself.
+    """
 
     def __init__(self, path: Path, *, timeout: float = 30.0) -> None:
         if timeout <= 0:
             raise ValueError("Runtime-admission lock timeout must be positive")
         self.path = path
         self.timeout = timeout
-        self._descriptor: int | None = None
+        self._manager: Any | None = None
         self._owner_pid: int | None = None
         self._depth = 0
 
@@ -4326,65 +4363,49 @@ class RuntimeAdmissionLock:
 
     def acquire(self) -> None:
         owner_pid = os.getpid()
-        if self._descriptor is not None:
+        if self._manager is not None:
             if self._owner_pid != owner_pid:
                 raise RuntimeError("Runtime-admission lock owner changed after fork")
             self._depth += 1
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        flags = (
-            os.O_RDWR
-            | os.O_CREAT
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
-        descriptor = os.open(self.path, flags, 0o600)
+
+        orchestrator_root = Path(__file__).resolve().parent.parent / ".orchestrator"
+        if str(orchestrator_root) not in sys.path:
+            sys.path.insert(0, str(orchestrator_root))
+        from common import stable_sidecar_lock
+
         deadline = time.monotonic() + self.timeout
-        try:
-            descriptor_stat = os.fstat(descriptor)
-            path_stat = self.path.lstat()
-            if (
-                not stat.S_ISREG(descriptor_stat.st_mode)
-                or stat.S_ISLNK(path_stat.st_mode)
-                or descriptor_stat.st_dev != path_stat.st_dev
-                or descriptor_stat.st_ino != path_stat.st_ino
-            ):
-                raise RuntimeError(
-                    f"Runtime-admission lock identity is unsafe: {self.path}"
-                )
-            while True:
-                try:
-                    fcntl.flock(
-                        descriptor,
-                        fcntl.LOCK_EX | fcntl.LOCK_NB,
-                    )
-                    break
-                except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(
-                            f"Timed out acquiring runtime-admission lock: {self.path}"
-                        )
-                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-        except Exception:
-            os.close(descriptor)
-            raise
-        self._descriptor = descriptor
-        self._owner_pid = owner_pid
-        self._depth = 1
+        while True:
+            manager = stable_sidecar_lock(
+                self.path,
+                plane="runtime_admission",
+                shared=False,
+                nonblocking=True,
+            )
+            try:
+                manager.__enter__()
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out acquiring runtime-admission lock: {self.path}"
+                    ) from exc
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+                continue
+            self._manager = manager
+            self._owner_pid = owner_pid
+            self._depth = 1
+            return
 
     def release(self) -> None:
-        if self._descriptor is None or self._owner_pid != os.getpid():
+        if self._manager is None or self._owner_pid != os.getpid():
             raise RuntimeError("Runtime-admission lock is not owned by this process")
         self._depth -= 1
         if self._depth:
             return
-        descriptor = self._descriptor
-        self._descriptor = None
+        manager = self._manager
+        self._manager = None
         self._owner_pid = None
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
+        manager.__exit__(None, None, None)
 
     @contextmanager
     def held(self) -> Iterator["RuntimeAdmissionLock"]:
@@ -4819,7 +4840,7 @@ class PromotionTransaction:
     def __init__(
         self,
         *,
-        evidence_path: Path,
+        evidence_path: Path | None = None,
         backend: PromotionBackend | None = None,
         lock_factory: Callable[[Path, float], RuntimeAdmissionLock] | None = None,
         required_fresh_loops: int = 3,
@@ -4832,7 +4853,9 @@ class PromotionTransaction:
             raise ValueError("Promotion and rollback require at least three fresh loops")
         if min(postcheck_timeout, poll_interval, lock_timeout, termination_timeout) <= 0:
             raise ValueError("Transaction timeouts and poll interval must be positive")
-        self.evidence_path = evidence_path
+        self.requested_evidence_path = evidence_path
+        self.evidence_path = _default_promotion_evidence_path()
+        self.evidence_path_rejection: str | None = None
         self.backend = backend or OSPromotionBackend()
         self.lock_factory = lock_factory or (
             lambda path, timeout: RuntimeAdmissionLock(path, timeout=timeout)
@@ -5074,6 +5097,12 @@ class PromotionTransaction:
             "history": self.history,
             "original_failure": self.original_failure,
             "rollback_failure": self.rollback_failure,
+            "requested_evidence_path": (
+                str(self.requested_evidence_path)
+                if self.requested_evidence_path is not None
+                else None
+            ),
+            "evidence_path_rejection": self.evidence_path_rejection,
             "candidate_pid": self.candidate_pid,
             "candidate_child_absence_proven": self.candidate_child_absence_proven,
             "candidate_launch_cleanup_error": self.candidate_launch_cleanup_error,
@@ -5129,6 +5158,20 @@ class PromotionTransaction:
         try:
             self.plan = self.backend.prepare(candidate_root)
             plan = self.plan
+            selected_evidence_path = (
+                self.requested_evidence_path
+                if self.requested_evidence_path is not None
+                else self.evidence_path
+            )
+            try:
+                _validate_transaction_evidence_path(
+                    selected_evidence_path,
+                    plan=plan,
+                )
+            except Exception as exc:
+                self.evidence_path_rejection = f"{type(exc).__name__}: {exc}"
+                raise
+            self.evidence_path = selected_evidence_path
             self._transition(
                 PromotionState.PREPARED,
                 candidate_commit=plan.candidate_identity.head_commit,
@@ -5242,7 +5285,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--evidence-path",
-        help="Absolute durable JSON evidence path required by --promote.",
+        help=(
+            "Absolute durable JSON evidence path. Defaults to the external "
+            f"runtime evidence directory {DEFAULT_PROMOTION_EVIDENCE_ROOT}."
+        ),
     )
     parser.add_argument("--postcheck-timeout", type=float, default=180.0)
     parser.add_argument("--poll-interval", type=float, default=0.5)
@@ -5272,10 +5318,12 @@ def main() -> int:
                 "--promote always uses the exact live supervisor config; "
                 "--config-path is discover-only"
             )
-        if not args.evidence_path:
-            raise SystemExit("--promote requires --evidence-path")
-        evidence_path = _absolute_path_without_resolving_alias(args.evidence_path)
-        if not Path(args.evidence_path).expanduser().is_absolute():
+        evidence_path = (
+            _absolute_path_without_resolving_alias(args.evidence_path)
+            if args.evidence_path
+            else None
+        )
+        if args.evidence_path and not Path(args.evidence_path).expanduser().is_absolute():
             raise SystemExit("--evidence-path must be absolute")
         result = PromotionTransaction(
             evidence_path=evidence_path,
