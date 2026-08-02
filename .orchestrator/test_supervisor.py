@@ -1418,6 +1418,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "auth_ready": True,
                     "last_auth_probe_at": "2026-06-06T12:00:00Z",
                     "auth_method": "codex_exec_oauth",
+                    "auth_probe": {
+                        "ready": True,
+                        "source": "live",
+                        "method": "codex_exec_oauth",
+                        "checked_at": "2026-06-06T12:00:00Z",
+                    },
                 }
             }
         }
