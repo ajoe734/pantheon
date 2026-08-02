@@ -4693,6 +4693,7 @@ def chair_review_failure_loop_details(
     config: dict[str, Any],
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
@@ -4750,6 +4751,7 @@ def chair_review_failure_loop_details(
             task,
             agent_name,
             provider_report=provider_report,
+            activity_events=activity_events,
         )
         if recovery_decision is not None and recovery_decision["allowed"] is True:
             continue
@@ -4778,9 +4780,18 @@ def chair_review_failure_loop_details(
     return loops[:max_items]
 
 
-def chair_review_failure_loop_lines(config: dict[str, Any], state: dict[str, Any]) -> list[str]:
+def chair_review_failure_loop_lines(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> list[str]:
     lines: list[str] = []
-    for item in chair_review_failure_loop_details(config, state):
+    for item in chair_review_failure_loop_details(
+        config,
+        state,
+        activity_events=activity_events,
+    ):
         reason = str(item.get("last_reason") or "").replace("\n", " ").strip()
         if len(reason) > 220:
             reason = reason[:217] + "..."
@@ -4861,6 +4872,7 @@ def chair_reassignment_triage_needed_for_task(
     *,
     task: Mapping[str, Any] | None = None,
     provider_report: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
@@ -4893,6 +4905,7 @@ def chair_reassignment_triage_needed_for_task(
             current_task,
             agent_name,
             provider_report=provider_report,
+            activity_events=activity_events,
         )
         if recovery_decision is not None and recovery_decision["allowed"] is True:
             return False
@@ -4904,6 +4917,7 @@ def failure_loop_task_agents_for_task_map(
     state: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     provider_report: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> set[tuple[str, str]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
@@ -4936,6 +4950,7 @@ def failure_loop_task_agents_for_task_map(
             task,
             agent_name,
             provider_report=provider_report,
+            activity_events=activity_events,
         )
         if recovery_decision is not None and recovery_decision["allowed"] is True:
             continue
@@ -4974,9 +4989,16 @@ def failure_loop_agents_for_task_map(
     config: dict[str, Any],
     state: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> set[str]:
     agents: set[str] = set()
-    for _task_id, agent_name in failure_loop_task_agents_for_task_map(config, state, task_map):
+    for _task_id, agent_name in failure_loop_task_agents_for_task_map(
+        config,
+        state,
+        task_map,
+        activity_events=activity_events,
+    ):
         agents.add(agent_name)
     return agents
 
@@ -4987,6 +5009,7 @@ def build_chair_review_message(
     *,
     agent_name: str,
     review_path: Path,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> str:
     approval_state = safe_load_approval_state(config)
     paused_lanes = sorted((state.get("provider_guardrails", {}) or {}).get("dispatch_pauses", {}).keys())
@@ -4998,7 +5021,11 @@ def build_chair_review_message(
     skill_line = f"- Skill Reference: {relpath(skill_path)}\n" if skill_path and skill_path.exists() else ""
     pending_approval_lines = chair_review_pending_approval_lines(config, approval_state)
     pending_approvals_block = "\n".join(pending_approval_lines) if pending_approval_lines else "- none"
-    failure_loop_lines = chair_review_failure_loop_lines(config, state)
+    failure_loop_lines = chair_review_failure_loop_lines(
+        config,
+        state,
+        activity_events=activity_events,
+    )
     failure_loops_block = "\n".join(failure_loop_lines) if failure_loop_lines else "- none"
     blocked_owner_rescue_lines = chair_review_blocked_owner_rescue_lines(config, state)
     blocked_owner_rescues_block = "\n".join(blocked_owner_rescue_lines) if blocked_owner_rescue_lines else "- none"
@@ -5099,6 +5126,7 @@ def queue_chair_review_event(
     agent_name: str,
     reason: str,
     issued_at: str,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> str:
     agent = agent_config_for(config, agent_name)
     review_path = chair_review_report_path(config, agent_name, issued_at=issued_at)
@@ -5113,7 +5141,13 @@ def queue_chair_review_event(
         "target_display_name": display_name_for(config, agent["id"]),
         "provider": agent.get("provider", agent["id"]),
         "reason": reason,
-        "message": build_chair_review_message(config, state, agent_name=agent_name, review_path=review_path),
+        "message": build_chair_review_message(
+            config,
+            state,
+            agent_name=agent_name,
+            review_path=review_path,
+            activity_events=activity_events,
+        ),
         "context_files": chair_review_context_files(config),
         "target_files": [relpath(review_path), relpath(decision_path)],
         "metadata": {
@@ -7391,6 +7425,39 @@ def _failure_recovery_activity_events(config: dict[str, Any]) -> list[dict[str, 
             return load_jsonl(path)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return []
+
+
+def failure_streak_recovery_activity_snapshot(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Read one cycle-scoped recovery snapshot only when a threshold exists.
+
+    Callers must thread this same list through every non-mutating recovery
+    decision in the cycle. The atomic consume path deliberately does not reuse
+    it: that path takes a fresh exact snapshot under ``runtime_state_lock``
+    immediately before the governed queue append.
+    """
+
+    threshold = max(
+        1,
+        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
+    )
+    guardrails = state.get("provider_guardrails")
+    streaks = (
+        guardrails.get("task_failure_streaks")
+        if isinstance(guardrails, Mapping)
+        else None
+    )
+    if not isinstance(streaks, Mapping) or not any(
+        isinstance(record, Mapping)
+        and isinstance(record.get("count"), int)
+        and not isinstance(record.get("count"), bool)
+        and int(record["count"]) >= threshold
+        for record in streaks.values()
+    ):
+        return []
+    return _failure_recovery_activity_events(config)
 
 
 def failure_streak_recovery_progress_generation(
@@ -10894,6 +10961,7 @@ def maybe_reassign_tasks_from_failure_streaks(
     config: dict[str, Any],
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     settings = worker_reassignment_settings(config)
     if not settings.get("enabled", True):
@@ -10926,6 +10994,7 @@ def maybe_reassign_tasks_from_failure_streaks(
                 task,
                 display_name_for(config, provider),
                 provider_report=provider_report,
+                activity_events=activity_events,
             )
             if (
                 recovery_decision is not None
@@ -12177,6 +12246,7 @@ def poll_worker_assignment_stage(
     task_map: dict[str, dict[str, Any]],
     active_worker_statuses: set[str],
     alive: bool,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     """Apply control completion, redelivery, ownership, and preemption rules."""
     if (
@@ -12277,7 +12347,13 @@ def poll_worker_assignment_stage(
     if (
         worker.get("queue_event_id")
         and worker.get("status") in active_worker_statuses
-        and higher_priority_ready_task_exists(config, worker, task_map, state)
+        and higher_priority_ready_task_exists(
+            config,
+            worker,
+            task_map,
+            state,
+            activity_events=activity_events,
+        )
     ):
         if alive and not terminate_worker_pid(worker.get("pid")):
             return {"changed": False, "stop": True}
@@ -12345,7 +12421,12 @@ def poll_worker_assignment_stage(
     return {"changed": False, "stop": False}
 
 
-def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
+def poll_workers(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> bool:
     changed = False
     approval_state = load_approval_state(config)
     task_map = task_index_from_status(config, load_status(config))
@@ -12410,6 +12491,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             task_map=task_map,
             active_worker_statuses=active_worker_statuses,
             alive=alive,
+            activity_events=activity_events,
         )
         changed = bool(assignment["changed"]) or changed
         if assignment["stop"]:
@@ -15061,6 +15143,8 @@ def higher_priority_ready_task_exists(
     worker: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     state: dict[str, Any] | None = None,
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
@@ -15102,6 +15186,7 @@ def higher_priority_ready_task_exists(
         config,
         effective_state,
         task_map,
+        activity_events=activity_events,
     )
     seen_event_keys = effective_state.get("seen_event_keys", {})
     if not isinstance(seen_event_keys, dict):
@@ -15151,6 +15236,7 @@ def higher_priority_ready_task_exists(
             effective_state,
             str(task_id),
             agent_name,
+            activity_events=activity_events,
         ):
             continue
         candidate_event = build_dispatch_event(
@@ -15402,6 +15488,7 @@ def dispatch_ready_tasks(
     provider_report: dict[str, Any] | None = None,
     agent_ids_override: list[str] | None = None,
     max_dispatches_override: int | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     settings = ready_dispatch_settings(config)
     if not settings.get("enabled", True):
@@ -15446,6 +15533,7 @@ def dispatch_ready_tasks(
         state,
         task_map,
         provider_report,
+        activity_events,
     )
     failure_loop_task_ids = failure_streak_threshold_task_ids(config, state)
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
@@ -15469,6 +15557,7 @@ def dispatch_ready_tasks(
             state,
             task_map,
             provider_report,
+            activity_events,
         )
         failure_loop_task_ids = failure_streak_threshold_task_ids(config, state)
 
@@ -15592,6 +15681,7 @@ def dispatch_ready_tasks(
                 target_agent,
                 task=task,
                 provider_report=provider_report,
+                activity_events=activity_events,
             ):
                 continue
 
@@ -15664,6 +15754,7 @@ def dispatch_ready_tasks(
                     task,
                     target_agent,
                     provider_report=provider_report,
+                    activity_events=activity_events,
                 ),
             )
             if event["key"] in pending_event_keys:
@@ -15727,6 +15818,7 @@ def dispatch_ready_tasks(
                 task,
                 target_agent,
                 provider_report=provider_report,
+                activity_events=activity_events,
             )
             recovery_dispatch = bool(
                 recovery_decision is not None
@@ -15896,6 +15988,7 @@ def dispatch_chair_review(
     state: dict[str, Any],
     planning_state: dict[str, Any] | None = None,
     provider_report: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     settings = chair_review_settings(config)
     if not settings.get("enabled", True):
@@ -15914,6 +16007,7 @@ def dispatch_chair_review(
         config,
         state,
         provider_report,
+        activity_events,
     )
     failure_loop_count = len(failure_loop_details)
     failure_loop_agents = {
@@ -15990,7 +16084,14 @@ def dispatch_chair_review(
         event_key = f"chair:{agent_id}:{reason}:{now}"
         if event_key in pending_event_keys:
             continue
-        queued_event_key = queue_chair_review_event(config, state, agent_name=agent_name, reason=reason, issued_at=now)
+        queued_event_key = queue_chair_review_event(
+            config,
+            state,
+            agent_name=agent_name,
+            reason=reason,
+            issued_at=now,
+            activity_events=activity_events,
+        )
         seen[queued_event_key] = now
         pending_event_keys.add(queued_event_key)
         rotation["current_index"] = (start_index + offset + 1) % len(candidates)
@@ -16217,6 +16318,10 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    recovery_activity_events = failure_streak_recovery_activity_snapshot(
+        config,
+        github_runtime_snapshot,
+    )
     provider_reports = probe_provider_reports(
         config,
         quiet=quiet,
@@ -16284,6 +16389,7 @@ def run_once(
                 verbose=verbose,
                 once=once,
                 provider_reports=provider_reports,
+                recovery_activity_events=recovery_activity_events,
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
                 prelock_changed=github_bus_changed,
@@ -16487,6 +16593,7 @@ def _run_once_locked(
     verbose: bool = False,
     once: bool = False,
     provider_reports: tuple[dict[str, Any], dict[str, Any]],
+    recovery_activity_events: list[dict[str, Any]],
     ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
     task_state_shadow_snapshot: dict[str, Any] | None = None,
     prelock_changed: bool = False,
@@ -16539,13 +16646,22 @@ def _run_once_locked(
                 loop_started_at=loop_started_at,
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
-        changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase(
+            "poll_workers",
+            poll_workers,
+            config,
+            state,
+            provider_report=provider_report,
+            activity_events=recovery_activity_events,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase(
             "maybe_reassign_tasks_from_failure_streaks",
             maybe_reassign_tasks_from_failure_streaks,
             config,
             state,
             provider_report,
+            recovery_activity_events,
             quiet=quiet,
         ) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
@@ -16571,15 +16687,62 @@ def _run_once_locked(
         elif discussion_planning_is_active(planning_state):
             changed = _safe_phase("dispatch_discussion_planning", dispatch_discussion_planning, config, state, planning_state, provider_report=provider_report, quiet=quiet) or changed
         else:
-            if chair_review_failure_loop_details(config, state, provider_report):
-                changed = _safe_phase("dispatch_chair_review", dispatch_chair_review, config, state, planning_state, provider_report=provider_report, quiet=quiet) or changed
-                changed = _safe_phase("dispatch_ready_tasks", dispatch_ready_tasks, config, state, provider_report=provider_report, quiet=quiet) or changed
+            if chair_review_failure_loop_details(
+                config,
+                state,
+                provider_report,
+                recovery_activity_events,
+            ):
+                changed = _safe_phase(
+                    "dispatch_chair_review",
+                    dispatch_chair_review,
+                    config,
+                    state,
+                    planning_state,
+                    provider_report=provider_report,
+                    activity_events=recovery_activity_events,
+                    quiet=quiet,
+                ) or changed
+                changed = _safe_phase(
+                    "dispatch_ready_tasks",
+                    dispatch_ready_tasks,
+                    config,
+                    state,
+                    provider_report=provider_report,
+                    activity_events=recovery_activity_events,
+                    quiet=quiet,
+                ) or changed
             else:
-                changed = _safe_phase("dispatch_ready_tasks", dispatch_ready_tasks, config, state, provider_report=provider_report, quiet=quiet) or changed
-                changed = _safe_phase("dispatch_chair_review", dispatch_chair_review, config, state, planning_state, provider_report=provider_report, quiet=quiet) or changed
+                changed = _safe_phase(
+                    "dispatch_ready_tasks",
+                    dispatch_ready_tasks,
+                    config,
+                    state,
+                    provider_report=provider_report,
+                    activity_events=recovery_activity_events,
+                    quiet=quiet,
+                ) or changed
+                changed = _safe_phase(
+                    "dispatch_chair_review",
+                    dispatch_chair_review,
+                    config,
+                    state,
+                    planning_state,
+                    provider_report=provider_report,
+                    activity_events=recovery_activity_events,
+                    quiet=quiet,
+                ) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = _safe_phase("process_queue", process_queue, config, state, provider_report, quiet=quiet) or changed
-        changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase(
+            "poll_workers",
+            poll_workers,
+            config,
+            state,
+            provider_report=provider_report,
+            activity_events=recovery_activity_events,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
         _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
@@ -16701,12 +16864,17 @@ def _claim_next_task_for_agent_locked(
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed
     if not discussion_planning_is_active(planning_state):
+        recovery_activity_events = failure_streak_recovery_activity_snapshot(
+            config,
+            state,
+        )
         changed = dispatch_ready_tasks(
             config,
             state,
             provider_report=provider_report,
             agent_ids_override=[agent_id],
             max_dispatches_override=1,
+            activity_events=recovery_activity_events,
         ) or changed
         changed = process_queue(config, state, provider_report) or changed
     supervisor_state = state.setdefault("supervisor", {})

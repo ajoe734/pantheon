@@ -7481,6 +7481,14 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.assertNotIn("probe_provider_reports", locked_cycle_source)
         self.assertIn("prefetch_task_state_shadow", run_once_source)
         self.assertNotIn("sync_task_state_shadow", locked_cycle_source)
+        self.assertIn(
+            "failure_streak_recovery_activity_snapshot",
+            run_once_source,
+        )
+        self.assertNotIn(
+            "failure_streak_recovery_activity_snapshot",
+            locked_cycle_source,
+        )
         self.assertIn("_fetch_worker_base_ref", run_once_source)
         self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
         self.assertIn(
@@ -14367,6 +14375,10 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
     def _dispatch(self, *, queue_side_effect: object | None = None) -> tuple[bool, mock.Mock]:
         queue_effect = queue_side_effect or self._fake_queue
         queue_mock = mock.Mock(side_effect=queue_effect)
+        activity_events = supervisor.failure_streak_recovery_activity_snapshot(
+            self.config,
+            self.state,
+        )
         with (
             mock.patch.object(supervisor, "load_status", return_value=self.status),
             mock.patch.object(
@@ -14377,8 +14389,80 @@ class FailureStreakRecoveryDispatchConsumptionV2Tests(unittest.TestCase):
             mock.patch.object(supervisor, "queue_delivery_event", queue_mock),
             mock.patch.object(supervisor, "utc_now", return_value="2026-08-02T01:06:30Z"),
         ):
-            changed = supervisor.dispatch_ready_tasks(self.config, self.state)
+            changed = supervisor.dispatch_ready_tasks(
+                self.config,
+                self.state,
+                activity_events=activity_events,
+            )
         return changed, queue_mock
+
+    def test_cycle_snapshot_reads_once_and_atomic_consume_revalidates_fresh(self) -> None:
+        queue_mock = mock.Mock(side_effect=self._fake_queue)
+        real_activity_read = supervisor._failure_recovery_activity_events
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_failure_recovery_activity_events",
+                wraps=real_activity_read,
+            ) as activity_reads,
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(
+                supervisor,
+                "load_event_queue",
+                side_effect=lambda _config: copy.deepcopy(self.queued_events),
+            ),
+            mock.patch.object(supervisor, "queue_delivery_event", queue_mock),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-02T01:06:30Z"),
+        ):
+            activity_events = supervisor.failure_streak_recovery_activity_snapshot(
+                self.config,
+                self.state,
+            )
+            self.assertEqual(activity_reads.call_count, 1)
+
+            self.assertEqual(
+                supervisor.failure_loop_task_agents_for_task_map(
+                    self.config,
+                    self.state,
+                    {self.task_id: self.task},
+                    activity_events=activity_events,
+                ),
+                set(),
+            )
+            self.assertEqual(
+                supervisor.chair_review_failure_loop_details(
+                    self.config,
+                    self.state,
+                    activity_events=activity_events,
+                ),
+                [],
+            )
+            with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+                self.assertFalse(
+                    supervisor.maybe_reassign_tasks_from_failure_streaks(
+                        self.config,
+                        self.state,
+                        activity_events=activity_events,
+                    )
+                )
+            persist.assert_not_called()
+            self.assertEqual(activity_reads.call_count, 1)
+
+            self.assertTrue(
+                supervisor.dispatch_ready_tasks(
+                    self.config,
+                    self.state,
+                    activity_events=activity_events,
+                )
+            )
+
+        queue_mock.assert_called_once()
+        self.assertEqual(
+            activity_reads.call_count,
+            2,
+            "one cycle snapshot plus one fresh atomic-consume revalidation",
+        )
 
     def test_observed_incident_consumes_once_and_reopens_normal_gates(self) -> None:
         decision = self._decision()

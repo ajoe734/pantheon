@@ -17,6 +17,10 @@ canonical task state, product controllers, or live services.
   stream and evaluate it against the latest failure generation, current task
   assignment/status, provider readiness and pauses, active workers, queue
   records, reservations, and active worktree leases.
+- Read that stream once before runtime admission when a threshold streak
+  exists, then thread the same cycle-scoped snapshot through poll,
+  reassignment, chair, failure-loop, and dispatch checks. Atomic consumption
+  deliberately takes one fresh exact snapshot under the runtime lock.
 - Suppress automatic reassignment, failure-loop task-agent blocking, and chair
   triage only while that complete decision is allowed. Threshold tasks remain
   excluded from helper claims, so the exception cannot transfer ownership.
@@ -47,8 +51,9 @@ canonical task state, product controllers, or live services.
 
 The new integration suite covers the captured Antigravity/Human-Ops incident,
 failure-loop/chair/reassignment gate release, concurrent double consumption,
-next-loop replay, queue failure, process-start audit binding, runtime-state
-crash recovery, a subsequent failure without progress, a newer second progress
+cycle-scoped activity read counts and fresh atomic revalidation, next-loop
+replay, queue failure, process-start audit binding, runtime-state crash
+recovery, a subsequent failure without progress, a newer second progress
 generation, provider/occupancy denial, audit shape/redaction, and unrelated
 streak preservation. The merged pure V2 suite continues to cover every deny
 row for identity, status, failure kind, progress binding, occupancy, prior
@@ -56,11 +61,11 @@ consumption, and provider pause/readiness.
 
 ## Verification
 
-- Integration + pure decision suite: 14 passed, 491 deselected, 45 subtests
+- Integration + pure decision suite: 15 passed, 491 deselected, 45 subtests
   passed.
-- Focused decision/dispatch/failure-loop suite: 20 passed, 485 deselected, 45
+- Focused decision/dispatch/failure-loop suite: 21 passed, 485 deselected, 45
   subtests passed.
-- Full supervisor regression: 505 passed, 147 subtests passed.
+- Full supervisor regression: 506 passed, 147 subtests passed.
 - Python compile check: passed.
 - `git diff --check`: passed.
 - Rejected PR #4437 heads `07316c73` and `77af55015`, plus rejected PR

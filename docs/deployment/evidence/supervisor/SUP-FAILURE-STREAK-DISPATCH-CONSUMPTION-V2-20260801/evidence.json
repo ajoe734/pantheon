@@ -21,7 +21,8 @@
   },
   "contract": {
     "progress_source": "Newest exact governed reviewer reopen from the locked activity stream, normalized against the latest failure generation.",
-    "admission": "The merged pure V2 decision is re-evaluated under runtime_state_lock immediately before the existing governed queue append.",
+    "admission": "Non-mutating checks share one activity snapshot read before runtime admission; the merged pure V2 decision is then re-evaluated from a fresh exact snapshot under runtime_state_lock immediately before the existing governed queue append.",
+    "activity_snapshot": "One cycle-scoped activity snapshot is threaded through poll, reassignment, chair, failure-loop, and dispatch checks; no candidate or phase rereads the growing stream.",
     "one_shot": "Runtime state and durable activity audit both retain the exact failure-recovery token; either source denies replay across loops or processes.",
     "queue_failure": "Queue rejection, exception, or missing exact readback leaves the token consumed with an explicit fail-closed outcome.",
     "dispatch_key": "The exact token extends the existing signed task dispatch key, permitting a newer governed generation without bypassing cooldown or queue identity.",
@@ -34,6 +35,7 @@
     "captured Antigravity/Human-Ops incident",
     "failure-loop, reassignment, and chair-triage gate release",
     "concurrent double consumption",
+    "one activity read per cycle plus one fresh atomic-consume read",
     "next-loop replay",
     "queue rejection",
     "worker start and crash-window audit reconstruction",
@@ -47,15 +49,15 @@
   "verification": [
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDispatchConsumptionV2 or FailureStreakRecoveryDecisionV2'",
-      "result": "14 passed, 491 deselected, 45 subtests passed"
+      "result": "15 passed, 491 deselected, 45 subtests passed"
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDispatchConsumptionV2 or FailureStreakRecoveryDecisionV2 or failure_loop'",
-      "result": "20 passed, 485 deselected, 45 subtests passed"
+      "result": "21 passed, 485 deselected, 45 subtests passed"
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-      "result": "505 passed, 147 subtests passed"
+      "result": "506 passed, 147 subtests passed"
     },
     {
       "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
