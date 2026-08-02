@@ -6,7 +6,7 @@ Owner: Codex
 
 Reviewer: Antigravity
 
-Base: `dev@c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65`
+Base: `dev@66621e3484a690921032d93e26ec2c9867708d2a`
 
 Branch: `task/LIFECYCLE-PROJ-STORE-001-V2`
 
@@ -27,6 +27,9 @@ rewriting its published history: that PR remains based on `941c15a` and contains
 an 86-character commit subject that fails the Commit trailers gate. The new
 branch restores only the four declared task artifact scopes onto current dev.
 Exact-head review must cover the final evidence commit on PR #4503.
+The branch then merged current `dev@66621e34` in
+`7e94409aa7e239042c300ef448991502d57f8aa3` without changing the seven declared
+task artifact paths.
 
 ## Exact verification commands
 
@@ -54,8 +57,10 @@ git diff --check
 
 Results:
 
-- focused real-PostgreSQL suite: `17 passed in 7.90s`;
-- adjacent Trade Journey regression: `136 passed in 34.20s`;
+- focused real-PostgreSQL suite after current-dev merge:
+  `17 passed in 6.77s`;
+- adjacent Trade Journey regression after current-dev merge:
+  `136 passed in 31.54s`;
 - dedicated migration-twice, DML-only, and EXPLAIN slice:
   `3 passed, 14 deselected in 1.48s`;
 - Python compilation and whitespace validation: exit 0;
