@@ -1,0 +1,439 @@
+{
+  "schema_version": "supervisor_failure_loop_chair_triage_recovery.v1",
+  "task_id": "OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "generated_at": "2026-08-02T12:56:00Z",
+  "decision": "preserve_remaining_pairs",
+  "summary": "One newly observed threshold pair was recovered through a canonical task reassignment and a fresh governed worker lease. The post-recovery authoritative baseline contains 13 pairs; none satisfies every stale missing-process guard because each retains unresolved PR/replacement execution or a non-recoverable terminal/auth condition.",
+  "scope": {
+    "owned_layer": "Task-scoped fleet triage and before/after evidence for current failure-loop pairs.",
+    "not_changing": [
+      "failure_loop_reassignment_threshold",
+      "provider or account configuration",
+      "supervisor source or runtime",
+      "canonical task JSON by direct file edit",
+      "worker processes or services",
+      "open PR implementation content"
+    ],
+    "record_files": [
+      "docs/deployment/evidence/supervisor/OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802/evidence.json",
+      "docs/deployment/evidence/supervisor/OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802/evidence.md"
+    ]
+  },
+  "authoritative_sources": {
+    "status_root": "/home/lupin/pantheon",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+    "source_head": "0404ca01ebb6803df6a4b927bacada5739f61de1",
+    "source_ref": "origin/dev",
+    "live_config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "live_supervisor": {
+      "pid": 3538768,
+      "started_at": "2026-08-01T15:47:45Z",
+      "command": "/usr/bin/python3.12 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose"
+    },
+    "failure_loop_reassignment_threshold": 2,
+    "runtime_state_version": 2
+  },
+  "merged_behavior_deduplication": [
+    {
+      "task_id": "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+      "pr": 4445,
+      "merge_commit": "2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+      "effect": "New failure records bind immutable generations."
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "pr": 4483,
+      "merge_commit": "5cb03dd5ebe3ce13435c848175c5dab5450e9ea5",
+      "effect": "Only governed reviewer progress can qualify a recovery generation."
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "pr": 4489,
+      "merge_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
+      "effect": "The pure decision is fail-closed across task identity, progress, occupancy, provider readiness, and one-shot consumption."
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "pr": 4491,
+      "merge_commit": "a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4",
+      "effect": "A qualifying generation is consumed atomically before governed queue append."
+    }
+  ],
+  "runtime_source_gap": {
+    "observed": true,
+    "detail": "The running command root at 941c15a3 predates the four merged failure-recovery changes. The origin/dev source evaluator therefore classifies each legacy runtime record as invalid_failure_record and refuses recovery; this evidence does not promote or restart the runtime.",
+    "safety_effect": "No legacy streak is treated as an authorized V3 generation and no direct runtime clear is attempted."
+  },
+  "snapshots": {
+    "pre_recovery": {
+      "captured_at": "2026-08-02T12:48:44Z",
+      "runtime_last_scan_at": "2026-08-02T12:48:29Z",
+      "pair_count": 14,
+      "additional_pair": {
+        "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+        "agent": "Codex",
+        "status": "in_progress",
+        "owner": "Codex",
+        "reviewer": "Codex2",
+        "count": 2,
+        "last_failure_kind": "generic_exit",
+        "last_failure_at": "2026-08-02T12:44:41Z"
+      }
+    },
+    "post_recovery": {
+      "captured_at": "2026-08-02T12:52:52Z",
+      "runtime_last_scan_at": "2026-08-02T12:52:11Z",
+      "pair_count": 13,
+      "active_queue_records_for_pairs": 0,
+      "active_worktrees_for_pairs": 0,
+      "archive_duplicates": 0
+    }
+  },
+  "canonical_recovery_event": {
+    "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+    "mutation_actor": "Human/Ops",
+    "mutation_kind": "governed_assign_then_supervisor_dispatch",
+    "assigned_at": "2026-08-02T12:49:24Z",
+    "before": {
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "failure_pair": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802:codex",
+      "old_worker_run_id": "codex-20260802T115324Z-ea48a9c9",
+      "old_worker_status": "retried",
+      "old_worker_pid": 1514648,
+      "old_worker_live_pid_start_ticks": null
+    },
+    "after": {
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "queue_event_id": "evt-20260802T124929Z-be244703",
+      "worker_run_id": "codex-20260802T124947Z-17a280cd",
+      "agent_id": "codex2_3",
+      "pid": 1828128,
+      "pid_start_ticks": 11203893,
+      "child_pid": 1828188,
+      "child_pid_start_ticks": 11203924,
+      "lease_acquired_at": "2026-08-02T12:49:47Z",
+      "workspace_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "workspace_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-governance-handoff-active-lease-guard-operator-v8-20260802"
+    },
+    "readback": "At 12:49:58Z the canonical row was in_progress with owner Codex2 and reviewer Codex; the original :codex pair no longer matched the assigned owner and therefore left the chair-threshold set.",
+    "process_safety": "The old recorded worker was already retried with no live PID generation. The new worker was not terminated or preempted by this task."
+  },
+  "pairs": [
+    {
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "agent": "Antigravity",
+      "role": "owner",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": ["L12-SIGNOFF-001"],
+      "dependency_truth": "L12-SIGNOFF-001 is archived done.",
+      "failure": {"count": 2, "kind": "terminal", "last_failure_at": "2026-08-01T14:26:33Z", "reason": "Error: timeout waiting for response"},
+      "latest_worker": {"run_id": "antigravity1-2-20260801T141906Z-fbff3de3", "status": "retried", "pid": 2931520, "live_pid_start_ticks": null, "queue_event_id": "evt-20260801T141900Z-eaee2d73", "lease_acquired_at": "2026-08-01T14:19:06Z", "lease_expires_at": "2026-08-01T14:49:06Z", "workspace_branch": "task/L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801", "workspace_path_exists": false},
+      "queue_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4450, "state": "OPEN", "head": "81b7922f8c93ba698819ffafa852141d88402d5d", "merge_state": "UNKNOWN", "checks": "Commit trailers failed; smoke skipped", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_terminal_and_auth_paused",
+      "reason": "This is not missing_process. Antigravity remains dispatch-paused with requires_live_auth_probe and quota_reached evidence, and PR #4450 has a failing required trailer check."
+    },
+    {
+      "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "agent": "Codex",
+      "role": "owner",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": ["OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"],
+      "dependency_truth": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 is archived done.",
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-07-29T09:11:34Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4303, "state": "OPEN", "head": "e8c3f69318fbd8ab66595884c2308ccdafad26f6", "merge_state": "BEHIND", "checks": "All visible branch checks succeeded", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_unresolved_implementation",
+      "reason": "PR #4303 is open/behind and the canonical row records an unresolved mutable-comment replay bypass. A missing process is stale, but the implementation is not resolved."
+    },
+    {
+      "task_id": "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+      "agent": "Codex",
+      "role": "owner",
+      "status": "in_progress",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-07-29T10:56:38Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_lease": {"path": "/tmp/manual-sup-l12-fleet-runtime-fix-20260729-0309", "path_exists": false, "branch": "task/SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729", "last_queue_event_id": "evt-20260729T105112Z-1f2ce7f2", "last_used_at": "2026-07-29T10:52:02Z", "active": false},
+      "archive_duplicate": false,
+      "pr_truth": {"open_pr": 4363, "open_head": "94695276e2d174505a107ccaa4346efb1692575e", "open_merge_state": "BEHIND", "open_checks": "All visible branch checks succeeded", "prior_merged_pr": 4333, "prior_merge_commit": "5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_unresolved_closeout_refresh",
+      "reason": "The prior report PR merged, but PR #4363 remains open/behind and the canonical next action requires a refreshed exact-head closeout."
+    },
+    {
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "agent": "Codex2",
+      "role": "owner",
+      "status": "review_approved",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": ["OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"],
+      "dependency_truth": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 is archived done.",
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-08-01T15:52:58Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": {"run_id": "codex-20260801T153216Z-e40ca2d3", "status": "retried", "pid": 3430460, "live_pid_start_ticks": null, "queue_event_id": "evt-20260801T153151Z-b586efec", "lease_acquired_at": "2026-08-01T15:32:16Z", "lease_expires_at": "2026-08-01T15:48:56Z", "workspace_branch": "task/L12-FLEET-STATUS-SYNC-001", "workspace_path_exists": false, "commit": "91b2937119bb2597d59ef995a8882e3f26407a41"},
+      "queue_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"open_pr": 4297, "open_head": "23a7d3244ad89d093a006ff6ace86f13053d794c", "open_merge_state": "BEHIND", "open_checks": "All visible branch checks succeeded", "implementation_pr": 4282, "implementation_merge_commit": "a0020c5ac50e510467a5e80c412c7703245cf4dd", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_open_closeout_pr",
+      "reason": "Implementation is merged and review evidence is bound, but closeout PR #4297 is still open/behind. Owner done is not legal before that PR merges."
+    },
+    {
+      "task_id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+      "agent": "Codex2",
+      "role": "owner",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "failure": {"count": 4, "kind": "terminal", "last_failure_at": "2026-08-01T15:28:05Z", "reason": "fatal: Invalid symmetric difference expression d2a9a6079789b6da1f15978ff7310c22a129f379...91b2937119bb2597d59ef995a8882e3f26407a41"},
+      "latest_worker": {"run_id": "codex-20260801T151029Z-b5825f8d", "status": "retried", "pid": 3300244, "live_pid_start_ticks": null, "queue_event_id": "evt-20260801T150950Z-33c379a9", "lease_acquired_at": "2026-08-01T15:10:29Z", "lease_expires_at": "2026-08-01T15:28:14Z", "workspace_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728", "workspace_path_exists": false, "commit": "41c1321652234bc89ffea5f85d17402548a9ea73"},
+      "queue_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4313, "state": "OPEN", "head": "0adaada2a29d8689e9564c70380317e8f29b6724", "merge_state": "UNKNOWN", "checks": "All visible branch checks succeeded", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_terminal_open_pr",
+      "reason": "This is a terminal git-range failure, not missing_process, and PR #4313 remains open."
+    },
+    {
+      "task_id": "LIFECYCLE-PROJ-PLAN-COMPOSED-HEAD-REVIEW-20260801",
+      "agent": "Codex2",
+      "role": "reviewer",
+      "status": "review",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-08-01T16:46:21Z", "reason": "Worker exited before the task reached a terminal status."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4466, "state": "OPEN", "head": "93b3d61cb07b4eb7db71f5a514dec04352f489d6", "merge_state": "BEHIND", "checks": "All visible branch checks succeeded", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_identity_and_exact_head_blocker",
+      "reason": "PR #4466 is open/behind and the row itself says Codex/Codex2 are ineligible for this specific independent review. No healthy independent reviewer is currently dispatchable: Claude/Claude2 auth is not ready and Antigravity is paused."
+    },
+    {
+      "task_id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+      "agent": "Codex2",
+      "role": "reviewer",
+      "status": "review",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-07-30T17:04:33Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4389, "state": "OPEN", "head": "17ffe3abb3df1dd178dd5f4d3ae3acd9823ff39a", "merge_state": "DIRTY", "checks": "Visible branch checks succeeded; canonical review context unresolved", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_merge_conflict",
+      "reason": "PR #4389 is dirty/conflicting. Re-dispatching review cannot substitute for owner conflict resolution."
+    },
+    {
+      "task_id": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+      "agent": "Codex2",
+      "role": "reviewer",
+      "status": "review",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-07-30T16:14:03Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4376, "state": "OPEN", "head": "38b9a7c93d30c1c56f95536ea0da4471e6778add", "merge_state": "BEHIND", "checks": "Commit trailers failed; smoke skipped", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_failed_checks",
+      "reason": "PR #4376 is behind and its required Commit trailers check fails. Reviewer dispatch is not a check repair."
+    },
+    {
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "agent": "Codex2",
+      "role": "owner",
+      "status": "review_approved",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-08-01T16:02:45Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"open_pr": 4384, "open_head": "98f4756f6427dbcf0d59c2ea3778c4beb7d3dd2b", "open_merge_state": "BEHIND", "open_checks": "All visible branch checks succeeded", "prior_merged_pr": 4379, "prior_merge_commit": "2c07f509bd74c022acd742bad8bbccfaa4053cd2", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_open_closeout_pr",
+      "reason": "The implementation packet merged, but the final reconcile PR #4384 remains open/behind; owner closeout cannot claim merged delivery."
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "agent": "Codex2",
+      "role": "owner",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "failure": {"count": 4, "kind": "missing_process", "last_failure_at": "2026-08-01T15:28:05Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": {"run_id": "codex-20260801T151040Z-5b9dc80d", "status": "retried", "pid": 3303016, "live_pid_start_ticks": null, "queue_event_id": "evt-20260801T150959Z-5d477549", "lease_acquired_at": "2026-08-01T15:10:40Z", "lease_expires_at": "2026-08-01T15:28:14Z", "workspace_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731", "workspace_path_exists": false, "commit": "76bbb04b569331a81916330d1cf713d068527c89"},
+      "queue_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"direct_pr": null, "direct_remote_branch": false, "replacement_task": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731", "replacement_pr": 4468, "replacement_state": "OPEN", "replacement_merge_state": "BEHIND", "replacement_checks": "Commit trailers failed; smoke skipped"},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_unresolved_replacement",
+      "reason": "The direct lane is stale, but its explicitly named V2 replacement is still open and failing checks. Deduplication treats that replacement PR as unresolved execution for the same closeout scope, so no supersede/clear is safe yet."
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "agent": "Codex2",
+      "role": "reviewer",
+      "status": "review",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "missing_process", "last_failure_at": "2026-07-31T13:02:01Z", "reason": "Worker process missing during supervisor boot reconciliation."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4468, "state": "OPEN", "head": "7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e", "merge_state": "BEHIND", "checks": "Commit trailers failed; smoke skipped", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_failed_checks",
+      "reason": "Replacement PR #4468 remains behind with a failing required trailer check."
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "agent": "Codex2",
+      "role": "owner",
+      "status": "review_approved",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "failure": {"count": 4, "kind": "missing_process", "last_failure_at": "2026-07-31T12:50:49Z", "reason": "Worker exited before the task reached a terminal status."},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4396, "state": "OPEN", "head": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac", "merge_state": "BEHIND", "checks": "All visible branch checks succeeded", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_open_reviewbus_pr",
+      "reason": "ReviewBus PR #4396 remains open/behind. The approved row is not a merged closeout."
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+      "agent": "Codex2",
+      "role": "owner",
+      "status": "review_approved",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "failure": {"count": 2, "kind": "terminal", "last_failure_at": "2026-08-01T16:01:04Z", "reason": "fatal: bad object d3178e6dd08f6945246d54675d379a63da6b00ea"},
+      "latest_worker": null,
+      "queue_active": false,
+      "worktree_active": false,
+      "archive_duplicate": false,
+      "pr_truth": {"pr": 4386, "state": "OPEN", "head": "2d5f692e960a22eef7c4b6d63002996a68468079", "merge_state": "DIRTY", "checks": "All visible branch checks succeeded", "remote_branch": true},
+      "recovery_decision": {"allowed": false, "reason_code": "invalid_failure_record"},
+      "classification": "preserve_terminal_merge_conflict",
+      "reason": "This is a terminal bad-object failure, not missing_process, and PR #4386 is still dirty/conflicting."
+    }
+  ],
+  "capacity_readback": {
+    "captured_at": "2026-08-02T12:54:47Z",
+    "global_execution_workers": 4,
+    "global_pending_only": 0,
+    "active_tasks": [
+      "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802",
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "LIFECYCLE-PROJ-STORE-001"
+    ],
+    "codex": {
+      "auth_ready": true,
+      "last_auth_probe_at": "2026-08-02T05:20:57Z",
+      "quota_group": "codex1",
+      "configured_capacity": 4,
+      "active": 2,
+      "available": 2,
+      "direct_candidates": 4,
+      "direct_dispatchable": 0,
+      "helper_dispatchable": 0,
+      "reason_fewer_than_four": "Two candidates are already active. OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 and SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729 are excluded by task-agent failure_loop plus chair_triage and both retain unresolved open PR execution."
+    },
+    "codex2": {
+      "auth_ready": true,
+      "last_auth_probe_at": "2026-08-02T12:38:30Z",
+      "quota_group": "codex2",
+      "configured_capacity": 4,
+      "active": 2,
+      "available": 2,
+      "direct_candidates": 12,
+      "direct_dispatchable": 0,
+      "helper_dispatchable": 0,
+      "reason_fewer_than_four": "Two candidates are already active. The other ten direct candidates are excluded by their task-agent failure_loop plus chair_triage. Helper claims are disabled for threshold task IDs and no unrelated task passes the helper plan."
+    },
+    "other_lane_constraints": {
+      "Claude": "auth_not_ready",
+      "Claude2": "auth_not_ready",
+      "Antigravity": "dispatch paused; requires live auth probe; quota_reached",
+      "effect": "There is no healthy independent non-Codex fallback for the PR-backed reviewer conflicts in this snapshot."
+    }
+  },
+  "process_protection": {
+    "signals_sent": 0,
+    "workers_preempted_by_this_task": 0,
+    "protected_observations": [
+      {"task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802", "run_id": "codex-20260802T124509Z-3d014931", "pid": 1800620, "pid_start_ticks": 11176143},
+      {"task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802", "run_id": "codex-20260802T124947Z-17a280cd", "pid": 1828128, "pid_start_ticks": 11203893},
+      {"task_id": "LIFECYCLE-PROJ-STORE-001", "run_id": "codex-20260802T125111Z-17cb1353", "pid": 1837599, "pid_start_ticks": 11212318}
+    ],
+    "lifecycle_reviewer_note": "The Codex2 reviewer emitted a governed reopen at 12:49:56Z before its process disappeared and was superseded by the supervisor at 12:50:54Z. This task did not terminate or preempt that reviewer; the new Codex owner worker started only after the review rejection returned the row to in_progress."
+  },
+  "mutations": {
+    "direct_runtime_state_edits": 0,
+    "failure_streak_clears": 0,
+    "threshold_changes": 0,
+    "affected_task_status_mutations_by_this_task": 0,
+    "own_task_status_updates": [
+      "Governed progress at 2026-08-02T12:55Z recorded the 13-pair classification and no-clear decision."
+    ],
+    "reason": "No remaining pair passed all stale missing-process guards. Mutation would either erase an unresolved implementation/review failure or bypass the merged V3 fail-closed decision contract."
+  },
+  "rollback": {
+    "runtime_rollback": "None required; this task did not mutate runtime state, threshold, provider state, queue, or processes.",
+    "canonical_recovery_rollback": "If the Human/Ops reassignment is later proven incorrect, reopen or reassign only SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802 through the governed status command; do not restore JSON snapshots.",
+    "evidence_rollback": "Revert this task evidence commit."
+  },
+  "validation": {
+    "status": "pending",
+    "commands": []
+  },
+  "review": {
+    "status": "review_pending",
+    "reviewer": "Codex",
+    "reviewed_head": null,
+    "decision": null,
+    "notes": []
+  }
+}
