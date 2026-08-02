@@ -16711,6 +16711,40 @@ class ProviderPauseRecoveryProbeTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
 
+    def test_fresh_full_refresh_result_avoids_a_duplicate_targeted_probe(self) -> None:
+        state = self._gated_pause()
+        live_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(live_success)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
     def test_failed_live_recovery_probe_is_interval_bounded(self) -> None:
         state = self._gated_pause()
         live_failure = {

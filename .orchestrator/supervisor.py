@@ -14787,6 +14787,17 @@ def probe_provider_reports(
         config,
         runtime_snapshot or {},
     ):
+        current = _provider_report_entry(report, provider_key)
+        not_before = provider_pause_probe_not_before(
+            config,
+            runtime_snapshot or {},
+            provider_key,
+        )
+        if provider_report_has_fresh_live_probe(current, not_before=not_before):
+            # A normal capability refresh already produced an authoritative
+            # result for this gate in the same recovery window. Reconcile it
+            # under the runtime lock instead of spending a duplicate probe.
+            continue
         probe = _safe_phase(
             f"probe_provider_recovery:{provider_key}",
             probe_provider_auth,
