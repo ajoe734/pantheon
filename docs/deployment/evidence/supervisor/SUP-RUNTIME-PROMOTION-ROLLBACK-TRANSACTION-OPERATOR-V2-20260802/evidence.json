@@ -5,14 +5,15 @@
   "owner": "Codex",
   "reviewer": "Human/Ops",
   "review_decision": "review_pending",
-  "recorded_at": "2026-08-02T09:31:07Z",
+  "recorded_at": "2026-08-02T09:45:55Z",
   "repository": "ajoe734/pantheon",
   "branch": "task/SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802",
   "base_branch": "dev",
   "task_branch_base": "c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65",
   "pull_request": 4500,
   "implementation_commits": [
-    "74d97f9ecf78e23683b0b2f4c6d48fde53027cfe"
+    "74d97f9ecf78e23683b0b2f4c6d48fde53027cfe",
+    "31a94665d9b3e124fa5b5891dc111815903cfa79"
   ],
   "dependency": {
     "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
@@ -26,7 +27,9 @@
     "pull_request": 4500,
     "head_before_pr_binding": "b06eb664c538794648f7a8fdfed4865944f03e01",
     "previous_rejected_head": "770dbdafcb3b9ffa966046fe19ce357535acac5c",
-    "repair_reason": "three task commit subjects exceeded 72 characters",
+    "latest_rejected_head": "aa12fb23d9cea8ea7baccc31fb9f08779f36837e",
+    "repair_reason": "enforce post-launch monotonic loop markers and prohibit rollback while an unknown spawned candidate may still be live",
+    "remediation_anchor_commit": "31a94665d9b3e124fa5b5891dc111815903cfa79",
     "history_rebuilt": true,
     "required": "REVIEW_PR=4500 and REVIEW_HEAD_SHA=<final exact head containing this PR binding>"
   },
@@ -36,6 +39,8 @@
       "same-owner-reentrant runtime-admission lock ownership",
       "exact PID/starttime termination, governed candidate launch, and captured incumbent relaunch",
       "three-distinct-loop candidate and rollback postchecks",
+      "independent launch-return boundaries and strictly increasing loop markers",
+      "parent-owned spawned-child containment with fail-closed unknown-child evidence",
       "projection, worker/queue/lease, provider, config, root, commit, and tree rollback proof",
       "atomic durable promoted, rolled_back, aborted, and rollback_failed evidence",
       "safe-by-default discover-only wrapper with explicit --promote activation",
@@ -52,6 +57,8 @@
   "transaction": {
     "required_fresh_candidate_loops": 3,
     "required_fresh_rollback_loops": 3,
+    "loop_marker_policy": "strictly_after_launch_boundary_and_strictly_increasing",
+    "unknown_spawned_child_policy": "prove_absent_or_rollback_failed_without_competing_launch",
     "candidate_identity": [
       "pid",
       "starttime_ticks",
@@ -92,16 +99,26 @@
     "rollback_provider_drift",
     "pre_term_snapshot_drift",
     "same_owner_lock_reentry",
-    "pid_reuse_before_termination"
+    "pid_reuse_before_termination",
+    "candidate_stale_loop_marker",
+    "candidate_equal_boundary_loop_marker",
+    "candidate_regressing_loop_marker",
+    "candidate_out_of_order_loop_marker",
+    "rollback_stale_loop_marker",
+    "rollback_equal_boundary_loop_marker",
+    "rollback_regressing_loop_marker",
+    "rollback_out_of_order_loop_marker",
+    "popen_success_generation_capture_failure_contained",
+    "popen_success_generation_capture_failure_still_live"
   ],
   "verification": [
     {
       "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
-      "result": "188 passed"
+      "result": "199 passed"
     },
     {
       "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py scripts/test_sync_dev_root.py scripts/test_status_command_runtime_pin.py .orchestrator/test_supervisor_watchdog.py",
-      "result": "264 passed, 14 subtests passed"
+      "result": "275 passed, 14 subtests passed"
     },
     {
       "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH .venv-pantheon/bin/python3 .orchestrator/test_supervisor.py -k worktree",
@@ -127,7 +144,7 @@
   "artifacts": [
     {
       "path": "scripts/promote_supervisor_runtime.py",
-      "sha256": "cdb37e0230ae01391452f285cdb45079f3ca976f6b21026b64059f5fac1005ed"
+      "sha256": "5e8fa48213359bd386479139454b9e4e5601e0ae5a4240922f0a63b6292daf4f"
     },
     {
       "path": "scripts/promote-supervisor-runtime.sh",
@@ -135,11 +152,11 @@
     },
     {
       "path": "scripts/test_promote_supervisor_runtime.py",
-      "sha256": "d1cfb1f5e87f05ab73de371911cb91c9f3c11ac3562c9ea2d7222c290d31a171"
+      "sha256": "3b5b3f1200f2b3076ee53d6c76626398d9704adf86cd880b91cb50313cb34745"
     }
   ],
   "live_claims": [],
   "rollout": "source merge after exact-head Human/Ops approval; no live runtime promotion",
   "rollback": "revert the eventual merge commit for this exact task",
-  "next_gate": "Push this PR-binding commit, pass PR #4500 checks, and obtain independent Human/Ops review bound to its final exact head before merge."
+  "next_gate": "Commit and push the review-remediation follow-up, pass PR #4500 checks, and obtain independent Human/Ops review bound to its final exact head before merge."
 }

@@ -4848,10 +4848,12 @@ class PromotionTransaction:
         self.candidate_generation: ProcessGeneration | None = None
         self.candidate_pid: int | None = None
         self.candidate_child_absence_proven: bool | None = None
+        self.candidate_launch_cleanup_error: str | None = None
         self.candidate_launch_boundary_at: datetime | None = None
         self.rollback_generation: ProcessGeneration | None = None
         self.rollback_pid: int | None = None
         self.rollback_child_absence_proven: bool | None = None
+        self.rollback_launch_cleanup_error: str | None = None
         self.rollback_launch_boundary_at: datetime | None = None
         self.candidate_observations: list[RuntimeObservation] = []
         self.rollback_observations: list[RuntimeObservation] = []
@@ -4893,6 +4895,12 @@ class PromotionTransaction:
                     PromotionState.ROLLBACK_FAILED,
                     error=self.rollback_failure,
                 )
+
+    def _capture_launch_boundary(self) -> datetime:
+        boundary = self.backend.utcnow()
+        if boundary.tzinfo is None or boundary.utcoffset() is None:
+            raise ValueError("Backend launch boundary must be timezone-aware")
+        return boundary.astimezone(timezone.utc)
 
     def _wait_for_fresh_loops(
         self,
@@ -5019,12 +5027,11 @@ class PromotionTransaction:
                 self.rollback_pid = exc.pid
                 self.rollback_generation = exc.generation
                 self.rollback_child_absence_proven = exc.child_absence_proven
+                self.rollback_launch_cleanup_error = exc.cleanup_error
                 raise
             if self.rollback_generation.pid == plan.incumbent_process.generation.pid:
                 raise ValueError("Rollback launch reused the incumbent PID")
-            self.rollback_launch_boundary_at = self.backend.utcnow().astimezone(
-                timezone.utc
-            )
+            self.rollback_launch_boundary_at = self._capture_launch_boundary()
             self._transition(
                 PromotionState.ROLLBACK_LAUNCHED,
                 pid=self.rollback_generation.pid,
@@ -5069,6 +5076,7 @@ class PromotionTransaction:
             "rollback_failure": self.rollback_failure,
             "candidate_pid": self.candidate_pid,
             "candidate_child_absence_proven": self.candidate_child_absence_proven,
+            "candidate_launch_cleanup_error": self.candidate_launch_cleanup_error,
             "candidate_launch_boundary_at": (
                 self.candidate_launch_boundary_at.isoformat().replace("+00:00", "Z")
                 if self.candidate_launch_boundary_at is not None
@@ -5076,6 +5084,7 @@ class PromotionTransaction:
             ),
             "rollback_pid": self.rollback_pid,
             "rollback_child_absence_proven": self.rollback_child_absence_proven,
+            "rollback_launch_cleanup_error": self.rollback_launch_cleanup_error,
             "rollback_launch_boundary_at": (
                 self.rollback_launch_boundary_at.isoformat().replace("+00:00", "Z")
                 if self.rollback_launch_boundary_at is not None
@@ -5163,10 +5172,9 @@ class PromotionTransaction:
                 self.candidate_pid = exc.pid
                 self.candidate_generation = exc.generation
                 self.candidate_child_absence_proven = exc.child_absence_proven
+                self.candidate_launch_cleanup_error = exc.cleanup_error
                 raise
-            self.candidate_launch_boundary_at = self.backend.utcnow().astimezone(
-                timezone.utc
-            )
+            self.candidate_launch_boundary_at = self._capture_launch_boundary()
             self._transition(
                 PromotionState.CANDIDATE_LAUNCHED,
                 pid=self.candidate_generation.pid,

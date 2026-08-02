@@ -3900,6 +3900,83 @@ def test_unknown_live_candidate_blocks_rollback_launch_and_is_durable(
     assert persisted["candidate_child_absence_proven"] is False
 
 
+def _exercise_os_launch_generation_failure(
+    tmp_path: Path,
+    process: Mock,
+) -> ProcessLaunchError:
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    contract = Mock(spec=GovernedSupervisorLaunchContract)
+    contract.argv = (str(Path(sys.executable).resolve()), "supervisor.py")
+    contract.cwd = tmp_path
+    contract.status_root = tmp_path / "status"
+    contract.required_environment = ()
+    contract.stdout_log_path = tmp_path / "supervisor.log"
+    process.pid = 4321
+    reader = Mock(spec=ProcfsRuntimeProcessReader)
+    reader.read_generation.side_effect = ValueError("injected procfs failure")
+    backend = promotion.OSPromotionBackend(reader=reader)
+
+    with patch(
+        "promote_supervisor_runtime.build_governed_supervisor_launch_contract",
+        return_value=contract,
+    ), patch(
+        "promote_supervisor_runtime.build_scrubbed_launch_environment",
+        return_value={},
+    ), patch(
+        "promote_supervisor_runtime._validate_governed_launch_environment",
+    ), patch(
+        "promote_supervisor_runtime.subprocess.Popen",
+        return_value=process,
+    ):
+        with pytest.raises(ProcessLaunchError) as captured:
+            backend.launch(
+                identity,
+                contract,
+                require_current_dev_identity=True,
+            )
+    return captured.value
+
+
+def test_os_launch_contains_and_reaps_child_when_generation_capture_fails(
+    tmp_path: Path,
+) -> None:
+    process = Mock()
+    process.poll.return_value = None
+    process.wait.return_value = 0
+
+    error = _exercise_os_launch_generation_failure(tmp_path, process)
+
+    assert error.pid == 4321
+    assert error.generation is None
+    assert error.child_absence_proven is True
+    assert "terminated and reaped" in str(error)
+    process.terminate.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=5.0)
+    process.kill.assert_not_called()
+
+
+def test_os_launch_reports_unknown_live_child_when_containment_cannot_prove_absence(
+    tmp_path: Path,
+) -> None:
+    process = Mock()
+    process.poll.return_value = None
+    process.terminate.side_effect = RuntimeError("terminate unavailable")
+    process.kill.side_effect = RuntimeError("kill unavailable")
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired("supervisor", 5.0),
+        subprocess.TimeoutExpired("supervisor", 5.0),
+    ]
+
+    error = _exercise_os_launch_generation_failure(tmp_path, process)
+
+    assert error.pid == 4321
+    assert error.generation is None
+    assert error.child_absence_proven is False
+    assert "containment could not be proven" in str(error)
+    assert "terminate:RuntimeError:terminate unavailable" in error.cleanup_error
+    assert "kill:RuntimeError:kill unavailable" in error.cleanup_error
+
+
 def test_snapshot_drift_under_admission_lock_aborts_without_termination(
     tmp_path: Path,
 ) -> None:
