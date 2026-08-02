@@ -4848,6 +4848,71 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 ("Codex", "Codex2"),
             )
 
+    def test_normalize_rebinds_all_23_stranded_antigravity_tasks(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Antigravity": ["Codex2"]},
+                "reviewer_fallbacks": {
+                    "Antigravity": ["Claude", "Codex"],
+                    "Codex2": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        report = {
+            "providers": {
+                "antigravity": {"auth_ready": False},
+                "claude": {"auth_ready": False},
+                "codex2": {"auth_ready": True},
+                "codex": {"auth_ready": True},
+            }
+        }
+        tasks = [
+            {
+                "id": f"STRANDED-ANTIGRAVITY-{index:02d}",
+                "status": "todo",
+                "owner": "Antigravity",
+                "reviewer": "Codex2",
+            }
+            for index in range(1, 24)
+        ]
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = [
+                supervisor.normalize_mainline_task_assignment(config, task, state=state)
+                for task in tasks
+            ]
+
+        self.assertEqual(changed, [True] * 23)
+        self.assertEqual(persist.call_count, 23)
+        for call in persist.call_args_list:
+            self.assertEqual(
+                (call.kwargs["new_owner"], call.kwargs["new_reviewer"]),
+                ("Codex2", "Codex"),
+            )
+            self.assertEqual(call.kwargs["expected_owner"], "Antigravity")
+            self.assertEqual(call.kwargs["expected_reviewer"], "Codex2")
+
     def test_pair_planner_traversal_is_deterministic_and_cycle_safe(self) -> None:
         config = {
             "agents": {
