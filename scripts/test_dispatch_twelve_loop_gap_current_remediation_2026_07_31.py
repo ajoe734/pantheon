@@ -565,6 +565,66 @@ def test_current_dry_run_fails_closed_without_provisioned_lock(
     assert stat_identity(authority["event_log"]) == before_journal_stat
 
 
+@pytest.mark.parametrize("missing", ["parent", "event"])
+def test_current_dry_run_fails_closed_without_journal_authority(
+    missing: str,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "ai-status.json").write_text(
+        json.dumps(active_state()),
+        encoding="utf-8",
+    )
+    event_log = (
+        tmp_path / "absent-parent" / "task-state-events.jsonl"
+        if missing == "parent"
+        else tmp_path / "task-state-events.jsonl"
+    )
+    live_config = tmp_path / "live-config.json"
+    live_config.write_text(
+        json.dumps(
+            {
+                "paths": {"status_file": str(tmp_path / "ai-status.json")},
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
+    before = directory_identity(tmp_path)
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(SCRIPT),
+            "--dry-run",
+            "--catalog",
+            str(CATALOG),
+            "--live-config",
+            str(live_config),
+            "--readiness-config",
+            str(config_path),
+            "--runtime-state",
+            str(runtime_path),
+            "--provider-capabilities",
+            str(capabilities_path),
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "journal is missing or empty" in result.stderr
+    assert not event_log.exists()
+    if missing == "parent":
+        assert not event_log.parent.exists()
+    assert directory_identity(tmp_path) == before
+
+
 def test_authority_uses_one_validated_snapshot_generation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
