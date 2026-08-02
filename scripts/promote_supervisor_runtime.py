@@ -18,7 +18,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable, Protocol
 from urllib.parse import urlsplit
 
 from supervisor_runtime_health import (
@@ -41,6 +41,15 @@ LIVE_SUPERVISOR_CONFIG_PATH = Path(
 TRUSTED_GITHUB_OWNER = "ajoe734"
 TRUSTED_GITHUB_REPOSITORY = "pantheon"
 TRUSTED_ORIGIN_DEV_URL = "https://github.com/ajoe734/pantheon.git"
+PROCFS_ROOT = Path("/proc")
+SUPERVISOR_ENTRYPOINT_RELATIVE = PurePosixPath(
+    ".orchestrator/supervisor.py"
+)
+PROCESS_ENVIRONMENT_ALLOWLIST = (
+    "PANTHEON_COMMAND_ROOT",
+    "PANTHEON_COMMAND_RUNTIME_SHA",
+    "PANTHEON_STATUS_ROOT",
+)
 
 # These files are created by the supervisor/status machinery even when its
 # durable state root is external.  This is intentionally a finite allowlist;
@@ -118,6 +127,84 @@ class TrustedDevIdentity:
 class TrackedGitlinkIdentity:
     relative_path: str
     commit: str
+
+
+@dataclass(frozen=True)
+class ProcessGeneration:
+    pid: int
+    starttime_ticks: int
+    state: str
+
+
+@dataclass(frozen=True)
+class ProcessCwdIdentity:
+    path: Path
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
+class SupervisorAdmissionLockIdentity:
+    path: Path
+    device: int
+    inode: int
+    byte_length: int
+    sha256: str
+    kernel_lock_id: str
+    kernel_lock_kind: str
+    kernel_lock_mode: str
+    owner_pid: int
+    owner_starttime_ticks: int
+
+
+@dataclass(frozen=True)
+class ExpectedSupervisorProcessContract:
+    executable: Path
+    argv: tuple[str, ...]
+    entrypoint: Path
+    config_path: Path
+    cwd: Path
+    cwd_device: int
+    cwd_inode: int
+    cwd_commit: str
+    cwd_tree: str
+    command_root: str
+    runtime_sha: str
+    status_root: str
+    admission_lock_path: Path
+
+
+@dataclass(frozen=True)
+class SupervisorProcessIdentity:
+    generation: ProcessGeneration
+    executable: Path
+    argv: tuple[str, ...]
+    entrypoint: Path
+    config_path: Path
+    cwd: ProcessCwdIdentity
+    cwd_commit: str
+    cwd_tree: str
+    environment_contract: tuple[tuple[str, str], ...]
+    admission_lock: SupervisorAdmissionLockIdentity
+
+
+class RuntimeProcessReader(Protocol):
+    def list_pids(self) -> tuple[int, ...]: ...
+
+    def read_generation(self, pid: int) -> ProcessGeneration: ...
+
+    def read_argv(self, pid: int) -> tuple[str, ...]: ...
+
+    def read_executable(self, pid: int) -> Path: ...
+
+    def read_cwd(self, pid: int) -> ProcessCwdIdentity: ...
+
+    def read_environment_contract(self, pid: int) -> dict[str, str]: ...
+
+    def read_admission_lock(
+        self,
+        path: Path,
+    ) -> SupervisorAdmissionLockIdentity: ...
 
 
 @dataclass(frozen=True)
@@ -1670,6 +1757,790 @@ def _capture_config_bytes(
     return content, file_identity, path_components
 
 
+class ProcfsRuntimeProcessReader:
+    """Read the minimum allowlisted process identity surface from procfs."""
+
+    def __init__(self, proc_root: Path = PROCFS_ROOT) -> None:
+        self.proc_root = proc_root
+
+    def list_pids(self) -> tuple[int, ...]:
+        try:
+            entries = tuple(self.proc_root.iterdir())
+        except OSError as exc:
+            raise ValueError(f"Cannot enumerate procfs: {type(exc).__name__}") from exc
+        return tuple(
+            sorted(
+                int(entry.name)
+                for entry in entries
+                if entry.name.isascii() and entry.name.isdigit()
+            )
+        )
+
+    def _process_path(self, pid: int, name: str) -> Path:
+        if pid <= 0 or not name or "/" in name:
+            raise ValueError("Invalid procfs process field request")
+        return self.proc_root / str(pid) / name
+
+    def read_generation(self, pid: int) -> ProcessGeneration:
+        path = self._process_path(pid, "stat")
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise ProcessLookupError(f"Process {pid} vanished") from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Process {pid} stat is unreadable: {type(exc).__name__}"
+            ) from exc
+        try:
+            text = raw.decode("ascii", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Process {pid} stat is not ASCII") from exc
+        close_paren = text.rfind(")")
+        open_paren = text.find("(")
+        if open_paren <= 0 or close_paren <= open_paren:
+            raise ValueError(f"Process {pid} stat has an invalid comm field")
+        try:
+            recorded_pid = int(text[:open_paren].strip())
+            fields = text[close_paren + 1 :].strip().split()
+            state = fields[0]
+            starttime_ticks = int(fields[19])
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"Process {pid} stat is missing generation fields") from exc
+        if recorded_pid != pid or len(state) != 1 or starttime_ticks <= 0:
+            raise ValueError(f"Process {pid} stat has invalid generation fields")
+        return ProcessGeneration(
+            pid=recorded_pid,
+            starttime_ticks=starttime_ticks,
+            state=state,
+        )
+
+    def read_argv(self, pid: int) -> tuple[str, ...]:
+        path = self._process_path(pid, "cmdline")
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise ProcessLookupError(f"Process {pid} vanished while reading argv") from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Process {pid} argv is unreadable: {type(exc).__name__}"
+            ) from exc
+        if not raw:
+            return ()
+        if not raw.endswith(b"\0"):
+            raise ValueError(f"Process {pid} argv is not NUL terminated")
+        try:
+            return tuple(part.decode("utf-8", errors="strict") for part in raw[:-1].split(b"\0"))
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Process {pid} argv is not valid UTF-8") from exc
+
+    def read_executable(self, pid: int) -> Path:
+        path = self._process_path(pid, "exe")
+        try:
+            raw = os.readlink(path)
+        except FileNotFoundError as exc:
+            raise ProcessLookupError(
+                f"Process {pid} vanished while reading executable"
+            ) from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Process {pid} executable is unreadable: {type(exc).__name__}"
+            ) from exc
+        if raw.endswith(" (deleted)"):
+            raise ValueError(f"Process {pid} executable has been deleted")
+        executable = Path(raw)
+        if not executable.is_absolute():
+            raise ValueError(f"Process {pid} executable is not absolute")
+        try:
+            return executable.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f"Process {pid} executable cannot be resolved") from exc
+
+    def read_cwd(self, pid: int) -> ProcessCwdIdentity:
+        path = self._process_path(pid, "cwd")
+        flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError as exc:
+            raise ProcessLookupError(f"Process {pid} vanished while reading cwd") from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Process {pid} cwd is unreadable: {type(exc).__name__}"
+            ) from exc
+        try:
+            before = os.readlink(path)
+            opened = os.fstat(descriptor)
+            after = os.readlink(path)
+        except FileNotFoundError as exc:
+            raise ProcessLookupError(f"Process {pid} vanished while reading cwd") from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Process {pid} cwd changed while being read: {type(exc).__name__}"
+            ) from exc
+        finally:
+            os.close(descriptor)
+        if before != after or before.endswith(" (deleted)"):
+            raise ValueError(f"Process {pid} cwd is deleted or changed")
+        cwd = Path(before)
+        if not cwd.is_absolute():
+            raise ValueError(f"Process {pid} cwd is not absolute")
+        try:
+            resolved = cwd.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f"Process {pid} cwd cannot be resolved") from exc
+        resolved_stat = resolved.stat()
+        if (resolved_stat.st_dev, resolved_stat.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise ValueError(f"Process {pid} cwd identity changed")
+        return ProcessCwdIdentity(
+            path=resolved,
+            device=opened.st_dev,
+            inode=opened.st_ino,
+        )
+
+    def read_environment_contract(self, pid: int) -> dict[str, str]:
+        path = self._process_path(pid, "environ")
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise ProcessLookupError(
+                f"Process {pid} vanished while reading environment contract"
+            ) from exc
+        except OSError as exc:
+            raise ValueError(
+                f"Process {pid} environment contract is unreadable: "
+                f"{type(exc).__name__}"
+            ) from exc
+        allowlisted = {
+            name.encode("ascii"): name for name in PROCESS_ENVIRONMENT_ALLOWLIST
+        }
+        contract: dict[str, str] = {}
+        for entry in raw.split(b"\0"):
+            if not entry:
+                continue
+            raw_name, separator, raw_value = entry.partition(b"=")
+            name = allowlisted.get(raw_name)
+            if name is None:
+                continue
+            if not separator or name in contract:
+                raise ValueError(
+                    f"Process {pid} environment contract has duplicate or malformed {name}"
+                )
+            try:
+                contract[name] = raw_value.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"Process {pid} environment contract has invalid UTF-8 for {name}"
+                ) from exc
+        return contract
+
+    def read_admission_lock(
+        self,
+        path: Path,
+    ) -> SupervisorAdmissionLockIdentity:
+        return _capture_supervisor_admission_lock(path, self)
+
+
+def _read_descriptor_bytes(descriptor: int, *, limit: int, label: str) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(descriptor, min(4096, limit + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise ValueError(f"{label} exceeds {limit} bytes")
+    return b"".join(chunks)
+
+
+def _capture_supervisor_admission_lock(
+    path: Path,
+    reader: ProcfsRuntimeProcessReader,
+) -> SupervisorAdmissionLockIdentity:
+    """Bind the singleton admission lock file, kernel row, and owner generation."""
+    descriptor = _open_path_descriptor(
+        path,
+        label="Supervisor admission lock",
+        require_directory=False,
+    )
+    try:
+        before = os.fstat(descriptor)
+        if before.st_nlink != 1:
+            raise ValueError("Supervisor admission lock must have exactly one link")
+        identity = _identity_from_stat(before)
+        _assert_path_identity(
+            path,
+            identity,
+            label="Supervisor admission lock",
+            require_directory=False,
+        )
+        content = _read_descriptor_bytes(
+            descriptor,
+            limit=64,
+            label="Supervisor admission lock",
+        )
+        after = os.fstat(descriptor)
+        stable_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        stable_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if stable_before != stable_after or len(content) != before.st_size:
+            raise ValueError("Supervisor admission lock changed during capture")
+        try:
+            owner_text = content.decode("ascii", errors="strict").strip()
+            owner_pid = int(owner_text)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("Supervisor admission lock owner PID is invalid") from exc
+        if owner_pid <= 0 or owner_text != str(owner_pid):
+            raise ValueError("Supervisor admission lock owner PID is invalid")
+        owner_generation = reader.read_generation(owner_pid)
+        _assert_live_process_generation(
+            reader,
+            owner_generation,
+            label="supervisor admission lock owner",
+        )
+        try:
+            lock_rows = (reader.proc_root / "locks").read_text(
+                encoding="ascii",
+                errors="strict",
+            ).splitlines()
+        except OSError as exc:
+            raise ValueError(
+                f"Kernel lock table is unreadable: {type(exc).__name__}"
+            ) from exc
+        expected_device = (os.major(before.st_dev), os.minor(before.st_dev))
+        matches: list[tuple[str, str, str, int]] = []
+        for row in lock_rows:
+            fields = row.split()
+            if len(fields) < 8 or fields[1] == "->":
+                continue
+            try:
+                major_hex, minor_hex, inode_text = fields[5].split(":", 2)
+                row_device = (int(major_hex, 16), int(minor_hex, 16))
+                row_inode = int(inode_text)
+                row_pid = int(fields[4])
+            except (IndexError, ValueError):
+                continue
+            if row_device == expected_device and row_inode == before.st_ino:
+                matches.append((fields[0].rstrip(":"), fields[1], fields[3], row_pid))
+        if len(matches) != 1:
+            raise ValueError(
+                "Supervisor admission lock must have exactly one kernel lock owner"
+            )
+        lock_id, lock_kind, lock_mode, kernel_owner_pid = matches[0]
+        if lock_kind != "FLOCK" or lock_mode != "WRITE":
+            raise ValueError("Supervisor admission lock has the wrong kernel lock mode")
+        if kernel_owner_pid != owner_pid:
+            raise ValueError("Supervisor admission lock file and kernel owner differ")
+        _assert_live_process_generation(
+            reader,
+            owner_generation,
+            label="supervisor admission lock owner",
+        )
+        _assert_path_identity(
+            path,
+            identity,
+            label="Supervisor admission lock",
+            require_directory=False,
+        )
+        return SupervisorAdmissionLockIdentity(
+            path=path,
+            device=before.st_dev,
+            inode=before.st_ino,
+            byte_length=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            kernel_lock_id=lock_id,
+            kernel_lock_kind=lock_kind,
+            kernel_lock_mode=lock_mode,
+            owner_pid=owner_pid,
+            owner_starttime_ticks=owner_generation.starttime_ticks,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _assert_live_process_generation(
+    reader: RuntimeProcessReader,
+    expected: ProcessGeneration,
+    *,
+    label: str,
+    allow_zombie: bool = False,
+) -> ProcessGeneration:
+    current = reader.read_generation(expected.pid)
+    if current.pid != expected.pid or current.starttime_ticks != expected.starttime_ticks:
+        raise ValueError(
+            f"Process generation changed before {label}: PID {expected.pid} was reused"
+        )
+    if not allow_zombie and current.state == "Z":
+        raise ValueError(f"Process {expected.pid} is a zombie before {label}")
+    return current
+
+
+def _guarded_process_read(
+    reader: RuntimeProcessReader,
+    generation: ProcessGeneration,
+    *,
+    label: str,
+    operation: Callable[[], Any],
+    allow_zombie: bool = False,
+) -> Any:
+    _assert_live_process_generation(
+        reader,
+        generation,
+        label=f"{label} read",
+        allow_zombie=allow_zombie,
+    )
+    value = operation()
+    _assert_live_process_generation(
+        reader,
+        generation,
+        label=f"{label} comparison",
+        allow_zombie=allow_zombie,
+    )
+    return value
+
+
+def _guarded_process_compare(
+    reader: RuntimeProcessReader,
+    generation: ProcessGeneration,
+    *,
+    label: str,
+    actual: Any,
+    expected: Any,
+) -> None:
+    _assert_live_process_generation(reader, generation, label=label)
+    if actual != expected:
+        raise ValueError(f"Supervisor process {label} mismatch")
+
+
+def _strict_live_config(identity: CandidateRuntimeIdentity) -> dict[str, Any]:
+    try:
+        decoded = identity.config_bytes.decode("utf-8", errors="strict")
+        payload = json.loads(decoded)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Captured live config is not strict UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Captured live config must be a JSON object")
+    return payload
+
+
+def _absolute_config_path(raw: Any, *, label: str) -> Path:
+    if not isinstance(raw, str) or not raw or raw != raw.strip():
+        raise ValueError(f"Captured live config {label} is invalid")
+    path = Path(raw)
+    _validate_absolute_identity_path(path, label=f"Captured live config {label}")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"Captured live config {label} cannot be resolved") from exc
+    if resolved != path:
+        raise ValueError(f"Captured live config {label} is not canonical")
+    return path
+
+
+def _expected_supervisor_process_contract(
+    identity: CandidateRuntimeIdentity,
+) -> ExpectedSupervisorProcessContract:
+    config = _strict_live_config(identity)
+    watchdog = config.get("watchdog")
+    if not isinstance(watchdog, dict):
+        raise ValueError("Captured live config watchdog object is missing")
+    raw_command = watchdog.get("supervisor_command")
+    if (
+        not isinstance(raw_command, list)
+        or not raw_command
+        or any(not isinstance(item, str) or not item for item in raw_command)
+    ):
+        raise ValueError("Captured live config supervisor_command is invalid")
+    argv = tuple(raw_command)
+    expected_entrypoint = identity.candidate_root / SUPERVISOR_ENTRYPOINT_RELATIVE
+    if argv.count(str(expected_entrypoint)) != 1:
+        raise ValueError(
+            "Captured live config does not bind the exact canonical supervisor entrypoint"
+        )
+    if argv.count("--config") != 1:
+        raise ValueError("Captured live config must contain exactly one --config option")
+    config_index = argv.index("--config")
+    if config_index + 1 >= len(argv) or argv[config_index + 1] != str(identity.config_path):
+        raise ValueError("Captured live config command does not bind its exact config path")
+    executable_arg = Path(argv[0])
+    if not executable_arg.is_absolute():
+        raise ValueError("Captured live config executable must be absolute")
+    try:
+        executable = executable_arg.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Captured live config executable cannot be resolved") from exc
+
+    paths = config.get("paths")
+    if not isinstance(paths, dict):
+        raise ValueError("Captured live config paths object is missing")
+    status_file = _absolute_config_path(
+        paths.get("status_file"),
+        label="paths.status_file",
+    )
+    state_file = _absolute_config_path(
+        paths.get("state_file"),
+        label="paths.state_file",
+    )
+    status_root = status_file.parent
+    if state_file.parent.name != ".orchestrator":
+        raise ValueError("Captured live config state_file is outside .orchestrator")
+    if state_file.parent.parent != status_root:
+        raise ValueError("Captured live config status and state roots differ")
+
+    return ExpectedSupervisorProcessContract(
+        executable=executable,
+        argv=argv,
+        entrypoint=expected_entrypoint,
+        config_path=identity.config_path,
+        cwd=identity.candidate_root,
+        cwd_device=identity.candidate_root_device,
+        cwd_inode=identity.candidate_root_inode,
+        cwd_commit=identity.head_commit,
+        cwd_tree=identity.tracked_tree_identity,
+        command_root=str(identity.candidate_root),
+        runtime_sha=identity.head_commit,
+        status_root=str(status_root),
+        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
+    )
+
+
+def _looks_like_supervisor_candidate(argv: tuple[str, ...]) -> bool:
+    return any(
+        PurePosixPath(argument).name == "supervisor.py"
+        for argument in argv[1:]
+    )
+
+
+def _read_process_cwd_git_identity(
+    cwd: ProcessCwdIdentity,
+) -> tuple[str, str]:
+    handle = _open_candidate_root_handle(cwd.path)
+    try:
+        if (
+            handle.identity.device != cwd.device
+            or handle.identity.inode != cwd.inode
+        ):
+            raise ValueError("Process cwd Git root identity changed")
+        return _read_head_tree(handle)
+    finally:
+        _close_candidate_root_handle(handle)
+
+
+def discover_incumbent_supervisor_process(
+    identity: CandidateRuntimeIdentity,
+    *,
+    reader: RuntimeProcessReader | None = None,
+    cwd_git_identity_reader: Callable[
+        [ProcessCwdIdentity], tuple[str, str]
+    ] = _read_process_cwd_git_identity,
+    candidate_revalidator: Callable[[], None] | None = None,
+) -> SupervisorProcessIdentity:
+    """Discover and bind exactly one incumbent to the immutable candidate."""
+    runtime_reader = reader or ProcfsRuntimeProcessReader()
+    expected = _expected_supervisor_process_contract(identity)
+    lock_before = runtime_reader.read_admission_lock(
+        expected.admission_lock_path
+    )
+
+    candidates: list[tuple[ProcessGeneration, tuple[str, ...]]] = []
+    discovery_errors: list[str] = []
+    for pid in runtime_reader.list_pids():
+        try:
+            generation = runtime_reader.read_generation(pid)
+        except ProcessLookupError:
+            continue
+        except Exception as exc:
+            discovery_errors.append(
+                f"pid={pid}:stat:{type(exc).__name__}"
+            )
+            continue
+        try:
+            argv = _guarded_process_read(
+                runtime_reader,
+                generation,
+                label="argv discovery",
+                operation=lambda pid=pid: runtime_reader.read_argv(pid),
+                allow_zombie=True,
+            )
+        except Exception as exc:
+            discovery_errors.append(
+                f"pid={pid}:argv:{type(exc).__name__}"
+            )
+            continue
+        if _looks_like_supervisor_candidate(argv):
+            if generation.state == "Z":
+                raise ValueError(f"Supervisor candidate PID {pid} is a zombie")
+            candidates.append((generation, argv))
+
+    if discovery_errors:
+        raise ValueError(
+            "Supervisor candidate enumeration was incomplete: "
+            + ",".join(discovery_errors)
+        )
+    if len(candidates) != 1:
+        raise ValueError(
+            "Expected exactly one live supervisor candidate; "
+            f"found {len(candidates)}"
+        )
+
+    generation, argv = candidates[0]
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="admission lock owner PID",
+        actual=lock_before.owner_pid,
+        expected=generation.pid,
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="admission lock owner starttime",
+        actual=lock_before.owner_starttime_ticks,
+        expected=generation.starttime_ticks,
+    )
+    entrypoints = tuple(
+        argument
+        for argument in argv[1:]
+        if PurePosixPath(argument).name == "supervisor.py"
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="canonical supervisor entrypoint",
+        actual=entrypoints,
+        expected=(str(expected.entrypoint),),
+    )
+    config_indexes = tuple(
+        index for index, argument in enumerate(argv) if argument == "--config"
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="config option cardinality",
+        actual=len(config_indexes),
+        expected=1,
+    )
+    config_index = config_indexes[0]
+    actual_config = argv[config_index + 1] if config_index + 1 < len(argv) else None
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="config path",
+        actual=actual_config,
+        expected=str(expected.config_path),
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="full argv",
+        actual=argv,
+        expected=expected.argv,
+    )
+
+    executable = _guarded_process_read(
+        runtime_reader,
+        generation,
+        label="executable",
+        operation=lambda: runtime_reader.read_executable(generation.pid),
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="executable",
+        actual=executable,
+        expected=expected.executable,
+    )
+    cwd = _guarded_process_read(
+        runtime_reader,
+        generation,
+        label="cwd",
+        operation=lambda: runtime_reader.read_cwd(generation.pid),
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="cwd realpath",
+        actual=cwd.path,
+        expected=expected.cwd,
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="cwd device",
+        actual=cwd.device,
+        expected=expected.cwd_device,
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="cwd inode",
+        actual=cwd.inode,
+        expected=expected.cwd_inode,
+    )
+    cwd_commit, cwd_tree = _guarded_process_read(
+        runtime_reader,
+        generation,
+        label="cwd Git identity",
+        operation=lambda: cwd_git_identity_reader(cwd),
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="cwd commit",
+        actual=cwd_commit,
+        expected=expected.cwd_commit,
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="cwd tree",
+        actual=cwd_tree,
+        expected=expected.cwd_tree,
+    )
+
+    environment_contract = _guarded_process_read(
+        runtime_reader,
+        generation,
+        label="environment contract",
+        operation=lambda: runtime_reader.read_environment_contract(
+            generation.pid
+        ),
+    )
+    expected_environment = {
+        "PANTHEON_COMMAND_ROOT": expected.command_root,
+        "PANTHEON_COMMAND_RUNTIME_SHA": expected.runtime_sha,
+        "PANTHEON_STATUS_ROOT": expected.status_root,
+    }
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="environment allowlist",
+        actual=set(environment_contract),
+        expected=set(expected_environment),
+    )
+    for name in PROCESS_ENVIRONMENT_ALLOWLIST:
+        _guarded_process_compare(
+            runtime_reader,
+            generation,
+            label=f"environment {name}",
+            actual=environment_contract.get(name),
+            expected=expected_environment[name],
+        )
+
+    if candidate_revalidator is not None:
+        _assert_live_process_generation(
+            runtime_reader,
+            generation,
+            label="candidate runtime revalidation",
+        )
+        candidate_revalidator()
+    lock_after = runtime_reader.read_admission_lock(
+        expected.admission_lock_path
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="admission lock generation",
+        actual=lock_after,
+        expected=lock_before,
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="final admission lock owner PID",
+        actual=lock_after.owner_pid,
+        expected=generation.pid,
+    )
+    _guarded_process_compare(
+        runtime_reader,
+        generation,
+        label="final admission lock owner starttime",
+        actual=lock_after.owner_starttime_ticks,
+        expected=generation.starttime_ticks,
+    )
+    _assert_live_process_generation(
+        runtime_reader,
+        generation,
+        label="final process identity",
+    )
+    return SupervisorProcessIdentity(
+        generation=generation,
+        executable=executable,
+        argv=argv,
+        entrypoint=expected.entrypoint,
+        config_path=expected.config_path,
+        cwd=cwd,
+        cwd_commit=cwd_commit,
+        cwd_tree=cwd_tree,
+        environment_contract=tuple(
+            (name, environment_contract[name])
+            for name in PROCESS_ENVIRONMENT_ALLOWLIST
+        ),
+        admission_lock=lock_after,
+    )
+
+
+def _argv_sha256(argv: tuple[str, ...]) -> str:
+    digest = hashlib.sha256()
+    for argument in argv:
+        encoded = argument.encode("utf-8", errors="strict")
+        digest.update(len(encoded).to_bytes(8, byteorder="big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _supervisor_process_identity_summary(
+    identity: SupervisorProcessIdentity,
+) -> dict[str, Any]:
+    lock = identity.admission_lock
+    return {
+        "pid": identity.generation.pid,
+        "starttime_ticks": identity.generation.starttime_ticks,
+        "executable": str(identity.executable),
+        "argv_count": len(identity.argv),
+        "argv_sha256": _argv_sha256(identity.argv),
+        "entrypoint": str(identity.entrypoint),
+        "config_path": str(identity.config_path),
+        "cwd": str(identity.cwd.path),
+        "cwd_device": identity.cwd.device,
+        "cwd_inode": identity.cwd.inode,
+        "cwd_commit": identity.cwd_commit,
+        "cwd_tree": identity.cwd_tree,
+        "environment_contract": dict(identity.environment_contract),
+        "admission_lock": {
+            "path": str(lock.path),
+            "device": lock.device,
+            "inode": lock.inode,
+            "byte_length": lock.byte_length,
+            "sha256": lock.sha256,
+            "kernel_lock_id": lock.kernel_lock_id,
+            "kernel_lock_kind": lock.kernel_lock_kind,
+            "kernel_lock_mode": lock.kernel_lock_mode,
+            "owner_pid": lock.owner_pid,
+            "owner_starttime_ticks": lock.owner_starttime_ticks,
+        },
+    }
+
+
 def build_candidate_runtime_identity(
     candidate_path: Path,
     config_path: Path | None = None,
@@ -1809,11 +2680,25 @@ def capture_promotion_snapshot(
 
     candidate_identity: CandidateRuntimeIdentity | None = None
     identity_error: str | None = None
+    supervisor_process_identity: SupervisorProcessIdentity | None = None
+    supervisor_process_error: str | None = None
     try:
         candidate_identity = build_candidate_runtime_identity(repo_root)
         candidate_identity.verify_immutable_snapshot()
     except Exception as exc:
         identity_error = str(exc)
+    if candidate_identity is not None and identity_error is None:
+        try:
+            supervisor_process_identity = discover_incumbent_supervisor_process(
+                candidate_identity,
+                candidate_revalidator=(
+                    candidate_identity.verify_immutable_snapshot
+                ),
+            )
+        except Exception as exc:
+            supervisor_process_error = str(exc)
+    else:
+        supervisor_process_error = "Candidate runtime identity is unavailable"
 
     file_errors: list[dict[str, str]] = []
 
@@ -1916,6 +2801,26 @@ def capture_promotion_snapshot(
             },
         },
     )
+    invariants.insert(
+        1,
+        {
+            "name": "incumbent_supervisor_process_identity_immutable",
+            "ok": (
+                supervisor_process_identity is not None
+                and supervisor_process_error is None
+            ),
+            "details": {
+                "error": supervisor_process_error,
+                "identity": (
+                    _supervisor_process_identity_summary(
+                        supervisor_process_identity
+                    )
+                    if supervisor_process_identity is not None
+                    else None
+                ),
+            },
+        },
+    )
 
     all_invariants_pass = all(inv["ok"] for inv in invariants)
 
@@ -1926,6 +2831,13 @@ def capture_promotion_snapshot(
         "candidate_runtime_identity": (
             _candidate_identity_summary(candidate_identity)
             if candidate_identity is not None
+            else None
+        ),
+        "incumbent_supervisor_process_identity": (
+            _supervisor_process_identity_summary(
+                supervisor_process_identity
+            )
+            if supervisor_process_identity is not None
             else None
         ),
         "health_report": health_report,
