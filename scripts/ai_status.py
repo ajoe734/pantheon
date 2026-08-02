@@ -84,6 +84,7 @@ from multi_repo_registry import (
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
+from review_identity import review_identities_are_independent
 from runtime_state import (
     activity_audit_lock_file,
     canonical_task_state_lock_file,
@@ -5612,8 +5613,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     metadata = task_metadata_from_env()
     ensure_agent(owner)
     ensure_agent(reviewer)
-    if owner == reviewer:
-        raise SystemExit("Reviewer cannot equal owner")
+    if not review_identities_are_independent(owner, reviewer):
+        raise SystemExit(
+            "Reviewer must be independent from owner; equivalent account identities "
+            "cannot review one another"
+        )
 
     bridge = _bridge_assignment_from_metadata(
         metadata,
@@ -6229,7 +6233,12 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task.get("id") or "").strip()
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
-    if not task_id or not owner or not reviewer or owner == reviewer:
+    if (
+        not task_id
+        or not owner
+        or not reviewer
+        or not review_identities_are_independent(owner, reviewer)
+    ):
         raise SystemExit("Cannot reconcile task: task owner/reviewer metadata is invalid.")
 
     raw_evidence_file = _required_reconcile_env("RECONCILE_EVIDENCE_FILE")
@@ -6567,9 +6576,10 @@ def resolve_approval_binding(
         os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
     )
 
-    owner = str(task.get("owner") or "").strip().casefold()
-    reviewer = str(task.get("reviewer") or "").strip().casefold()
-    independent = bool(reviewer) and reviewer != owner
+    independent = review_identities_are_independent(
+        task.get("owner"),
+        task.get("reviewer"),
+    )
 
     if not raw_pr and not raw_head:
         if independent and task_has_pr_review_target(task):
@@ -6732,6 +6742,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
+    if not review_identities_are_independent(task.get("owner"), task.get("reviewer")):
+        raise SystemExit(
+            f"{task_id} owner/reviewer identities are not independent; refusing approval"
+        )
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()

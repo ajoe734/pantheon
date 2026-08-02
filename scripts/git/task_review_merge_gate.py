@@ -85,6 +85,12 @@ from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from review_identity import review_identities_are_independent
+
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
 DEFAULT_DEV_BRANCH = "dev"
 DEFAULT_TASK_PREFIX = "task/"
@@ -214,8 +220,7 @@ class TaskContract:
 
     @property
     def requires_independent_review(self) -> bool:
-        reviewer = normalize_agent(self.reviewer)
-        return bool(reviewer) and reviewer != normalize_agent(self.owner)
+        return review_identities_are_independent(self.owner, self.reviewer)
 
     @property
     def gated(self) -> bool:
@@ -299,7 +304,7 @@ def contract_from_task_row(
     policy = POLICY_REVIEW_BEFORE_MERGE
     honored = False
     detail = ""
-    independent = bool(normalize_agent(reviewer)) and normalize_agent(reviewer) != normalize_agent(owner)
+    independent = review_identities_are_independent(owner, reviewer)
 
     if declared == POLICY_MERGE_THEN_REVIEW:
         if independent:

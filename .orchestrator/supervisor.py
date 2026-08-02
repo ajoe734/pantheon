@@ -82,6 +82,7 @@ from provider_permissions import (
     provider_capabilities as build_provider_capabilities,
     write_provider_capabilities,
 )
+from review_identity import review_identities_are_independent
 from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
@@ -7602,6 +7603,30 @@ def first_viable_agent(
     return None
 
 
+def first_viable_independent_agent(
+    config: dict[str, Any],
+    preferred: list[str],
+    *,
+    counterpart: str,
+    exclude: set[str],
+    state: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+) -> str | None:
+    """Return the first viable lane independent from the paired task role."""
+
+    for candidate in preferred:
+        name = first_viable_agent(
+            config,
+            [candidate],
+            exclude=exclude,
+            state=state,
+            task=task,
+        )
+        if name and review_identities_are_independent(counterpart, name):
+            return name
+    return None
+
+
 def agent_auto_dispatch_block_reason(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -8253,8 +8278,8 @@ def owner_worker_canonical_handoff_status(
     return task_status if task_status in outcome_statuses else None
 
 
-def task_has_bound_finalize_delivery_identity(task: dict[str, Any]) -> bool:
-    """True when review/finalize is bound to an immutable delivery head."""
+def task_has_exact_head_review_binding(task: dict[str, Any]) -> bool:
+    """True when task review metadata carries a structurally exact PR head."""
 
     for field in ("review_binding", "github_review_bridge"):
         binding = task.get(field)
@@ -8273,6 +8298,15 @@ def task_has_bound_finalize_delivery_identity(task: dict[str, Any]) -> bool:
         ):
             return True
 
+    return False
+
+
+def task_has_bound_finalize_delivery_identity(task: dict[str, Any]) -> bool:
+    """True when review/finalize is bound to an immutable delivery head."""
+
+    if task_has_exact_head_review_binding(task):
+        return True
+
     delivery = task.get("delivery")
     if isinstance(delivery, dict):
         commit = str(delivery.get("commit") or "").strip()
@@ -8282,6 +8316,32 @@ def task_has_bound_finalize_delivery_identity(task: dict[str, Any]) -> bool:
         if re.fullmatch(r"[0-9a-fA-F]{40}", commit) and repository:
             return True
     return False
+
+
+def task_reviewer_identity_is_bound(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    status: dict[str, Any] | None = None,
+) -> bool:
+    """Whether automatic recovery must preserve the assigned reviewer label."""
+
+    if task_has_exact_head_review_binding(task):
+        return True
+    if not isinstance(status, dict):
+        return False
+    task_id = str(task.get("id") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    return bool(
+        task_id
+        and reviewer
+        and pending_review_handoff(
+            config,
+            status,
+            task_id=task_id,
+            reviewer=reviewer,
+        )
+    )
 
 
 def _prepare_missing_handoff_blocker_locked(
@@ -9366,6 +9426,8 @@ def _persist_task_reassignment_locked(
     task = next((item for item in tasks if item.get("id") == task_id), None)
     if task is None:
         return False
+    if not review_identities_are_independent(new_owner, new_reviewer):
+        return False
 
     old_owner = str(task.get("owner") or "")
     old_reviewer = str(task.get("reviewer") or "")
@@ -9531,11 +9593,20 @@ def maybe_reassign_task_after_worker_failure(
         return None
 
     if task_status in review_statuses and reviewer == failing_agent:
+        if task_reviewer_identity_is_bound(config, task, status=status):
+            return None
         candidates = l12_provider_first_candidates(
             task,
             normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent),
         )
-        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
+        new_reviewer = first_viable_independent_agent(
+            config,
+            candidates,
+            counterpart=owner,
+            exclude={owner, reviewer},
+            state=state,
+            task=task,
+        )
         if not new_reviewer:
             return None
         message = (
@@ -9581,7 +9652,14 @@ def maybe_reassign_task_after_worker_failure(
         reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent))
         reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent))
         reviewer_candidates = l12_provider_first_candidates(task, reviewer_candidates)
-        new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
+        new_reviewer = first_viable_independent_agent(
+            config,
+            reviewer_candidates,
+            counterpart=new_owner,
+            exclude={new_owner},
+            state=state,
+            task=task,
+        )
         if not new_reviewer:
             return None
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
@@ -12751,6 +12829,7 @@ def normalize_mainline_task_assignment(
     task: dict[str, Any],
     *,
     state: dict[str, Any] | None = None,
+    status: dict[str, Any] | None = None,
 ) -> bool:
     if task_is_sidecar(task) or task_assignment_is_catalog_locked(task):
         return False
@@ -12769,7 +12848,15 @@ def normalize_mainline_task_assignment(
     assignment_state = None if task_status == "in_progress" else state
     owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
     reviewer_allowed = agent_can_take_task(config, reviewer, task, state=assignment_state)
-    if owner_allowed and reviewer_allowed:
+    reviewer_independent = review_identities_are_independent(owner, reviewer)
+    reviewer_identity_bound = task_reviewer_identity_is_bound(
+        config,
+        task,
+        status=status,
+    )
+    if not reviewer_allowed and reviewer_identity_bound:
+        return False
+    if owner_allowed and reviewer_allowed and reviewer_independent:
         return False
 
     new_owner = owner
@@ -12780,13 +12867,24 @@ def normalize_mainline_task_assignment(
         owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
         if not owner_candidates:
             owner_candidates = default_reassignment_candidates(config, exclude={owner, reviewer})
-        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, state=state, task=task)
+        replacement_owner = first_viable_independent_agent(
+            config,
+            owner_candidates,
+            counterpart=reviewer,
+            exclude={owner, reviewer},
+            state=state,
+            task=task,
+        )
         if not replacement_owner:
             return False
         new_owner = replacement_owner
         changed_fields.append(f"owner {owner} -> {new_owner}")
 
-    if not reviewer or not reviewer_allowed or reviewer == new_owner:
+    if (
+        not reviewer
+        or not reviewer_allowed
+        or not review_identities_are_independent(new_owner, reviewer)
+    ):
         reviewer_candidates: list[str] = []
         if reviewer:
             reviewer_candidates.append(reviewer)
@@ -12794,7 +12892,14 @@ def normalize_mainline_task_assignment(
         if owner:
             reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), owner))
             reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), owner))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
+        replacement_reviewer = first_viable_independent_agent(
+            config,
+            reviewer_candidates,
+            counterpart=new_owner,
+            exclude={new_owner},
+            state=state,
+            task=task,
+        )
         if not replacement_reviewer:
             return False
         new_reviewer = replacement_reviewer
@@ -14162,7 +14267,12 @@ def dispatch_ready_tasks(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
-        normalized = normalize_mainline_task_assignment(config, task, state=state) or normalized
+        normalized = normalize_mainline_task_assignment(
+            config,
+            task,
+            state=state,
+            status=status,
+        ) or normalized
 
     if normalized:
         changed = True
