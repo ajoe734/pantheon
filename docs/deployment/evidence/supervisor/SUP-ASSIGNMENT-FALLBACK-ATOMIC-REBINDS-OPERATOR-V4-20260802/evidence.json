@@ -82,7 +82,8 @@
     "candidate_order": "Direct configured fallbacks retain declaration order, task-preferred lanes follow, and discovered mapping edges are traversed breadth-first with case-insensitive de-duplication.",
     "bounded_cycles": "Traversal is bounded by finite unique candidate names and terminates when mappings contain cycles such as Antigravity -> Codex2 -> Antigravity.",
     "atomic_persistence": "The canonical lock compares expected owner, reviewer, and status before assigning both fields in the same governed write.",
-    "shared_consumers": "Mainline normalization, helper claim dispatch, and worker-failure owner fallback consume plan_task_assignment_pair.",
+    "shared_consumers": "Mainline normalization, helper claim dispatch, and both owner- and reviewer-side worker-failure fallback consume plan_task_assignment_pair.",
+    "reviewer_failure_boundary": "Reviewer failure fixes the incumbent owner, excludes the failed reviewer, and restricts the planner to the bounded reviewer candidates that survive task-scoped L12 provider-first filtering.",
     "fail_closed": "Catalog-locked tasks, tasks without a viable distinct pair, and stale compare-and-swap inputs are not mutated.",
     "identity_boundary": "Reviewer independence remains distinct configured agent identity; Codex/Codex2 mutual review is allowed and no account/quota-group rule is added."
   },
@@ -124,7 +125,16 @@
       "status": "proven",
       "tests": [
         ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused",
-        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_worker_failure_replans_reviewer_when_fallback_is_incumbent_reviewer"
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_worker_failure_replans_reviewer_when_fallback_is_incumbent_reviewer",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassigns_review_task_to_new_reviewer_after_repeated_failure"
+      ]
+    },
+    "reviewer_failure_cycle_and_no_pair": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reviewer_failure_pair_planner_traverses_cycle_with_exact_cas",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reviewer_failure_cyclic_no_pair_causes_zero_mutation",
+        ".orchestrator/test_supervisor.py::WorkerReassignmentTests::test_l12_reviewer_failure_does_not_fall_back_to_codex2_when_provider_first_lane_fails"
       ]
     },
     "codex_codex2_mutual_review_allowed": {
@@ -151,11 +161,11 @@
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py -k 'pair_planner or normalize_mainline_task_assignment or helper_claim or persist_task_reassignment or WorkerReassignmentTests'",
-      "result": "38 passed, 475 deselected in 3.81s"
+      "result": "40 passed, 475 deselected in 3.59s"
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
-      "result": "513 passed, 147 subtests passed in 56.73s"
+      "result": "515 passed, 147 subtests passed; JUnit recorded 662 cases, 0 failures, 0 errors in 105.374s"
     },
     {
       "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",

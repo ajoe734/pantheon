@@ -15342,8 +15342,122 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Claude")
         self.assertEqual(kwargs["new_reviewer"], "Codex")
         self.assertEqual(kwargs["handoff_to"], "Codex")
+        self.assertEqual(kwargs["expected_owner"], "Claude")
+        self.assertEqual(kwargs["expected_reviewer"], "Gemini")
+        self.assertEqual(kwargs["expected_status"], "review")
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
+
+    def test_reviewer_failure_pair_planner_traverses_cycle_with_exact_cas(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "reviewer_fallbacks": {
+                    "Gemini": ["Claude", "Codex2"],
+                    "Codex2": ["Gemini", "Codex"],
+                },
+                "eligible_statuses": ["review"],
+            },
+            "agents": {
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "gemini": {"display_name": "Gemini", "provider": "gemini"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        worker = {
+            "task_id": "PAIR-REVIEW-CYCLE-001",
+            "agent_id": "gemini",
+            "retry_count": 1,
+            "run_id": "gemini-review-cycle",
+        }
+        task = {
+            "id": "PAIR-REVIEW-CYCLE-001",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                state,
+                worker,
+                "terminal reviewer provider failure",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Codex")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Claude", "Codex"))
+        self.assertEqual(kwargs["expected_owner"], "Claude")
+        self.assertEqual(kwargs["expected_reviewer"], "Gemini")
+        self.assertEqual(kwargs["expected_status"], "review")
+
+    def test_reviewer_failure_cyclic_no_pair_causes_zero_mutation(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "reviewer_fallbacks": {
+                    "Gemini": ["Codex"],
+                    "Codex": ["Gemini"],
+                },
+                "eligible_statuses": ["review"],
+            },
+            "agents": {
+                "gemini": {"display_name": "Gemini", "provider": "gemini"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        worker = {
+            "task_id": "PAIR-REVIEW-NO-PAIR-001",
+            "agent_id": "gemini",
+            "retry_count": 1,
+            "run_id": "gemini-review-no-pair",
+        }
+        task = {
+            "id": "PAIR-REVIEW-NO-PAIR-001",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+        }
+        original = copy.deepcopy(task)
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                {},
+                worker,
+                "terminal reviewer provider failure",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+        self.assertEqual(task, original)
 
     def test_reassign_review_skips_paused_reviewer_candidates(self) -> None:
         config = {

@@ -8988,6 +8988,8 @@ def plan_task_assignment_pair(
     fixed_owner: str | None = None,
     owner_candidates: list[str] | None = None,
     preferred_reviewers: list[str] | None = None,
+    allowed_reviewers: list[str] | None = None,
+    excluded_reviewers: set[str] | None = None,
     preserve_in_progress_incumbents: bool = False,
 ) -> tuple[str, str] | None:
     """Plan one viable, independent owner/reviewer pair before mutation.
@@ -9001,12 +9003,31 @@ def plan_task_assignment_pair(
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
     task_status = str(task.get("status") or "").strip().lower()
+    allowed_reviewer_keys = (
+        {
+            canonical_agent_name(config, name).casefold()
+            for name in allowed_reviewers
+            if canonical_agent_name(config, name)
+        }
+        if allowed_reviewers is not None
+        else None
+    )
+    excluded_reviewer_keys = {
+        canonical_agent_name(config, name).casefold()
+        for name in (excluded_reviewers or set())
+        if canonical_agent_name(config, name)
+    }
 
     if task_assignment_is_catalog_locked(task):
         if (
             owner
             and reviewer
             and owner.casefold() != reviewer.casefold()
+            and reviewer.casefold() not in excluded_reviewer_keys
+            and (
+                allowed_reviewer_keys is None
+                or reviewer.casefold() in allowed_reviewer_keys
+            )
             and agent_can_take_task(config, owner, task, state=state)
             and agent_can_take_task(config, reviewer, task, state=state)
         ):
@@ -9079,6 +9100,11 @@ def plan_task_assignment_pair(
                 not candidate_reviewer
                 or reviewer_key in seen_reviewers
                 or reviewer_key == owner_key
+                or reviewer_key in excluded_reviewer_keys
+                or (
+                    allowed_reviewer_keys is not None
+                    and reviewer_key not in allowed_reviewer_keys
+                )
             ):
                 continue
             seen_reviewers.add(reviewer_key)
@@ -11043,20 +11069,33 @@ def maybe_reassign_task_after_worker_failure(
         return None
 
     if task_status in review_statuses and reviewer == failing_agent:
-        candidates = l12_provider_first_candidates(
-            task,
-            normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent),
+        candidates = bounded_fallback_candidates(
+            config,
+            settings.get("reviewer_fallbacks", {}) or {},
+            roots=[failing_agent],
         )
-        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not new_reviewer:
+        candidates = l12_provider_first_candidates(task, candidates)
+        if not candidates:
             return None
+        planned_pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            fixed_owner=owner,
+            preferred_reviewers=candidates,
+            allowed_reviewers=candidates,
+            excluded_reviewers={reviewer},
+        )
+        if planned_pair is None:
+            return None
+        fixed_owner, new_reviewer = planned_pair
         message = (
             f"Auto-reassigned review from {reviewer} to {new_reviewer} after repeated {failing_agent} {failure_label}: {failure_summary}"
         )
         if not persist_task_reassignment(
             config,
             task_id=task_id,
-            new_owner=owner,
+            new_owner=fixed_owner,
             new_reviewer=new_reviewer,
             message=message,
             handoff_to=new_reviewer,

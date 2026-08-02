@@ -15,14 +15,15 @@ Owner: Codex · Reviewer: Human/Ops · Status: **review pending**
 
 - Automatic reassignment now plans a complete viable owner/reviewer pair. A viable incumbent reviewer can become owner when the unavailable owner's fallback points to that reviewer; another viable reviewer is selected before any canonical write.
 - Direct configured fallbacks retain declared order, task-preferred lanes are included, and discovered mapping edges are traversed breadth-first. A case-insensitive seen set makes fallback cycles finite and deterministic.
-- Mainline normalization, helper claims, and worker-failure owner fallback all consume `plan_task_assignment_pair()` rather than rebuilding incompatible field-by-field choices.
+- Mainline normalization, helper claims, and both owner- and reviewer-side worker-failure fallback all consume `plan_task_assignment_pair()` rather than rebuilding incompatible field-by-field choices.
+- Reviewer failure keeps the incumbent owner fixed, excludes the failed reviewer even when a cycle reaches it again, and limits L12 selection to the bounded candidates that survive provider-first filtering.
 - `persist_task_reassignment()` accepts the expected owner, reviewer, and task status. Those values are compared under the canonical task-state lock before both assignment fields are written together.
 - Catalog-locked assignment contracts remain immutable. If no distinct viable pair exists or compare-and-swap inputs are stale, canonical state is not mutated.
 - Independence remains distinct configured agent identity only. Codex and Codex2 may review one another; no account group, quota group, provider policy, config, or global mutual-review ban changes in this task.
 
 ## Incident reproduction
 
-The focused regression creates the reported 23 `todo` tasks with unavailable Antigravity owners and Codex2 incumbent reviewers. The viable owner fallback is Codex2 while Claude is unavailable. All 23 are planned as `owner=Codex2, reviewer=Codex` and persisted with owner/reviewer/status compare-and-swap expectations. Separate no-pair and stale-CAS tests prove zero mutation.
+The focused regression creates the reported 23 `todo` tasks with unavailable Antigravity owners and Codex2 incumbent reviewers. The viable owner fallback is Codex2 while Claude is unavailable. All 23 are planned as `owner=Codex2, reviewer=Codex` and persisted with owner/reviewer/status compare-and-swap expectations. Separate owner-side and reviewer-side no-pair tests plus stale-CAS coverage prove zero canonical mutation. Reviewer-failure coverage traverses a cyclic graph deterministically and verifies exact owner/reviewer/status expectations on persistence.
 
 ## Scope boundaries
 
@@ -32,8 +33,8 @@ The task changes only supervisor assignment planning/persistence, supervisor tes
 
 - Both canonical prerequisites are archived `done/completed`.
 - Checkout-scoped Python distribution provisioned and verified.
-- Focused assignment regression: 38 passed, 475 deselected in 3.81s.
-- Full supervisor regression: 513 passed, 147 subtests passed in 56.73s.
+- Focused assignment regression: 40 passed, 475 deselected in 3.59s.
+- Full supervisor regression: 515 passed, 147 subtests passed; JUnit recorded 662 cases with zero failures or errors.
 - Python compile, evidence JSON parse, commit trailers, `git diff --check`, exact-head GitHub CI, and independent review remain mandatory gates.
 
 ## Review and delivery

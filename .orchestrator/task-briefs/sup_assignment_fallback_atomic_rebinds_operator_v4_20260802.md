@@ -11,7 +11,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Branch: `task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802`
 - Anchor: `db6e23c3cfe79e6dcdb91c4df86f5eff7ad33062`
 - Pull request: `#4501`
-- Next: pass exact-head CI and obtain independent Human/Ops exact-head review of PR #4501 before merge.
+- Next: push the repaired exact head, pass CI, and obtain independent Human/Ops exact-head review of PR #4501 before merge.
 
 ## Summary
 Recover the already-tested atomic owner/reviewer pair planner under merged account-neutral governance after a stale post-merge coordinator race corrupted the V3 dependency record.
@@ -26,9 +26,10 @@ Recover the already-tested atomic owner/reviewer pair planner under merged accou
 
 ## Delivered Contract
 
-- Mainline normalization, helper claims, and terminal worker-failure fallback consume one shared owner/reviewer pair planner.
+- Mainline normalization, helper claims, and both owner- and reviewer-side terminal worker-failure fallback consume one shared owner/reviewer pair planner.
 - Configured and task-preferred fallback graphs are traversed in stable breadth-first order with case-insensitive cycle detection.
 - A viable incumbent reviewer may become the new owner when the old owner is unavailable; the planner selects another viable, distinct reviewer before any canonical write.
+- Reviewer failure keeps the owner fixed, excludes the failed reviewer, preserves L12 provider-first reviewer eligibility, and fails closed when a cyclic graph has no legal distinct reviewer.
 - Governed persistence compares expected owner, reviewer, and status under the canonical task-state lock, then writes both assignment fields together.
 - Catalog-locked assignments remain immutable, and a missing legal distinct pair or stale compare-and-swap causes no canonical mutation.
 - Independence is based on distinct configured agent identity only. Codex and Codex2 remain valid mutual owner/reviewer assignments unless task-scoped live auth/quota evidence makes one unavailable.
@@ -36,8 +37,8 @@ Recover the already-tested atomic owner/reviewer pair planner under merged accou
 ## Verification
 
 - Both canonical prerequisites are archived `done/completed`.
-- Focused assignment regression: 38 passed, 475 deselected.
-- Full supervisor regression: 513 passed, 147 subtests passed in 56.73s.
+- Focused assignment regression: 40 passed, 475 deselected.
+- Full supervisor regression: 515 passed, 147 subtests passed; JUnit recorded 662 cases with zero failures or errors.
 - Python compile, evidence JSON parse, commit trailers, `git diff --check`, and exact-head GitHub CI are required before review handoff.
 - Evidence manifest: `docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json`.
 
