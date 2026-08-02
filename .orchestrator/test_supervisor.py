@@ -253,13 +253,22 @@ class RuntimeConfigTests(unittest.TestCase):
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
-    def _worker_for_log(self, content: str) -> dict[str, str]:
+    def _worker_for_log(
+        self,
+        content: str,
+        *,
+        provider: str = "codex",
+        runner_failed: bool = False,
+    ) -> dict[str, object]:
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
         handle.write(content)
         handle.flush()
         handle.close()
         self.addCleanup(Path(handle.name).unlink, missing_ok=True)
-        return {"log_path": handle.name}
+        worker: dict[str, object] = {"log_path": handle.name, "provider": provider}
+        if runner_failed:
+            worker.update({"runner_status": "failed", "exit_code": 1})
+        return worker
 
     def test_ignores_error_markers_inside_captured_log_output(self) -> None:
         worker = self._worker_for_log(
@@ -271,13 +280,17 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     'worker_retry_scheduled: {"message": "Transient worker failure detected; retry 1 scheduled at 2026-04-05T13:48:48Z: reason: \\"QUOTA_EXHAUSTED\\""}',
                     "No local failure happened in this session.",
                 ]
-            )
+            ),
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_real_model_availability_failure(self) -> None:
-        worker = self._worker_for_log('Error: Model "grok-code-fast-1" from --model flag is not available.\n')
+        worker = self._worker_for_log(
+            'Error: Model "grok-code-fast-1" from --model flag is not available.\n',
+            runner_failed=True,
+        )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
@@ -294,7 +307,9 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "An unexpected critical error occurred:[object Object]",
                 ]
             )
-            + "\n"
+            + "\n",
+            provider="gemini",
+            runner_failed=True,
         )
 
         self.assertEqual(
@@ -304,29 +319,34 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_detects_copilot_monthly_quota_failure(self) -> None:
         line = '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
-        worker = self._worker_for_log(line + "\n")
+        worker = self._worker_for_log(line + "\n", provider="copilot", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_claude_auth_failure_from_cli_log(self) -> None:
+        system_line = (
+            '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,'
+            '"retry_delay_ms":590.5,"error_status":401,"error":"authentication_failed"}'
+        )
         worker = self._worker_for_log(
             "\n".join(
                 [
-                    '{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":590.5,"error_status":401,"error":"authentication_failed"}',
+                    system_line,
                     '{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"Invalid authentication credentials\\"}}"}]}}',
                 ]
             )
-            + "\n"
+            + "\n",
+            provider="claude",
+            runner_failed=True,
         )
 
-        self.assertEqual(
-            supervisor.detect_worker_failure(worker),
-            '{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"Invalid authentication credentials\\"}}"}]}}',
-        )
+        self.assertEqual(supervisor.detect_worker_failure(worker), system_line)
 
     def test_ignores_auth_text_inside_tool_result_user_message(self) -> None:
         worker = self._worker_for_log(
-            '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"prior state said not authenticated, but this is just captured inspection output"}]}}\n'
+            '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"prior state said not authenticated, but this is just captured inspection output"}]}}\n',
+            provider="claude",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -340,7 +360,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -354,14 +375,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_ignores_activity_log_bullet_that_mentions_prior_quota_reassignment(self) -> None:
         worker = self._worker_for_log(
-            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n"
+            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -381,7 +404,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                 }
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -401,7 +425,9 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                 }
             )
-            + "\n"
+            + "\n",
+            provider="claude",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -416,12 +442,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 },
             }
         )
-        worker = self._worker_for_log(line + "\n")
+        worker = self._worker_for_log(line + "\n", provider="claude")
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_real_no_quota_line(self) -> None:
-        worker = self._worker_for_log("402 You have no quota\n")
+        worker = self._worker_for_log(
+            "402 You have no quota\n",
+            provider="copilot",
+            runner_failed=True,
+        )
 
         self.assertEqual(supervisor.detect_worker_failure(worker), "402 You have no quota")
 
@@ -436,13 +466,14 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "worker continued reviewing after this probe.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_standalone_fatal_line(self) -> None:
-        worker = self._worker_for_log("fatal: provider process crashed\n")
+        worker = self._worker_for_log("fatal: provider process crashed\n", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), "fatal: provider process crashed")
 
@@ -455,7 +486,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -469,7 +501,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "No local failure happened in this session.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -483,10 +516,68 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "The quoted failure came from a reviewed diff, not this worker process.",
                 ]
             )
-            + "\n"
+            + "\n",
+            runner_failed=True,
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_captured_quota_fixtures_and_source_lines_are_not_terminal_evidence(self) -> None:
+        captured_lines = (
+            "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json "
+            "TerminalQuotaError: You have exhausted your capacity on this model.",
+            '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}',
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits.",
+            '{"type":"result","subtype":"error_during_execution","is_error":true,'
+            '"result":"You\'ve hit your weekly limit · resets Jun 8, 12pm (UTC)"}',
+        )
+
+        for captured_line in captured_lines:
+            with self.subTest(captured_line=captured_line):
+                worker = self._worker_for_log(captured_line + "\n", provider="codex")
+                self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_successful_runner_never_promotes_transcript_quota_text(self) -> None:
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "completed", "exit_code": 0})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
+        cases = (
+            ("claude", "status: 401 unauthorized", True, "auth"),
+            ("gemini", "status: 429 RESOURCE_EXHAUSTED", True, "capacity_retryable"),
+            (
+                "claude",
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "result": "You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+                    },
+                    separators=(",", ":"),
+                ),
+                False,
+                "quota_terminal",
+            ),
+            ("codex", "fatal: provider process crashed", True, "terminal"),
+        )
+
+        for provider, line, runner_failed, expected_kind in cases:
+            with self.subTest(provider=provider, expected_kind=expected_kind):
+                worker = self._worker_for_log(
+                    line + "\n",
+                    provider=provider,
+                    runner_failed=runner_failed,
+                )
+                reason = supervisor.detect_worker_failure(worker)
+                self.assertEqual(reason, line)
+                failure = supervisor.classify_worker_failure({}, worker, reason)
+                self.assertEqual(failure["kind"], expected_kind)
 
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
@@ -563,6 +654,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_quota_reached_probe_envelope_before_auth_words(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "antigravity"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "Provider authentication probe status: quota_reached",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
     def test_classifies_claude_weekly_rate_limit_as_terminal_quota(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "claude"}
@@ -578,7 +682,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
         worker = self._worker_for_log(
-            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n"
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n",
+            runner_failed=True,
         )
 
         self.assertEqual(
@@ -587,7 +692,11 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
     def test_detects_claude_weekly_rate_limit_line_as_worker_failure(self) -> None:
-        worker = self._worker_for_log("rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n")
+        worker = self._worker_for_log(
+            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n",
+            provider="claude",
+            runner_failed=True,
+        )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
@@ -757,7 +866,13 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "Your quota will reset after 89h52m2s.\n"
         )
         worker.update(
-            {"provider": "antigravity", "run_id": "antigravity-run-1", "task_id": "TJ-E2E-005"}
+            {
+                "provider": "antigravity",
+                "run_id": "antigravity-run-1",
+                "task_id": "TJ-E2E-005",
+                "runner_status": "failed",
+                "exit_code": 1,
+            }
         )
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
@@ -1123,7 +1238,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIn("claude_account_manual", pauses)
         self.assertTrue(supervisor.agent_dispatch_paused(config, state, "claude2"))
 
-    def test_expire_provider_dispatch_pauses_removes_expired_entry(self) -> None:
+    def test_expired_quota_pause_becomes_probe_gated_without_reopening_dispatch(self) -> None:
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -1147,9 +1262,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
             changed = supervisor.expire_provider_dispatch_pauses(config, state)
 
         self.assertTrue(changed)
-        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
+        self.assertTrue(pause["requires_live_recovery_probe"])
+        self.assertEqual(pause["recovery_probe_not_before"], "2026-04-06T12:00:00Z")
+        self.assertTrue(supervisor.provider_dispatch_paused(config, state, "copilot"))
         write_activity_log.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_recovery_probe_scheduled")
 
     def test_mark_revoked_auth_pause_is_sticky_until_probe(self) -> None:
         from datetime import datetime, timezone
@@ -1301,6 +1419,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "auth_ready": True,
                     "last_auth_probe_at": "2026-06-06T12:00:00Z",
                     "auth_method": "codex_exec_oauth",
+                    "auth_probe": {
+                        "ready": True,
+                        "source": "live",
+                        "method": "codex_exec_oauth",
+                        "checked_at": "2026-06-06T12:00:00Z",
+                    },
                 }
             }
         }
@@ -15769,6 +15893,8 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                         "queue_event_id": "evt-gemini",
                         "pid": 987654,
                         "log_path": str(log_path),
+                        "runner_status": "failed",
+                        "exit_code": 1,
                         "work_progress_snapshot": {"commit_sha": "f" * 40},
                         "request_snapshot": {
                             "task_id": "OPS-LEASE-003",
@@ -15807,7 +15933,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(streak["generations"][0]["rejected_head"], "f" * 40)
             self.assertIn("capacity", worker["last_error"].lower())
 
-    def test_reconcile_runtime_uses_log_failure_for_copilot_monthly_quota(self) -> None:
+    def test_reconcile_runtime_keeps_missing_process_without_terminal_envelope_out_of_quota(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config = self._config(root)
@@ -15880,15 +16006,13 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(worker["status"], "reassigned")
             self.assertEqual(worker["reassigned_to"], "Claude")
             self.assertEqual(state["queue"]["events"]["evt-copilot"]["status"], "completed")
-            pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
-            self.assertEqual(pause["pause_kind"], "quota_terminal")
-            self.assertEqual(pause["worker_run_id"], "copilot-run-dead")
+            self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
             streak = state["provider_guardrails"]["task_failure_streaks"]["MPOS-P1-PER-002:copilot"]
             self.assertEqual(streak["schema_version"], 3)
-            self.assertEqual(streak["last_failure_kind"], "quota_terminal")
+            self.assertEqual(streak["last_failure_kind"], "missing_process")
             self.assertEqual(streak["generations"][0]["reason_class"], "terminal")
             self.assertEqual(streak["generations"][0]["rejected_head"], "1" * 40)
-            self.assertIn("monthly quota", worker["last_error"].lower())
+            self.assertIn("process missing", worker["last_error"].lower())
 
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
@@ -16837,6 +16961,29 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
         write_caps.assert_called_once_with(self.config, report=report)
 
+    def test_live_quota_probe_is_degraded_and_never_creates_an_auth_pause(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "quota_reached",
+            "method": "codex_exec_oauth",
+            "error": "Provider authentication probe status: quota_reached",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+
+        report = self._refresh(probe, state)
+
+        capability = report["providers"]["codex2"]
+        self.assertEqual(capability["account_health"], "degraded")
+        self.assertEqual(capability["probe_failure_kind"], "quota_terminal")
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(pause["pause_kind"], "quota_terminal")
+        self.assertNotIn("requires_live_auth_probe", pause)
+        self.assertNotIn("sticky_until_auth_probe", pause)
+
     def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
         """The observed regression: an auth pause reopened the lane on a timer."""
         state = {
@@ -16857,7 +17004,7 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
         self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
 
-    def test_capacity_pause_still_expires_on_its_window(self) -> None:
+    def test_capacity_pause_stays_blocked_while_recovery_probe_is_pending(self) -> None:
         state = {
             "provider_guardrails": {
                 "dispatch_pauses": {
@@ -16872,7 +17019,192 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         with mock.patch.object(supervisor, "write_activity_log"):
             expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
         self.assertTrue(expired)
-        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertTrue(pause["requires_live_recovery_probe"])
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+
+class ProviderPauseRecoveryProbeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "supervisor": {"auto_refresh_provider_capabilities": False},
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                }
+            },
+            "providers": {
+                "antigravity": {
+                    "delivery_mode": "antigravity",
+                    "quota_group": "antigravity",
+                }
+            },
+            "provider_guardrails": {
+                "recovery_probe_interval_seconds": 300,
+                "recovery_probe_max_per_cycle": 1,
+            },
+        }
+
+    @staticmethod
+    def _gated_pause() -> dict[str, object]:
+        return {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "trigger_provider": "antigravity",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "2026-08-02T05:00:00Z",
+                        "requires_live_recovery_probe": True,
+                        "recovery_probe_not_before": "2026-08-02T05:00:00Z",
+                    }
+                }
+            }
+        }
+
+    def test_auto_refresh_false_still_runs_one_targeted_recovery_probe(self) -> None:
+        state = self._gated_pause()
+        cached = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": False,
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T05:00:00Z",
+                        "source": "cached",
+                    },
+                }
+            }
+        }
+        live = {
+            "provider": "antigravity",
+            "ready": True,
+            "status": "ready",
+            "method": "agy_prompt_oauth",
+            "checked_at": "2026-08-02T06:00:00Z",
+            "last_auth_probe_at": "2026-08-02T06:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(cached)),
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=live) as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_called_once_with(self.config, "antigravity", force=True)
+        write_caps.assert_called_once_with(self.config, report=current)
+        self.assertEqual(current["providers"]["antigravity"]["account_health"], "healthy")
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_cached_success_cannot_clear_a_probe_gated_quota_pause(self) -> None:
+        state = self._gated_pause()
+        cached_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "cached",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(
+                self.config,
+                state,
+                cached_success,
+            )
+
+        self.assertFalse(changed)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_fresh_full_refresh_result_avoids_a_duplicate_targeted_probe(self) -> None:
+        state = self._gated_pause()
+        live_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(live_success)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_failed_live_recovery_probe_is_interval_bounded(self) -> None:
+        state = self._gated_pause()
+        live_failure = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": False,
+                    "account_health": "degraded",
+                    "probe_failure_kind": "quota_terminal",
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(
+                self.config,
+                state,
+                live_failure,
+            )
+
+        self.assertTrue(changed)
+        pause = state["provider_guardrails"]["dispatch_pauses"]["antigravity"]
+        self.assertEqual(pause["last_recovery_probe_at"], "2026-08-02T06:00:00Z")
+        self.assertEqual(pause["next_recovery_probe_at"], "2026-08-02T06:05:00Z")
+        targets = supervisor.provider_recovery_probe_targets(
+            self.config,
+            state,
+            now=datetime(2026, 8, 2, 6, 4, 59, tzinfo=timezone.utc),
+        )
+        self.assertEqual(targets, [])
 
 
 class OwnerlessInProgressReconciliationTests(unittest.TestCase):
