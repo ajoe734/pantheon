@@ -8936,6 +8936,168 @@ def first_viable_agent(
     return None
 
 
+def bounded_fallback_candidates(
+    config: dict[str, Any],
+    mapping: dict[str, Any],
+    *,
+    roots: list[str],
+    preferred: list[str] | None = None,
+) -> list[str]:
+    """Return a deterministic, cycle-safe breadth-first fallback order.
+
+    Direct configured fallbacks retain their declared order. Task-preferred
+    lanes follow those direct candidates, and every discovered candidate may
+    contribute its own configured fallbacks. A case-insensitive seen set bounds
+    traversal by the finite configured/roster names even when mappings contain
+    cycles such as Codex -> Codex2 -> Codex.
+    """
+
+    queue: list[str] = []
+    seen: set[str] = set()
+
+    def enqueue(raw_name: str | None) -> None:
+        name = canonical_agent_name(config, raw_name)
+        key = name.casefold()
+        if not name or key in seen:
+            return
+        seen.add(key)
+        queue.append(name)
+
+    for root in roots:
+        for candidate in normalized_mapping_values(mapping, root):
+            enqueue(candidate)
+    for candidate in preferred or []:
+        enqueue(candidate)
+
+    ordered: list[str] = []
+    cursor = 0
+    while cursor < len(queue):
+        candidate = queue[cursor]
+        cursor += 1
+        ordered.append(candidate)
+        for child in normalized_mapping_values(mapping, candidate):
+            enqueue(child)
+    return ordered
+
+
+def plan_task_assignment_pair(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    state: dict[str, Any] | None = None,
+    fixed_owner: str | None = None,
+    owner_candidates: list[str] | None = None,
+    preferred_reviewers: list[str] | None = None,
+    preserve_in_progress_incumbents: bool = False,
+) -> tuple[str, str] | None:
+    """Plan one viable, independent owner/reviewer pair before mutation.
+
+    The search considers a candidate owner together with its reviewer options;
+    it never rejects an otherwise viable owner merely because that agent is the
+    incumbent reviewer. This is deliberately identity-only independence: it
+    does not merge account/quota groups or prohibit Codex/Codex2 mutual review.
+    """
+
+    owner = canonical_agent_name(config, str(task.get("owner") or ""))
+    reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    task_status = str(task.get("status") or "").strip().lower()
+
+    if task_assignment_is_catalog_locked(task):
+        if (
+            owner
+            and reviewer
+            and owner.casefold() != reviewer.casefold()
+            and agent_can_take_task(config, owner, task, state=state)
+            and agent_can_take_task(config, reviewer, task, state=state)
+        ):
+            return owner, reviewer
+        return None
+
+    settings = worker_reassignment_settings(config)
+    owner_mapping = settings.get("owner_fallbacks", {}) or {}
+    reviewer_mapping = settings.get("reviewer_fallbacks", {}) or {}
+    preferred_lanes = task_preferred_lane_order(config, task)
+
+    if fixed_owner is not None:
+        owner_order = [canonical_agent_name(config, fixed_owner)]
+    elif owner_candidates is not None:
+        owner_order = [canonical_agent_name(config, name) for name in owner_candidates]
+    else:
+        owner_fallbacks = bounded_fallback_candidates(
+            config,
+            owner_mapping,
+            roots=[owner] if owner else [],
+            preferred=[lane for lane in preferred_lanes if lane != owner],
+        )
+        if not owner_fallbacks:
+            owner_fallbacks = default_reassignment_candidates(
+                config,
+                exclude={owner} if owner else set(),
+            )
+        owner_order = ([owner] if owner else []) + owner_fallbacks
+
+    seen_owners: set[str] = set()
+    for candidate_owner in owner_order:
+        candidate_owner = canonical_agent_name(config, candidate_owner)
+        owner_key = candidate_owner.casefold()
+        if not candidate_owner or owner_key in seen_owners:
+            continue
+        seen_owners.add(owner_key)
+        incumbent_owner = fixed_owner is None and owner_key == owner.casefold()
+        owner_state = (
+            None
+            if incumbent_owner and preserve_in_progress_incumbents and task_status == "in_progress"
+            else state
+        )
+        if not agent_can_take_task(config, candidate_owner, task, state=owner_state):
+            continue
+
+        reviewer_order = list(preferred_reviewers or ([reviewer] if reviewer else []))
+        if preferred_reviewers is None and owner and owner not in reviewer_order:
+            reviewer_order.append(owner)
+        reviewer_order.extend(
+            bounded_fallback_candidates(
+                config,
+                reviewer_mapping,
+                roots=[name for name in (reviewer, owner, candidate_owner) if name],
+                preferred=[lane for lane in preferred_lanes if lane != candidate_owner],
+            )
+        )
+        reviewer_order.extend(
+            bounded_fallback_candidates(
+                config,
+                owner_mapping,
+                roots=[name for name in (owner, candidate_owner) if name],
+            )
+        )
+
+        seen_reviewers: set[str] = set()
+        for candidate_reviewer in reviewer_order:
+            candidate_reviewer = canonical_agent_name(config, candidate_reviewer)
+            reviewer_key = candidate_reviewer.casefold()
+            if (
+                not candidate_reviewer
+                or reviewer_key in seen_reviewers
+                or reviewer_key == owner_key
+            ):
+                continue
+            seen_reviewers.add(reviewer_key)
+            incumbent_reviewer = reviewer_key == reviewer.casefold()
+            reviewer_state = (
+                None
+                if incumbent_reviewer and preserve_in_progress_incumbents and task_status == "in_progress"
+                else state
+            )
+            if agent_can_take_task(
+                config,
+                candidate_reviewer,
+                task,
+                state=reviewer_state,
+            ):
+                return candidate_owner, candidate_reviewer
+    return None
+
+
 def agent_auto_dispatch_block_reason(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10690,6 +10852,9 @@ def _persist_task_reassignment_locked(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
 ) -> bool:
     status_path = config_path(config, "status_file")
     status = load_status(config)
@@ -10703,6 +10868,13 @@ def _persist_task_reassignment_locked(
 
     old_owner = str(task.get("owner") or "")
     old_reviewer = str(task.get("reviewer") or "")
+    old_status = str(task.get("status") or "")
+    if expected_owner is not None and old_owner != expected_owner:
+        return False
+    if expected_reviewer is not None and old_reviewer != expected_reviewer:
+        return False
+    if expected_status is not None and old_status != expected_status:
+        return False
     if (
         task_assignment_is_catalog_locked(task)
         and (new_owner != old_owner or new_reviewer != old_reviewer)
@@ -10779,6 +10951,9 @@ def persist_task_reassignment(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    expected_owner: str | None = None,
+    expected_reviewer: str | None = None,
+    expected_status: str | None = None,
 ) -> bool:
     status_path = config_path(config, "status_file")
     with canonical_task_state_lock_file(
@@ -10796,6 +10971,9 @@ def persist_task_reassignment(
             handoff_to=handoff_to,
             handoff_from=handoff_from,
             resolve_open_blockers=resolve_open_blockers,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
         )
     if not applied:
         return False
@@ -10883,6 +11061,9 @@ def maybe_reassign_task_after_worker_failure(
             message=message,
             handoff_to=new_reviewer,
             handoff_from=reviewer,
+            expected_owner=owner,
+            expected_reviewer=reviewer,
+            expected_status=str(task.get("status") or ""),
         ):
             return None
         write_activity_log(
@@ -10904,20 +11085,28 @@ def maybe_reassign_task_after_worker_failure(
         return new_reviewer
 
     if task_status in owned_statuses | finalize_statuses and owner == failing_agent:
-        candidates = l12_provider_first_candidates(
-            task,
-            normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent),
+        candidates = bounded_fallback_candidates(
+            config,
+            settings.get("owner_fallbacks", {}) or {},
+            roots=[failing_agent],
         )
-        new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not new_owner:
+        candidates = l12_provider_first_candidates(task, candidates)
+        if not candidates:
             return None
         reviewer_candidates = [reviewer]
         reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), failing_agent))
         reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), failing_agent))
         reviewer_candidates = l12_provider_first_candidates(task, reviewer_candidates)
-        new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
-        if not new_reviewer:
+        planned_pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            owner_candidates=candidates,
+            preferred_reviewers=reviewer_candidates,
+        )
+        if planned_pair is None:
             return None
+        new_owner, new_reviewer = planned_pair
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
         message = (
             f"Auto-reassigned ownership from {owner} to {new_owner} after repeated {failing_agent} {failure_label}: {failure_summary}"
@@ -10932,6 +11121,9 @@ def maybe_reassign_task_after_worker_failure(
             message=message,
             new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_from=owner,
+            expected_owner=owner,
+            expected_reviewer=reviewer,
+            expected_status=str(task.get("status") or ""),
         ):
             return None
         write_activity_log(
@@ -14140,40 +14332,31 @@ def normalize_mainline_task_assignment(
     assignment_state = None if task_status == "in_progress" else state
     owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
     reviewer_allowed = agent_can_take_task(config, reviewer, task, state=assignment_state)
-    if owner_allowed and reviewer_allowed:
+    if (
+        owner_allowed
+        and reviewer_allowed
+        and owner.casefold() != reviewer.casefold()
+    ):
         return False
 
-    new_owner = owner
-    new_reviewer = reviewer
-    changed_fields: list[str] = []
-
-    if owner and not owner_allowed:
-        owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
-        if not owner_candidates:
-            owner_candidates = default_reassignment_candidates(config, exclude={owner, reviewer})
-        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, state=state, task=task)
-        if not replacement_owner:
-            return False
-        new_owner = replacement_owner
-        changed_fields.append(f"owner {owner} -> {new_owner}")
-
-    if not reviewer or not reviewer_allowed or reviewer == new_owner:
-        reviewer_candidates: list[str] = []
-        if reviewer:
-            reviewer_candidates.append(reviewer)
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), reviewer))
-        if owner:
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("reviewer_fallbacks", {}), owner))
-            reviewer_candidates.extend(normalized_mapping_values(settings.get("owner_fallbacks", {}), owner))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
-        if not replacement_reviewer:
-            return False
-        new_reviewer = replacement_reviewer
-        if replacement_reviewer != reviewer:
-            changed_fields.append(f"reviewer {reviewer or '(unset)'} -> {new_reviewer}")
+    planned_pair = plan_task_assignment_pair(
+        config,
+        task,
+        state=state,
+        preserve_in_progress_incumbents=True,
+    )
+    if planned_pair is None:
+        return False
+    new_owner, new_reviewer = planned_pair
 
     if new_owner == owner and new_reviewer == reviewer:
         return False
+
+    changed_fields: list[str] = []
+    if new_owner != owner:
+        changed_fields.append(f"owner {owner or '(unset)'} -> {new_owner}")
+    if new_reviewer != reviewer:
+        changed_fields.append(f"reviewer {reviewer or '(unset)'} -> {new_reviewer}")
 
     blocked_agents = [
         agent_name
@@ -14193,6 +14376,9 @@ def normalize_mainline_task_assignment(
         message=message,
         handoff_to=new_owner if new_owner != owner else new_reviewer,
         handoff_from=owner if new_owner != owner else reviewer,
+        expected_owner=owner,
+        expected_reviewer=reviewer,
+        expected_status=str(task.get("status") or ""),
     ):
         return False
     write_activity_log(
@@ -14944,6 +15130,75 @@ def agent_dispatch_loads(
     return loads
 
 
+def plan_helper_claim_assignment(
+    config: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    owner_name: str,
+    reviewer_name: str,
+    idle_agent_name: str,
+    agent_loads: dict[str, list[int]],
+    helper_settings: dict[str, Any],
+    owner_paused: bool = False,
+    state: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    if not helper_settings.get("enabled", True):
+        return None
+    task_status = str(task.get("status") or "").lower()
+    allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
+    paused_owner_statuses = {
+        str(value).lower() for value in helper_settings.get("paused_owner_task_statuses", ["in_progress"])
+    }
+    if task_status not in allowed_statuses and not (owner_paused and task_status in paused_owner_statuses):
+        return None
+    if not owner_name or owner_name == idle_agent_name:
+        return None
+    if task_preferred_lane_blocks_helper_claim(
+        config,
+        task=task,
+        owner_name=owner_name,
+        idle_agent_name=idle_agent_name,
+        owner_paused=owner_paused,
+        state=state,
+    ):
+        return None
+    fallbacks = bounded_fallback_candidates(
+        config,
+        worker_reassignment_settings(config).get("owner_fallbacks", {}) or {},
+        roots=[owner_name],
+        preferred=task_preferred_helper_fallbacks(
+            config,
+            task=task,
+            owner_name=owner_name,
+        ),
+    )
+    if not fallbacks:
+        return None
+    idle_agent_name = canonical_agent_name(config, idle_agent_name)
+    if idle_agent_name not in fallbacks:
+        return None
+    if owner_paused:
+        pass
+    elif not helper_settings.get("claim_idle_work", False):
+        owner_loads = agent_loads.get(owner_name, [])
+        if helper_settings.get("require_owner_higher_priority_load", True):
+            dispatch_reason_for_status = {
+                "in_progress": REASON_OWNED_IN_PROGRESS,
+                "todo": REASON_OWNED_READY,
+            }.get(task_status, REASON_OWNED_READY)
+            current_priority = dispatch_reason_priority(dispatch_reason_for_status)
+            if current_priority is None or not any(priority < current_priority for priority in owner_loads):
+                return None
+
+    return plan_task_assignment_pair(
+        config,
+        task,
+        state=state,
+        fixed_owner=idle_agent_name,
+        preferred_reviewers=[owner_name, reviewer_name],
+    )
+
+
 def choose_helper_claim_agent(
     config: dict[str, Any],
     *,
@@ -14956,48 +15211,17 @@ def choose_helper_claim_agent(
     owner_paused: bool = False,
     state: dict[str, Any] | None = None,
 ) -> bool:
-    if not helper_settings.get("enabled", True):
-        return False
-    if not agent_can_take_task(config, idle_agent_name, task):
-        return False
-    task_status = str(task.get("status") or "").lower()
-    allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
-    paused_owner_statuses = {
-        str(value).lower() for value in helper_settings.get("paused_owner_task_statuses", ["in_progress"])
-    }
-    if task_status not in allowed_statuses and not (owner_paused and task_status in paused_owner_statuses):
-        return False
-    if not owner_name or owner_name == idle_agent_name:
-        return False
-    if task_preferred_lane_blocks_helper_claim(
+    return plan_helper_claim_assignment(
         config,
         task=task,
         owner_name=owner_name,
+        reviewer_name=reviewer_name,
         idle_agent_name=idle_agent_name,
+        agent_loads=agent_loads,
+        helper_settings=helper_settings,
         owner_paused=owner_paused,
         state=state,
-    ):
-        return False
-    fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
-    for preferred_fallback in task_preferred_helper_fallbacks(config, task=task, owner_name=owner_name):
-        if preferred_fallback not in fallbacks:
-            fallbacks.append(preferred_fallback)
-    if not fallbacks:
-        return False
-    if owner_paused:
-        return idle_agent_name in fallbacks
-    if helper_settings.get("claim_idle_work", False):
-        return idle_agent_name in fallbacks
-    owner_loads = agent_loads.get(owner_name, [])
-    if helper_settings.get("require_owner_higher_priority_load", True):
-        dispatch_reason_for_status = {
-            "in_progress": REASON_OWNED_IN_PROGRESS,
-            "todo": REASON_OWNED_READY,
-        }.get(task_status, REASON_OWNED_READY)
-        current_priority = dispatch_reason_priority(dispatch_reason_for_status)
-        if current_priority is None or not any(priority < current_priority for priority in owner_loads):
-            return False
-    return idle_agent_name in fallbacks
+    ) is not None
 
 
 def task_preferred_lane_blocks_helper_claim(
@@ -15638,7 +15862,7 @@ def dispatch_ready_tasks(
                 tuple[dict[str, Any], dict[str, Any]] | None,
             ]
         ] = []
-        helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
+        helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool, str]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
@@ -15690,7 +15914,7 @@ def dispatch_ready_tasks(
                 or owner_paused
                 or bool(helper_settings.get("claim_sidecars_when_idle", False))
             )
-            helper_claim_candidate = (
+            helper_claim_eligible = (
                 (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
                 and not task_assignment_is_catalog_locked(task)
                 and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
@@ -15703,7 +15927,9 @@ def dispatch_ready_tasks(
                     owner_field=owner_field,
                     previous_owner=str(task_owner or ""),
                 )
-                and choose_helper_claim_agent(
+            )
+            helper_plan = (
+                plan_helper_claim_assignment(
                     config,
                     task=task,
                     owner_name=str(task_owner or ""),
@@ -15714,9 +15940,11 @@ def dispatch_ready_tasks(
                     owner_paused=owner_paused,
                     state=state,
                 )
+                if helper_claim_eligible
+                else None
             )
 
-            if helper_claim_candidate:
+            if helper_plan is not None:
                 helper_dispatch_reason = (
                     "owned_in_progress_dispatch"
                     if task_status == "in_progress"
@@ -15736,6 +15964,7 @@ def dispatch_ready_tasks(
                         str(task_owner or ""),
                         str(task_reviewer or ""),
                         owner_paused,
+                        helper_plan[1],
                     )
                 )
 
@@ -15888,6 +16117,7 @@ def dispatch_ready_tasks(
             task_owner,
             task_reviewer,
             owner_paused,
+            new_reviewer,
         ) in helper_candidates[:remaining_occurrence_slots]:
             task_id = str(task.get(task_id_field) or "")
             if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
@@ -15896,12 +16126,18 @@ def dispatch_ready_tasks(
                 f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
                 if owner_paused
                 else (
-                    f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
+                    f"Helper-claimed by idle {target_agent}."
                     if helper_settings.get("claim_idle_work", False)
                     else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
                 )
             )
-            new_reviewer = str(task_owner or task_reviewer or "")
+            if new_reviewer == task_owner:
+                reviewer_suffix = f" previous owner {task_owner} becomes reviewer."
+            elif new_reviewer != task_reviewer:
+                reviewer_suffix = f" reviewer re-bound from {task_reviewer} to {new_reviewer}."
+            else:
+                reviewer_suffix = f" reviewer remains {new_reviewer}."
+            helper_message = helper_message.rstrip(".") + reviewer_suffix
             if not persist_task_reassignment(
                 config,
                 task_id=task_id,
@@ -15910,6 +16146,9 @@ def dispatch_ready_tasks(
                 message=helper_message,
                 handoff_to=target_agent,
                 handoff_from=str(task_owner or ""),
+                expected_owner=task_owner,
+                expected_reviewer=task_reviewer,
+                expected_status=str(task.get("status") or ""),
             ):
                 continue
 
