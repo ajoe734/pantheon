@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import shutil
 import subprocess
@@ -17,8 +18,14 @@ from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
     FilesystemIdentity,
     PathComponentIdentity,
+    ProcessCwdIdentity,
+    ProcessGeneration,
+    ProcfsRuntimeProcessReader,
+    SupervisorAdmissionLockIdentity,
+    SupervisorProcessIdentity,
     build_candidate_runtime_identity,
     capture_promotion_snapshot,
+    discover_incumbent_supervisor_process,
     evaluate_promotion_invariants,
     parse_origin_url,
     resolve_candidate_root,
@@ -136,6 +143,43 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     return identity
 
 
+def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdentity:
+    generation = ProcessGeneration(pid=12345, starttime_ticks=67890, state="S")
+    lock = SupervisorAdmissionLockIdentity(
+        path=repo / ".orchestrator" / "supervisor.lock",
+        device=20,
+        inode=21,
+        byte_length=6,
+        sha256="e" * 64,
+        mtime_ns=22,
+        ctime_ns=23,
+        kernel_lock_id="42",
+        kernel_lock_kind="FLOCK",
+        kernel_lock_class="ADVISORY",
+        kernel_lock_mode="WRITE",
+        kernel_lock_start="0",
+        kernel_lock_end="EOF",
+        owner_pid=generation.pid,
+        owner_starttime_ticks=generation.starttime_ticks,
+    )
+    return SupervisorProcessIdentity(
+        generation=generation,
+        executable=Path(sys.executable).resolve(),
+        argv=(sys.executable, "supervisor.py"),
+        entrypoint=repo / ".orchestrator" / "supervisor.py",
+        config_path=promotion.LIVE_SUPERVISOR_CONFIG_PATH,
+        cwd=ProcessCwdIdentity(path=repo, device=1, inode=2),
+        cwd_commit="a" * 40,
+        cwd_tree="b" * 40,
+        environment_contract=(
+            ("PANTHEON_COMMAND_ROOT", str(repo)),
+            ("PANTHEON_COMMAND_RUNTIME_SHA", "a" * 40),
+            ("PANTHEON_STATUS_ROOT", str(repo)),
+        ),
+        admission_lock=lock,
+    )
+
+
 @patch("promote_supervisor_runtime.lock_held", return_value=True)
 @patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
 @patch("supervisor_runtime_health.lock_held", return_value=True)
@@ -145,11 +189,15 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
     create_realistic_healthy_fixture(repo)
     identity = _verified_identity_dependency(repo)
+    process_identity = _verified_process_identity_dependency(repo)
 
     with patch(
         "promote_supervisor_runtime.build_candidate_runtime_identity",
         return_value=identity,
-    ) as identity_builder:
+    ) as identity_builder, patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=process_identity,
+    ) as process_discovery:
         snapshot = capture_promotion_snapshot(repo, now=now)
 
     assert snapshot["eligible_for_promotion"] is True
@@ -157,6 +205,8 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     assert all(inv["ok"] for inv in snapshot["invariants"])
     identity_builder.assert_called_once_with(repo)
     identity.verify_immutable_snapshot.assert_called_once_with()
+    process_discovery.assert_called_once()
+    assert snapshot["incumbent_supervisor_process_identity"]["pid"] == 12345
 
 
 @patch("promote_supervisor_runtime.lock_held", return_value=True)
@@ -188,6 +238,42 @@ def test_promotion_snapshot_fails_closed_when_identity_capture_is_missing(
     assert snapshot["eligible_for_promotion"] is False
     assert identity_invariant["ok"] is False
     assert identity_invariant["details"]["error"] == "identity unavailable"
+
+
+@patch("promote_supervisor_runtime.lock_held", return_value=True)
+@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
+@patch("supervisor_runtime_health.lock_held", return_value=True)
+@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
+def test_promotion_snapshot_requires_exact_process_identity(
+    mock_matches,
+    mock_sup_lock,
+    mock_alive,
+    mock_lock,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    create_realistic_healthy_fixture(repo)
+    identity = _verified_identity_dependency(repo)
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        side_effect=ValueError("zero exact incumbents"),
+    ):
+        snapshot = capture_promotion_snapshot(repo, now=now)
+
+    process_invariant = next(
+        item
+        for item in snapshot["invariants"]
+        if item["name"]
+        == "incumbent_supervisor_process_identity_immutable"
+    )
+    assert snapshot["eligible_for_promotion"] is False
+    assert process_invariant["ok"] is False
+    assert process_invariant["details"]["error"] == "zero exact incumbents"
 
 
 def test_capture_promotion_snapshot_fail_closed_on_missing_files(tmp_path: Path) -> None:
@@ -2070,3 +2156,487 @@ def test_live_config_revalidation_rejects_same_inode_parent_replacement(
     with patch("promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH", live_config):
         with pytest.raises(ValueError, match="path component identity drift"):
             identity.verify_against_live_config(live_config)
+
+
+class InjectedRuntimeProcessReader:
+    def __init__(
+        self,
+        *,
+        pids: tuple[int, ...],
+        generations: dict[int, ProcessGeneration],
+        argv: dict[int, tuple[str, ...]],
+        executable: dict[int, Path],
+        cwd: dict[int, ProcessCwdIdentity],
+        environment: dict[int, dict[str, str]],
+        locks: list[SupervisorAdmissionLockIdentity],
+    ) -> None:
+        self.pids = pids
+        self.generations = generations
+        self.generation_sequences: dict[
+            int, list[ProcessGeneration | BaseException]
+        ] = {}
+        self.argv = argv
+        self.executable = executable
+        self.cwd = cwd
+        self.environment = environment
+        self.locks = locks
+        self.errors: dict[str, BaseException] = {}
+
+    def list_pids(self) -> tuple[int, ...]:
+        return self.pids
+
+    def read_generation(self, pid: int) -> ProcessGeneration:
+        sequence = self.generation_sequences.get(pid)
+        if sequence:
+            value = sequence.pop(0) if len(sequence) > 1 else sequence[0]
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        return self.generations[pid]
+
+    def _raise(self, name: str) -> None:
+        error = self.errors.get(name)
+        if error is not None:
+            raise error
+
+    def read_argv(self, pid: int) -> tuple[str, ...]:
+        self._raise("read_argv")
+        return self.argv[pid]
+
+    def read_executable(self, pid: int) -> Path:
+        self._raise("read_executable")
+        return self.executable[pid]
+
+    def read_cwd(self, pid: int) -> ProcessCwdIdentity:
+        self._raise("read_cwd")
+        return self.cwd[pid]
+
+    def read_environment_contract(self, pid: int) -> dict[str, str]:
+        self._raise("read_environment_contract")
+        return dict(self.environment[pid])
+
+    def read_admission_lock(
+        self,
+        path: Path,
+    ) -> SupervisorAdmissionLockIdentity:
+        self._raise("read_admission_lock")
+        value = self.locks.pop(0) if len(self.locks) > 1 else self.locks[0]
+        assert value.path == path
+        return value
+
+
+def _injected_process_fixture(
+    tmp_path: Path,
+) -> tuple[
+    CandidateRuntimeIdentity,
+    InjectedRuntimeProcessReader,
+    tuple[str, ...],
+]:
+    candidate = tmp_path / "candidate"
+    (candidate / ".orchestrator").mkdir(parents=True)
+    entrypoint = candidate / ".orchestrator" / "supervisor.py"
+    entrypoint.write_text("# test entrypoint\n", encoding="utf-8")
+    candidate_stat = candidate.stat()
+    config_path = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    config_path.parent.mkdir()
+    status_root = tmp_path / "status-root"
+    (status_root / ".orchestrator").mkdir(parents=True)
+    status_file = status_root / "ai-status.json"
+    state_file = status_root / ".orchestrator" / "state.json"
+    status_file.write_text("{}\n", encoding="utf-8")
+    state_file.write_text("{}\n", encoding="utf-8")
+    executable = Path(sys.executable).resolve()
+    argv = (
+        str(executable),
+        "-u",
+        str(entrypoint),
+        "--config",
+        str(config_path),
+        "--verbose",
+    )
+    config_bytes = json.dumps(
+        {
+            "watchdog": {"supervisor_command": list(argv)},
+            "paths": {
+                "status_file": str(status_file),
+                "state_file": str(state_file),
+            },
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    config_path.write_bytes(config_bytes)
+    config_stat = config_path.stat()
+    commit = "a" * 40
+    tree = "b" * 40
+    identity = CandidateRuntimeIdentity(
+        candidate_root=candidate,
+        candidate_root_device=candidate_stat.st_dev,
+        candidate_root_inode=candidate_stat.st_ino,
+        git_directory_device=1,
+        git_directory_inode=2,
+        git_objects_device=3,
+        git_objects_inode=4,
+        git_config_device=5,
+        git_config_inode=6,
+        git_head_device=7,
+        git_head_inode=8,
+        git_index_device=9,
+        git_index_inode=10,
+        basename=commit,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        canonical_remote="github.com/ajoe734/pantheon",
+        repository_slug="ajoe734/pantheon",
+        config_path=config_path,
+        config_device=config_stat.st_dev,
+        config_inode=config_stat.st_ino,
+        config_path_components=(),
+        config_bytes=config_bytes,
+        config_byte_length=len(config_bytes),
+        config_sha256=promotion.hashlib.sha256(config_bytes).hexdigest(),
+    )
+    generation = ProcessGeneration(pid=1717, starttime_ticks=424242, state="S")
+    lock = SupervisorAdmissionLockIdentity(
+        path=status_root / ".orchestrator" / "supervisor.lock",
+        device=30,
+        inode=31,
+        byte_length=5,
+        sha256="c" * 64,
+        mtime_ns=32,
+        ctime_ns=33,
+        kernel_lock_id="71",
+        kernel_lock_kind="FLOCK",
+        kernel_lock_class="ADVISORY",
+        kernel_lock_mode="WRITE",
+        kernel_lock_start="0",
+        kernel_lock_end="EOF",
+        owner_pid=generation.pid,
+        owner_starttime_ticks=generation.starttime_ticks,
+    )
+    reader = InjectedRuntimeProcessReader(
+        pids=(generation.pid,),
+        generations={generation.pid: generation},
+        argv={generation.pid: argv},
+        executable={generation.pid: executable},
+        cwd={
+            generation.pid: ProcessCwdIdentity(
+                path=candidate,
+                device=candidate_stat.st_dev,
+                inode=candidate_stat.st_ino,
+            )
+        },
+        environment={
+            generation.pid: {
+                "PANTHEON_COMMAND_ROOT": str(candidate),
+                "PANTHEON_COMMAND_RUNTIME_SHA": commit,
+                "PANTHEON_STATUS_ROOT": str(status_root),
+            }
+        },
+        locks=[lock, lock],
+    )
+    return identity, reader, argv
+
+
+def _discover_injected(
+    identity: CandidateRuntimeIdentity,
+    reader: InjectedRuntimeProcessReader,
+    *,
+    git_identity: tuple[str, str] | None = None,
+) -> SupervisorProcessIdentity:
+    return discover_incumbent_supervisor_process(
+        identity,
+        reader=reader,
+        cwd_git_identity_reader=(
+            lambda _cwd: git_identity
+            if git_identity is not None
+            else (identity.head_commit, identity.tracked_tree_identity)
+        ),
+    )
+
+
+def test_process_identity_binds_exact_generation_argv_cwd_git_env_and_lock(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    identity = _discover_injected(candidate, reader)
+
+    assert identity.generation == ProcessGeneration(
+        pid=1717,
+        starttime_ticks=424242,
+        state="S",
+    )
+    assert identity.argv == argv
+    summary = promotion._supervisor_process_identity_summary(identity)
+    encoded_summary = json.dumps(summary, sort_keys=True)
+    assert summary["argv_sha256"] == promotion._argv_sha256(argv)
+    assert summary["admission_lock"]["owner_starttime_ticks"] == 424242
+    assert set(summary["environment_contract"]) == {
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_STATUS_ROOT",
+    }
+    assert "SECRET" not in encoded_summary
+
+
+def test_process_identity_revalidates_candidate_inside_lock_bracket(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    revalidator = Mock()
+
+    discover_incumbent_supervisor_process(
+        candidate,
+        reader=reader,
+        cwd_git_identity_reader=lambda _cwd: (
+            candidate.head_commit,
+            candidate.tracked_tree_identity,
+        ),
+        candidate_revalidator=revalidator,
+    )
+
+    revalidator.assert_called_once_with()
+
+
+def test_process_identity_rejects_zero_supervisor_candidates(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.pids = ()
+
+    with pytest.raises(ValueError, match="exactly one.*found 0"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_multiple_supervisor_candidates(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    other = 1818
+    reader.pids = (1717, other)
+    reader.generations[other] = ProcessGeneration(
+        pid=other,
+        starttime_ticks=525252,
+        state="S",
+    )
+    reader.argv[other] = argv
+
+    with pytest.raises(ValueError, match="exactly one.*found 2"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_wrong_config_argv(tmp_path: Path) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    reader.argv[1717] = argv[:4] + (str(tmp_path / "wrong-config.json"),) + argv[5:]
+
+    with pytest.raises(ValueError, match="config path mismatch"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_wrong_supervisor_entrypoint(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    reader.argv[1717] = argv[:2] + (
+        str(tmp_path / "wrong" / "supervisor.py"),
+    ) + argv[3:]
+
+    with pytest.raises(ValueError, match="canonical supervisor entrypoint mismatch"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_extra_full_argv_argument(tmp_path: Path) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    reader.argv[1717] = argv + ("--once",)
+
+    with pytest.raises(ValueError, match="full argv mismatch"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_stale_pid(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.generations[1717]
+    reader.generation_sequences[1717] = [
+        original,
+        ProcessLookupError("vanished"),
+    ]
+
+    with pytest.raises(ValueError, match="enumeration was incomplete"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_reused_pid_starttime(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.generations[1717]
+    reader.generation_sequences[1717] = [
+        original,
+        ProcessGeneration(pid=1717, starttime_ticks=999999, state="S"),
+    ]
+
+    with pytest.raises(ValueError, match="enumeration was incomplete"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_zombie_candidate(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.generations[1717] = ProcessGeneration(
+        pid=1717,
+        starttime_ticks=424242,
+        state="Z",
+    )
+
+    with pytest.raises(ValueError, match="zombie"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_deleted_cwd(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.errors["read_cwd"] = ValueError("cwd is deleted")
+
+    with pytest.raises(ValueError, match="cwd is deleted"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_wrong_cwd_realpath(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    wrong = tmp_path / "wrong-cwd"
+    wrong.mkdir()
+    wrong_stat = wrong.stat()
+    reader.cwd[1717] = ProcessCwdIdentity(
+        path=wrong,
+        device=wrong_stat.st_dev,
+        inode=wrong_stat.st_ino,
+    )
+
+    with pytest.raises(ValueError, match="cwd realpath mismatch"):
+        _discover_injected(candidate, reader)
+
+
+@pytest.mark.parametrize(
+    ("git_identity", "message"),
+    [
+        (("f" * 40, "b" * 40), "cwd commit mismatch"),
+        (("a" * 40, "f" * 40), "cwd tree mismatch"),
+    ],
+)
+def test_process_identity_rejects_wrong_cwd_git_identity(
+    tmp_path: Path,
+    git_identity: tuple[str, str],
+    message: str,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match=message):
+        _discover_injected(candidate, reader, git_identity=git_identity)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_STATUS_ROOT",
+    ],
+)
+def test_process_identity_rejects_wrong_allowlisted_environment(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.environment[1717][name] = "wrong"
+
+    with pytest.raises(ValueError, match=f"environment {name} mismatch"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_unreadable_proc_field(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.errors["read_environment_contract"] = PermissionError("denied")
+
+    with pytest.raises(PermissionError, match="denied"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_executable_mismatch(tmp_path: Path) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.executable[1717] = tmp_path / "wrong-python"
+
+    with pytest.raises(ValueError, match="executable mismatch"):
+        _discover_injected(candidate, reader)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"kernel_lock_id": "72"},
+        {"mtime_ns": 34},
+    ],
+)
+def test_process_identity_rejects_admission_lock_generation_drift(
+    tmp_path: Path,
+    changes: dict[str, Any],
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, **changes)
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(candidate, reader)
+
+
+def test_process_identity_rejects_admission_lock_owner_generation_mismatch(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    reader.locks = [
+        replace(reader.locks[0], owner_starttime_ticks=313131),
+    ]
+
+    with pytest.raises(ValueError, match="owner starttime mismatch"):
+        _discover_injected(candidate, reader)
+
+
+def test_procfs_environment_reader_returns_only_allowlisted_contract(
+    tmp_path: Path,
+) -> None:
+    proc_root = tmp_path / "proc"
+    process_dir = proc_root / "1717"
+    process_dir.mkdir(parents=True)
+    (process_dir / "environ").write_bytes(
+        b"PANTHEON_COMMAND_ROOT=/runtime\0"
+        b"SECRET_TOKEN=must-not-escape\0"
+        b"PANTHEON_COMMAND_RUNTIME_SHA=" + b"a" * 40 + b"\0"
+        b"PANTHEON_STATUS_ROOT=/status\0"
+    )
+
+    contract = ProcfsRuntimeProcessReader(
+        proc_root
+    ).read_environment_contract(1717)
+
+    assert contract == {
+        "PANTHEON_COMMAND_ROOT": "/runtime",
+        "PANTHEON_COMMAND_RUNTIME_SHA": "a" * 40,
+        "PANTHEON_STATUS_ROOT": "/status",
+    }
+    assert "must-not-escape" not in json.dumps(contract)
+
+
+def test_real_procfs_lock_capture_binds_kernel_owner_generation(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "supervisor.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()}\n")
+        handle.flush()
+        captured = ProcfsRuntimeProcessReader().read_admission_lock(lock_path)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    assert captured.owner_pid == os.getpid()
+    assert captured.owner_starttime_ticks > 0
+    assert captured.kernel_lock_kind == "FLOCK"
+    assert captured.kernel_lock_class == "ADVISORY"
+    assert captured.kernel_lock_mode == "WRITE"
+    assert captured.kernel_lock_start == "0"
+    assert captured.kernel_lock_end == "EOF"
