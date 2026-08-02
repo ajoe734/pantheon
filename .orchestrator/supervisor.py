@@ -6485,6 +6485,7 @@ def mark_provider_dispatch_paused(
     failure_kind: str | None = None,
     pause_kind: str | None = None,
     raw_ref: str | None = None,
+    quota_reset_at: str | None = None,
 ) -> bool:
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
@@ -6507,10 +6508,13 @@ def mark_provider_dispatch_paused(
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     hinted_blocked_until: str | None = None
     hint_capped = False
+    explicit_quota_reset = _parse_iso_utc(quota_reset_at)
     if probe_gated_auth_pause:
         blocked_until = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     if effective_pause_kind == "quota_terminal":
-        hinted = parse_quota_retry_hint(reason, now=now)
+        hinted = explicit_quota_reset
+        if hinted is None:
+            hinted = parse_quota_retry_hint(reason, now=now)
         if hinted is not None and hinted > blocked_until:
             hinted = hinted.replace(microsecond=0)
             hinted_blocked_until = hinted.isoformat().replace("+00:00", "Z")
@@ -6564,6 +6568,8 @@ def mark_provider_dispatch_paused(
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
+    if effective_pause_kind == "quota_terminal" and explicit_quota_reset is not None:
+        bucket[pause_provider_id]["quota_reset_at"] = _isoformat_utc(explicit_quota_reset)
     if changed:
         if effective_pause_kind == "quota_terminal":
             pause_description = "terminal quota failure"
@@ -8566,13 +8572,18 @@ def reconcile_provider_pause_recovery(
             )
             continue
 
-        failure_kind = str(
-            current.get("probe_failure_kind")
-            or rewrite_provider_health.classify_probe_failure_kind(
-                probe.get("ready"),
-                status=probe.get("status"),
+        probe_status = str(probe.get("status") or "").strip().lower()
+        failure_kind = (
+            "capacity_retryable"
+            if probe_status.startswith("models_cache_")
+            else str(
+                current.get("probe_failure_kind")
+                or rewrite_provider_health.classify_probe_failure_kind(
+                    probe.get("ready"),
+                    status=probe.get("status"),
+                )
+                or "capacity_retryable"
             )
-            or "capacity_retryable"
         )
         next_probe_at = _isoformat_utc(checked_at + timedelta(seconds=interval_seconds))
         if str(entry.get("last_recovery_probe_at") or "") == checked_at_iso:
@@ -8971,15 +8982,25 @@ def apply_provider_probe_to_report(
     capability["auth_method"] = probe.get("method")
     capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
     capability["auth_probe"] = probe
-    health = rewrite_provider_health.classify_probe(
-        probe.get("ready"),
-        status=probe.get("status"),
+    probe_status = str(probe.get("status") or "").strip().lower()
+    cache_compatibility_failure = probe_status.startswith("models_cache_")
+    health = (
+        rewrite_provider_health.AccountHealth.DEGRADED
+        if cache_compatibility_failure
+        else rewrite_provider_health.classify_probe(
+            probe.get("ready"),
+            status=probe.get("status"),
+        )
     )
     if health is None:
         return None
-    failure_kind = rewrite_provider_health.classify_probe_failure_kind(
-        probe.get("ready"),
-        status=probe.get("status"),
+    failure_kind = (
+        "capacity_retryable"
+        if cache_compatibility_failure
+        else rewrite_provider_health.classify_probe_failure_kind(
+            probe.get("ready"),
+            status=probe.get("status"),
+        )
     )
     capability["auth_ready"] = probe.get("ready") is True
     capability["account_health"] = health.value
@@ -8988,6 +9009,69 @@ def apply_provider_probe_to_report(
     capability["local_cli_worker_supported"] = ready
     capability["supports_auto_approve"] = ready
     return health
+
+
+def reconcile_fresh_provider_probe_failures(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    previous_report: dict[str, Any] | None,
+    current_report: dict[str, Any] | None,
+) -> bool:
+    """Persist new pre-lock live probe failures through dispatch guardrails.
+
+    Provider CLI/cache work is intentionally completed before runtime admission.
+    This small in-lock projection consumes only its sanitized result: quota and
+    cache/tooling failures become recoverable account pauses, credential failures
+    become auth-probe-gated pauses, and an identical persisted probe is ignored.
+    """
+
+    changed = False
+    providers = (current_report or {}).get("providers") or {}
+    if not isinstance(providers, dict):
+        return False
+    for provider_key, current in providers.items():
+        if not isinstance(current, dict) or current.get("auth_ready") is not False:
+            continue
+        probe = current.get("auth_probe")
+        if not isinstance(probe, dict) or str(probe.get("source") or "").strip().lower() != "live":
+            continue
+        checked_at = str(probe.get("checked_at") or probe.get("last_auth_probe_at") or "")
+        previous = _provider_report_entry(previous_report, str(provider_key))
+        previous_probe = previous.get("auth_probe") if isinstance(previous.get("auth_probe"), dict) else {}
+        if (
+            checked_at
+            and checked_at
+            == str(previous_probe.get("checked_at") or previous_probe.get("last_auth_probe_at") or "")
+            and str(probe.get("status") or "") == str(previous_probe.get("status") or "")
+        ):
+            continue
+
+        failure_kind = str(
+            current.get("probe_failure_kind")
+            or rewrite_provider_health.classify_probe_failure_kind(
+                probe.get("ready"),
+                status=probe.get("status"),
+            )
+            or "capacity_retryable"
+        )
+        if failure_kind == "auth":
+            changed = mark_provider_auth_probe_not_ready(
+                config,
+                state,
+                str(provider_key),
+                probe,
+            ) or changed
+            continue
+        changed = mark_provider_dispatch_paused(
+            config,
+            state,
+            str(provider_key),
+            str(probe.get("error") or probe.get("status") or "provider live probe failed"),
+            failure_kind=failure_kind,
+            pause_kind=failure_kind,
+            quota_reset_at=str(probe.get("quota_reset_at") or "") or None,
+        ) or changed
+    return changed
 
 
 def refresh_provider_auth_before_dispatch(
@@ -9054,6 +9138,7 @@ def refresh_provider_auth_before_dispatch(
                 str(probe.get("error") or probe.get("status") or "provider capacity probe failed"),
                 failure_kind=failure_kind,
                 pause_kind=failure_kind,
+                quota_reset_at=str(probe.get("quota_reset_at") or "") or None,
             )
     return health
 
@@ -17499,7 +17584,12 @@ def probe_provider_reports(
         current = _provider_report_entry(report, provider_key)
         if stale_readmission:
             previous_probe = current.get("auth_probe") if isinstance(current.get("auth_probe"), dict) else None
-            if not provider_auth_probe_due(config, provider_key, previous_probe):
+            probe_status = str((previous_probe or {}).get("status") or "").strip().lower()
+            exact_cache_incompatibility = probe_status == "models_cache_incompatible"
+            if (
+                not exact_cache_incompatibility
+                and not provider_auth_probe_due(config, provider_key, previous_probe)
+            ):
                 continue
             not_before = None
         else:
@@ -17513,14 +17603,29 @@ def probe_provider_reports(
             # result for this gate in the same recovery window. Reconcile it
             # under the runtime lock instead of spending a duplicate probe.
             continue
-        probe = _safe_phase(
-            f"probe_provider_recovery:{provider_key}",
-            probe_provider_auth,
-            config,
-            provider_key,
-            force=True,
-            quiet=quiet,
+        provider_cfg = (config.get("providers", {}) or {}).get(provider_key, {}) or {}
+        recover_codex_models_cache = (
+            str(provider_cfg.get("delivery_mode") or provider_key).strip().lower() == "codex"
         )
+        if recover_codex_models_cache:
+            probe = _safe_phase(
+                f"probe_provider_recovery:{provider_key}",
+                probe_provider_auth,
+                config,
+                provider_key,
+                force=True,
+                recover_incompatible_models_cache=True,
+                quiet=quiet,
+            )
+        else:
+            probe = _safe_phase(
+                f"probe_provider_recovery:{provider_key}",
+                probe_provider_auth,
+                config,
+                provider_key,
+                force=True,
+                quiet=quiet,
+            )
         if not isinstance(probe, dict):
             checked_at = utc_now()
             probe = {
@@ -17948,6 +18053,15 @@ def _run_once_locked(
         # runtime-admission hold; run_once supplies the reports it gathered
         # before the lock was taken.
         previous_provider_report, provider_report = provider_reports
+        changed = _safe_phase(
+            "reconcile_fresh_provider_probe_failures",
+            reconcile_fresh_provider_probe_failures,
+            config,
+            state,
+            previous_provider_report,
+            provider_report,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("reconcile_provider_pause_recovery", reconcile_provider_pause_recovery, config, state, provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         if isinstance(assistant_dev_bridge_snapshot, dict):

@@ -4,11 +4,14 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shutil
+import stat
 import subprocess
+import threading
 
 import model_rotation
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +72,42 @@ CODEX_AUTH_FAILURE_MARKERS = (
     "invalid authentication credentials",
     "invalid api key",
 )
+CODEX_QUOTA_MARKERS = (
+    "hit your usage limit",
+    "hit your weekly limit",
+    "hit your limit",
+    "usage limit reached",
+    "quota_reached",
+    "credit balance is too low",
+)
+CODEX_MODELS_CACHE_SCHEMA_MARKERS = (
+    "models_cache.json",
+    "supports_reasoning_summaries",
+    "missing field",
+)
+CODEX_MODELS_CACHE_FILENAME = "models_cache.json"
+_CODEX_QUOTA_RESET_ISO_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:reset(?:s)?(?:[_\s-]*at)?|try\s+again\s+at)"
+    r"(?![A-Za-z0-9])[^0-9]{0,32}"
+    r"(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))",
+    re.IGNORECASE,
+)
+_CODEX_QUOTA_RESET_EPOCH_PATTERN = re.compile(
+    r'"?resetsAt"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
+    re.IGNORECASE,
+)
+_CODEX_QUOTA_RESET_HUMAN_DATE_PATTERN = re.compile(
+    r"\btry\s+again\s+at\s+"
+    r"(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<year>\d{4})\s+(?P<clock>\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)\b",
+    re.IGNORECASE,
+)
+_CODEX_QUOTA_RESET_HUMAN_TIME_PATTERN = re.compile(
+    r"\btry\s+again\s+at\s+(?P<clock>\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)\b",
+    re.IGNORECASE,
+)
+_CODEX_CACHE_RECOVERY_LOCKS: dict[str, threading.Lock] = {}
+_CODEX_CACHE_RECOVERY_LOCKS_GUARD = threading.Lock()
 
 
 def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
@@ -139,6 +178,8 @@ def _codex_runtime_env(config: dict[str, Any] | None = None, provider_id: str = 
         api_key_value = env.get(api_key_env) or base_env.get(api_key_env) or ""
         if api_key_value:
             env["OPENAI_API_KEY"] = api_key_value
+        elif api_key_env != "OPENAI_API_KEY":
+            env.pop("OPENAI_API_KEY", None)
     else:
         env.pop("OPENAI_API_KEY", None)
     codex_home = str(codex_settings.get("codex_home") or codex_settings.get("config_home") or "").strip()
@@ -164,6 +205,8 @@ def _codex_runtime_env_with_overrides(
         api_key_env = str(codex_settings.get("api_key_env") or "").strip()
         if api_key_env and runtime_env.get(api_key_env):
             runtime_env["OPENAI_API_KEY"] = runtime_env[api_key_env]
+        elif api_key_env and api_key_env != "OPENAI_API_KEY":
+            runtime_env.pop("OPENAI_API_KEY", None)
     return runtime_env
 
 
@@ -362,6 +405,254 @@ def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _codex_models_cache_schema_incompatible(output: str | None) -> bool:
+    """Match only the observed Codex models-cache schema break.
+
+    A generic JSON or CLI parse failure is not enough to authorize a provider-
+    home mutation.  Recovery requires all three parts of the v0.144.6 failure:
+    the exact cache filename, the newly required field, and the missing-field
+    parser diagnosis.
+    """
+
+    normalized = str(output or "").lower()
+    return all(marker.lower() in normalized for marker in CODEX_MODELS_CACHE_SCHEMA_MARKERS)
+
+
+def _codex_quota_reset_at(
+    output: str | None,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Extract one reset-context-bound UTC timestamp without retaining payloads."""
+
+    text = str(output or "")
+    match = _CODEX_QUOTA_RESET_ISO_PATTERN.search(text)
+    if match:
+        try:
+            parsed = datetime.fromisoformat(match.group("timestamp").replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+        if parsed is not None and parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    epoch_match = _CODEX_QUOTA_RESET_EPOCH_PATTERN.search(text)
+    if epoch_match:
+        try:
+            parsed = datetime.fromtimestamp(int(epoch_match.group("epoch")), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+        return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    local_now = now or datetime.now().astimezone()
+    if local_now.tzinfo is None:
+        local_now = local_now.replace(tzinfo=timezone.utc)
+    human_date_match = _CODEX_QUOTA_RESET_HUMAN_DATE_PATTERN.search(text)
+    if human_date_match:
+        human_value = (
+            f"{human_date_match.group('month')} {human_date_match.group('day')} "
+            f"{human_date_match.group('year')} {human_date_match.group('clock')}"
+        )
+        parsed = None
+        for format_string in ("%b %d %Y %I:%M %p", "%B %d %Y %I:%M %p", "%b %d %Y %I:%M:%S %p", "%B %d %Y %I:%M:%S %p"):
+            try:
+                parsed = datetime.strptime(human_value, format_string)
+                break
+            except ValueError:
+                continue
+        if parsed is not None:
+            return (
+                parsed.replace(tzinfo=local_now.tzinfo)
+                .astimezone(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+    human_time_match = _CODEX_QUOTA_RESET_HUMAN_TIME_PATTERN.search(text)
+    if human_time_match:
+        parsed_clock = None
+        for format_string in ("%I:%M %p", "%I:%M:%S %p"):
+            try:
+                parsed_clock = datetime.strptime(human_time_match.group("clock"), format_string)
+                break
+            except ValueError:
+                continue
+        if parsed_clock is not None:
+            candidate = local_now.replace(
+                hour=parsed_clock.hour,
+                minute=parsed_clock.minute,
+                second=parsed_clock.second,
+                microsecond=0,
+            )
+            if candidate <= local_now:
+                candidate += timedelta(days=1)
+            return candidate.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return None
+
+
+def _codex_cache_identity(path: Path) -> dict[str, Any] | None:
+    try:
+        file_stat = path.lstat()
+    except OSError:
+        return None
+    return {
+        "device": int(file_stat.st_dev),
+        "inode": int(file_stat.st_ino),
+        "mode": int(file_stat.st_mode),
+        "uid": int(file_stat.st_uid),
+        "links": int(file_stat.st_nlink),
+        "size": int(file_stat.st_size),
+        "mtime_ns": int(file_stat.st_mtime_ns),
+    }
+
+
+def _codex_cache_identity_matches(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    return all(
+        left.get(key) == right.get(key)
+        for key in ("device", "inode", "mode", "uid", "links", "size", "mtime_ns")
+    )
+
+
+def _codex_models_cache_path(
+    config: dict[str, Any],
+    provider_id: str,
+    env: dict[str, str],
+) -> tuple[Path | None, str | None]:
+    configured_home = _codex_home(config, provider_id).expanduser()
+    effective_home = Path(str(env.get("CODEX_HOME") or configured_home)).expanduser()
+    if not configured_home.is_absolute() or not effective_home.is_absolute():
+        return None, "provider_home_not_absolute"
+    for provider_home in (configured_home, effective_home):
+        current = Path(provider_home.anchor)
+        for component in provider_home.parts[1:]:
+            current /= component
+            try:
+                component_stat = current.lstat()
+            except OSError:
+                return None, "provider_home_unavailable"
+            if stat.S_ISLNK(component_stat.st_mode):
+                return None, "provider_home_unsafe"
+    configured_home = Path(os.path.abspath(configured_home))
+    effective_home = Path(os.path.abspath(effective_home))
+    if configured_home != effective_home:
+        return None, "provider_home_ambiguous"
+    try:
+        home_stat = effective_home.lstat()
+    except OSError:
+        return None, "provider_home_unavailable"
+    if effective_home.is_symlink() or not stat.S_ISDIR(home_stat.st_mode):
+        return None, "provider_home_unsafe"
+    if int(home_stat.st_uid) != os.geteuid():
+        return None, "provider_home_unowned"
+    return effective_home / CODEX_MODELS_CACHE_FILENAME, None
+
+
+def _codex_cache_recovery_lock(path: Path) -> threading.Lock:
+    key = str(path)
+    with _CODEX_CACHE_RECOVERY_LOCKS_GUARD:
+        return _CODEX_CACHE_RECOVERY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _quarantine_codex_models_cache(
+    config: dict[str, Any],
+    provider_id: str,
+    env: dict[str, str],
+    expected_identity: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Atomically move one exact, owned provider cache aside.
+
+    The function never opens auth material.  It hashes the already-identified
+    cache through an O_NOFOLLOW descriptor, proves the pathname still names the
+    same inode/mtime/size observed before the failing probe, then uses one
+    same-directory atomic replace.  Any ambiguity stays fail closed.
+    """
+
+    cache_path, path_error = _codex_models_cache_path(config, provider_id, env)
+    if cache_path is None:
+        return None, path_error or "cache_path_ambiguous"
+    with _codex_cache_recovery_lock(cache_path):
+        current_identity = _codex_cache_identity(cache_path)
+        if not _codex_cache_identity_matches(expected_identity, current_identity):
+            return None, "cache_identity_changed"
+        assert current_identity is not None
+        if (
+            cache_path.is_symlink()
+            or not stat.S_ISREG(int(current_identity["mode"]))
+            or int(current_identity["uid"]) != os.geteuid()
+            or int(current_identity["links"]) != 1
+        ):
+            return None, "cache_path_unsafe_or_unowned"
+
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(cache_path, flags)
+        except OSError:
+            return None, "cache_open_failed"
+        digest = hashlib.sha256()
+        try:
+            opened_stat = os.fstat(descriptor)
+            opened_identity = {
+                "device": int(opened_stat.st_dev),
+                "inode": int(opened_stat.st_ino),
+                "mode": int(opened_stat.st_mode),
+                "uid": int(opened_stat.st_uid),
+                "links": int(opened_stat.st_nlink),
+                "size": int(opened_stat.st_size),
+                "mtime_ns": int(opened_stat.st_mtime_ns),
+            }
+            if not _codex_cache_identity_matches(current_identity, opened_identity):
+                return None, "cache_descriptor_identity_changed"
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            final_stat = os.fstat(descriptor)
+            final_identity = {
+                "device": int(final_stat.st_dev),
+                "inode": int(final_stat.st_ino),
+                "mode": int(final_stat.st_mode),
+                "uid": int(final_stat.st_uid),
+                "links": int(final_stat.st_nlink),
+                "size": int(final_stat.st_size),
+                "mtime_ns": int(final_stat.st_mtime_ns),
+            }
+            if not _codex_cache_identity_matches(opened_identity, final_identity):
+                return None, "cache_changed_while_hashing"
+        finally:
+            os.close(descriptor)
+
+        if not _codex_cache_identity_matches(final_identity, _codex_cache_identity(cache_path)):
+            return None, "cache_path_changed_before_quarantine"
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        quarantine_path = cache_path.with_name(
+            f"{cache_path.name}.quarantine.{stamp}.{digest.hexdigest()[:12]}.{final_identity['inode']}"
+        )
+        if quarantine_path.exists() or quarantine_path.is_symlink():
+            return None, "quarantine_target_exists"
+        try:
+            os.replace(cache_path, quarantine_path)
+        except OSError:
+            return None, "cache_quarantine_failed"
+        if not _codex_cache_identity_matches(final_identity, _codex_cache_identity(quarantine_path)):
+            return None, "quarantine_identity_mismatch"
+        return {
+            "outcome": "quarantined",
+            "provider": provider_id,
+            "cache_path": str(cache_path),
+            "quarantine_path": str(quarantine_path),
+            "evidence": {
+                "device": final_identity["device"],
+                "inode": final_identity["inode"],
+                "uid": final_identity["uid"],
+                "size": final_identity["size"],
+                "mtime_ns": final_identity["mtime_ns"],
+                "sha256": digest.hexdigest(),
+            },
+        }, None
+
+
 def _codex_probe_ready(
     returncode: int,
     stdout: str | None,
@@ -371,6 +662,14 @@ def _codex_probe_ready(
 ) -> tuple[bool, str | None, str]:
     output = "\n".join(part for part in (stdout, stderr) if part)
     compact_error = _compact_auth_error(output)
+    if _codex_models_cache_schema_incompatible(output):
+        return (
+            False,
+            "Codex models cache is incompatible with the installed CLI schema.",
+            "models_cache_incompatible",
+        )
+    if _contains_any_marker(output, CODEX_QUOTA_MARKERS):
+        return False, "Codex usage limit reached.", "quota_reached"
     if _contains_any_marker(output, CODEX_AUTH_REVOKED_MARKERS):
         return False, compact_error or "Codex refresh token is revoked.", "refresh_token_revoked"
     if returncode != 0:
@@ -440,19 +739,11 @@ def _gemini_auth_ready(
 
 def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str, str]) -> dict[str, Any]:
     auth_path = _codex_auth_path(config, provider_id)
-    payload = load_json(auth_path, default={}) if auth_path.exists() else {}
-    if not isinstance(payload, dict):
-        payload = {}
-    tokens = payload.get("tokens") if isinstance(payload.get("tokens"), dict) else {}
     api_key_env = str(((config.get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}).get("api_key_env") or "").strip()
     metadata = {
-        "auth_file": str(auth_path),
         "auth_file_exists": auth_path.exists(),
-        "api_key_env": api_key_env or None,
-        "api_key_env_present": bool(api_key_env and env.get("OPENAI_API_KEY")),
-        "has_access_token": bool(tokens.get("access_token") or payload.get("access_token")),
-        "has_refresh_token": bool(tokens.get("refresh_token") or payload.get("refresh_token")),
-        "expires_at": tokens.get("expires_at") or payload.get("expires_at"),
+        "api_key_env_configured": bool(api_key_env),
+        "api_key_env_present": bool(api_key_env and env.get(api_key_env)),
     }
     return metadata
 
@@ -464,6 +755,7 @@ def _codex_auth_probe(
     *,
     env: dict[str, str] | None = None,
     force: bool = False,
+    recover_incompatible_models_cache: bool = False,
 ) -> dict[str, Any]:
     env = _codex_runtime_env_with_overrides(config, provider_id, env)
     metadata = _codex_auth_metadata(config, provider_id, env)
@@ -479,8 +771,8 @@ def _codex_auth_probe(
         )
     if not metadata.get("api_key_env_present") and not metadata.get("auth_file_exists"):
         api_key_note = (
-            f" Configured API key env {metadata.get('api_key_env')} is not present."
-            if metadata.get("api_key_env")
+            " A configured API key environment variable is not present."
+            if metadata.get("api_key_env_configured")
             else ""
         )
         return _auth_probe_record(
@@ -514,6 +806,11 @@ def _codex_auth_probe(
         "--skip-git-repo-check",
         prompt,
     ]
+    cache_identity_before_probe: dict[str, Any] | None = None
+    if recover_incompatible_models_cache:
+        cache_path, _cache_path_error = _codex_models_cache_path(config, provider_id, env)
+        if cache_path is not None:
+            cache_identity_before_probe = _codex_cache_identity(cache_path)
     try:
         result = run_command(command, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
@@ -542,7 +839,59 @@ def _codex_auth_probe(
         result.stderr,
         expected_output=expected_output,
     )
-    return _auth_probe_record(
+    cache_recovery: dict[str, Any] | None = None
+    if status == "models_cache_incompatible" and recover_incompatible_models_cache:
+        cache_recovery, recovery_error = _quarantine_codex_models_cache(
+            config,
+            provider_id,
+            env,
+            cache_identity_before_probe,
+        )
+        if cache_recovery is None:
+            metadata["models_cache_recovery"] = {
+                "outcome": "fail_closed",
+                "reason": recovery_error or "cache_recovery_failed",
+            }
+            return _auth_probe_record(
+                provider_id,
+                "codex",
+                ready=False,
+                method=method,
+                error="Codex models cache recovery was not safe to perform.",
+                status="models_cache_recovery_failed",
+                metadata=metadata,
+            )
+        metadata["models_cache_recovery"] = cache_recovery
+        try:
+            result = run_command(command, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            return _auth_probe_record(
+                provider_id,
+                "codex",
+                ready=False,
+                method=method,
+                error=f"Codex auth probe timed out after cache recovery and {timeout:g}s.",
+                status="probe_timeout",
+                metadata=metadata,
+            )
+        except OSError as exc:
+            return _auth_probe_record(
+                provider_id,
+                "codex",
+                ready=False,
+                method=method,
+                error=f"{type(exc).__name__}: {exc}",
+                status="probe_error",
+                metadata=metadata,
+            )
+        ready, error, status = _codex_probe_ready(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            expected_output=expected_output,
+        )
+
+    record = _auth_probe_record(
         provider_id,
         "codex",
         ready=ready,
@@ -551,6 +900,13 @@ def _codex_auth_probe(
         status=status,
         metadata=metadata,
     )
+    if status == "quota_reached":
+        reset_at = _codex_quota_reset_at(
+            "\n".join(part for part in (result.stdout, result.stderr) if part)
+        )
+        if reset_at:
+            record["quota_reset_at"] = reset_at
+    return record
 
 
 def codex_auth_ready(
@@ -1019,6 +1375,7 @@ def probe_provider_auth(
     provider_id: str,
     *,
     force: bool = True,
+    recover_incompatible_models_cache: bool = False,
 ) -> dict[str, Any]:
     """Probe one concrete provider immediately before dispatch.
 
@@ -1037,7 +1394,13 @@ def probe_provider_auth(
 
     if delivery_mode == "codex":
         binary = _configured_provider_binary(config, provider_key, "codex", "codex")
-        return _codex_auth_probe(config, provider_key, binary, force=force)
+        return _codex_auth_probe(
+            config,
+            provider_key,
+            binary,
+            force=force,
+            recover_incompatible_models_cache=recover_incompatible_models_cache,
+        )
     if delivery_mode == "claude_cli":
         binary = _configured_provider_binary(config, provider_key, "runtime", "claude")
         return _claude_auth_probe(
@@ -1762,7 +2125,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "extension": str(openai_path) if openai_path else None,
                 "config": str(config_path_for_provider),
                 "home": str(_codex_home(config, provider_id)),
-                "auth": str(_codex_auth_path(config, provider_id)),
                 "binary": provider_binary,
             },
             "settings": {
