@@ -15,3 +15,9 @@ Remove full-sleep drift and per-task mutation convoys so dispatch cadence tracks
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
+
+## Latest Exact-Head Follow-Up
+
+- Rejected head: `ba3b176500f557944eb6f3e08709361281609989`.
+- Human/Ops found that flooring fractional `prepared_epoch_seconds` still let same-second runner markers claim post-intent order, including marker-only terminal recovery, and that a unique live marker could bypass an absent exact process candidate.
+- Remediation anchor: `267bbc09fcbd51e0d86787fb34b51b773c569d8e`. Marker timestamps now compare against the full intent epoch; same-second ambiguity fails closed; running/live markers require an exact post-intent `/proc` candidate; strictly post-intent terminal/dead markers remain recoverable.

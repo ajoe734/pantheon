@@ -149,8 +149,23 @@ def _hard_crash_reserved_worker_after_launch(
         def deliver(self, request: object) -> object:
             run_id = "codex-hard-crash-run"
             runtime_paths = common.worker_runtime_paths(config, run_id)
+            spawn_env = os.environ.copy()
+            spawn_env.update(
+                {
+                    "ORCH_RUN_ID": run_id,
+                    "ORCH_TASK_ID": "SLOW-IO-1",
+                    "ORCH_AGENT_ID": "codex",
+                    "ORCH_PROVIDER": "codex",
+                }
+            )
             process = subprocess.Popen(
-                [sys.executable, "-c", "import time; time.sleep(60)"],
+                [
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(60)",
+                    ".orchestrator/worker_runner.py",
+                ],
+                env=spawn_env,
                 start_new_session=True,
             )
             common.write_json(
