@@ -1,6 +1,6 @@
 # L12 current three-pass gap re-audit — 2026-08-01
 
-Task: L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801  
+Task: L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801
 Evidence cut: 2026-08-02T07:49:00Z
 Pantheon source cut: origin/dev at 79ba3f431127bf9718697d2ba9e9ddce97969ec3
 Evidence status: review_pending; no independent exact-head approval has been recorded
