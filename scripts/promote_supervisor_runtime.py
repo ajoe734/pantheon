@@ -4801,6 +4801,7 @@ def materialize_immutable_rollback_runtime(
         if (
             identity.head_commit != snapshot.head_commit
             or identity.tracked_tree_identity != snapshot.tracked_tree_identity
+            or identity.accepted_dev_commit != snapshot.accepted_dev_commit
             or identity.repository_slug != snapshot.repository_slug
         ):
             raise ValueError("Immutable rollback identity differs from incumbent")
@@ -4902,6 +4903,10 @@ class PromotionLock:
             raise RuntimeError("Promotion lock is already held")
         if self.path.is_symlink():
             raise ValueError(f"Promotion lock cannot be a symlink: {self.path}")
+        parent_components = _capture_directory_component_identities(
+            self.path.parent,
+            label="Promotion lock parent",
+        )
         flags = (
             os.O_RDWR
             | os.O_CREAT
@@ -4933,6 +4938,10 @@ class PromotionLock:
                 != (path_stat.st_dev, path_stat.st_ino)
             ):
                 raise ValueError("Promotion lock identity changed during acquire")
+            _assert_path_component_identities(
+                parent_components,
+                label="Promotion lock parent",
+            )
             self._descriptor = descriptor
         except BaseException:
             os.close(descriptor)
@@ -5042,6 +5051,13 @@ class OSPromotionBackend:
                 seed_argv=seed_argv,
                 seed_cwd=seed_cwd,
             )
+            if (
+                mutable_incumbent.accepted_dev_commit
+                != candidate_identity.accepted_dev_commit
+            ):
+                raise ValueError(
+                    "Candidate and mutable incumbent captured different accepted dev tips"
+                )
             incumbent_identity = materialize_immutable_rollback_runtime(
                 mutable_incumbent
             )

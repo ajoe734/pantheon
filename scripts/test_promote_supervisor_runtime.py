@@ -23,6 +23,7 @@ from promote_supervisor_runtime import (
     GovernedSupervisorLaunchContract,
     MutableIncumbentSnapshot,
     PromotionPlan,
+    PromotionLock,
     PromotionState,
     PromotionTransaction,
     ProcessCwdIdentity,
@@ -4698,6 +4699,32 @@ def test_runtime_admission_lock_preserves_bounded_external_contention(
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
+
+
+def test_promotion_lock_preserves_bounded_external_contention(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "promotion.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        lock = PromotionLock(lock_path, timeout=0.01)
+
+        with pytest.raises(TimeoutError, match="Timed out acquiring promotion"):
+            lock.acquire()
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def test_promotion_lock_rejects_symlink_leaf(tmp_path: Path) -> None:
+    target = tmp_path / "target.lock"
+    target.touch()
+    alias = tmp_path / "promotion.lock"
+    alias.symlink_to(target)
+
+    with pytest.raises(ValueError, match="cannot be a symlink"):
+        PromotionLock(alias, timeout=1.0).acquire()
 
 
 def test_runtime_admission_lock_composes_with_watchdog_intent_writer(
