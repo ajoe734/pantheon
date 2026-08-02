@@ -10554,10 +10554,11 @@ def _runtime_launch_marker_candidates(
         if marker_started_at.tzinfo is None:
             marker_started_at = marker_started_at.replace(tzinfo=timezone.utc)
         # worker_runner timestamps have one-second resolution.  A marker in
-        # the same wall-clock second as a fractional intent boundary cannot
-        # prove which happened first, so it must fail closed.  A matching live
-        # process may still be recovered through the boot-tick proof below.
-        if marker_started_at.timestamp() < prepared_epoch:
+        # the same wall-clock second as a fractional intent boundary, or equal
+        # to a legacy second-resolution boundary, cannot prove strictly
+        # post-intent order and must fail closed.  A matching live process may
+        # still be recovered through the boot-tick proof below.
+        if marker_started_at.timestamp() <= prepared_epoch:
             continue
         candidates.append((marker, path))
 
