@@ -17,7 +17,6 @@ set -uo pipefail
 
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
 LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
-STATUS_ROOT="${PANTHEON_STATUS_ROOT:-/home/lupin/pantheon}"
 REF="${SYNC_REF:-origin/dev}"
 PID_FILE="${PANTHEON_SUPERVISOR_PID:-/home/lupin/pantheon/.orchestrator/supervisor.pid}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
@@ -166,15 +165,21 @@ PY
       && git -C "$runtime" checkout --quiet --detach "$sha" \
       || { rm -rf -- "$temporary_parent"; return 1; }
     if ! python3 - "$runtime" "$destination" "$COMMAND_RUNTIME_PARENT" <<'PY'
+import ctypes
+import errno
 import os
 import sys
 from pathlib import Path
 
 source, destination, parent = map(Path, sys.argv[1:])
-try:
-    os.rename(source, destination)
-except FileExistsError:
-    pass
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = libc.renameat2
+renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+renameat2.restype = ctypes.c_int
+if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+    error = ctypes.get_errno()
+    if error != errno.EEXIST:
+        raise OSError(error, os.strerror(error), destination)
 fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 try:
     os.fsync(fd)
