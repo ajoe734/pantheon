@@ -4,12 +4,12 @@
     "id": "LIFECYCLE-PROJ-STORE-001",
     "title": "Build the lifecycle projection relational store",
     "owner": "Codex",
-    "reviewer": "Antigravity",
+    "reviewer": "Codex2",
     "status": "review",
     "base_branch": "dev",
-    "base_sha": "c92e60ceaff895a6fa5fdd7e39bcd96e9a409bc1",
+    "base_sha": "0404ca01ebb6803df6a4b927bacada5739f61de1",
     "task_branch": "task/LIFECYCLE-PROJ-STORE-001-V2",
-    "evidence_cut_at": "2026-08-02T09:54:04Z",
+    "evidence_cut_at": "2026-08-02T13:03:01Z",
     "evidence_cut_semantics": "Owner verification before independent exact-head review. The protected PR merge is future state and must be recorded by governed delivery metadata because this manifest cannot contain its own future merge commit."
   },
   "scope": {
@@ -32,11 +32,14 @@
   },
   "implementation": {
     "anchor_commits": [
-      "090e0a1cd115728236ad1d74633630ce1b9b3f30"
+      "090e0a1cd115728236ad1d74633630ce1b9b3f30",
+      "1f2444bbad52633913ebd6efd1e1a5699584b28e",
+      "6b4e6f6b0143558cb2230a0f6a1164917b3112ae"
     ],
     "base_refresh_merges": [
       "7e94409aa7e239042c300ef448991502d57f8aa3",
-      "9f47ae6be4b544d5c5169d0d0aeb3d09a135a91a"
+      "9f47ae6be4b544d5c5169d0d0aeb3d09a135a91a",
+      "d96bdd2982c03a2a6432632a25a598730b33bc9b"
     ],
     "superseded_delivery": {
       "pull_request": "https://github.com/ajoe734/pantheon/pull/4476",
@@ -45,7 +48,7 @@
       "reason": "Published commit 85b8c8f75bf5d107318c79216d9d30fb5f874da0 has an 86-character subject and permanently fails the Commit trailers gate; the task-owned artifacts were recomposed without ancient-base history."
     },
     "pull_request": {
-      "status": "open_draft_pending_final_evidence_head",
+      "status": "open_pending_final_evidence_head",
       "number": 4503,
       "url": "https://github.com/ajoe734/pantheon/pull/4503",
       "base": "dev",
@@ -59,11 +62,11 @@
   },
   "contract_proof": {
     "authority": "telemetry_events remains unchanged and authoritative; projection rows retain event_id and ingested_seq lineage without raw payload copies",
-    "atomicity": "receipt disposition, identity/stage/aggregate mutations, revision, scoped quarantine truth, and contiguous checkpoint commit in one PostgreSQL transaction",
-    "idempotency": "an all-exact-duplicate batch short-circuits before every derived mutation and before revision/freshness changes; conflicting fingerprints fail closed",
+    "atomicity": "each global event receipt is claimed before identity/stage/aggregate mutation; receipt disposition, derived rows, revision, scoped quarantine truth, and contiguous checkpoint then commit in one PostgreSQL transaction",
+    "idempotency": "an all-exact-duplicate batch short-circuits before every derived mutation and before revision/freshness changes; mixed batches apply only new-receipt-owned rows and fail closed on ambiguous shared aggregate ownership; conflicting fingerprints fail closed",
     "checkpoint": "a recursive indexed query derives the highest contiguous receipt sequence from durable database truth and crosses a previously persisted gap tail only after the missing receipt arrives",
     "freshness": "accepted_live and last_live_success_at can advance only in live mode; backfill, recovery, and replay own separate timestamps",
-    "writer_exclusion": "a stable SHA-256-derived signed bigint scopes pg_try_advisory_xact_lock across independent Python processes; a second same-controller writer fails readiness without blocking",
+    "writer_exclusion": "a stable SHA-256-derived signed bigint scopes pg_try_advisory_xact_lock across independent Python processes; different overlapping controller locks still serialize on the global receipt claim, and a concurrent loser rolls back before derived mutation",
     "identity": "the CHECK registry covers the existing materializer resolve identifiers and lifecycle stable identities; first/last source time and sequence bounds converge with LEAST/GREATEST",
     "least_privilege": "bootstrap is explicit and reads the versioned migration file; the runtime constructor defaults to no DDL and was exercised with a DML-only PostgreSQL login that could not create a schema",
     "quarantine": "unresolved counts are recomputed from controller-scoped unresolved rows, and an exact retry cannot increment occurrence or controller count"
@@ -75,15 +78,15 @@
     },
     {
       "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py",
-      "result": "pass; 17 passed in 10.44s against PostgreSQL 16.14 after merging current dev, including a real DML-only runtime login"
+      "result": "pass; 19 passed in 14.93s against PostgreSQL 16.14 after merging dev@0404ca01, including mixed duplicate/new ownership, a two-connection post-read barrier race, and a real DML-only runtime login"
     },
     {
       "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
-      "result": "pass; 136 passed in 35.00s after merging current dev"
+      "result": "pass; 138 passed in 60.24s after merging dev@0404ca01"
     },
     {
       "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py -k 'runtime_role_has_dml_without_ddl or migration_applied_twice_and_prior_reader_compat or indexed_explain_paths'",
-      "result": "pass; 3 passed, 14 deselected in 1.48s"
+      "result": "pass; 3 passed, 16 deselected in 2.55s"
     },
     {
       "command": "apply 001_create_trade_journey_projection_schema.sql twice to isolated schema lifecycle_proj_store_evidence_v2; seed and ANALYZE 5,000 rows per indexed relation; run the five bounded EXPLAIN queries in explain-plans.txt; drop the isolated schema",
@@ -120,9 +123,20 @@
     "live_capital_or_broker_action": false
   },
   "review": {
-    "status": "pending",
-    "reviewer": "Antigravity",
+    "status": "changes_addressed_pending_exact_head_re_review",
+    "reviewer": "Codex2",
+    "prior_independent_decision": {
+      "status": "changes_requested",
+      "reviewed_head": "3e525480706ee0eb1cb5aadf583cb2a6c9670d1c",
+      "reviewer": "Codex2",
+      "findings": [
+        "mixed duplicate/new batches could apply duplicate-owned aggregate and quarantine mutations",
+        "overlapping controller locks could both commit derived rows after racing on one global event receipt"
+      ]
+    },
     "required_scope": [
+      "reproduce a mixed durable-duplicate/new batch and verify old journey, stage, quarantine, and row revision truth remains byte-for-byte unchanged while the new event commits",
+      "synchronize two PostgreSQL connections after the receipt pre-read and verify one success, one concurrent-claim rollback, one receipt, one journey, and one controller revision",
       "reproduce duplicate-with-mutations immutability and revision stability",
       "reproduce durable checkpoint gap closure and rollback/retry",
       "verify mode-owned accepted_live/freshness and scoped quarantine truth",
@@ -130,14 +144,7 @@
       "verify the exact migration file twice, DML-only runtime role, prior-reader query, and all five exact EXPLAIN index names",
       "record PR required checks and bind the exact reviewed head before approval"
     ],
-    "provider_probe": {
-      "status": "ready",
-      "source": "live",
-      "checked_at": "2026-08-02T09:43:03Z",
-      "method": "agy_prompt_oauth",
-      "model": "gemini-3.6-flash-low"
-    },
-    "decision": null
+    "decision": "Codex2 must independently bind the final post-evidence PR head; the prior rejected-head decision above is retained as immutable review history"
   },
   "residual_risks": [
     {
