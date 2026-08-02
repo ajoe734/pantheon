@@ -4,7 +4,7 @@ Status: `review_pending`
 
 Owner: Codex
 
-Reviewer: Codex2
+Reviewer: Human/Ops
 
 Repository / PR: `ajoe734/pantheon` / `#4443`
 
@@ -59,9 +59,9 @@ blanket `.orchestrator/**` family.
 
 | Command | Result |
 |---|---|
-| `.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py` | 108 passed in 19.89s |
+| `.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py` | 108 passed in 25.80s |
 | `.venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py` | passed |
-| `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge` | passed through pre-evidence head `018b2193c907327a888aa6810fec4f5df28741ff` |
+| `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge` | passed through composed pre-evidence head `cdfbf7b75a2db6eda5fdf5b7eba4a738904824ee` |
 | `git diff --check origin/dev...HEAD` | passed |
 | `git merge-base --is-ancestor <rejected-head> HEAD` | exit 1 for `07316c73`, `77af55015`, `853a1778e`, and `4cd85c7a8` |
 
@@ -78,15 +78,19 @@ task-brief symlinks, ignored directories substituted for each allowed-file
 family, and an external symlinked loose-object fanout.
 
 The merged snapshot-invariant dependency `cd770e5dc` is an ancestor. The branch
-is based on `dev` commit `941c15a34208e54e96cdd148ba3a5bfcd339abab`
-without importing rejected implementation ancestry.
+now composes `origin/dev` commit
+`5cb03dd5ebe3ce13435c848175c5dab5450e9ea5` through merge commit
+`cdfbf7b75a2db6eda5fdf5b7eba4a738904824ee`, without rewriting reviewed
+history or importing rejected implementation ancestry. The delivery diff
+against that base remains exactly the two promotion scripts and these two
+task-scoped evidence files.
 
-PR head `49d15673bd929d9f0f78386a05ef280976bea3c6` was independently rejected by
-Codex2 because allowlisted generated symlinks, ignored directories substituted
-for allowlisted file paths, and external loose-object fanout symlinks remained
-fail-open. This refreshed evidence records the descriptor-bound regular-file
-validation and complete objects-tree scan and remains review-pending for a new
-exact-head Codex2 decision.
+PR head `42cbc8f73df4d3521f8de9c1ef19a2348c6ba6ed` was reopened by Human/Ops
+because it was behind current `dev`. The implementation itself is unchanged:
+the current-base composition retains the previously reviewed descriptor-bound
+regular-file validation and complete objects-tree scan, and the full focused
+matrix still passes. This refreshed evidence remains review-pending for a new
+exact-head Human/Ops decision.
 
 ## Deliberate non-scope
 
@@ -95,5 +99,5 @@ define launch/watchdog behavior, signal a process, write or repair config,
 perform rollback, or promote a live runtime. No live service or config was
 changed. Rollout is the eventual source merge; rollback is revert of that merge.
 
-Independent exact-head Codex2 review remains required. This evidence does not
+Independent exact-head Human/Ops review remains required. This evidence does not
 assert `review_approved` and makes no live-promotion claim.
