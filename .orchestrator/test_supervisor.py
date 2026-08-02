@@ -653,6 +653,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_quota_reached_probe_envelope_before_auth_words(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "antigravity"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "Provider authentication probe status: quota_reached",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
     def test_classifies_claude_weekly_rate_limit_as_terminal_quota(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "claude"}
@@ -1224,7 +1237,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIn("claude_account_manual", pauses)
         self.assertTrue(supervisor.agent_dispatch_paused(config, state, "claude2"))
 
-    def test_expire_provider_dispatch_pauses_removes_expired_entry(self) -> None:
+    def test_expired_quota_pause_becomes_probe_gated_without_reopening_dispatch(self) -> None:
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -1248,9 +1261,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
             changed = supervisor.expire_provider_dispatch_pauses(config, state)
 
         self.assertTrue(changed)
-        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
+        self.assertTrue(pause["requires_live_recovery_probe"])
+        self.assertEqual(pause["recovery_probe_not_before"], "2026-04-06T12:00:00Z")
+        self.assertTrue(supervisor.provider_dispatch_paused(config, state, "copilot"))
         write_activity_log.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_recovery_probe_scheduled")
 
     def test_mark_revoked_auth_pause_is_sticky_until_probe(self) -> None:
         from datetime import datetime, timezone
@@ -1402,6 +1418,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "auth_ready": True,
                     "last_auth_probe_at": "2026-06-06T12:00:00Z",
                     "auth_method": "codex_exec_oauth",
+                    "auth_probe": {
+                        "ready": True,
+                        "source": "live",
+                        "method": "codex_exec_oauth",
+                        "checked_at": "2026-06-06T12:00:00Z",
+                    },
                 }
             }
         }
@@ -16514,6 +16536,29 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIs(report["providers"]["codex2"]["auth_ready"], True)
         write_caps.assert_called_once_with(self.config, report=report)
 
+    def test_live_quota_probe_is_degraded_and_never_creates_an_auth_pause(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "quota_reached",
+            "method": "codex_exec_oauth",
+            "error": "Provider authentication probe status: quota_reached",
+            "checked_at": "2026-07-26T20:00:00Z",
+            "last_auth_probe_at": "2026-07-26T20:00:00Z",
+            "source": "live",
+        }
+
+        report = self._refresh(probe, state)
+
+        capability = report["providers"]["codex2"]
+        self.assertEqual(capability["account_health"], "degraded")
+        self.assertEqual(capability["probe_failure_kind"], "quota_terminal")
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(pause["pause_kind"], "quota_terminal")
+        self.assertNotIn("requires_live_auth_probe", pause)
+        self.assertNotIn("sticky_until_auth_probe", pause)
+
     def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
         """The observed regression: an auth pause reopened the lane on a timer."""
         state = {
@@ -16534,7 +16579,7 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
         self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
 
-    def test_capacity_pause_still_expires_on_its_window(self) -> None:
+    def test_capacity_pause_stays_blocked_while_recovery_probe_is_pending(self) -> None:
         state = {
             "provider_guardrails": {
                 "dispatch_pauses": {
@@ -16549,7 +16594,192 @@ class FreshAuthProbeLaneHoldTests(unittest.TestCase):
         with mock.patch.object(supervisor, "write_activity_log"):
             expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
         self.assertTrue(expired)
-        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertTrue(pause["requires_live_recovery_probe"])
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+
+class ProviderPauseRecoveryProbeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "supervisor": {"auto_refresh_provider_capabilities": False},
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                }
+            },
+            "providers": {
+                "antigravity": {
+                    "delivery_mode": "antigravity",
+                    "quota_group": "antigravity",
+                }
+            },
+            "provider_guardrails": {
+                "recovery_probe_interval_seconds": 300,
+                "recovery_probe_max_per_cycle": 1,
+            },
+        }
+
+    @staticmethod
+    def _gated_pause() -> dict[str, object]:
+        return {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "trigger_provider": "antigravity",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "2026-08-02T05:00:00Z",
+                        "requires_live_recovery_probe": True,
+                        "recovery_probe_not_before": "2026-08-02T05:00:00Z",
+                    }
+                }
+            }
+        }
+
+    def test_auto_refresh_false_still_runs_one_targeted_recovery_probe(self) -> None:
+        state = self._gated_pause()
+        cached = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": False,
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T05:00:00Z",
+                        "source": "cached",
+                    },
+                }
+            }
+        }
+        live = {
+            "provider": "antigravity",
+            "ready": True,
+            "status": "ready",
+            "method": "agy_prompt_oauth",
+            "checked_at": "2026-08-02T06:00:00Z",
+            "last_auth_probe_at": "2026-08-02T06:00:00Z",
+            "source": "live",
+        }
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(cached)),
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=live) as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_called_once_with(self.config, "antigravity", force=True)
+        write_caps.assert_called_once_with(self.config, report=current)
+        self.assertEqual(current["providers"]["antigravity"]["account_health"], "healthy")
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_cached_success_cannot_clear_a_probe_gated_quota_pause(self) -> None:
+        state = self._gated_pause()
+        cached_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "cached",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(
+                self.config,
+                state,
+                cached_success,
+            )
+
+        self.assertFalse(changed)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_fresh_full_refresh_result_avoids_a_duplicate_targeted_probe(self) -> None:
+        state = self._gated_pause()
+        live_success = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": True,
+                    "auth_probe": {
+                        "ready": True,
+                        "status": "ready",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_provider_report", return_value=copy.deepcopy(live_success)),
+            mock.patch.object(supervisor, "probe_provider_auth") as probe,
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+        ):
+            _previous, current = supervisor.probe_provider_reports(
+                self.config,
+                quiet=True,
+                runtime_snapshot=state,
+            )
+
+        probe.assert_not_called()
+        write_caps.assert_not_called()
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(self.config, state, current)
+        self.assertTrue(changed)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "antigravity"))
+
+    def test_failed_live_recovery_probe_is_interval_bounded(self) -> None:
+        state = self._gated_pause()
+        live_failure = {
+            "providers": {
+                "antigravity": {
+                    "auth_ready": False,
+                    "account_health": "degraded",
+                    "probe_failure_kind": "quota_terminal",
+                    "auth_probe": {
+                        "ready": False,
+                        "status": "quota_reached",
+                        "checked_at": "2026-08-02T06:00:00Z",
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.reconcile_provider_pause_recovery(
+                self.config,
+                state,
+                live_failure,
+            )
+
+        self.assertTrue(changed)
+        pause = state["provider_guardrails"]["dispatch_pauses"]["antigravity"]
+        self.assertEqual(pause["last_recovery_probe_at"], "2026-08-02T06:00:00Z")
+        self.assertEqual(pause["next_recovery_probe_at"], "2026-08-02T06:05:00Z")
+        targets = supervisor.provider_recovery_probe_targets(
+            self.config,
+            state,
+            now=datetime(2026, 8, 2, 6, 4, 59, tzinfo=timezone.utc),
+        )
+        self.assertEqual(targets, [])
 
 
 class OwnerlessInProgressReconciliationTests(unittest.TestCase):
