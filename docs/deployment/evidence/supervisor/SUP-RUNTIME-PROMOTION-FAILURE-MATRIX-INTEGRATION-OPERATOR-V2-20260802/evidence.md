@@ -6,7 +6,7 @@ Owner: Codex
 
 Reviewer: Human/Ops
 
-Repository / PR: `ajoe734/pantheon` / pending clean integration PR
+Repository / PR: `ajoe734/pantheon` / #4505
 
 ## Result
 
@@ -110,9 +110,9 @@ The task branch started at the exact merged rollback dependency
 - PR #4497 / `79e02ee059387044eec1d21a283e4848f814f49a` — launch preflight;
 - PR #4500 / `c92e60ceaff895a6fa5fdd7e39bcd96e9a409bc1` — rollback transaction.
 
-Polluted PR #4433 remains open only until this clean integration PR exists.
-The replacement PR must link #4433 as superseded, and #4433 must then be closed
-without reusing its head `2905e147573a2ec7741b1c2a9bb792267a22eb9c` or any prior approval.
+Clean integration PR #4505 links and supersedes polluted PR #4433. PR #4433
+was closed at `2026-08-02T10:24:23Z` without reusing its head
+`2905e147573a2ec7741b1c2a9bb792267a22eb9c` or any prior approval.
 
 This manifest remains `review_pending`. Human/Ops must review the final exact
 head after every repository check and the root merge-freeze gate are green,
