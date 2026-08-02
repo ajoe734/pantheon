@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 
-_CODEX_CHATGPT_LANE_ALIASES = frozenset({"codex", "codex2", "codex3"})
+_CODEX_CHATGPT_LANE_ALIASES = frozenset({"codex", "codex2"})
 
 
 def normalize_review_identity(value: Any) -> str:

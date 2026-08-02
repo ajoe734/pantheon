@@ -154,6 +154,11 @@ class PolicyResolutionTests(unittest.TestCase):
 
         self.assertFalse(contract.requires_independent_review)
 
+    def test_codex3_is_independent_without_configured_account_evidence(self) -> None:
+        contract = gate.contract_from_task_row(task_row(reviewer="Codex3"))
+
+        self.assertTrue(contract.requires_independent_review)
+
     def test_merge_then_review_task_may_merge_without_approval(self) -> None:
         decision = decide(
             tasks=[task_row(status="in_progress", reviewer="Codex", merge_policy="merge_then_review")],
