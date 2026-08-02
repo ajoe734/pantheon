@@ -7184,6 +7184,12 @@ def decide_failure_streak_recovery(
         elif failure["provider"] != normalize_agent_id(owner):
             reason = "provider_owner_mismatch"
         elif (
+            progress["event_type"] == "reopen"
+            and progress["exact_head"]
+            not in {FAILURE_STREAK_ABSENT_HEAD, failure["rejected_head"]}
+        ):
+            reason = "reviewer_progress_head_mismatch"
+        elif (
             progress["event_type"] == "worker_commit"
             and progress["exact_head"] == failure["rejected_head"]
         ):

@@ -13983,6 +13983,16 @@ class FailureStreakRecoveryDecisionV2Tests(unittest.TestCase):
                 "target_agent_not_owner",
             ),
             (
+                "cross failure generation",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        failure_generation_id="sha256:" + "0" * 64,
+                    )
+                },
+                "progress_failure_generation_mismatch",
+            ),
+            (
                 "cross task progress",
                 {
                     "progress_generation": self._progress_with(
@@ -14011,6 +14021,16 @@ class FailureStreakRecoveryDecisionV2Tests(unittest.TestCase):
                     )
                 },
                 "progress_not_newer_than_failure",
+            ),
+            (
+                "reviewer progress bound to another head",
+                {
+                    "progress_generation": self._progress_with(
+                        progress,
+                        exact_head="c" * 40,
+                    )
+                },
+                "reviewer_progress_head_mismatch",
             ),
             (
                 "same rejected head replay",
