@@ -10398,11 +10398,13 @@ def _persist_runtime_phase_launch_intent(
         raise RuntimeError("reserved runtime phase launch context is incomplete")
 
     prepared_at = utc_now()
+    prepared_epoch_seconds = time.time()
+    prepared_boottime_ticks = _runtime_launch_prepared_boottime_ticks()
     intent = {
         "schema_version": 1,
         "status": "prepared",
         "prepared_at": prepared_at,
-        "prepared_epoch_seconds": time.time(),
+        "prepared_epoch_seconds": prepared_epoch_seconds,
         "task_id": request.task_id,
         "queue_event_id": queue_event_id,
         "event_id_for_log": event_id_for_log,
@@ -10424,6 +10426,11 @@ def _persist_runtime_phase_launch_intent(
             "reason": request.reason,
         },
     }
+    if prepared_boottime_ticks is not None:
+        # Linux process start ticks and CLOCK_BOOTTIME share the same boot
+        # epoch.  Persisting the pre-spawn boundary avoids the one-second
+        # precision loss in /proc/stat's wall-clock ``btime`` value.
+        intent["prepared_boottime_ticks"] = prepared_boottime_ticks
 
     with _measured_runtime_state_lock(config):
         current = load_runtime_state(config)
@@ -10515,10 +10522,13 @@ def _runtime_launch_marker_candidates(
         normalize_agent_id(str(intent.get("adapter_name") or "")),
     }
     agent_ids.discard("")
-    try:
-        prepared_epoch = float(intent.get("prepared_epoch_seconds") or 0.0)
-    except (TypeError, ValueError):
-        prepared_epoch = 0.0
+    prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
+    if prepared_epoch is None:
+        return []
+    # worker_runner emits second-resolution UTC timestamps.  Compare at that
+    # declared resolution so a runner launched later in the same wall-clock
+    # second is retained without letting heartbeat rewrites refresh an old run.
+    prepared_marker_epoch = math.floor(prepared_epoch)
     status_dir = worker_runtime_paths(config, "launch-recovery-probe")[
         "status_path"
     ].parent
@@ -10528,7 +10538,7 @@ def _runtime_launch_marker_candidates(
     candidates: list[tuple[dict[str, Any], Path]] = []
     for path in sorted(status_dir.glob("*.json")):
         try:
-            if path.is_symlink() or path.stat().st_mtime + 1.0 < prepared_epoch:
+            if path.is_symlink():
                 continue
         except OSError:
             continue
@@ -10541,6 +10551,13 @@ def _runtime_launch_marker_candidates(
         if agent_ids and marker_agent and marker_agent not in agent_ids:
             continue
         if not str(marker.get("run_id") or ""):
+            continue
+        marker_started_at = _parse_iso_utc(str(marker.get("started_at") or ""))
+        if marker_started_at is None:
+            continue
+        if marker_started_at.tzinfo is None:
+            marker_started_at = marker_started_at.replace(tzinfo=timezone.utc)
+        if marker_started_at.timestamp() < prepared_marker_epoch:
             continue
         candidates.append((marker, path))
 
@@ -10576,19 +10593,87 @@ def _runtime_launch_intent_stale_seconds(config: Mapping[str, Any]) -> float:
     )
 
 
-def _runtime_launch_intent_is_stale(
-    config: Mapping[str, Any],
+def _runtime_launch_prepared_epoch_seconds(
     intent: Mapping[str, Any],
-) -> bool:
+) -> float | None:
     try:
         prepared_epoch = float(intent.get("prepared_epoch_seconds") or 0.0)
     except (TypeError, ValueError):
         prepared_epoch = 0.0
-    if prepared_epoch <= 0 or not math.isfinite(prepared_epoch):
-        prepared_at = _parse_iso_utc(str(intent.get("prepared_at") or ""))
-        if prepared_at is None:
-            return True
-        prepared_epoch = prepared_at.timestamp()
+    if prepared_epoch > 0 and math.isfinite(prepared_epoch):
+        return prepared_epoch
+    prepared_at = _parse_iso_utc(str(intent.get("prepared_at") or ""))
+    if prepared_at is None:
+        return None
+    if prepared_at.tzinfo is None:
+        prepared_at = prepared_at.replace(tzinfo=timezone.utc)
+    return prepared_at.timestamp()
+
+
+def _linux_clock_ticks_per_second() -> float | None:
+    try:
+        ticks = float(os.sysconf("SC_CLK_TCK"))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    return ticks if ticks > 0 and math.isfinite(ticks) else None
+
+
+def _runtime_launch_prepared_boottime_ticks() -> int | None:
+    """Return the current Linux boot-relative tick boundary when available."""
+
+    ticks_per_second = _linux_clock_ticks_per_second()
+    clock_boottime = getattr(time, "CLOCK_BOOTTIME", None)
+    if ticks_per_second is None or clock_boottime is None:
+        return None
+    try:
+        boottime_seconds = float(time.clock_gettime(clock_boottime))
+    except (OSError, TypeError, ValueError):
+        return None
+    if boottime_seconds < 0 or not math.isfinite(boottime_seconds):
+        return None
+    return math.floor(boottime_seconds * ticks_per_second)
+
+
+def _proc_boot_epoch_seconds(proc_root: Path) -> float | None:
+    """Read Linux's boot wall-clock epoch from one procfs root."""
+
+    try:
+        lines = (proc_root / "stat").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        ).splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split()
+        if len(fields) != 2 or fields[0] != "btime":
+            continue
+        try:
+            boot_epoch = float(fields[1])
+        except (TypeError, ValueError):
+            return None
+        return boot_epoch if boot_epoch > 0 and math.isfinite(boot_epoch) else None
+    return None
+
+
+def _proc_process_started_epoch_seconds(
+    proc_root: Path,
+    pid_start_ticks: int,
+) -> float | None:
+    boot_epoch = _proc_boot_epoch_seconds(proc_root)
+    ticks_per_second = _linux_clock_ticks_per_second()
+    if boot_epoch is None or ticks_per_second is None or pid_start_ticks < 0:
+        return None
+    return boot_epoch + (pid_start_ticks / ticks_per_second)
+
+
+def _runtime_launch_intent_is_stale(
+    config: Mapping[str, Any],
+    intent: Mapping[str, Any],
+) -> bool:
+    prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
+    if prepared_epoch is None:
+        return True
     return max(0.0, time.time() - prepared_epoch) >= _runtime_launch_intent_stale_seconds(config)
 
 
@@ -10645,6 +10730,32 @@ def _proc_worker_runner_launch_marker(
     pid_start_ticks = worker_pid_start_ticks(pid, proc_root=entry.parent)
     if pid_start_ticks is None:
         raise RuntimeError("exact worker-runner PID generation is unreadable")
+    process_started_epoch = _proc_process_started_epoch_seconds(
+        entry.parent,
+        pid_start_ticks,
+    )
+    prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
+    if process_started_epoch is None or prepared_epoch is None:
+        raise RuntimeError("worker-runner launch epoch is unreadable")
+
+    raw_prepared_boottime_ticks = intent.get("prepared_boottime_ticks")
+    if raw_prepared_boottime_ticks is not None:
+        try:
+            prepared_boottime_ticks = int(raw_prepared_boottime_ticks)
+        except (TypeError, ValueError):
+            raise RuntimeError("worker launch boot-tick boundary is invalid")
+        if prepared_boottime_ticks < 0:
+            raise RuntimeError("worker launch boot-tick boundary is invalid")
+        if pid_start_ticks < prepared_boottime_ticks:
+            return None
+
+    # ``btime`` is intentionally whole-second procfs data, so its reconstructed
+    # wall epoch can lead real time by less than one second.  The persisted
+    # boot-tick boundary above provides the exact check for newly written
+    # intents; this fallback keeps older intents recoverable while rejecting
+    # process generations that are definitively earlier than the intent.
+    if process_started_epoch + 1.0 < prepared_epoch:
+        return None
     argv = [
         value.decode("utf-8", errors="ignore")
         for value in raw_cmdline.split(b"\0")
@@ -10666,7 +10777,10 @@ def _proc_worker_runner_launch_marker(
             "status": "running",
             "pid": pid,
             "pid_start_ticks": pid_start_ticks,
-            "started_at": intent.get("prepared_at") or utc_now(),
+            "started_at": _isoformat_utc(
+                datetime.fromtimestamp(process_started_epoch, tz=timezone.utc)
+            ),
+            "process_started_epoch_seconds": process_started_epoch,
             "command": [],
             "launch_recovered_from": "proc_environ",
         },

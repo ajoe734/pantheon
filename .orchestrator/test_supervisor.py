@@ -7493,6 +7493,58 @@ class ReservedRuntimeSlowIOTests(unittest.TestCase):
         activity = self.activity_path.read_text(encoding="utf-8")
         self.assertIn("runtime_phase_launch_intent_expired", activity)
 
+    def test_stale_unique_pre_intent_marker_cannot_bypass_process_proof(self) -> None:
+        """Fresh heartbeat mtime cannot make one old marker adopt a new lease."""
+
+        intent = self._seed_stale_launch_intent()
+        prepared_epoch = time.time() - 3600.0
+        intent["prepared_epoch_seconds"] = prepared_epoch
+        intent["prepared_at"] = supervisor._isoformat_utc(
+            datetime.fromtimestamp(prepared_epoch, tz=timezone.utc)
+        )
+        state = runtime_state.load_runtime_state(self.config)
+        state["supervisor"]["runtime_phase_reservations"]["process_queue"][
+            "launch_intent"
+        ] = copy.deepcopy(intent)
+        runtime_state.save_runtime_state(self.config, state)
+
+        marker_path = common.worker_runtime_paths(self.config, "run-old")["status_path"]
+        common.write_json(
+            marker_path,
+            {
+                "run_id": "run-old",
+                "task_id": "SLOW-IO-1",
+                "agent": "codex",
+                "status": "running",
+                "pid": None,
+                "started_at": "2020-01-01T00:00:00Z",
+                "last_heartbeat_at": supervisor.utc_now(),
+            },
+        )
+        os.utime(marker_path, None)
+
+        operation = mock.Mock(return_value=True)
+        with mock.patch.object(
+            supervisor,
+            "_runtime_launch_process_candidates",
+            return_value=([], True),
+        ):
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    self.config,
+                    "process_queue",
+                    operation,
+                )
+            )
+
+        operation.assert_called_once()
+        recovered = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn("run-old", recovered.get("workers", {}))
+        self.assertNotIn(
+            "runtime_phase_reservations",
+            recovered.get("supervisor", {}),
+        )
+
     def test_stale_ambiguous_dead_markers_clear_after_process_proof(self) -> None:
         """Marker debris without a live exact process does not retain the token."""
 
@@ -18970,6 +19022,7 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         self.assertEqual(sum(len(pids) for pids in result.values()), 1)
 
     def test_launch_recovery_process_scan_binds_exact_env_and_pid_generation(self) -> None:
+        boot_epoch = 1_700_000_000
         proc = self._make_fake_proc(
             {
                 111: (
@@ -18982,14 +19035,17 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
                 ),
             }
         )
-        for pid, task_id, run_id in (
-            (111, "TASK-EXACT", "run-exact"),
-            (222, "TASK-OTHER", "run-other"),
+        (proc / "stat").write_text(f"btime {boot_epoch}\n", encoding="utf-8")
+        for pid, task_id, run_id, agent_id in (
+            (111, "TASK-EXACT", "run-exact", "codex"),
+            # Same task but a distinct configured identity/quota group must not
+            # be adopted for Codex merely because the provider name is close.
+            (222, "TASK-EXACT", "run-other", "codex2"),
         ):
             (proc / str(pid) / "environ").write_bytes(
                 (
-                    f"ORCH_TASK_ID={task_id}\0ORCH_AGENT_ID=codex\0"
-                    f"ORCH_PROVIDER=codex\0ORCH_RUN_ID={run_id}\0"
+                    f"ORCH_TASK_ID={task_id}\0ORCH_AGENT_ID={agent_id}\0"
+                    f"ORCH_PROVIDER={agent_id}\0ORCH_RUN_ID={run_id}\0"
                 ).encode("utf-8")
             )
             stat_fields = ["S", *("0" for _ in range(18)), str(pid * 100)]
@@ -18998,16 +19054,22 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-        candidates, conclusive = supervisor._runtime_launch_process_candidates(
-            {"paths": {"state_file": str(proc / "state.json")}},
-            {
-                "task_id": "TASK-EXACT",
-                "agent_id": "codex",
-                "provider": "codex",
-                "prepared_at": "2026-08-02T18:00:00Z",
-            },
-            proc_root=proc,
-        )
+        with mock.patch.object(
+            supervisor,
+            "_linux_clock_ticks_per_second",
+            return_value=100.0,
+        ):
+            candidates, conclusive = supervisor._runtime_launch_process_candidates(
+                {"paths": {"state_file": str(proc / "state.json")}},
+                {
+                    "task_id": "TASK-EXACT",
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "prepared_at": "2026-08-02T18:00:00Z",
+                    "prepared_epoch_seconds": boot_epoch + 100.0,
+                },
+                proc_root=proc,
+            )
 
         self.assertTrue(conclusive)
         self.assertEqual(len(candidates), 1)
@@ -19015,7 +19077,109 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         self.assertEqual(marker["run_id"], "run-exact")
         self.assertEqual(marker["pid"], 111)
         self.assertEqual(marker["pid_start_ticks"], 11100)
+        self.assertGreaterEqual(
+            marker["process_started_epoch_seconds"],
+            boot_epoch + 100.0,
+        )
         self.assertEqual(status_path.name, "run-exact.json")
+
+    def test_launch_recovery_process_scan_rejects_pre_intent_generation(self) -> None:
+        boot_epoch = 1_700_000_000
+        proc = self._make_fake_proc(
+            {
+                111: (
+                    "python3 .orchestrator/worker_runner.py --run-id run-old "
+                    "--status-path status.json -- codex exec wake"
+                ),
+            }
+        )
+        (proc / "stat").write_text(f"btime {boot_epoch}\n", encoding="utf-8")
+        (proc / "111" / "environ").write_bytes(
+            b"ORCH_TASK_ID=TASK-EXACT\0ORCH_AGENT_ID=codex\0"
+            b"ORCH_PROVIDER=codex\0ORCH_RUN_ID=run-old\0"
+        )
+        stat_fields = ["S", *("0" for _ in range(18)), "11100"]
+        (proc / "111" / "stat").write_text(
+            f"111 (python3) {' '.join(stat_fields)}\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(
+            supervisor,
+            "_linux_clock_ticks_per_second",
+            return_value=100.0,
+        ):
+            candidates, conclusive = supervisor._runtime_launch_process_candidates(
+                {"paths": {"state_file": str(proc / "state.json")}},
+                {
+                    "task_id": "TASK-EXACT",
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "prepared_at": "2026-08-02T18:00:00Z",
+                    "prepared_epoch_seconds": boot_epoch + 500.0,
+                },
+                proc_root=proc,
+            )
+
+        self.assertTrue(conclusive)
+        self.assertEqual(candidates, [])
+
+    def test_launch_recovery_marker_uses_started_at_not_fresh_mtime(self) -> None:
+        proc = self._make_fake_proc({})
+        status_dir = proc / "worker-runtime" / "status"
+        status_dir.mkdir(parents=True)
+        old_marker = status_dir / "run-old.json"
+        old_marker.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-old",
+                    "task_id": "TASK-EXACT",
+                    "agent": "codex",
+                    "status": "running",
+                    "started_at": "2020-01-01T00:00:00Z",
+                    "last_heartbeat_at": "2026-08-02T18:00:10Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        fresh_marker = status_dir / "run-fresh.json"
+        fresh_marker.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-fresh",
+                    "task_id": "TASK-EXACT",
+                    "agent": "codex",
+                    "status": "running",
+                    "started_at": "2026-08-02T18:00:01Z",
+                    "last_heartbeat_at": "2026-08-02T18:00:01Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        # Reproduce heartbeat replacement/refresh: mtime is new even though the
+        # immutable runner start belongs to a 2020 process generation.
+        fresh_mtime = datetime(2026, 8, 2, 18, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(old_marker, (fresh_mtime, fresh_mtime))
+
+        candidates = supervisor._runtime_launch_marker_candidates(
+            {"paths": {"state_file": str(proc / "state.json")}},
+            {
+                "task_id": "TASK-EXACT",
+                "agent_id": "codex",
+                "provider": "codex",
+                "prepared_at": "2026-08-02T18:00:00Z",
+                "prepared_epoch_seconds": datetime(
+                    2026,
+                    8,
+                    2,
+                    18,
+                    0,
+                    tzinfo=timezone.utc,
+                ).timestamp(),
+            },
+        )
+
+        self.assertEqual([marker["run_id"] for marker, _path in candidates], ["run-fresh"])
 
     def test_block_reason_flags_live_duplicate(self) -> None:
         config = {
