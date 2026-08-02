@@ -6042,6 +6042,38 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
         )
 
+    def test_injected_slow_prelock_phase_does_not_extend_runtime_hold(self) -> None:
+        """A 60s external phase leaves only the 250ms mutation transaction locked."""
+
+        clock = [100.0]
+        lock_holds: list[float] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            entered = clock[0]
+            try:
+                yield
+            finally:
+                lock_holds.append(clock[0] - entered)
+
+        def slow_probe(*_args: object, **_kwargs: object) -> tuple[dict, dict]:
+            clock[0] += 60.0
+            return ({}, {})
+
+        def short_transaction(*_args: object, **_kwargs: object) -> bool:
+            clock[0] += 0.25
+            return False
+
+        with (
+            mock.patch.object(supervisor.time, "monotonic", side_effect=lambda: clock[0]),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "probe_provider_reports", side_effect=slow_probe),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=short_transaction),
+        ):
+            supervisor.run_once(self.config, watch=False)
+
+        self.assertEqual(lock_holds, [0.25])
+
     def test_run_once_drains_assistant_bridge_before_runtime_lock(self) -> None:
         """Governed bridge assignment must not run under runtime admission."""
 
@@ -8042,6 +8074,8 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         )
         self.assertIn("_fetch_worker_base_ref", run_once_source)
         self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
+        self.assertIn("continue_or_skip_empty", run_once_source)
+        self.assertNotIn("continue_or_skip_empty", locked_cycle_source)
         self.assertIn(
             "with runtime_state_lock(config, shared=False",
             locked_operation_source,

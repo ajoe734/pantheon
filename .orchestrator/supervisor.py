@@ -18121,6 +18121,15 @@ def run_once(
         if isinstance(bridge_state, dict)
         else None
     )
+    # Branch continuation probes local git state and may invoke hooks or wait
+    # on repository metadata.  It is independent of runtime admission, so do
+    # not charge that latency to worker lease/status commands.
+    _safe_phase(
+        "continue_or_skip_empty",
+        continue_or_skip_empty,
+        THIS_DIR.parent,
+        quiet=quiet,
+    )
     recovery_activity_events = failure_streak_recovery_activity_snapshot(
         config,
         github_runtime_snapshot,
@@ -18478,7 +18487,6 @@ def _run_once_locked(
         changed = _safe_phase("reconcile_runtime_on_boot", reconcile_runtime_on_boot, config, state, quiet=quiet) or changed
         if changed:
             save_runtime_state(config, state)
-        _safe_phase("continue_or_skip_empty", continue_or_skip_empty, THIS_DIR.parent, quiet=quiet)
         changed = _safe_phase("expire_provider_dispatch_pauses", expire_provider_dispatch_pauses, config, state, quiet=quiet) or changed
         pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:

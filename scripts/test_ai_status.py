@@ -907,6 +907,70 @@ class SupervisorDispatchBatchTests(unittest.TestCase):
 
         self.assertEqual(self.sync_mock.call_count, 0)
 
+    def test_batch_activity_outbox_recovers_after_post_state_crash(self) -> None:
+        """Both rows survive a crash between canonical save and audit append."""
+
+        store_env = mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: "",
+            },
+        )
+        store_env.start()
+        self.addCleanup(store_env.stop)
+        ai_status.save_state(deepcopy(self.state))
+        working = ai_status.load_state()
+        with (
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            ai_status.buffer_activity_events() as events,
+        ):
+            ai_status.run_supervisor_dispatch_batch(
+                working,
+                self.mutations,
+                commands={
+                    "start": ai_status.command_start,
+                    "progress": ai_status.command_progress,
+                    "note": ai_status.command_note,
+                },
+                runtime_snapshot={"workers": {}},
+                config={},
+            )
+            self.assertEqual(len(events), 2)
+            with mock.patch.object(
+                ai_status,
+                "recover_status_activity_outbox",
+                side_effect=RuntimeError("simulated post-state crash"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "post-state crash"):
+                    ai_status.commit_state_with_activity_outbox(working, events)
+
+        pending = ai_status.load_state()
+        self.assertEqual(
+            [task["status"] for task in pending["tasks"]],
+            ["in_progress", "in_progress"],
+        )
+        outbox = pending[ai_status.STATUS_ACTIVITY_OUTBOX_KEY]
+        self.assertEqual(len(outbox["events"]), 2)
+        self.assertEqual(ai_status.LOG_FILE.read_text(encoding="utf-8"), "")
+
+        self.assertTrue(ai_status.recover_status_activity_outbox(pending))
+        recovered = ai_status.load_state()
+        self.assertIsNone(recovered[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+        audit_rows = [
+            json.loads(line)
+            for line in ai_status.LOG_FILE.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            [row["task_id"] for row in audit_rows],
+            ["BATCH-ONE", "BATCH-TWO"],
+        )
+        self.assertEqual(
+            len({row["event_id"] for row in audit_rows}),
+            2,
+        )
+
     def test_payload_parser_rejects_duplicate_tasks_and_unbounded_rows(self) -> None:
         payload = self._test_root / "batch.json"
         payload.write_text(
