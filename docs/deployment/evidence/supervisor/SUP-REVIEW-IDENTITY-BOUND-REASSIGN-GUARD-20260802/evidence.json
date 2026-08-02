@@ -42,11 +42,13 @@
     ],
     "anchors": [
       "37ff4c59a",
-      "4d6a77c86"
+      "4d6a77c86",
+      "b32efd014"
     ],
     "composition_commits": [
       "6097badb5",
-      "8ab9c1772"
+      "8ab9c1772",
+      "3c27811c7"
     ]
   },
   "historical_evidence_only": [
@@ -64,7 +66,7 @@
   "contract": {
     "bound_reviewer_continuity": "A structurally exact reviewed-head binding or pending reviewer handoff binds the current reviewer label. Automatic provider/lane recovery returns without rewriting that reviewer or its pending handoff.",
     "independent_fallback": "Unbound recovery may still select a replacement, but candidate selection and the canonical persistence boundary both require a reviewer identity independent from the owner.",
-    "identity_equivalence": "Codex, Codex2, and their canonical Codex lane aliases resolve to one ChatGPT review identity even though their dispatch labels differ.",
+    "identity_equivalence": "Only the verified Codex and Codex2 pair resolves to one ChatGPT review identity. Codex3 remains independent unless explicit configured account evidence establishes equivalence.",
     "approval_gate": "assign, approve, and merged-done reconciliation reject owner/reviewer pairs whose review identities are equivalent.",
     "merge_gate": "The review-before-merge contract treats equivalent identities as no independent reviewer, so neither merge nor auto-merge becomes authorized even if an exact-head approval record is forged for the alternate label.",
     "persistence_gate": "Supervisor reassignment persistence refuses any non-independent owner/reviewer pair, covering automatic and chair-driven callers at the canonical write boundary."
@@ -88,6 +90,13 @@
         "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_codex_and_codex2_are_not_independent_review_identities",
         "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_same_account_exact_head_approval_never_becomes_merge_ready"
       ]
+    },
+    "unverified_alias_not_collapsed": {
+      "status": "proven",
+      "tests": [
+        "scripts/git/test_task_review_merge_gate.py::PolicyResolutionTests::test_codex3_is_independent_without_configured_account_evidence"
+      ],
+      "detail": "A numeric lane label alone is not account-equivalence evidence; Codex versus Codex3 remains an independent pair under the current verified facts."
     },
     "unbound_independent_reassignment_preserved": {
       "status": "proven",
@@ -115,12 +124,12 @@
       "result": "checkout-scoped .venv-pantheon provisioned; imports and pytest verified"
     },
     {
-      "command": "five focused supervisor selectors from .orchestrator plus four focused ai-status/merge-gate selectors from repository root",
-      "result": "9 passed"
+      "command": "five focused supervisor selectors from .orchestrator plus five focused ai-status/merge-gate selectors from repository root",
+      "result": "10 passed"
     },
     {
       "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
-      "result": "495 passed, 102 subtests passed"
+      "result": "503 passed, 147 subtests passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
@@ -128,7 +137,7 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
-      "result": "94 passed"
+      "result": "95 passed"
     },
     {
       "command": "python3 -m py_compile .orchestrator/review_identity.py .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py",
@@ -136,7 +145,7 @@
     },
     {
       "command": "git diff --check",
-      "result": "passed before evidence authoring; rerun required at finalization"
+      "result": "passed after the final evidence refresh"
     }
   ],
   "review": {
@@ -145,11 +154,12 @@
     "reviewed_head": null,
     "pull_request": 4488,
     "recorded_at": null,
-    "notes": null
+    "notes": "Exact head 0b05455f0c96e1900825f888d36c638a61dcce51 was reopened because Codex3 lacked evidence for same-account equivalence. The bounded correction removes that alias and adds a negative regression; the updated head requires a fresh exact-head decision."
   },
   "delivery": {
-    "base_commit": "5cb03dd5ebe3ce13435c848175c5dab5450e9ea5",
+    "base_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
     "implementation_anchor": "37ff4c59a",
+    "correction_anchor": "b32efd0143e2300051716e623b55e5ea2e1aec78",
     "implementation_head": null,
     "pull_request": 4488,
     "merge_commit": null,
