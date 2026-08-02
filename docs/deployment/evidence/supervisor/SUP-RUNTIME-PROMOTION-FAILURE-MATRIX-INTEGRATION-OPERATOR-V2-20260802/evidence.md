@@ -119,6 +119,12 @@ head after every repository check and the root merge-freeze gate are green,
 bind this `evidence.json`, and authorize protected merge. This task does not
 self-write `review_approved`.
 
+The branch composed `origin/dev` at
+`f3dae9017e448591ebbda91a9bf17f4a9c715a66` in merge commit
+`08d40a3396598761213165978838f3e3a42dd3d8`. Every qualification command in
+the verification table was rerun after that composition and retained the
+recorded result.
+
 ## Rollout and rollback
 
 Rollout is source merge only. No automatic live promotion follows the merge.
