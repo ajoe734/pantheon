@@ -32,7 +32,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import durable_write_bytes, validate_status_command_runtime
-from rewrite.task_state_store import load_events, project_latest_state
+from rewrite.task_state_store import load_snapshot
 
 
 DEFAULT_CATALOG_PATH = (
@@ -477,17 +477,52 @@ def resolve_task_state_authority(
     }
 
 
-def load_authoritative_task_state(authority: dict[str, Any]) -> dict[str, Any]:
+def load_authoritative_task_snapshot(
+    authority: dict[str, Any],
+    *,
+    refresh_checkpoint: bool = True,
+) -> dict[str, Any]:
+    """Return one validated authoritative journal generation.
+
+    ``load_snapshot`` verifies the complete journal prefix digest while reusing
+    the checkpoint's already-validated head and parsing only an appended tail.
+    Keeping the snapshot intact also binds the projected state, event identity,
+    and scale telemetry to the same shared-lock window.
+    """
+
     try:
-        events = load_events(Path(authority["event_log"]))
-        state = project_latest_state(events)
+        snapshot = load_snapshot(
+            Path(authority["event_log"]),
+            refresh_checkpoint=refresh_checkpoint,
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         raise DispatchError(
             f"cannot project authoritative task-state journal: {type(exc).__name__}: {exc}"
         ) from exc
+    state = snapshot.get("state")
     if not isinstance(state, dict) or not isinstance(state.get("tasks"), list):
         raise DispatchError("authoritative task-state projection must contain a task list")
-    return state
+    return snapshot
+
+
+def load_authoritative_task_state(authority: dict[str, Any]) -> dict[str, Any]:
+    """Compatibility projection backed by one authoritative snapshot read."""
+
+    return load_authoritative_task_snapshot(authority)["state"]
+
+
+def authoritative_snapshot_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Expose non-payload snapshot facts for dry-run and admission evidence."""
+
+    return {
+        "event_count": int(snapshot["event_count"]),
+        "byte_size": int(snapshot["byte_size"]),
+        "last_event_id": snapshot["last_event_id"],
+        "last_event_sha256": snapshot["last_event_sha256"],
+        "state_sha256": snapshot["state_sha256"],
+        "checkpoint_used": snapshot["resumed_from_checkpoint"] is True,
+        "revalidated_tail_events": int(snapshot["revalidated_events"]),
+    }
 
 
 def _dirty_command_runtime_files(root: Path) -> list[str]:
@@ -2121,7 +2156,8 @@ def verify_current_canonical_readback(
     admitted_task_ids: list[str],
     readiness: dict[str, Any],
 ) -> dict[str, Any]:
-    authoritative = load_authoritative_task_state(authority)
+    authoritative_snapshot = load_authoritative_task_snapshot(authority)
+    authoritative = authoritative_snapshot["state"]
     projection = load_json_object(status_root / "ai-status.json")
     if canonical_json_sha256(authoritative) != canonical_json_sha256(projection):
         raise DispatchError("canonical ai-status/task-state readback mismatch")
@@ -2169,6 +2205,9 @@ def verify_current_canonical_readback(
         "state_sha256": canonical_json_sha256(authoritative),
         "projection_sha256": canonical_json_sha256(projection),
         "exact": admitted_task_ids,
+        "task_state_snapshot": authoritative_snapshot_evidence(
+            authoritative_snapshot
+        ),
     }
 
 
@@ -2782,7 +2821,11 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.live_config),
         status_root=status_root,
     )
-    state = load_authoritative_task_state(authority)
+    task_state_snapshot = load_authoritative_task_snapshot(
+        authority,
+        refresh_checkpoint=not args.dry_run,
+    )
+    state = task_state_snapshot["state"]
     command_root = Path(args.command_root).resolve()
     readiness_config_path = Path(
         args.readiness_config or command_root / ".orchestrator" / "config.json"
@@ -2820,6 +2863,7 @@ def main(argv: list[str] | None = None) -> int:
         output["task_state_store"] = {
             "mode": authority["mode"],
             "event_log": str(authority["event_log"]),
+            "snapshot": authoritative_snapshot_evidence(task_state_snapshot),
         }
         output["status"] = "dry_run"
         print(json.dumps(output, indent=2, sort_keys=True))
