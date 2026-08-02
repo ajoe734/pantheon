@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -773,6 +774,85 @@ def _append_tail_without_checkpoint(
     with path.open("ab") as stream:
         stream.write(store.canonical_json_bytes(event) + b"\n")
     return event
+
+
+def _stat_identity(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        stat.S_IFMT(info.st_mode) | stat.S_IMODE(info.st_mode),
+        info.st_ino,
+        info.st_size,
+        info.st_atime_ns,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _directory_snapshot(parent: Path) -> dict[str, tuple[bytes, tuple] | None]:
+    return {
+        child.name: (
+            (child.read_bytes(), _stat_identity(child))
+            if child.is_file() and not child.is_symlink()
+            else None
+        )
+        for child in sorted(parent.iterdir())
+    }
+
+
+@pytest.mark.parametrize("missing", ["parent", "event", "lock"])
+def test_observational_snapshot_requires_existing_authority_without_creating_it(
+    missing: str,
+    tmp_path: Path,
+) -> None:
+    if missing == "parent":
+        path = tmp_path / "absent" / "task-state-events.jsonl"
+        before = tuple(sorted(child.name for child in tmp_path.iterdir()))
+    else:
+        path = tmp_path / "task-state-events.jsonl"
+        store.append_state_commit(path, growing_board(1), source="test")
+        if missing == "event":
+            path.unlink()
+        else:
+            path.with_name(f"{path.name}.lock").unlink()
+        before = _directory_snapshot(tmp_path)
+
+    with pytest.raises(store.TaskStateStoreError, match=missing):
+        store.load_snapshot(path, refresh_checkpoint=False)
+
+    if missing == "parent":
+        assert not path.parent.exists()
+        assert tuple(sorted(child.name for child in tmp_path.iterdir())) == before
+    else:
+        assert _directory_snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("symlink_component", ["parent", "event", "lock"])
+def test_observational_snapshot_rejects_symlinked_authority(
+    symlink_component: str,
+    tmp_path: Path,
+) -> None:
+    real_parent = tmp_path / "real"
+    path = real_parent / "task-state-events.jsonl"
+    store.append_state_commit(path, growing_board(1), source="test")
+    if symlink_component == "parent":
+        linked_parent = tmp_path / "linked"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        observed_path = linked_parent / path.name
+    elif symlink_component == "event":
+        observed_path = real_parent / "linked-events.jsonl"
+        observed_path.symlink_to(path)
+        observed_path.with_name(f"{observed_path.name}.lock").write_bytes(b"lock")
+    else:
+        observed_path = path
+        lock = path.with_name(f"{path.name}.lock")
+        lock.unlink()
+        lock.symlink_to(real_parent / "other-lock")
+
+    with pytest.raises(store.TaskStateStoreError, match="symlink|regular file"):
+        store.load_snapshot(observed_path, refresh_checkpoint=False)
 
 
 def test_snapshot_reuses_the_checkpointed_prefix_and_only_parses_the_tail(

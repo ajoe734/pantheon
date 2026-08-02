@@ -114,6 +114,44 @@ def _prepare_parent(path: Path) -> Path:
     return resolved
 
 
+def _require_existing_authority(path: Path) -> Path:
+    """Resolve a provisioned journal without creating or changing anything."""
+
+    if not path.is_absolute():
+        raise TaskStateStoreError(f"task-state event log path must be an absolute path: {path}")
+    resolved = path.expanduser().absolute()
+    symlink = _first_symlink_component(resolved.parent)
+    if symlink is not None:
+        raise TaskStateStoreError(f"task-state store parent contains symlink: {symlink}")
+    try:
+        parent_info = os.stat(resolved.parent, follow_symlinks=False)
+    except OSError as exc:
+        raise TaskStateStoreError(
+            f"task-state store parent must already exist: {resolved.parent}"
+        ) from exc
+    if not stat.S_ISDIR(parent_info.st_mode):
+        raise TaskStateStoreError(
+            f"task-state store parent must be a directory: {resolved.parent}"
+        )
+
+    required_files = (
+        (resolved, "event log"),
+        (resolved.with_name(f"{resolved.name}.lock"), "lock"),
+    )
+    for candidate, label in required_files:
+        try:
+            info = os.stat(candidate, follow_symlinks=False)
+        except OSError as exc:
+            raise TaskStateStoreError(
+                f"task-state {label} must be an existing regular file: {candidate}"
+            ) from exc
+        if not stat.S_ISREG(info.st_mode):
+            raise TaskStateStoreError(
+                f"task-state {label} must be an existing regular file: {candidate}"
+            )
+    return resolved
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(
         path,
@@ -126,17 +164,24 @@ def _fsync_directory(path: Path) -> None:
 
 
 @contextmanager
-def _store_lock(path: Path, *, shared: bool):
+def _store_lock(path: Path, *, shared: bool, observational: bool = False):
+    if observational and not shared:
+        raise TaskStateStoreError("observational task-state locks must be shared")
     lock_path = path.with_name(f"{path.name}.lock")
-    descriptor = os.open(
-        lock_path,
-        os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
+    flags = (
+        (os.O_RDONLY if observational else os.O_RDWR | os.O_CREAT)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
     )
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise TaskStateStoreError(f"cannot open task-state lock: {lock_path}") from exc
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise TaskStateStoreError(f"task-state lock must be a regular file: {lock_path}")
-        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        if not observational:
+            os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
         fcntl.flock(descriptor, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
         yield
     finally:
@@ -245,7 +290,11 @@ def _full_replay_forced() -> bool:
     }
 
 
-def _read_checkpoint(event_path: Path) -> dict[str, Any] | None:
+def _read_checkpoint(
+    event_path: Path,
+    *,
+    observational: bool = False,
+) -> dict[str, Any] | None:
     """Return a structurally usable checkpoint, or ``None`` to force full replay.
 
     Every failure mode here -- missing, unreadable, wrong schema, wrong version,
@@ -258,6 +307,8 @@ def _read_checkpoint(event_path: Path) -> dict[str, Any] | None:
         return None
     path = _checkpoint_path(event_path)
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if observational:
+        flags |= getattr(os, "O_NOATIME", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError:
@@ -516,7 +567,7 @@ def _snapshot_from_payload(
 
 
 @contextmanager
-def _journal_view(path: Path):
+def _journal_view(path: Path, *, observational: bool = False):
     """Expose the journal as a read-only buffer without copying it into the heap.
 
     Hashing every byte is what lets the checkpoint be trusted, but reading a
@@ -529,6 +580,8 @@ def _journal_view(path: Path):
         yield memoryview(b"")
         return
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if observational:
+        flags |= getattr(os, "O_NOATIME", 0)
     descriptor = os.open(path, flags)
     try:
         info = os.fstat(descriptor)
@@ -549,8 +602,9 @@ def _load_snapshot_unlocked(
     *,
     refresh_checkpoint: bool = True,
 ) -> dict[str, Any]:
-    checkpoint = _read_checkpoint(event_path)
-    with _journal_view(event_path) as payload:
+    observational = not refresh_checkpoint
+    checkpoint = _read_checkpoint(event_path, observational=observational)
+    with _journal_view(event_path, observational=observational) as payload:
         snapshot = _snapshot_from_payload(payload, checkpoint)
     if refresh_checkpoint and snapshot["revalidated_events"]:
         _write_checkpoint(
@@ -604,14 +658,22 @@ def load_snapshot(
     report where ``event_count`` came from one journal generation and the
     compared digest from another.
 
-    ``refresh_checkpoint=False`` keeps an observational caller from creating,
-    replacing, or repairing the derived checkpoint. The journal and any usable
-    checkpoint are still fully validated, including the complete prefix hash and
-    every uncheckpointed event. Mutation paths retain the default refresh mode.
+    ``refresh_checkpoint=False`` selects a strictly observational authority
+    path. It requires an existing non-symlink parent, regular journal, and
+    regular lock; opens the lock read-only without ``O_CREAT`` or ``fchmod``;
+    and never creates, replaces, or repairs the derived checkpoint. The journal
+    and any usable checkpoint are still fully validated, including the complete
+    prefix hash and every uncheckpointed event. Mutation paths retain the
+    provision-and-refresh default.
     """
 
-    event_path = _prepare_parent(Path(path))
-    with _store_lock(event_path, shared=True):
+    observational = not refresh_checkpoint
+    event_path = (
+        _require_existing_authority(Path(path))
+        if observational
+        else _prepare_parent(Path(path))
+    )
+    with _store_lock(event_path, shared=True, observational=observational):
         fingerprint = _journal_fingerprint(event_path)
         if not _full_replay_forced():
             with _SNAPSHOT_CACHE_LOCK:

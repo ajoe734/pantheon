@@ -6,6 +6,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import stat
 import subprocess
 
 import pytest
@@ -356,6 +357,25 @@ def file_identity(path: Path) -> tuple[bool, bytes | None]:
     return path.exists(), path.read_bytes() if path.exists() else None
 
 
+def stat_identity(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        stat.S_IFMT(info.st_mode) | stat.S_IMODE(info.st_mode),
+        info.st_ino,
+        info.st_size,
+        info.st_atime_ns,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def directory_identity(parent: Path) -> tuple[str, ...]:
+    return tuple(sorted(path.name for path in parent.iterdir()))
+
+
 def checkpoint_temp_files(checkpoint: Path) -> tuple[str, ...]:
     return tuple(
         sorted(path.name for path in checkpoint.parent.glob(f"{checkpoint.name}.*.tmp"))
@@ -411,6 +431,9 @@ def test_current_dry_run_cli_is_read_only(
         encoding="utf-8",
     )
     config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
+    lock = authority["event_log"].with_name(f"{authority['event_log'].name}.lock")
+    lock.write_bytes(b"provisioned observational lock\n")
+    lock.chmod(0o640)
     expected_snapshot = load_snapshot(
         authority["event_log"],
         refresh_checkpoint=False,
@@ -419,7 +442,18 @@ def test_current_dry_run_cli_is_read_only(
         "projection": file_identity(tmp_path / "ai-status.json"),
         "journal": file_identity(authority["event_log"]),
         "checkpoint": file_identity(checkpoint),
+        "lock": file_identity(lock),
     }
+    before_stats = {
+        name: stat_identity(path)
+        for name, path in {
+            "projection": tmp_path / "ai-status.json",
+            "journal": authority["event_log"],
+            "checkpoint": checkpoint,
+            "lock": lock,
+        }.items()
+    }
+    before_directory = directory_identity(tmp_path)
     before_temp_files = checkpoint_temp_files(checkpoint)
     env = {**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)}
     result = subprocess.run(
@@ -461,8 +495,74 @@ def test_current_dry_run_cli_is_read_only(
         "projection": file_identity(tmp_path / "ai-status.json"),
         "journal": file_identity(authority["event_log"]),
         "checkpoint": file_identity(checkpoint),
+        "lock": file_identity(lock),
     } == before_files
+    assert {
+        name: stat_identity(path)
+        for name, path in {
+            "projection": tmp_path / "ai-status.json",
+            "journal": authority["event_log"],
+            "checkpoint": checkpoint,
+            "lock": lock,
+        }.items()
+    } == before_stats
+    assert directory_identity(tmp_path) == before_directory
     assert checkpoint_temp_files(checkpoint) == before_temp_files
+
+
+def test_current_dry_run_fails_closed_without_provisioned_lock(
+    tmp_path: Path,
+) -> None:
+    state = active_state()
+    authority = write_authority(tmp_path, state)
+    lock = authority["event_log"].with_name(f"{authority['event_log'].name}.lock")
+    lock.unlink()
+    live_config = tmp_path / "live-config.json"
+    live_config.write_text(
+        json.dumps(
+            {
+                "paths": {"status_file": str(tmp_path / "ai-status.json")},
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(authority["event_log"]),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
+    before = directory_identity(tmp_path)
+    before_journal = file_identity(authority["event_log"])
+    before_journal_stat = stat_identity(authority["event_log"])
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(SCRIPT),
+            "--dry-run",
+            "--catalog",
+            str(CATALOG),
+            "--live-config",
+            str(live_config),
+            "--readiness-config",
+            str(config_path),
+            "--runtime-state",
+            str(runtime_path),
+            "--provider-capabilities",
+            str(capabilities_path),
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "lock must be an existing regular file" in result.stderr
+    assert not lock.exists()
+    assert directory_identity(tmp_path) == before
+    assert file_identity(authority["event_log"]) == before_journal
+    assert stat_identity(authority["event_log"]) == before_journal_stat
 
 
 def test_authority_uses_one_validated_snapshot_generation(
