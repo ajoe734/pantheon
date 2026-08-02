@@ -10,7 +10,7 @@ admission, authoritative journal readback, and at-most-once materialization.
 | Reviewer | Human/Ops |
 | Base | `dev` |
 | Branch | `task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802` |
-| Implementation candidate | `fd34d63148aeff6ccbe7af01b37e9351298e7e15` |
+| Implementation candidate | `a42b177be32c4b4e2fc8888179bf5eff014e6a83` |
 | Composed `dev` base | `ef2b4f0a3988be6adbf56d24ec5df00df2717f39` |
 | Review state | `review_pending` |
 
@@ -63,6 +63,14 @@ then admitted and read back from the authoritative event log.
 - Packet payloads are bounded to 16 tasks. Per-packet dispatch and per-item
   processing OS fences make the live claimant authoritative even after a JSON
   claim expires; a crash releases the fence for deterministic recovery.
+- Both OS fences open every managed parent directory through pinned directory
+  descriptors with `O_DIRECTORY|O_NOFOLLOW`, and verify the leaf with `fstat`
+  before locking. A symlinked claims parent or non-regular leaf fails closed
+  without creating a file outside the repository/inbox boundary.
+- The per-item processing fence remains held through dispatch, receipt fsync,
+  archive/finalize, and retry/claim metadata cleanup. Expiring the advisory
+  JSON claim while the first drainer is paused at receipt commit cannot start a
+  second dispatch.
 - Assignment/readback subprocess timeouts are bounded (2 seconds by default,
   capped at 5 seconds) and are retryable. Inbox retry metadata binds the signed
   packet digest and uses bounded exponential backoff.
@@ -87,37 +95,38 @@ remain unchanged.
 
 The 2,000-event scratch fixture is 137,953,724 bytes. Four workers executed
 eight real governed commands (two each of approve, assign, note, and reopen)
-while 16 full `supervisor.run_once` cycles were active.
+while 18 full `supervisor.run_once` cycles were active.
 
 | Shape | Legacy p95 | Current p95 |
 |---|---:|---:|
-| Uncontended journal command | 11.682s | 0.121s |
-| Real governed commands during active supervisor cycles | 55.694s | **1.407s** |
+| Uncontended journal command | 11.493s | 0.123s |
+| Real governed commands during active supervisor cycles | 53.766s | **1.572s** |
 
 All eight commands succeeded, six used worker leases, supervisor/command
-execution overlapped, and exact projection parity held at event 2,016. The
+execution overlapped across 18 full cycles, and exact projection parity held at
+event 2,016. The
 formal report has `meets_target: true` against the two-second p95 gate.
 
 The benchmark reuses the task-state latency harness with the exact committed
-bridge candidate `fd34d63148aeff6ccbe7af01b37e9351298e7e15`. It mutates only
+bridge candidate `a42b177be32c4b4e2fc8888179bf5eff014e6a83`. It mutates only
 scratch state.
 
 ## Human/Ops review remediation
 
-Human/Ops rejected the prior exact head
-`d2f92118c9af913605780243a8842a8c38dbb484` and required four additional
-fail-closed guarantees. Candidate `fd34d63148aeff6ccbe7af01b37e9351298e7e15`
-addresses them on top of `origin/dev` commit
-`ef2b4f0a3988be6adbf56d24ec5df00df2717f39`:
+Human/Ops rejected exact head
+`2b956587f5eb9d35aebb95d191ab505afce6945f` after independently reproducing
+two remaining fence failures. Candidate
+`a42b177be32c4b4e2fc8888179bf5eff014e6a83` addresses both on top of
+`origin/dev` commit `ef2b4f0a3988be6adbf56d24ec5df00df2717f39`:
 
-1. a full `run_once` partial-packet negative proves zero queued events and zero
-   workers before exact durable admission;
-2. a 16-task packet bound plus OS-owner fences prevents a live claimant from
-   being stolen after JSON TTL expiry;
-3. partial retry skips an exact archived prefix and leaves its archived record
-   byte-for-byte equivalent at the JSON-object boundary; and
-4. the complete supervisor and bridge matrix plus the concurrent benchmark
-   were rerun against the composed implementation commit.
+1. dispatch and inbox fence parents are opened component-by-component without
+   following symlinks, and two negatives prove no outside lock file is created;
+2. the inbox processing fence now spans the complete item transaction, and a
+   pause-after-dispatch/expired-claim negative proves exactly one dispatch with
+   no concurrent receipt/finalize error; and
+3. the complete supervisor and bridge matrix plus the 2,000-event benchmark
+   were rerun from the new committed candidate instead of reusing the rejected
+   head's report.
 
 ## Regression matrix
 
@@ -127,6 +136,8 @@ The focused suites cover:
 - partial packet fail-closed supervisor dispatch and archived-prefix retry;
 - crash/stale dispatcher claim and processing rename restart recovery;
 - live dispatcher and inbox claimant fencing beyond expired JSON claims;
+- dispatch/inbox claims-parent symlink escape rejection with no outside write;
+- processing-fence ownership through receipt commit and metadata cleanup;
 - packet task-count validation at the 16-task boundary;
 - forged retry metadata and mismatched packet/spec identity;
 - concurrent drainers and concurrent exact duplicate dispatch;
@@ -140,14 +151,11 @@ The focused suites cover:
 Owner validation:
 
 ```text
-pytest .orchestrator/test_supervisor.py plus all bridge suites and CLIs
-→ 597 passed, 147 subtests passed in 83.93s
-
-pytest bridge dispatcher/inbox/reliability plus CLIs
-→ 81 passed in 18.32s
+PYTHONPATH=.orchestrator pytest supervisor plus all bridge suites and CLIs
+→ 600 passed, 147 subtests passed in 81.51s
 
 2,000-event governed/full-cycle benchmark
-→ p95 1.407s, 8/8 commands, exact projection, meets_target true
+→ p95 1.572s, 8/8 commands, 18 cycles, exact projection, meets_target true
 ```
 
 The final candidate is also required to pass `py_compile`, JSON parsing,

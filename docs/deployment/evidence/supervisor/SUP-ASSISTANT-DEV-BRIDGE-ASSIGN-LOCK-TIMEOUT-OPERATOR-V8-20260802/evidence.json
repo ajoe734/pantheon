@@ -9,7 +9,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
     "review_status": "review_pending",
-    "implementation_commit": "fd34d63148aeff6ccbe7af01b37e9351298e7e15"
+    "implementation_commit": "a42b177be32c4b4e2fc8888179bf5eff014e6a83"
   },
   "scope": {
     "owned_layer": "Supervisor assistant-bridge lock boundary, signed-packet dispatch claims, bounded governed assignment/readback, retry and receipt recovery, and task-scoped tests/evidence.",
@@ -36,15 +36,15 @@
   },
   "review_remediation": {
     "reviewer": "Human/Ops",
-    "rejected_head": "d2f92118c9af913605780243a8842a8c38dbb484",
-    "review_comment": "https://github.com/ajoe734/pantheon/pull/4507#issuecomment-5157345049",
+    "rejected_head": "2b956587f5eb9d35aebb95d191ab505afce6945f",
+    "review_comment": "https://github.com/ajoe734/pantheon/pull/4507#issuecomment-5157460012",
     "composed_dev_commit": "ef2b4f0a3988be6adbf56d24ec5df00df2717f39",
-    "remediated_head": "fd34d63148aeff6ccbe7af01b37e9351298e7e15",
+    "remediated_head": "a42b177be32c4b4e2fc8888179bf5eff014e6a83",
     "gates": [
-      "Bridge tasks fail closed in supervisor scheduling and stale queued dispatch until exact durable packet admission succeeds.",
-      "Packets contain at most 16 tasks and OS-owner fences remain authoritative after JSON claim TTL expiry.",
-      "Partial retry recognizes an exact archived prefix without mutating or reusing the archived task.",
-      "The full test matrix and 2,000-event concurrent benchmark were rerun after composing current origin/dev."
+      "Dispatch and inbox fence parents are opened component-by-component with directory descriptors, O_DIRECTORY, and O_NOFOLLOW; both leaves are fstat-verified regular files.",
+      "Symlinked dispatch and inbox claims parents fail closed without creating any outside file.",
+      "The inbox processing fence remains held through receipt durability, archive/finalize, and retry/claim metadata cleanup after dispatch.",
+      "The full test matrix and 2,000-event concurrent benchmark were rerun from the new committed candidate after composing current origin/dev."
     ]
   },
   "incident": {
@@ -59,6 +59,8 @@
     "Inbox and replay locks cover only claim and durable commit sections.",
     "Claims bind exact packet digest, task hashes, claimant PID, timestamps, and expiry.",
     "Packet task count is bounded to 16 and dispatch/processing OS fences prevent a live claimant from being stolen after JSON TTL expiry.",
+    "Every managed fence parent is opened with pinned no-follow directory descriptors and both fence leaves are verified as regular files before locking.",
+    "The inbox processing fence spans dispatch, receipt fsync, archive/finalize, and retry/claim metadata cleanup.",
     "Bounded assignment/readback timeouts are retryable with exact-identity bounded backoff.",
     "Partial materialization resumes idempotently from active or archived exact provenance without duplicate canonical rows or archived mutation.",
     "Supervisor execution dispatch remains fail closed until exact durable packet admission succeeds.",
@@ -102,7 +104,8 @@
         "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_stale_dispatch_claim_recovers_after_crashed_claimant",
         "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_timeout_prefix_can_finish_from_archive_without_reusing_task_id",
         "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_live_dispatch_fence_survives_expired_json_claim",
-        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_live_processing_fence_survives_expired_json_claim"
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_live_processing_fence_survives_expired_json_claim",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_processing_fence_stays_held_through_receipt_commit"
       ]
     },
     {
@@ -130,10 +133,10 @@
           "note": 2,
           "reopen": 2
         },
-        "full_run_once_cycles": 16,
-        "current_p95_seconds": 1.407,
-        "current_max_seconds": 1.407,
-        "legacy_p95_seconds": 55.694,
+        "full_run_once_cycles": 18,
+        "current_p95_seconds": 1.572,
+        "current_max_seconds": 1.572,
+        "legacy_p95_seconds": 53.766,
         "all_commands_succeeded": true,
         "exact_projection": true,
         "final_event_count": 2016
@@ -154,6 +157,8 @@
         "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_full_supervisor_cycle_never_queues_partially_materialized_packet",
         "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_processing_item_is_recovered_after_restart",
         "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_concurrent_drainers_apply_one_processing_claim",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_dispatch_fence_parent_symlink_fails_without_outside_write",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_inbox_processing_fence_parent_symlink_fails_without_outside_write",
         "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py::test_queue_rejects_unsigned_packet"
       ]
     },
@@ -166,16 +171,16 @@
   ],
   "validation": {
     "full_exact_head_matrix": {
-      "result": "597 passed, 147 subtests passed in 83.93s",
+      "result": "600 passed, 147 subtests passed in 81.51s",
       "status": "pass"
     },
     "bridge_matrix": {
-      "result": "81 passed in 18.32s",
+      "result": "84 bridge tests included in the combined 600-pass exact-candidate matrix",
       "status": "pass"
     },
     "benchmark": {
       "report": "bench-report.json",
-      "report_sha256": "b3c7602d601ff3ac626bb22c26bbf87e275aae558395f319fd6f52f560d90898",
+      "report_sha256": "2bd4793e4246b51bc52a4db289d0127e3ae3a0fb147f2fdace1c15b6e398ea67",
       "status": "pass"
     },
     "final_gates": {
@@ -187,7 +192,7 @@
   },
   "delivery": {
     "merge_order": [
-      "fd34d63148aeff6ccbe7af01b37e9351298e7e15",
+      "a42b177be32c4b4e2fc8888179bf5eff014e6a83",
       "task evidence/finalization commit"
     ],
     "rollout": "Merge the reviewed task PR to dev; no direct live mutation.",

@@ -2,10 +2,10 @@
   "cold_first_read": {
     "event_count": 2000,
     "resumed_from_checkpoint": false,
-    "seconds": 2.423
+    "seconds": 2.229
   },
   "fixture": {
-    "build_seconds": 3.28,
+    "build_seconds": 2.759,
     "bytes": 137953724,
     "events": 2000,
     "task_rows": 30
@@ -27,25 +27,25 @@
   },
   "meets_target": true,
   "speedup_p95": {
-    "uncontended": 96.5,
-    "under_active_supervisor_cycle": 39.6
+    "uncontended": 93.4,
+    "under_active_supervisor_cycle": 34.2
   },
   "target_p95_seconds": 2.0,
   "uncontended": {
     "current": {
       "label": "current",
-      "max_seconds": 0.121,
-      "min_seconds": 0.11,
-      "p50_seconds": 0.116,
-      "p95_seconds": 0.121,
+      "max_seconds": 0.123,
+      "min_seconds": 0.112,
+      "p50_seconds": 0.113,
+      "p95_seconds": 0.123,
       "samples": 4
     },
     "legacy": {
       "label": "legacy",
-      "max_seconds": 11.682,
-      "min_seconds": 10.633,
-      "p50_seconds": 11.278,
-      "p95_seconds": 11.682,
+      "max_seconds": 11.493,
+      "min_seconds": 10.586,
+      "p50_seconds": 11.02,
+      "p95_seconds": 11.493,
       "samples": 4
     }
   },
@@ -53,50 +53,50 @@
     "current": {
       "all_commands_succeeded": true,
       "candidate_runtime": {
-        "base_ref": "HEAD",
+        "base_ref": "a42b177be32c4b4e2fc8888179bf5eff014e6a83",
         "executable_paths_clean": true,
-        "source_sha": "fd34d63148aeff6ccbe7af01b37e9351298e7e15"
+        "source_sha": "a42b177be32c4b4e2fc8888179bf5eff014e6a83"
       },
       "command_latencies": [
         {
           "command": "approve",
           "index": 0,
-          "seconds": 1.407
+          "seconds": 1.572
         },
         {
           "command": "assign",
           "index": 1,
-          "seconds": 0.564
+          "seconds": 0.747
         },
         {
           "command": "note",
           "index": 2,
-          "seconds": 1.377
+          "seconds": 1.533
         },
         {
           "command": "reopen",
           "index": 3,
-          "seconds": 1.344
+          "seconds": 1.506
         },
         {
           "command": "approve",
           "index": 4,
-          "seconds": 1.002
+          "seconds": 0.905
         },
         {
           "command": "assign",
           "index": 5,
-          "seconds": 0.838
+          "seconds": 0.843
         },
         {
           "command": "note",
           "index": 6,
-          "seconds": 0.957
+          "seconds": 0.926
         },
         {
           "command": "reopen",
           "index": 7,
-          "seconds": 0.999
+          "seconds": 0.918
         }
       ],
       "command_mix": {
@@ -109,30 +109,32 @@
       "concurrent_workers": 4,
       "exact_projection": true,
       "final_event_count": 2016,
-      "full_run_once_cycles": 16,
+      "full_run_once_cycles": 18,
       "full_run_once_seconds": [
-        0.043,
-        0.041,
-        0.043,
-        0.051,
+        0.052,
+        0.052,
         0.055,
-        0.05,
-        0.05,
-        0.056,
-        0.058,
-        0.328,
-        0.816,
-        0.072,
-        0.081,
+        0.092,
         0.079,
-        0.073,
-        0.707
+        0.069,
+        0.062,
+        0.065,
+        0.064,
+        0.338,
+        0.836,
+        0.043,
+        0.043,
+        0.047,
+        0.038,
+        0.058,
+        0.049,
+        0.641
       ],
       "harness": "real_governed_commands_full_run_once",
       "label": "current",
-      "max_seconds": 1.407,
-      "p50_seconds": 1.001,
-      "p95_seconds": 1.407,
+      "max_seconds": 1.572,
+      "p50_seconds": 0.922,
+      "p95_seconds": 1.572,
       "supervisor_active_during_commands": true,
       "worker_lease_bound_commands": 6
     },
@@ -140,9 +142,9 @@
       "commands": 8,
       "concurrent_workers": 4,
       "label": "legacy",
-      "max_seconds": 55.694,
-      "p50_seconds": 54.372,
-      "p95_seconds": 55.694,
+      "max_seconds": 53.766,
+      "p50_seconds": 51.465,
+      "p95_seconds": 53.766,
       "supervisor_cycle_seconds": 45.0
     }
   }
