@@ -6,7 +6,11 @@
   "reviewer": "Human/Ops",
   "observed_window": {
     "started_at": "2026-08-02T07:38:00Z",
-    "ended_at": "2026-08-02T07:49:00Z"
+    "ended_at": "2026-08-02T07:49:00Z",
+    "reviewer_required_prerequisite_supplement": {
+      "started_at": "2026-08-02T07:55:42Z",
+      "ended_at": "2026-08-02T08:03:43Z"
+    }
   },
   "source_cut": {
     "repository": "ajoe734/pantheon",
@@ -63,7 +67,9 @@
       "rows_checked": 18,
       "validator_pass": 3,
       "checksum_pass": 18,
-      "accepted": 3,
+      "validator_and_checksum_pass": 3,
+      "catalog_revalidation_tasks_retained": 16,
+      "bff_closure_boundary": "L12-BFF-001 passes mechanical replay, but that is not current independent review, root freeze, hosted acceptance, or closeout; retain L12-EVIDENCE-REVALIDATE-BFF-20260731 and its release-gate edge.",
       "rows": [
         {"task_id": "L12-FLEET-001", "validator": "fail", "checksum": "pass", "rejection_rules": ["bound_document_consistency", "checks_bound_to_commits", "companion_checksum", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
         {"task_id": "L12-CTRL-001", "validator": "fail", "checksum": "pass", "rejection_rules": ["bound_document_consistency", "current_cut_consistency", "current_delivery_checks", "head_binding"]},
@@ -137,7 +143,31 @@
         "exit_code": 124,
         "last_frame": "task_state_store.py canonical_json_bytes while validating authoritative events"
       },
-      "governed_show_concurrency_result": "status_task_lock_busy"
+      "governed_show_concurrency_result": "status_task_lock_busy",
+      "non_catalog_prerequisite": {
+        "task_id": "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+        "catalog_membership": false,
+        "receipt": {
+          "path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z.json",
+          "packet_id": "pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z",
+          "status": "processed",
+          "admission_status": "admitted",
+          "dispatched_at": "2026-08-02T07:55:42Z",
+          "task_spec_hash": "9dccec7c1b3b07b3e0acc9f6440c3fa18885647467f0e7cef07791d8cb417654"
+        },
+        "canonical_event_readback": {
+          "sequence": 8421,
+          "event_id": "task-state-fe716248137690a4dbae2bd404deccee5d5edf24f4d60de0141b574c20ae3780",
+          "state_sha256": "85cf98cfd8222cefffd05f7425915fecfbea694eb6633a4fb18e0f31fe6faf1b",
+          "committed_at": "2026-08-02T07:55:45Z",
+          "source": "Human/Ops",
+          "task_source": "active",
+          "task_status": "todo",
+          "owner": "Antigravity",
+          "reviewer": "Human/Ops"
+        },
+        "verdict": "materialized_prerequisite_only_not_product_catalog_materialization"
+      }
     },
     "fleet": {
       "observed_at": "2026-08-02T07:44:39Z",
@@ -155,19 +185,21 @@
       {"number": 4397, "state": "MERGED", "head": "fd67904e2c1adb7256d4d9d9dc618105346be424", "merge": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a", "canonical": "done_live"},
       {"number": 4399, "state": "MERGED", "head": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15", "merge": "894eb813c7cb5609ae517103a727d93ba8cbd1ed", "canonical": "done_live"},
       {"number": 4425, "state": "OPEN_BEHIND", "head": "dfdcd07ffb244ce29182478654ffe7d6ec4178e9", "canonical": "blocked"},
-      {"number": 4443, "state": "OPEN_CLEAN_GREEN", "head": "e83dd7aeaed4615372d706983c20b813743b6069", "canonical": "in_progress"},
+      {"number": 4443, "state": "MERGED", "head": "e83dd7aeaed4615372d706983c20b813743b6069", "merge": "11d766efbd8bf81aca447d4ccf213109d7263dac", "canonical": "done"},
       {"number": 4445, "state": "MERGED", "head": "50a3b0807d2e3bcbff452f83d6cb853a5d30ceb4", "merge": "2350e4e85c69009b52e7fbb75e621b04f83f66c9", "canonical": "done"},
       {"number": 4447, "state": "OPEN_DIRTY_CONFLICTING", "head": "c640b6faa92fb484a8638b22243bee2e840cc079", "canonical": "stale_duplicate"},
       {"number": 4455, "state": "OPEN_BEHIND", "head": "717b9cfa2815cb9dcb58c32f12e73ecf5898ed0c", "canonical": "replacement_missing_exact_head_binding"}
     ]
   },
   "catalog_delta": {
-    "verdict": "nonzero",
-    "superseded_task_packets": ["L12-EVIDENCE-REVALIDATE-BFF-20260731"],
+    "verdict": "zero",
+    "superseded_task_packets": [],
     "missing_task_packets": [],
     "additional_task_packets": [],
-    "effective_tasks": 27,
-    "effective_g1": 24,
+    "retained_task_packets": ["L12-EVIDENCE-REVALIDATE-BFF-20260731"],
+    "retained_dependency_edges": ["L12-EVIDENCE-REVALIDATE-BFF-20260731 -> L12-CURRENT-PROOF-RELEASE-GATE-20260731"],
+    "effective_tasks": 28,
+    "effective_g1": 25,
     "effective_g2": 2,
     "effective_g3": 1
   },

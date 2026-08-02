@@ -1,7 +1,8 @@
 # L12 current three-pass gap re-audit — 2026-08-01
 
 Task: L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801
-Evidence cut: 2026-08-02T07:49:00Z
+Primary evidence cut: 2026-08-02T07:49:00Z
+Reviewer-required prerequisite supplement: 2026-08-02T07:55:42Z–08:03:43Z
 Pantheon source cut: origin/dev at 79ba3f431127bf9718697d2ba9e9ddce97969ec3
 Evidence status: review_pending; no independent exact-head approval has been recorded
 
@@ -20,15 +21,18 @@ boundaries:
    and not ready, authenticated hosted loop readback was unavailable, the hosted
    frontend is not the current execute-plans dev cut, and the verifier/hosted
    lanes are not complete.
-3. The supervisor/DAG pass confirms that the authored 28-task catalog is
-   structurally valid as 25 G1 + 2 G2 + 1 G3. Fresh evidence, however, supersedes
-   one BFF revalidation task, making the effective plan 27 tasks with a 24-task
-   G1 frontier. A live dry-run fails closed because authoritative event replay
-   does not finish within 30 seconds, and canonical active/archive state
-   contains zero of the 28 catalog task IDs.
+3. The supervisor/DAG pass confirms that the immutable 28-task catalog remains
+   structurally valid and unchanged as 25 G1 + 2 G2 + 1 G3. A mechanical
+   validator/checksum pass for the archived L12-BFF-001 artifact does not prove
+   current independent review, root freeze, hosted acceptance, or closeout, so
+   the BFF revalidation task and its release-gate edge remain required. A live
+   dry-run fails closed because authoritative event replay does not finish
+   within 30 seconds, and canonical active/archive state contains zero of the
+   28 catalog task IDs.
 
-This is a non-zero re-audit delta. It does not authorize this documentation-only
-task to rewrite the guarded catalog or materialize product tasks. The machine
+This is an exact zero catalog delta. It does not authorize this
+documentation-only task to rewrite the guarded catalog or materialize product
+tasks. The machine
 record is [reaudit-delta.json](../../bff/execution-tasks/2026-08-01-l12-current-gap-reaudit/reaudit-delta.json),
 with the owner-cut observations preserved in
 [the evidence snapshot](2026-08-01-l12-current-three-pass-gap-reaudit-evidence.json).
@@ -123,13 +127,16 @@ repository-relative and checksum-directory-relative checksum entries.
 |---|---:|---|
 | Validator pass | 3 | L12-DIST-001, L12-BFF-001, L12-MANIFEST-001 |
 | Checksum pass | 18 | all replayed rows |
-| Both pass/current accepted | 3 | L12-DIST-001, L12-BFF-001, L12-MANIFEST-001 |
-| Revalidation still required | 15 | FLEET, CTRL, TEL, REC, SRC, ALPHA, AGORA, CONS, DEP, TEACH, IMIT, CAP, EVO, SIGNOFF, TRUTH |
+| Both mechanical checks pass | 3 | L12-DIST-001, L12-BFF-001, L12-MANIFEST-001 |
+| Catalog revalidation tasks retained | 16 | FLEET, CTRL, TEL, REC, SRC, ALPHA, AGORA, CONS, DEP, TEACH, IMIT, CAP, EVO, BFF, SIGNOFF, TRUTH |
 
-The material delta is L12-BFF-001: it now passes both checks. Therefore
-L12-EVIDENCE-REVALIDATE-BFF-20260731 is stale and must be superseded before any
-catalog materialization. All other current validator failures remain real; the
-machine delta retains their exact rejection rules.
+L12-BFF-001 now passes both mechanical checks, but those checks replay an
+archived artifact. They do not establish current independent exact-head review,
+root freeze, hosted acceptance, or closeout. Consequently
+L12-EVIDENCE-REVALIDATE-BFF-20260731 remains in the immutable catalog and its
+dependency edge into L12-CURRENT-PROOF-RELEASE-GATE-20260731 is retained. All
+current validator failures remain real; the machine delta retains their exact
+rejection rules.
 
 ### Hosted and verifier truth
 
@@ -201,10 +208,11 @@ The existing FE, knowledge/runtime/observability verifier, hosted and closeout
 lanes are resumed legacy lanes. They are deliberately not counted among the 28
 new catalog tasks.
 
-Fresh evidence changes the executable plan without invalidating this historical
-structural check: remove the superseded BFF evidence revalidation and its edge
-from the release gate. The effective counts are 27 total, G1=24, G2=2, G3=1.
-This audit records the delta but does not edit or dispatch the guarded catalog.
+Fresh evidence does not change the executable catalog. The BFF validator and
+checksum result is an input to its still-required independent revalidation task,
+not authority to delete that task or its release-gate dependency. The effective
+counts therefore remain exactly 28 total, G1=25, G2=2, G3=1. This audit records
+an exact zero catalog delta and does not edit or dispatch the guarded catalog.
 
 ### Deduplication and materialization
 
@@ -242,6 +250,24 @@ That does not turn a timed-out guarded dry-run into admission. Product dispatch
 must remain fail closed until the dry-run completes and processed receipt,
 admission, replay row, and active/archive readback agree.
 
+### Non-catalog dispatcher scaling prerequisite
+
+The later task
+SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802 is a prerequisite to
+safe catalog materialization, not a member of the 28-task product catalog. Its
+bridge receipt
+`pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z.json` is
+`processed`, with admission status `admitted` at 2026-08-02T07:55:42Z. The
+receipt's authoritative materialization readback binds event count 8421, event
+`task-state-fe716248137690a4dbae2bd404deccee5d5edf24f4d60de0141b574c20ae3780`,
+and projected state SHA-256
+`85cf98cfd8222cefffd05f7425915fecfbea694eb6633a4fb18e0f31fe6faf1b`.
+Direct event-8421 readback contains the active `todo` row with Antigravity owner
+and Human/Ops reviewer. This closes receipt-versus-canonical materialization for
+the prerequisite only; it does not materialize, shrink, or complete any of the
+28 catalog tasks. At the supplement cut it had no worker run because the primary
+provider remained quota-paused.
+
 ### Structural parallelism versus live capacity
 
 At 07:44:39Z the supervisor sample contained 4 running workers, all in one
@@ -256,8 +282,8 @@ quota group:
 
 The catalog's Antigravity/Claude-first preferences remain assignment intent,
 but no Antigravity or Claude workers were running at this cut.
-A 25-task authored frontier—or the effective 24-task frontier—means those tasks
-are dependency/artifact independent. It does not create 24 or 25 simultaneous
+A 25-task structural frontier means those tasks are dependency/artifact
+independent. It does not create 25 simultaneous
 accounts, quota groups, or worker slots.
 
 ## Twelve-loop requirement matrix
@@ -279,7 +305,7 @@ required authenticated observation was unavailable.
 | capital_pool_execution | Approved capital intent → safe terminal execution/compensation; real writes off | not_implemented; fail-closed binding test | L12-CAP-001 fail/pass | Historical marker only; no current authenticated record | Controller in runtime-manager with no-live-capital default | Auth/two-person/no-live-capital/recovery/compensation, evidence, hosted | CONTROLLER-CAP + EVIDENCE-CAP → INTEGRATION → GATE → HOSTED → CLOSE |
 | telemetry_reconciliation | Ordered telemetry/drift/incident reconciliation and terminal provenance | not_implemented; fail-closed binding and health tests | L12-TEL-001 and L12-REC-001 fail/pass | Public lifecycle projector stale; no authenticated loop record | Controller in telemetry plus terminal incident/BFF integration | TEL/REC evidence, OBS exact-head review, degraded/recovery hosted proof | CONTROLLER-TELREC + EVIDENCE-TEL + EVIDENCE-REC → INTEGRATION → GATE → OBS → HOSTED → CLOSE |
 | evolution | Approved EvolutionDecision → downstream terminal/compensation truth | not_implemented; fail-closed binding and health tests | L12-EVO-001 fail/pass on head_binding | Not implemented; no authenticated record | Controller in services/evolution plus downstream truth | Current exact-head evidence, OBS review, hosted proof | CONTROLLER-EVO + EVIDENCE-EVO → INTEGRATION → GATE → OBS → HOSTED → CLOSE |
-| bff_health_monitoring | Current downstream/BFF health with stale/failure/recovery semantics | not_implemented; inventory and health contracts fail closed | L12-BFF-001 pass/pass | Public BFF degraded/not-ready; JWT routes unverified | Controller in control-plane/bff plus stale/recovery shared truth | Restart/stale/recovery, OBS and authenticated hosted proof | CONTROLLER-BFF → INTEGRATION → GATE → OBS → HOSTED → CLOSE |
+| bff_health_monitoring | Current downstream/BFF health with stale/failure/recovery semantics | not_implemented; inventory and health contracts fail closed | L12-BFF-001 pass/pass mechanically; current closure not proven | Public BFF degraded/not-ready; JWT routes unverified | Controller in control-plane/bff plus stale/recovery shared truth | Independent BFF evidence revalidation/root freeze, restart/stale/recovery, OBS and authenticated hosted proof | CONTROLLER-BFF + EVIDENCE-BFF → INTEGRATION → GATE → OBS → HOSTED → CLOSE |
 
 The exact task IDs and full rejection-rule arrays are in the machine delta.
 
@@ -290,7 +316,7 @@ The exact task IDs and full rejection-rule arrays are in the machine delta.
 | #4397 merge/live | PR head fd67904e…, merge cf6a8fed… at 2026-07-31T14:10:14Z, required checks green; archived row reports live runtime promotion | pass |
 | #4399 scheduler canary | PR head 6f391cfd…, merge 894eb813…; archived canonical row is done/live with bound canary evidence | pass |
 | Antigravity dispatcher bootstrap | Guarded dispatcher V2 is merged/done and static validation passes; current live dry-run times out during authoritative event replay before admission | fail closed; bootstrap source exists but safe live admission does not |
-| 25-task frontier | Authored G1=25 is structurally disjoint. Fresh BFF evidence supersedes one row, so effective G1=24. Live capacity sampled 4 workers/1 quota group | structural pass as authored; executable count changed; not materialized |
+| 25-task frontier | Immutable G1=25 is structurally disjoint and unchanged. BFF mechanical replay does not authorize task or edge removal. Live capacity sampled 4 workers/1 quota group | structural pass; zero catalog delta; not materialized |
 | 28-task DAG completion | 28/28 authored IDs absent from canonical active/archive; one receipt-only verifier claim rejected | fail: 0/28 materialized, 0/28 complete |
 | Hosted/verifier | Hosted FE is stale relative to execute-plans dev; BFF degraded/not-ready; authenticated loop readback unavailable; verifier lanes incomplete | fail |
 | L12-CLOSE-001 | Canonical row is todo and its prerequisites are incomplete | fail/not runnable |
@@ -303,33 +329,36 @@ The exact task IDs and full rejection-rule arrays are in the machine delta.
 | #4399 | merged, exact head 6f391cfd…, checks green; canonical row done/live | source repair and bound scheduler canary accepted |
 | #4425 | open, behind; exact head dfdcd07f…; trailer and canonical review checks failing | original held-close overlap-guard PR is not accepted |
 | #4455 | replacement open, behind; exact head 717b9cfa…; mechanical checks green, no exact-head review binding | held-close replacement still requires current rebase and independent binding |
-| #4443 | open, clean; exact head e83dd7ae…; all visible checks green; canonical task in_progress | runtime identity prerequisite still requires owner handoff, independent approval, and merge |
+| #4443 | merged at 2026-08-02T07:50:36Z; exact head e83dd7ae…, merge 11d766ef…; canonical task archived done | runtime identity source prerequisite accepted after the primary cut |
 | #4445 | merged, exact head 50a3b080…, merge 2350e4e8…; canonical task done | failure-streak record wiring implementation accepted |
 | #4447 | open, dirty/conflicting; exact head c640b6fa…; review gate failing | stale duplicate of the accepted #4445 task must be retired |
 
 PR #4417 merged the guarded dispatcher itself, but its evidence correctly did
 not claim live materialization. The earlier bridge materialization prerequisite
-is now archived done; it is no longer the blocker. The current blocker is the
-newer SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801 task and its
-dependency chain.
+is archived done. The SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801
+task remains a separate bridge reliability lane. The newly materialized
+SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802 task is the explicit
+non-catalog prerequisite for the proven 2 GB/full-replay dispatcher timeout.
 
 ## Required execution order
 
-1. Rebase and independently review the held-close replacement #4455, complete
-   exact-head review/merge for runtime-identity #4443, and retire stale duplicate
-   #4447; the #4445 failure-streak record-wiring implementation is accepted.
-2. Repair the assistant bridge assign/materialization lock boundary and prove a
-   processed receipt agrees with authoritative active/archive projection.
-3. Apply this audited catalog delta before dispatch: supersede
-   L12-EVIDENCE-REVALIDATE-BFF-20260731 and remove its release-gate edge.
-4. Re-run guarded dry-run. Only a successful, conflict-free result may
-   canonically materialize the effective 24-task G1 frontier.
-5. Deliver nine controller lanes and fifteen evidence revalidation lanes with
+1. Rebase and independently review the held-close replacement #4455 and retire
+   stale duplicate #4447; #4443 and the #4445 failure-streak record-wiring
+   implementation are accepted.
+2. Complete the separate assistant bridge assign/materialization lock repair.
+3. Complete and independently accept the non-catalog dispatcher snapshot-scaling
+   prerequisite. Its processed receipt and canonical event-8421 readback prove
+   only that the prerequisite task exists.
+4. Preserve the zero-delta immutable catalog, including
+   L12-EVIDENCE-REVALIDATE-BFF-20260731 and its release-gate edge.
+5. Re-run guarded dry-run. Only a successful, conflict-free result may
+   canonically materialize the 25-task G1 frontier.
+6. Deliver nine controller lanes and sixteen evidence revalidation lanes with
    exact-head independent review.
-6. Deliver catalog integration, then current-proof release gate.
-7. Run the real learning verifier and resume legacy FE, four verifier, hosted,
+7. Deliver catalog integration, then current-proof release gate.
+8. Run the real learning verifier and resume legacy FE, four verifier, hosted,
    and closeout lanes in dependency order.
-8. Allow L12-CLOSE-001 only after all controller, current evidence, hosted and
+9. Allow L12-CLOSE-001 only after all controller, current evidence, hosted and
    verifier truth is accepted.
 
 ## Rollout, rollback, and residual risk
@@ -343,8 +372,8 @@ Blocking residual risks remain outside this audit's owned layer:
 
 - false processed/false materialization at the assistant bridge boundary;
 - one stale open duplicate PR for an already accepted failure-streak Task ID;
-- guarded catalog effective delta not yet applied;
-- nine missing controllers and fifteen current evidence revalidations;
+- dispatcher snapshot-scaling prerequisite not yet implemented or accepted;
+- nine missing controllers and sixteen current evidence revalidations;
 - old frontend/BFF hosted deployment identity and degraded BFF readiness;
 - incomplete exact-head verifier, hosted and final closeout lanes.
 

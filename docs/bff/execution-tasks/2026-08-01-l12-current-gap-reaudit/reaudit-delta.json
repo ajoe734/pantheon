@@ -2,6 +2,7 @@
   "schema_version": 1,
   "audit_id": "L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801",
   "observed_at": "2026-08-02T07:49:00Z",
+  "reviewer_required_prerequisite_supplement_observed_at": "2026-08-02T08:03:43Z",
   "source_cut": {
     "repository": "ajoe734/pantheon",
     "branch": "origin/dev",
@@ -12,11 +13,11 @@
     "runtime_state_observed_at": "2026-08-02T07:44:39Z"
   },
   "verdict": {
-    "delta": "nonzero",
+    "delta": "zero",
     "product_complete": false,
     "catalog_materialized": false,
     "catalog_as_authored_valid": true,
-    "summary": "The guarded 28-task catalog remains structurally valid, but current evidence replay accepts L12-BFF-001, so L12-EVIDENCE-REVALIDATE-BFF-20260731 is superseded and the effective plan is 27 tasks with a 24-task G1 frontier. None of the catalog IDs is canonically materialized. The guarded dry-run cannot finish authoritative event projection within 30 seconds and exits 124, so dispatch remains fail closed even though the live supervisor shadow is caught up."
+    "summary": "The guarded catalog remains immutable and structurally valid at exactly 28 tasks with G1=25, G2=2, and G3=1. L12-BFF-001 passes mechanical validator/checksum replay, but that does not prove current independent review, root freeze, hosted acceptance, or closeout; L12-EVIDENCE-REVALIDATE-BFF-20260731 and its release-gate edge remain. None of the catalog IDs is canonically materialized. The guarded dry-run cannot finish authoritative event projection within 30 seconds and exits 124, so dispatch remains fail closed. SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802 is a separately materialized non-catalog prerequisite."
   },
   "three_pass_verdicts": [
     {
@@ -46,7 +47,7 @@
         "validator_pass": 3,
         "checksum_pass": 18,
         "validator_and_checksum_pass": 3,
-        "revalidation_required": 15,
+        "catalog_revalidation_tasks_retained": 16,
         "public_bff_health": "degraded_not_ready",
         "authenticated_hosted_loop_readback": "unverified_no_valid_jwt",
         "hosted_frontend_on_current_execute_plans_dev": false,
@@ -63,8 +64,8 @@
         "as_authored_g1": 25,
         "as_authored_g2": 2,
         "as_authored_g3": 1,
-        "effective_tasks_after_fresh_delta": 27,
-        "effective_g1": 24,
+        "effective_tasks_after_fresh_delta": 28,
+        "effective_g1": 25,
         "canonical_catalog_tasks_present": 0,
         "receipt_only_materialization_accepted": 0,
         "live_dispatch_dry_run_exit": 124,
@@ -257,11 +258,11 @@
       "desired_contract": "Reconcile downstream and BFF health into current, tenant/environment-scoped health truth with restart, stale-state, failure and recovery semantics.",
       "current_source_controller_binding": {"catalog_status": "not_implemented", "controller": null, "module": null, "compose_service": null, "desired_query_status": "planned", "actual_query_status": "planned"},
       "current_tests": ["tests/test_loop_catalog_registry.py", "services/control-plane/bff/test_loop_inventory_read_model_contract.py", "services/control-plane/bff/test_loop_health_read_model_contract.py"],
-      "current_accepted_evidence_checksum": {"task_id": "L12-BFF-001", "validator": "pass", "checksum": "pass", "accepted": true, "rejection_rules": []},
+      "current_accepted_evidence_checksum": {"task_id": "L12-BFF-001", "validator": "pass", "checksum": "pass", "accepted": false, "mechanical_checks_pass": true, "closure_gap": "Mechanical replay of the archived artifact does not prove current independent review, root freeze, hosted acceptance, or closeout.", "rejection_rules": []},
       "hosted_runtime_readback": "Public /healthz was degraded and not ready because lifecycle-projector last poll was stale; authenticated loop inventory/health returned 401 without a valid JWT.",
       "missing_development": ["Implement canonical BFF health controller in services/control-plane/bff", "Integrate stale/failure/recovery terminal truth into the shared catalog"],
-      "missing_validation": ["Controller restart/stale/downstream recovery proof", "Complete observability verifier and current hosted authenticated readback"],
-      "closing_tasks": ["L12-CONTROLLER-BFF-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
+      "missing_validation": ["Complete independent L12-EVIDENCE-REVALIDATE-BFF-20260731 current-head review and root freeze", "Controller restart/stale/downstream recovery proof", "Complete observability verifier and current hosted authenticated readback"],
+      "closing_tasks": ["L12-CONTROLLER-BFF-20260731", "L12-EVIDENCE-REVALIDATE-BFF-20260731", "L12-CONTROLLER-CATALOG-INTEGRATION-20260731", "L12-CURRENT-PROOF-RELEASE-GATE-20260731", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
     }
   ],
   "current_evidence_replay": {
@@ -271,8 +272,9 @@
     "checksum_resolution": "Each archive row's canonical review_file was used; checksum entries were resolved according to whether they were repository-relative or checksum-directory-relative.",
     "validator_pass_task_ids": ["L12-DIST-001", "L12-BFF-001", "L12-MANIFEST-001"],
     "checksum_pass_task_ids": ["L12-FLEET-001", "L12-CTRL-001", "L12-TEL-001", "L12-REC-001", "L12-SRC-001", "L12-ALPHA-001", "L12-AGORA-001", "L12-CONS-001", "L12-DEP-001", "L12-DIST-001", "L12-TEACH-001", "L12-IMIT-001", "L12-CAP-001", "L12-EVO-001", "L12-BFF-001", "L12-SIGNOFF-001", "L12-MANIFEST-001", "L12-TRUTH-001"],
-    "accepted_task_ids": ["L12-DIST-001", "L12-BFF-001", "L12-MANIFEST-001"],
-    "revalidation_required_task_ids": ["L12-FLEET-001", "L12-CTRL-001", "L12-TEL-001", "L12-REC-001", "L12-SRC-001", "L12-ALPHA-001", "L12-AGORA-001", "L12-CONS-001", "L12-DEP-001", "L12-TEACH-001", "L12-IMIT-001", "L12-CAP-001", "L12-EVO-001", "L12-SIGNOFF-001", "L12-TRUTH-001"],
+    "validator_and_checksum_pass_task_ids": ["L12-DIST-001", "L12-BFF-001", "L12-MANIFEST-001"],
+    "catalog_revalidation_required_task_ids": ["L12-FLEET-001", "L12-CTRL-001", "L12-TEL-001", "L12-REC-001", "L12-SRC-001", "L12-ALPHA-001", "L12-AGORA-001", "L12-CONS-001", "L12-DEP-001", "L12-TEACH-001", "L12-IMIT-001", "L12-CAP-001", "L12-EVO-001", "L12-BFF-001", "L12-SIGNOFF-001", "L12-TRUTH-001"],
+    "bff_closure_boundary": "The L12-BFF-001 mechanical pass is not current independent review, root freeze, hosted acceptance, or closeout and does not remove its catalog task or dependency edge.",
     "historical_baseline": {
       "path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/current-proof-revalidation-baseline.json",
       "accepted": 2,
@@ -302,21 +304,17 @@
     "legacy_lanes_not_counted_as_new": ["L12-FE-TRUTH-001", "L12-VERIFY-KNOW-001", "L12-VERIFY-RUNTIME-001", "L12-VERIFY-LEARN-001", "L12-VERIFY-OBS-001", "L12-HOSTED-001", "L12-CLOSE-001"]
   },
   "catalog_delta": {
-    "verdict": "nonzero",
+    "verdict": "zero",
     "missing_task_packets": [],
     "additional_task_packets": [],
-    "superseded_task_packets": [
-      {
-        "task_id": "L12-EVIDENCE-REVALIDATE-BFF-20260731",
-        "reason": "Fresh replay accepts L12-BFF-001 under both the current ten-rule validator and its companion checksum.",
-        "required_catalog_operation": "Remove this G1 task and remove its dependency edge from L12-CURRENT-PROOF-RELEASE-GATE-20260731 before materialization; do not rewrite the immutable guarded catalog from this audit task."
-      }
-    ],
+    "superseded_task_packets": [],
+    "retained_task_packets": ["L12-EVIDENCE-REVALIDATE-BFF-20260731"],
+    "retained_dependency_edges": ["L12-EVIDENCE-REVALIDATE-BFF-20260731 -> L12-CURRENT-PROOF-RELEASE-GATE-20260731"],
     "effective_plan": {
-      "task_count": 27,
-      "waves": {"G1": 24, "G2": 2, "G3": 1},
+      "task_count": 28,
+      "waves": {"G1": 25, "G2": 2, "G3": 1},
       "unique_sink": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
-      "structural_frontier_note": "The original structural G1 frontier is 25. Applying the one proven supersession yields an effective structural frontier of 24; this is independent of provider capacity."
+      "structural_frontier_note": "The immutable structural G1 frontier remains 25. Mechanical replay of L12-BFF-001 is evidence for its retained revalidation task, not authority for catalog mutation; structural parallelism remains independent of provider capacity."
     }
   },
   "deduplication": {
@@ -341,10 +339,34 @@
     {"step": 1, "subject": "PR #4397 / supervisor seen-event key repair", "state": "merged_and_live", "head_sha": "fd67904e2c1adb7256d4d9d9dc618105346be424", "merge_sha": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a", "verdict": "pass"},
     {"step": 2, "subject": "PR #4399 / scheduler preemption repair", "state": "merged_live_and_canonical_done_with_bound_evidence", "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15", "merge_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed", "verdict": "pass"},
     {"step": 3, "subject": "PR #4425 / held-close overlap guard", "state": "original_pr_open_behind_checks_failing; replacement_pr_4455_open_behind_without_exact_head_review_binding", "head_sha": "dfdcd07ffb244ce29182478654ffe7d6ec4178e9", "replacement_head_sha": "717b9cfa2815cb9dcb58c32f12e73ecf5898ed0c", "verdict": "blocker"},
-    {"step": 4, "subject": "PR #4443 / runtime identity root config git V2", "state": "open_clean_all_visible_checks_green_canonical_task_in_progress", "head_sha": "e83dd7aeaed4615372d706983c20b813743b6069", "verdict": "pending_exact_head_owner_handoff_and_merge"},
+    {"step": 4, "subject": "PR #4443 / runtime identity root config git V2", "state": "merged_and_canonical_done", "head_sha": "e83dd7aeaed4615372d706983c20b813743b6069", "merge_sha": "11d766efbd8bf81aca447d4ccf213109d7263dac", "verdict": "pass"},
     {"step": 5, "subject": "PRs #4445 and #4447 / failure-streak record wiring V3", "state": "pr_4445_merged_and_task_done; pr_4447_open_dirty_conflicting_stale_duplicate", "heads": ["50a3b0807d2e3bcbff452f83d6cb853a5d30ceb4", "c640b6faa92fb484a8638b22243bee2e840cc079"], "merge_sha": "2350e4e85c69009b52e7fbb75e621b04f83f66c9", "verdict": "implementation_pass_duplicate_pr_retirement_required"},
     {"step": 6, "subject": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801", "state": "todo_after_record_wiring_activity_normalizer_and_recovery_decision_done; dispatch_consumption_dependency_running", "verdict": "current_scheduler_and_materialization_blocker"},
-    {"step": 7, "subject": "guarded catalog materialization", "state": "not_started", "verdict": "blocked"}
+    {
+      "step": 7,
+      "subject": "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+      "catalog_membership": false,
+      "state": "todo_materialized_by_processed_admitted_receipt_and_canonical_event_8421_readback",
+      "receipt": {
+        "path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z.json",
+        "packet_id": "pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z",
+        "status": "processed",
+        "admission_status": "admitted",
+        "dispatched_at": "2026-08-02T07:55:42Z",
+        "task_spec_hash": "9dccec7c1b3b07b3e0acc9f6440c3fa18885647467f0e7cef07791d8cb417654"
+      },
+      "canonical_event_readback": {
+        "sequence": 8421,
+        "event_id": "task-state-fe716248137690a4dbae2bd404deccee5d5edf24f4d60de0141b574c20ae3780",
+        "state_sha256": "85cf98cfd8222cefffd05f7425915fecfbea694eb6633a4fb18e0f31fe6faf1b",
+        "task_source": "active",
+        "task_status": "todo",
+        "owner": "Antigravity",
+        "reviewer": "Human/Ops"
+      },
+      "verdict": "required_non_catalog_prerequisite_not_yet_implemented_or_accepted"
+    },
+    {"step": 8, "subject": "guarded catalog materialization", "state": "not_started", "verdict": "blocked"}
   ],
   "live_dispatch": {
     "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --dry-run --current --command-root $PANTHEON_COMMAND_ROOT --command-sha $PANTHEON_COMMAND_RUNTIME_SHA --runtime-state /home/lupin/pantheon/.orchestrator/state.json",
@@ -359,7 +381,7 @@
   "fleet_capacity": {
     "observed_at": "2026-08-02T07:44:39Z",
     "structural_frontier_as_authored": 25,
-    "structural_frontier_effective": 24,
+    "structural_frontier_effective": 25,
     "running_workers": 4,
     "quota_groups": ["codex1"],
     "provider_distribution": {"codex1": 4, "codex2": 0, "antigravity": 0, "claude": 0, "claude2": 0},
@@ -376,7 +398,7 @@
       {"provider": "codex1-4", "run_id": "codex-20260802T073713Z-f2ed0230", "task_id": "L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801"},
       {"provider": "codex1-2", "run_id": "codex-20260802T074436Z-8aa50f93", "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802"}
     ],
-    "interpretation": "Antigravity/Claude-first assignment remains catalog intent, but Antigravity was quota-paused and all four live workers shared codex1. A disjoint 24-task effective frontier states dependency/artifact independence, not a promise of 24 simultaneous accounts or workers."
+    "interpretation": "Antigravity/Claude-first assignment remains catalog intent, but Antigravity was quota-paused and all four live workers shared codex1. The unchanged disjoint 25-task structural frontier states dependency/artifact independence, not a promise of 25 simultaneous accounts or workers."
   },
   "hosted_and_verifier_state": {
     "frontend_manifest": {
@@ -404,11 +426,12 @@
     }
   },
   "merge_order": [
-    "Rebase and independently review held-close replacement PR #4455, complete exact-head review and merge for runtime-identity PR #4443, and retire stale duplicate PR #4447; failure-streak record-wiring PR #4445 is already merged and canonical done.",
-    "Repair and merge SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801; prove processed receipts agree with authoritative active/archive projection.",
-    "Apply the audited catalog delta before dispatch: supersede L12-EVIDENCE-REVALIDATE-BFF-20260731 and remove its release-gate dependency.",
-    "Materialize the effective 24-task G1 frontier only through a successful guarded dry-run and canonical readback.",
-    "Merge nine controller lanes and fifteen evidence revalidation lanes under independent exact-head review.",
+    "Rebase and independently review held-close replacement PR #4455 and retire stale duplicate PR #4447; runtime-identity PR #4443 and failure-streak record-wiring PR #4445 are merged and canonical done.",
+    "Complete the separate SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801 reliability lane.",
+    "Complete and independently accept the non-catalog SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802 prerequisite; its processed receipt and canonical event-8421 readback prove task materialization only.",
+    "Preserve the zero-delta immutable catalog, including L12-EVIDENCE-REVALIDATE-BFF-20260731 and its release-gate dependency.",
+    "Materialize the 25-task G1 frontier only through a successful guarded dry-run and canonical readback.",
+    "Merge nine controller lanes and sixteen evidence revalidation lanes under independent exact-head review.",
     "Run catalog integration, then the current-proof release gate.",
     "Run the real learning verifier and resume the legacy FE, four-verifier, hosted and closeout lanes in dependency order.",
     "Allow L12-CLOSE-001 only after all current hosted/controller/evidence/verifier truth is accepted."
@@ -433,6 +456,8 @@
     "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit-evidence.json",
     "/home/lupin/pantheon/ai-task-archive/tasks/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2.json",
     "/home/lupin/pantheon/ai-task-archive/tasks/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730.json",
+    "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/pkt-sup-l12-dispatcher-authoritative-snapshot-scaling-20260802T0755Z.json",
+    "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl#sequence=8421",
     "https://github.com/ajoe734/pantheon/pull/4397",
     "https://github.com/ajoe734/pantheon/pull/4399",
     "https://github.com/ajoe734/pantheon/pull/4425",
