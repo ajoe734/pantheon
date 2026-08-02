@@ -1,0 +1,174 @@
+{
+  "schema_version": "supervisor_codex_models_cache_quota_classification.v1",
+  "schema_status": {
+    "status": "task_scoped",
+    "product_level_required": false,
+    "note": "Source-only supervisor provider-admission repair. No live service restart, production deployment, provider-home mutation, credential operation, or capital authority is claimed by this evidence."
+  },
+  "task": {
+    "id": "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+    "title": "Recover incompatible Codex model cache and classify usage-limit quota accurately",
+    "phase": "Supervisor provider admission / cache compatibility / quota routing V8",
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802/evidence.md"
+  },
+  "scope": {
+    "owned_layer": [
+      "Exact Codex v0.144.6 models_cache.json schema-failure recognition requiring the cache filename, supports_reasoning_summaries field, and missing-field diagnosis together.",
+      "Targeted provider-home cache quarantine with owner/type/link checks, pre-probe and descriptor identity binding, SHA-256/inode/mtime/size evidence, same-directory atomic replace, and one bounded post-quarantine probe.",
+      "Codex usage-limit classification as quota_reached with a sanitized UTC reset timestamp when present.",
+      "Pre-lock targeted cache recovery and in-lock projection of sanitized probe results through existing capability and dispatch-pause APIs.",
+      "Scoped owner/reviewer fallback through the existing exact-CAS pair planner while keeping configured Codex and Codex2 account identities distinct."
+    ],
+    "not_changing": [
+      "No auth.json content read, rewrite, copy, rotation, path disclosure, or token-presence disclosure; no API key value read or emitted.",
+      "No hardcoded Codex/Codex2 account equivalence and no global mutual-review prohibition.",
+      "No dependency, priority, capacity, cooldown, failure-loop, chair-triage, active-lease, explicit-Human/Ops, or exact-head review gate redesign.",
+      "No canonical task-state hand edit, live service restart, provider-home canary, production deployment, or capital-affecting action."
+    ],
+    "implementation_files": [
+      ".orchestrator/provider_permissions.py",
+      ".orchestrator/test_provider_permissions.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "dependencies": [
+    {
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "pull_request": 4517,
+      "merge_commit": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
+      "is_ancestor": true
+    },
+    {
+      "task_id": "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802",
+      "pull_request": 4515,
+      "merge_commit": "941b47946fe945feb0d705f773b91bd3153a6715",
+      "is_ancestor": true
+    },
+    {
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "pull_request": 4501,
+      "merge_commit": "66621e3484a690921032d93e26ec2c9867708d2a",
+      "is_ancestor": true
+    }
+  ],
+  "contract": {
+    "cache_failure_classification": "Only the exact three-marker models-cache schema signature authorizes recovery; generic JSON, CLI, auth, timeout, or path failures do not.",
+    "cache_path_authority": "Only <exact configured CODEX_HOME>/models_cache.json is eligible. Relative, divergent, symlinked, non-directory, unavailable, or unowned homes and symlinked/non-regular/unowned/multiply-linked caches fail closed.",
+    "quarantine_atomicity": "The cache is hashed through O_NOFOLLOW, identity is revalidated before os.replace, and the quarantined pathname is revalidated against the same inode evidence.",
+    "probe_bound": "Cache mutation is enabled only on the bounded pre-lock Codex recovery target. In-lock pre-dispatch probes never request quarantine. A quarantine failure consumes no refresh probe.",
+    "quota_projection": "Usage-limit output becomes quota_reached/quota_terminal, with quota_reset_at stored only after ISO/epoch normalization. It never becomes auth revocation.",
+    "recovery": "A fresh successful probe clears only the affected configured dispatch identity; failed, timeout, revoked, quota, cache, and ambiguous outcomes remain closed without launching a worker.",
+    "routing": "Configured account/quota identities remain authoritative. The existing atomic pair planner preserves explicit Human/Ops review and identity-only owner/reviewer independence; Codex and Codex2 are not globally coalesced."
+  },
+  "regression_matrix": [
+    {
+      "case": "compatible cache",
+      "proof": "ProviderPermissionsTest::test_codex_compatible_models_cache_is_never_quarantined"
+    },
+    {
+      "case": "exact incompatible cache plus refresh success",
+      "proof": "ProviderPermissionsTest::test_codex_exact_incompatible_cache_refresh_success_recovers_provider"
+    },
+    {
+      "case": "exact incompatible cache plus quota/reset",
+      "proof": "ProviderPermissionsTest::test_codex_exact_incompatible_cache_is_quarantined_then_quota_is_classified"
+    },
+    {
+      "case": "unsafe symlink and unowned provider home",
+      "proof": "ProviderPermissionsTest::test_codex_cache_recovery_fails_closed_for_symlink; ::test_codex_cache_recovery_fails_closed_for_unowned_provider_home"
+    },
+    {
+      "case": "concurrent probes",
+      "proof": "ProviderPermissionsTest::test_concurrent_codex_cache_probes_quarantine_one_exact_inode"
+    },
+    {
+      "case": "quarantine failure",
+      "proof": "ProviderPermissionsTest::test_codex_cache_quarantine_failure_does_not_spend_refresh_probe"
+    },
+    {
+      "case": "quota without reset",
+      "proof": "ProviderPermissionsTest::test_codex_usage_limit_without_reset_is_quota_not_auth"
+    },
+    {
+      "case": "auth revoked",
+      "proof": "ProviderPermissionsTest::test_codex_auth_ready_false_on_revoked_refresh_token"
+    },
+    {
+      "case": "timeout",
+      "proof": "ProviderPermissionsTest::test_codex_probe_timeout_stays_fail_closed_without_cache_mutation; ProviderStaleCacheReadmissionProbeTests::test_failed_ambiguous_and_exception_probes_stay_fail_closed"
+    },
+    {
+      "case": "pre-lock-only quarantine authority",
+      "proof": "FreshAuthProbeLaneHoldTests::test_in_lock_pre_dispatch_probe_never_requests_cache_quarantine; ProviderStaleCacheReadmissionProbeTests::test_fresh_exact_models_cache_failure_bypasses_failed_probe_interval_once"
+    },
+    {
+      "case": "distinct Codex/Codex2 pause, rebind, and recovery",
+      "proof": "CodexCacheQuotaRoutingTests::test_live_usage_limit_pauses_only_codex_and_rebinds_exact_pair_to_codex2; ::test_fresh_success_clears_only_the_affected_distinct_quota_group"
+    },
+    {
+      "case": "cache compatibility is not auth revocation",
+      "proof": "CodexCacheQuotaRoutingTests::test_models_cache_probe_failure_is_degraded_not_credential_revocation"
+    }
+  ],
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned; imports and pytest verified from a foreign cwd"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py",
+      "result": "93 passed, 7 subtests passed"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
+      "result": "548 passed, 154 subtests passed"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py -k 'FreshAuthProbeLaneHoldTests or CodexCacheQuotaRoutingTests or ProviderPauseRecoveryProbeTests or ProviderStaleCacheReadmissionProbeTests'",
+      "result": "22 passed, 526 deselected, 5 subtests passed after final metadata hardening"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/provider_permissions.py .orchestrator/supervisor.py .orchestrator/test_provider_permissions.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "security": {
+    "auth_json": "Existence is checked by stat only for admission. Payloads and paths are not loaded into probe/capability metadata.",
+    "api_keys": "Only configured/present booleans are used; values and configured variable names are not emitted in probe metadata.",
+    "cache_payload": "Read only for SHA-256 evidence after exact CLI signature and safe path/owner/type identity checks; no cache JSON is interpreted or rewritten.",
+    "failure_output": "Cache and quota results are normalized to bounded generic errors; only a validated UTC quota reset timestamp is retained."
+  },
+  "review": {
+    "decision": "review_pending",
+    "reviewer": "Human/Ops",
+    "reviewed_head": null,
+    "reviewed_at": null,
+    "required": "Independent Human/Ops review must bind the final exact PR head before merge."
+  },
+  "delivery": {
+    "pull_request": null,
+    "base_sha": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
+    "implementation_head": "145f549fa312194168b1624b9c1d782ceb103c01",
+    "implementation_commits": [
+      "ede27e6799a39b987ba8fbc32fd840b4674b6782",
+      "ff378fe967cab389433e51e52a7b0670bf598000",
+      "f265f4449ef59855a732246af94749f888ee0866",
+      "145f549fa312194168b1624b9c1d782ceb103c01"
+    ]
+  },
+  "rollout": "Source merge only. A separately governed canary may later prove provider-home quarantine, quota pause, distinct-group fallback, fresh-reset recovery, and rollback.",
+  "rollback": "Revert the eventual task merge. Restore the quarantined cache only if the governed canary determines it is needed and its inode/hash/mtime evidence matches the intended artifact.",
+  "live_claims": []
+}
