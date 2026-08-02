@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -830,6 +831,234 @@ EOF
         self.assertFalse(ready)
         self.assertEqual(status, "unexpected_output")
         self.assertIsNotNone(error)
+
+    @staticmethod
+    def _codex_cache_failure() -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            ["codex"],
+            1,
+            "",
+            (
+                "failed to load models_cache.json: missing field "
+                "`supports_reasoning_summaries` at line 1 column 42"
+            ),
+        )
+
+    @staticmethod
+    def _codex_cache_config(home: Path) -> dict[str, object]:
+        return {
+            "providers": {
+                "codex": {
+                    "delivery_mode": "codex",
+                    "account": "codex",
+                    "codex": {"codex_home": str(home)},
+                }
+            }
+        }
+
+    def test_codex_compatible_models_cache_is_never_quarantined(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            cache = home / "models_cache.json"
+            cache.write_text('{"compatible":true}', encoding="utf-8")
+            config = self._codex_cache_config(home)
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with mock.patch.object(provider_permissions, "run_command", return_value=completed) as run_command:
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                    recover_incompatible_models_cache=True,
+                )
+
+            self.assertTrue(probe["ready"])
+            self.assertTrue(cache.exists())
+            self.assertEqual(list(home.glob("models_cache.json.quarantine.*")), [])
+            run_command.assert_called_once()
+
+    def test_codex_exact_incompatible_cache_is_quarantined_then_quota_is_classified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            cache = home / "models_cache.json"
+            cache_bytes = b'{"models":[{"slug":"gpt-5"}]}'
+            cache.write_bytes(cache_bytes)
+            config = self._codex_cache_config(home)
+            quota = subprocess.CompletedProcess(
+                ["codex"],
+                1,
+                "",
+                "You've hit your usage limit. reset_at=2026-08-09T05:10:00Z",
+            )
+            with (
+                mock.patch.object(provider_permissions, "command_exists", return_value="/usr/bin/codex"),
+                mock.patch.object(
+                    provider_permissions,
+                    "run_command",
+                    side_effect=[self._codex_cache_failure(), quota],
+                ) as run_command,
+            ):
+                probe = provider_permissions.probe_provider_auth(
+                    config,
+                    "codex",
+                    force=True,
+                    recover_incompatible_models_cache=True,
+                )
+
+            self.assertFalse(probe["ready"])
+            self.assertEqual(probe["status"], "quota_reached")
+            self.assertEqual(probe["quota_reset_at"], "2026-08-09T05:10:00Z")
+            recovery = probe["metadata"]["models_cache_recovery"]
+            self.assertEqual(recovery["outcome"], "quarantined")
+            self.assertEqual(
+                recovery["evidence"]["sha256"],
+                provider_permissions.hashlib.sha256(cache_bytes).hexdigest(),
+            )
+            self.assertFalse(cache.exists())
+            quarantine = Path(recovery["quarantine_path"])
+            self.assertTrue(quarantine.exists())
+            self.assertEqual(quarantine.read_bytes(), cache_bytes)
+            self.assertEqual(run_command.call_count, 2)
+
+    def test_codex_cache_recovery_fails_closed_for_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            outside = Path(tmpdir) / "outside-cache.json"
+            outside.write_text("do-not-move", encoding="utf-8")
+            (home / "models_cache.json").symlink_to(outside)
+            config = self._codex_cache_config(home)
+            with mock.patch.object(
+                provider_permissions,
+                "run_command",
+                return_value=self._codex_cache_failure(),
+            ) as run_command:
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                    recover_incompatible_models_cache=True,
+                )
+
+            self.assertFalse(probe["ready"])
+            self.assertEqual(probe["status"], "models_cache_recovery_failed")
+            self.assertEqual(
+                probe["metadata"]["models_cache_recovery"]["reason"],
+                "cache_path_unsafe_or_unowned",
+            )
+            self.assertEqual(outside.read_text(encoding="utf-8"), "do-not-move")
+            run_command.assert_called_once()
+
+    def test_codex_cache_quarantine_failure_does_not_spend_refresh_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            cache = home / "models_cache.json"
+            cache.write_text("incompatible", encoding="utf-8")
+            config = self._codex_cache_config(home)
+            with (
+                mock.patch.object(
+                    provider_permissions,
+                    "run_command",
+                    return_value=self._codex_cache_failure(),
+                ) as run_command,
+                mock.patch.object(provider_permissions.os, "replace", side_effect=OSError("denied")),
+            ):
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                    recover_incompatible_models_cache=True,
+                )
+
+            self.assertEqual(probe["status"], "models_cache_recovery_failed")
+            self.assertEqual(
+                probe["metadata"]["models_cache_recovery"]["reason"],
+                "cache_quarantine_failed",
+            )
+            self.assertTrue(cache.exists())
+            run_command.assert_called_once()
+
+    def test_concurrent_codex_cache_probes_quarantine_one_exact_inode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text("{}", encoding="utf-8")
+            (home / "models_cache.json").write_text("incompatible", encoding="utf-8")
+            config = self._codex_cache_config(home)
+            initial_probe_barrier = provider_permissions.threading.Barrier(2)
+            call_lock = provider_permissions.threading.Lock()
+            call_count = 0
+
+            def probe_result(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                nonlocal call_count
+                with call_lock:
+                    call_count += 1
+                    current = call_count
+                if current <= 2:
+                    initial_probe_barrier.wait(timeout=5)
+                    return self._codex_cache_failure()
+                return subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+
+            with mock.patch.object(provider_permissions, "run_command", side_effect=probe_result):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    results = list(
+                        pool.map(
+                            lambda _index: provider_permissions._codex_auth_probe(
+                                config,
+                                "codex",
+                                "/usr/bin/codex",
+                                force=True,
+                                recover_incompatible_models_cache=True,
+                            ),
+                            range(2),
+                        )
+                    )
+
+            self.assertEqual(call_count, 3)
+            self.assertEqual(sorted(result["status"] for result in results), ["models_cache_recovery_failed", "ready"])
+            self.assertEqual(len(list(home.glob("models_cache.json.quarantine.*"))), 1)
+
+    def test_codex_usage_limit_without_reset_is_quota_not_auth(self) -> None:
+        ready, error, status = provider_permissions._codex_probe_ready(
+            1,
+            "",
+            "ERROR: You've hit your usage limit.",
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(status, "quota_reached")
+        self.assertEqual(error, "Codex usage limit reached.")
+        self.assertIsNone(provider_permissions._codex_quota_reset_at(error))
+
+    def test_codex_probe_never_reads_auth_json_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            home.mkdir()
+            (home / "auth.json").write_text('{"tokens":{"refresh_token":"secret"}}', encoding="utf-8")
+            config = self._codex_cache_config(home)
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with (
+                mock.patch.object(provider_permissions, "load_json", side_effect=AssertionError("auth read")),
+                mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value={}),
+                mock.patch.object(provider_permissions, "run_command", return_value=completed),
+            ):
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex",
+                    "/usr/bin/codex",
+                    force=True,
+                )
+
+            self.assertTrue(probe["ready"])
 
     def test_provider_capabilities_marks_codex_revoked_token_auth_down(self) -> None:
         config = {
