@@ -3888,7 +3888,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "id": "SUP-L12-STALE-PR-RETIRE-20260729",
                     "status": "in_progress",
                     "owner": "Claude2",
-                    "reviewer": "Antigravity",
+                    "reviewer": "Codex",
                     "depends_on": [],
                     "preferred_lane_order": [
                         "Antigravity",
@@ -3908,6 +3908,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
             mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "_cached_provider_capabilities",
+                return_value={"providers": {}},
+            ),
         ):
             changed = supervisor.dispatch_ready_tasks(
                 config,
@@ -3920,7 +3925,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "SUP-L12-STALE-PR-RETIRE-20260729")
         self.assertEqual(kwargs["new_owner"], "Claude2")
-        self.assertEqual(kwargs["new_reviewer"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "SUP-L12-STALE-PR-RETIRE-20260729")
         self.assertEqual(queued_event["target_agent"], "Claude2")
@@ -4252,7 +4257,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(queued_event["target_agent"], "Codex")
@@ -4464,7 +4469,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "WB-006")
         self.assertEqual(kwargs["new_owner"], "Copilot")
-        self.assertEqual(kwargs["new_reviewer"], "Qwen")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "WB-006")
         self.assertEqual(queued_event["target_agent"], "Copilot")
@@ -4757,6 +4762,173 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIn("Codex", names)
         self.assertIn("Copilot", names)
         self.assertNotIn("Copilot (legacy alias)", names)
+
+    def test_pair_planner_atomically_rebinds_incumbent_reviewer_as_owner(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2"],
+                    "Codex2": ["Antigravity"],
+                },
+                "reviewer_fallbacks": {
+                    "Antigravity": ["Claude", "Codex"],
+                    "Codex2": ["Antigravity", "Codex"],
+                    "Codex": ["Codex2"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "pause_kind": "quota_terminal",
+                    }
+                }
+            }
+        }
+        report = {
+            "providers": {
+                "antigravity": {"auth_ready": True},
+                "claude": {"auth_ready": False},
+                "codex2": {"auth_ready": True},
+                "codex": {"auth_ready": True},
+            }
+        }
+        task = {
+            "id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V3-20260801",
+            "status": "todo",
+            "owner": "Antigravity",
+            "reviewer": "Codex2",
+            "depends_on": [],
+            "preferred_lane_order": ["Antigravity", "Claude", "Codex2", "Codex"],
+        }
+
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertEqual(
+                supervisor.plan_task_assignment_pair(config, task, state=state),
+                ("Codex2", "Codex"),
+            )
+            changed = supervisor.normalize_mainline_task_assignment(config, task, state=state)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Codex"))
+        self.assertEqual(kwargs["expected_owner"], "Antigravity")
+        self.assertEqual(kwargs["expected_reviewer"], "Codex2")
+        self.assertEqual(kwargs["expected_status"], "todo")
+
+        healthy_codex_pair = {**task, "owner": "Codex", "reviewer": "Codex2"}
+        with mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report):
+            self.assertEqual(
+                supervisor.plan_task_assignment_pair(config, healthy_codex_pair),
+                ("Codex", "Codex2"),
+            )
+
+    def test_pair_planner_traversal_is_deterministic_and_cycle_safe(self) -> None:
+        config = {
+            "agents": {
+                "antigravity": {"display_name": "Antigravity"},
+                "claude": {"display_name": "Claude"},
+                "codex2": {"display_name": "Codex2"},
+            }
+        }
+        mapping = {
+            "Antigravity": ["Codex2"],
+            "Codex2": ["Antigravity"],
+        }
+        expected = ["Codex2", "Claude", "Antigravity"]
+        self.assertEqual(
+            supervisor.bounded_fallback_candidates(
+                config,
+                mapping,
+                roots=["Antigravity"],
+                preferred=["Claude"],
+            ),
+            expected,
+        )
+        self.assertEqual(
+            supervisor.bounded_fallback_candidates(
+                config,
+                mapping,
+                roots=["Antigravity"],
+                preferred=["Claude"],
+            ),
+            expected,
+        )
+
+    def test_pair_planner_no_legal_pair_causes_no_partial_mutation(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2"],
+                    "Codex2": ["Antigravity"],
+                },
+                "reviewer_fallbacks": {
+                    "Antigravity": ["Codex2"],
+                    "Codex2": ["Antigravity"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity": {
+                        "provider": "antigravity",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        task = {
+            "id": "STRANDED-PAIR-001",
+            "status": "todo",
+            "owner": "Antigravity",
+            "reviewer": "Codex2",
+        }
+        original = copy.deepcopy(task)
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_cached_provider_capabilities",
+                return_value={"providers": {}},
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            self.assertIsNone(supervisor.plan_task_assignment_pair(config, task, state=state))
+            self.assertFalse(supervisor.normalize_mainline_task_assignment(config, task, state=state))
+
+        persist.assert_not_called()
+        self.assertEqual(task, original)
 
     def test_normalize_reassigns_todo_owned_by_auth_down_agent(self) -> None:
         config = {
@@ -9527,6 +9699,36 @@ class ChairReviewDispatchTests(unittest.TestCase):
             json.loads(status_path.read_text(encoding="utf-8")),
             original,
         )
+
+    def test_persist_task_reassignment_cas_rejects_stale_assignment(self) -> None:
+        status_path = self.root / "ai-status.json"
+        original = {
+            "tasks": [
+                {
+                    "id": "PAIR-CAS-001",
+                    "status": "todo",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                }
+            ]
+        }
+        status_path.write_text(json.dumps(original), encoding="utf-8")
+
+        with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+            applied = supervisor.persist_task_reassignment(
+                self.config,
+                task_id="PAIR-CAS-001",
+                new_owner="Claude",
+                new_reviewer="Codex2",
+                message="Stale pair plan must not overwrite the newer assignment.",
+                expected_owner="Antigravity",
+                expected_reviewer="Codex2",
+                expected_status="todo",
+            )
+
+        self.assertFalse(applied)
+        sync.assert_not_called()
+        self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), original)
 
     def test_refresh_chair_review_invalid_decision_retries_next_chair(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"
@@ -15421,6 +15623,76 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
+
+    def test_worker_failure_replans_reviewer_when_fallback_is_incumbent_reviewer(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2"],
+                    "Codex2": ["Antigravity"],
+                },
+                "reviewer_fallbacks": {
+                    "Antigravity": ["Claude", "Codex"],
+                    "Codex2": ["Antigravity", "Codex"],
+                },
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state: dict = {}
+        worker = {
+            "task_id": "PAIR-WORKER-FAILURE-001",
+            "agent_id": "antigravity",
+            "retry_count": 1,
+            "run_id": "antigravity-terminal",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "PAIR-WORKER-FAILURE-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+        report = {
+            "providers": {
+                "antigravity": {"auth_ready": False},
+                "claude": {"auth_ready": False},
+                "codex2": {"auth_ready": True},
+                "codex": {"auth_ready": True},
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                state,
+                worker,
+                "terminal provider failure",
+                terminal=True,
+            )
+
+        self.assertEqual(reassigned_to, "Codex2")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual((kwargs["new_owner"], kwargs["new_reviewer"]), ("Codex2", "Codex"))
+        self.assertEqual(kwargs["expected_owner"], "Antigravity")
+        self.assertEqual(kwargs["expected_reviewer"], "Codex2")
+        self.assertEqual(kwargs["expected_status"], "in_progress")
 
     def test_l12_owner_failure_does_not_fall_back_to_codex_when_provider_first_lane_fails(self) -> None:
         config = {
