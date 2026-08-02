@@ -78,6 +78,15 @@ Base: `79ba3f431127bf9718697d2ba9e9ddce97969ec3` (`origin/dev`).
 
 Implementation anchor: `25c30277cf79b649f0762c695e10eca64e55329a`.
 
+Implementation candidate: `67dd730b6d1afa17c946b4d42fd0565b24746f12`.
+
+Replacement PR: [#4491](https://github.com/ajoe734/pantheon/pull/4491).
+After that replacement existed, stale PR
+[#4385](https://github.com/ajoe734/pantheon/pull/4385) and rejected PR
+[#4438](https://github.com/ajoe734/pantheon/pull/4438) were closed as
+superseded with links to V2 PRs #4483, #4489, and #4491. Their commits were
+not merged or reused.
+
 This evidence is owner-authored and remains **review_pending**. Human/Ops must
 independently review the final exact PR head and bind it through the canonical
 review gate before merge. No live-runtime outcome, rollout, restart, signal, or

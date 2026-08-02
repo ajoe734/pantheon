@@ -85,8 +85,12 @@
   "delivery": {
     "base_sha": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
     "implementation_anchor": "25c30277cf79b649f0762c695e10eca64e55329a",
-    "candidate_head": "25c30277cf79b649f0762c695e10eca64e55329a",
-    "pull_request": null,
+    "candidate_head": "67dd730b6d1afa17c946b4d42fd0565b24746f12",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4491",
+    "superseded_pull_requests": [
+      "https://github.com/ajoe734/pantheon/pull/4385",
+      "https://github.com/ajoe734/pantheon/pull/4438"
+    ],
     "rollout": "source merge only; live promotion remains separately governed",
     "rollback": "revert the activity-normalizer, pure-decision, and dispatch-consumption task merge commits; no config migration"
   }
