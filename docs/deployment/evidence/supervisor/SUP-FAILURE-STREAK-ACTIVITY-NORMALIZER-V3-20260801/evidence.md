@@ -2,7 +2,7 @@
 
 Task: Normalize governed progress from real activity event shapes
 
-Owner: Codex2 · Reviewer: Antigravity · Status: **review_pending**
+Owner: Codex · Reviewer: Human/Ops · Status: **review_pending**
 
 ## Scope
 
@@ -10,7 +10,9 @@ This task adds only a pure activity normalizer over the exact V3 failure record
 merged by PR #4445. It does not wire retry eligibility or consumption and does
 not mutate canonical task state, runtime state, queues, workers, leases,
 reservations, provider state, configuration, product controllers, or live
-services.
+services. The task-scoped owner fallback does not combine the separate
+Codex/Codex2 account or quota groups and does not change global reviewer
+policy.
 
 ## Delivered contract
 
@@ -41,8 +43,8 @@ synthetic owner/reviewer fields that production does not emit.
 
 ## Verification
 
-- Focused normalizer suite: 5 passed, 477 deselected, 28 subtests passed.
-- Full supervisor regression: 482 passed, 94 subtests passed.
+- Focused normalizer suite: 5 passed, 486 deselected, 28 subtests passed.
+- Full supervisor regression: 491 passed, 102 subtests passed.
 - Direct captured-shape node probes: 2 passed.
 - Python compile check: passed.
 - `git diff --check origin/dev..HEAD` and worktree diff check: passed.
@@ -52,10 +54,15 @@ synthetic owner/reviewer fields that production does not emit.
 ## Review boundary
 
 Implementation anchor: `51b45f485dea47ebbea41157fd8d81c40ded3745`.
+Current `origin/dev` base: `16135f2316541591e54cba6d58f0a80273731bc1`.
+Non-rewriting composition commit: `802464d9f9ade9e81d57860726cfa44a9eaa5171`.
+Pull request: `#4483`.
 
-This evidence is owner-authored and remains **review_pending**. Antigravity must
-independently inspect the final PR head and bind the exact-head canonical review
-gate before approval or merge. No test count, hosted claim, or approval state is
+This evidence is owner-authored and remains **review_pending**. Human/Ops
+independently reviewed the prior head `9c68b31a79a8dc6bb48b4eb90bf8d7192daf021d`
+and then reopened the gate because `origin/dev` advanced. Human/Ops must inspect
+the new final PR head and bind that exact head in the canonical review gate
+before approval or merge. No test count, hosted claim, or approval state is
 inferred beyond the commands recorded above.
 
 Generated task briefs, dashboard bundles, assistant packets, and runtime state

@@ -4,8 +4,8 @@
     "id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
     "title": "Normalize governed progress from real activity event shapes",
     "phase": "Supervisor Retry V3 / 2 Activity Normalizer",
-    "owner": "Codex2",
-    "reviewer": "Antigravity",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
     "status": "review_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -13,7 +13,7 @@
   },
   "scope": {
     "owned_layer": "Pure immutable normalization of governed ai-status reviewer reopen and worker-commit activity over the merged V3 failure record.",
-    "not_changing": "Failure recording, retry eligibility, recovery consumption, canonical task state, queues, workers, leases, reservations, provider state, configuration, product controllers, and live services.",
+    "not_changing": "Failure recording, retry eligibility, recovery consumption, canonical task state, queues, workers, leases, reservations, provider state, Codex/Codex2 account or quota groups, global reviewer policy, configuration, product controllers, and live services.",
     "implementation_files": [
       ".orchestrator/supervisor.py",
       ".orchestrator/test_supervisor.py"
@@ -68,11 +68,11 @@
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakActivityNormalizerV3'",
-      "result": "5 passed, 477 deselected, 28 subtests passed"
+      "result": "5 passed, 486 deselected, 28 subtests passed"
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-      "result": "482 passed, 94 subtests passed"
+      "result": "491 passed, 102 subtests passed"
     },
     {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q <two captured-shape node ids>",
@@ -93,15 +93,16 @@
   ],
   "review": {
     "decision": "review_pending",
-    "reviewer": "Antigravity",
+    "reviewer": "Human/Ops",
     "reviewed_head": null,
     "reviewed_at": null,
-    "note": "Owner-authored evidence only. Independent exact-head review is required before approval or merge."
+    "note": "Owner-authored evidence only. Human/Ops independently reviewed the prior head 9c68b31a79a8dc6bb48b4eb90bf8d7192daf021d, then reopened the gate because origin/dev advanced. Independent review of the new exact PR head is required before approval or merge."
   },
   "delivery": {
-    "base_sha": "2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+    "base_sha": "16135f2316541591e54cba6d58f0a80273731bc1",
     "implementation_anchor": "51b45f485dea47ebbea41157fd8d81c40ded3745",
-    "pull_request": null,
+    "composition_commit": "802464d9f9ade9e81d57860726cfa44a9eaa5171",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4483",
     "candidate_head": null,
     "rollout": "source merge only",
     "rollback": "revert this task, then SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
