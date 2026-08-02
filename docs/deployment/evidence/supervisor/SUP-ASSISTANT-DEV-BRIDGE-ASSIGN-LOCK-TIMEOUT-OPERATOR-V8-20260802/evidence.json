@@ -1,0 +1,181 @@
+{
+  "schema_version": "assistant_dev_bridge_repair_evidence.v1",
+  "task": {
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+    "title": "Remove canonical assign lock timeout from supervisor dev bridge",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+    "review_status": "review_pending",
+    "implementation_anchors": [
+      "91367aa0103330b64206f4c4295fa30c46e823a5",
+      "b33231225ac6b9656108e41df525d28ba7126ad1",
+      "c93404f68055ed48d496f8b5e4777f4aa1b94feb"
+    ]
+  },
+  "scope": {
+    "owned_layer": "Supervisor assistant-bridge lock boundary, signed-packet dispatch claims, bounded governed assignment/readback, retry and receipt recovery, and task-scoped tests/evidence.",
+    "not_changing": "No config, live runtime, canonical JSON/state/event log by hand, provider or quota policy, worker routing, product service, dashboard bundle, deployment, or product task.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py"
+    ],
+    "evidence_directory": "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802"
+  },
+  "dependency_reconciliation": {
+    "v8_replaces_blocked_v3": true,
+    "superseded_dependency_is_evidence_only": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2",
+    "active_dependencies": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "identity_constraint": "Codex and Codex2 remain distinct configured identities; this change introduces no global mutual-review rule or quota-group rewrite."
+  },
+  "incident": {
+    "evidence": "incident-reproduction.json",
+    "receipt_count": 2,
+    "observed_timeout_seconds_each": 30,
+    "direct_canonical_assignment_later_succeeded": true,
+    "root_cause": "The supervisor held exclusive runtime admission while draining the inbox; the drainer held its drain lock and the dispatcher held its replay lock while synchronously waiting for governed assign, whose child required the parent's governed lock path."
+  },
+  "delivered_properties": [
+    "Bridge drain and governed assignment execute before exclusive runtime admission.",
+    "Inbox and replay locks cover only claim and durable commit sections.",
+    "Claims bind exact packet digest, task hashes, claimant PID, timestamps, and expiry.",
+    "Bounded assignment/readback timeouts are retryable with exact-identity bounded backoff.",
+    "Partial materialization resumes idempotently without duplicate canonical rows.",
+    "Processed receipts require durable exact admission and active-or-archive authoritative readback for every task.",
+    "Forged retry, mismatched payload, receipt-only, projection-only, and replay-only success paths fail closed."
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "status": "pass",
+      "statement": "Both historical signed packet failures and later direct canonical success are reproduced with durable hashes.",
+      "evidence": [
+        "incident-reproduction.json"
+      ]
+    },
+    {
+      "id": "AC2",
+      "status": "pass",
+      "statement": "Exact lock ownership and elapsed phases are identified using call-graph and scratch-root instrumentation.",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_drains_assistant_bridge_before_runtime_lock",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback"
+      ]
+    },
+    {
+      "id": "AC3",
+      "status": "pass",
+      "statement": "No governed status subprocess or wait runs under runtime-admission, event-log, inbox, or replay locks required by the subprocess.",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_drains_assistant_bridge_before_runtime_lock",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_concurrent_drainers_apply_one_processing_claim"
+      ]
+    },
+    {
+      "id": "AC4",
+      "status": "pass",
+      "statement": "Transient timeouts retry with bounded exact replay and at-most-once materialization.",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_assign_timeout_before_task_is_retryable_and_unadmitted",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_timeout_after_one_task_resumes_exact_packet_without_duplicate_rows",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_stale_dispatch_claim_recovers_after_crashed_claimant"
+      ]
+    },
+    {
+      "id": "AC5",
+      "status": "pass",
+      "statement": "Processed status requires durable admission, exact hashes, and authoritative active-or-archive readback.",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_seen_digest_without_admission_fails_closed",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_replay_requires_authoritative_materialized_task_provenance",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_existing_receipt_does_not_suppress_exact_dispatch"
+      ]
+    },
+    {
+      "id": "AC6",
+      "status": "pass",
+      "statement": "Full supervisor cycles and concurrent real governed commands stay below two seconds p95 with exact projection.",
+      "measured": {
+        "fixture_events": 2000,
+        "fixture_bytes": 137953724,
+        "workers": 4,
+        "commands": 8,
+        "command_mix": {
+          "approve": 2,
+          "assign": 2,
+          "note": 2,
+          "reopen": 2
+        },
+        "full_run_once_cycles": 16,
+        "current_p95_seconds": 1.391,
+        "current_max_seconds": 1.391,
+        "legacy_p95_seconds": 53.598,
+        "all_commands_succeeded": true,
+        "exact_projection": true,
+        "final_event_count": 2016
+      },
+      "evidence": [
+        "bench-report.json",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback"
+      ]
+    },
+    {
+      "id": "AC7",
+      "status": "pass",
+      "statement": "Required negative matrix preserves signatures, identity, leases, artifacts, and journal integrity.",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_forged_retry_metadata_cannot_delay_signed_packet",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_mismatched_payload_cannot_take_live_dispatch_claim",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_processing_item_is_recovered_after_restart",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_concurrent_drainers_apply_one_processing_claim",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py::test_queue_rejects_unsigned_packet"
+      ]
+    },
+    {
+      "id": "AC8",
+      "status": "review_pending",
+      "statement": "Clean PR, exact-head Human/Ops review, merge, and governed archive.",
+      "remaining": "Push final committed candidate, open PR to dev, obtain exact-head Human/Ops approval, merge, then use governed done closeout."
+    }
+  ],
+  "validation": {
+    "focused_and_supervisor": {
+      "result": "584 passed, 147 subtests passed in 108.90s",
+      "status": "pass"
+    },
+    "bridge_cli": {
+      "result": "8 passed in 4.77s",
+      "status": "pass"
+    },
+    "benchmark": {
+      "report": "bench-report.json",
+      "report_sha256": "85803d55b8cd2d4b5bdeedb175792395992cba4b711106db818b503cebee5f59",
+      "status": "pass"
+    },
+    "final_gates": {
+      "py_compile": "pass",
+      "json": "pass",
+      "commit_trailers": "pending_final_commit",
+      "git_diff_check": "pass"
+    }
+  },
+  "delivery": {
+    "merge_order": [
+      "91367aa0103330b64206f4c4295fa30c46e823a5",
+      "b33231225",
+      "c93404f68055ed48d496f8b5e4777f4aa1b94feb",
+      "task evidence/finalization commit"
+    ],
+    "rollout": "Merge the reviewed task PR to dev; no direct live mutation.",
+    "rollback": "Revert the task merge commit. Do not rewrite canonical state or delete live claim/retry metadata by hand."
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "cold_first_read": {
+    "event_count": 2000,
+    "resumed_from_checkpoint": false,
+    "seconds": 2.372
+  },
+  "fixture": {
+    "build_seconds": 2.984,
+    "bytes": 137953724,
+    "events": 2000,
+    "task_rows": 30
+  },
+  "live_reference": {
+    "event_count": 2050,
+    "exclusive_lock_hold_seconds": [
+      517.0,
+      771.0
+    ],
+    "journal_bytes": 157000000,
+    "note_command_seconds": [
+      55.0,
+      90.0
+    ],
+    "reviewer_reopen_wait_seconds": 508.0,
+    "runtime_admission_inode": 807896,
+    "supervisor_pid": 901543
+  },
+  "meets_target": true,
+  "speedup_p95": {
+    "uncontended": 96.4,
+    "under_active_supervisor_cycle": 38.5
+  },
+  "target_p95_seconds": 2.0,
+  "uncontended": {
+    "current": {
+      "label": "current",
+      "max_seconds": 0.117,
+      "min_seconds": 0.107,
+      "p50_seconds": 0.109,
+      "p95_seconds": 0.117,
+      "samples": 4
+    },
+    "legacy": {
+      "label": "legacy",
+      "max_seconds": 11.274,
+      "min_seconds": 10.272,
+      "p50_seconds": 10.477,
+      "p95_seconds": 11.274,
+      "samples": 4
+    }
+  },
+  "under_active_supervisor_cycle": {
+    "current": {
+      "all_commands_succeeded": true,
+      "candidate_runtime": {
+        "base_ref": "HEAD",
+        "executable_paths_clean": true,
+        "source_sha": "c93404f68055ed48d496f8b5e4777f4aa1b94feb"
+      },
+      "command_latencies": [
+        {
+          "command": "approve",
+          "index": 0,
+          "seconds": 1.391
+        },
+        {
+          "command": "assign",
+          "index": 1,
+          "seconds": 0.534
+        },
+        {
+          "command": "note",
+          "index": 2,
+          "seconds": 1.38
+        },
+        {
+          "command": "reopen",
+          "index": 3,
+          "seconds": 1.373
+        },
+        {
+          "command": "approve",
+          "index": 4,
+          "seconds": 0.95
+        },
+        {
+          "command": "assign",
+          "index": 5,
+          "seconds": 0.891
+        },
+        {
+          "command": "note",
+          "index": 6,
+          "seconds": 0.962
+        },
+        {
+          "command": "reopen",
+          "index": 7,
+          "seconds": 0.932
+        }
+      ],
+      "command_mix": {
+        "approve": 2,
+        "assign": 2,
+        "note": 2,
+        "reopen": 2
+      },
+      "commands": 8,
+      "concurrent_workers": 4,
+      "exact_projection": true,
+      "final_event_count": 2016,
+      "full_run_once_cycles": 16,
+      "full_run_once_seconds": [
+        0.049,
+        0.046,
+        0.042,
+        0.047,
+        0.067,
+        0.056,
+        0.051,
+        0.053,
+        0.324,
+        0.851,
+        0.05,
+        0.061,
+        0.068,
+        0.054,
+        0.066,
+        0.659
+      ],
+      "harness": "real_governed_commands_full_run_once",
+      "label": "current",
+      "max_seconds": 1.391,
+      "p50_seconds": 0.956,
+      "p95_seconds": 1.391,
+      "supervisor_active_during_commands": true,
+      "worker_lease_bound_commands": 6
+    },
+    "legacy": {
+      "commands": 8,
+      "concurrent_workers": 4,
+      "label": "legacy",
+      "max_seconds": 53.598,
+      "p50_seconds": 52.599,
+      "p95_seconds": 53.598,
+      "supervisor_cycle_seconds": 45.0
+    }
+  }
+}

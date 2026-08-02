@@ -1,0 +1,72 @@
+{
+  "schema_version": "assistant_dev_bridge_lock_incident.v1",
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+  "source_task_id": "L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801",
+  "historical_receipts": [
+    {
+      "packet_id": "pkt-l12-current-gap-three-pass-reaudit-20260801T0355Z",
+      "emitted_at": "2026-08-01T03:56:05Z",
+      "drained_at": "2026-08-01T03:56:12Z",
+      "signature_algorithm": "HMAC-SHA256",
+      "signature_key_id": "assistant-bridge-dev",
+      "packet_file_sha256": "e75b12bf7e5a46406de977e04cd7227ee40a023faea26e1b09d1d32aa6d1dfca",
+      "receipt_file_sha256": "61f4c57ef4f7d9d80ae527e346a40635fe3e1db6ad66d2ac2390beb27b3a7c06",
+      "packet_digest": "5c9e2426819438a045ac7b17f600c8ff2cc1d23dcdcffeafac3efa02cfb2dd45",
+      "result": {
+        "status": "failed",
+        "task_status": "error",
+        "error": "ai_status.py assign timed out after 30s",
+        "admission_status": "not_attempted",
+        "replay_rejected": false,
+        "retryable": false
+      }
+    },
+    {
+      "packet_id": "pkt-l12-current-gap-three-pass-reaudit-20260801T0357Z-r1",
+      "emitted_at": "2026-08-01T03:57:04Z",
+      "drained_at": "2026-08-01T03:57:39Z",
+      "signature_algorithm": "HMAC-SHA256",
+      "signature_key_id": "assistant-bridge-dev",
+      "packet_file_sha256": "327d8ea1b7492b3b5f738e5059ef4113619bfd6166b932e97451690689444ee7",
+      "receipt_file_sha256": "19a3886bae7dd822ebfe1938effb135265d31d94712a85f6640c1dec2e28ad10",
+      "packet_digest": "5fc8ebf6db430d2fa993591529b854196f04979c2975cd382563a02ee8062b9a",
+      "result": {
+        "status": "failed",
+        "task_status": "error",
+        "error": "ai_status.py assign timed out after 30s",
+        "admission_status": "not_attempted",
+        "replay_rejected": false,
+        "retryable": false
+      }
+    }
+  ],
+  "root_cause": {
+    "owner": "The supervisor process invoking run_once owned exclusive runtime admission; the same drainer process owned the inbox drain and packet replay locks around the child wait.",
+    "historical_pid_available": false,
+    "historical_pid_note": "The two receipts preserve the phase and 30-second timeout but not the OS PID. Ownership follows directly from the pre-fix synchronous lock nesting.",
+    "wait_cycle": [
+      "supervisor holds exclusive runtime admission",
+      "supervisor/drainer holds inbox drain lock",
+      "dispatcher holds packet replay lock",
+      "parent waits for governed ai_status assign subprocess",
+      "child waits for governed runtime/task-state admission",
+      "parent timeout fires after 30 seconds"
+    ],
+    "scratch_instrumentation": [
+      "dispatch claim claimant_pid",
+      "claim created_at and expires_at",
+      "phaseTimingsMs for claim, governed assign, authoritative readback, admission commit, and replay commit",
+      "supervisor ordering test asserting bridge drain before runtime lock"
+    ]
+  },
+  "later_canonical_readback": {
+    "task_archive_path": "ai-task-archive/tasks/L12-CURRENT-GAP-THREE-PASS-REAUDIT-20260801.json",
+    "task_archive_sha256": "0291e7fbdc37bd24178073d452e8c0fa209dad49a7d7ce1e18d7aded2042e4c0",
+    "status": "done",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "review_head_sha": "eb48a0bc36cdd9ee0707d0d7515a8a5639643211",
+    "pr": 4494,
+    "merge_commit": "0a2bd446952936998996ba6ecc89b1cbacd55bce"
+  }
+}

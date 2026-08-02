@@ -16596,6 +16596,32 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    # The bridge dispatcher shells out to the governed task-state writer.  It
+    # must never inherit the supervisor cycle's exclusive runtime-admission
+    # lock: worker commands take that lock shared while validating their
+    # leases, and a parent waiting on the child from inside the exclusive hold
+    # turns ordinary status traffic into a 30-second bridge timeout.  Drain
+    # into a scratch runtime fragment now and publish only the small result
+    # snapshot after runtime admission is acquired below.
+    bridge_runtime_scratch: dict[str, Any] = {}
+    bridge_drain_changed = bool(
+        _safe_phase(
+            "drain_assistant_dev_packet_inbox",
+            drain_assistant_dev_packet_inbox,
+            config,
+            bridge_runtime_scratch,
+            quiet=quiet,
+        )
+    )
+    bridge_state = bridge_runtime_scratch.get("assistant_dev_bridge")
+    assistant_dev_bridge_snapshot = (
+        {
+            "changed": bridge_drain_changed,
+            "state": deepcopy(bridge_state),
+        }
+        if isinstance(bridge_state, dict)
+        else None
+    )
     recovery_activity_events = failure_streak_recovery_activity_snapshot(
         config,
         github_runtime_snapshot,
@@ -16670,6 +16696,7 @@ def run_once(
                 recovery_activity_events=recovery_activity_events,
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
+                assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
                 prelock_changed=github_bus_changed,
             )
         )
@@ -16874,6 +16901,7 @@ def _run_once_locked(
     recovery_activity_events: list[dict[str, Any]],
     ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
     task_state_shadow_snapshot: dict[str, Any] | None = None,
+    assistant_dev_bridge_snapshot: dict[str, Any] | None = None,
     prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
@@ -16911,7 +16939,11 @@ def _run_once_locked(
         previous_provider_report, provider_report = provider_reports
         changed = _safe_phase("reconcile_provider_pause_recovery", reconcile_provider_pause_recovery, config, state, provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
-        changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
+        if isinstance(assistant_dev_bridge_snapshot, dict):
+            bridge_state = assistant_dev_bridge_snapshot.get("state")
+            if isinstance(bridge_state, dict):
+                state["assistant_dev_bridge"] = deepcopy(bridge_state)
+                changed = bool(assistant_dev_bridge_snapshot.get("changed")) or changed
         if watch:
             changed = _safe_phase("run_scan", _run_scan_locked, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
             state = load_runtime_state(config)

@@ -5933,6 +5933,71 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
         )
 
+    def test_run_once_drains_assistant_bridge_before_runtime_lock(self) -> None:
+        """Governed bridge assignment must not run under runtime admission."""
+
+        call_order: list[str] = []
+        bridge_result = {
+            "last_drain_at": "2026-08-02T03:56:12Z",
+            "last_result": {"processedCount": 1, "errorCount": 0},
+        }
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def drain(_config: dict, scratch: dict) -> bool:
+            call_order.append("bridge_drain")
+            scratch["assistant_dev_bridge"] = copy.deepcopy(bridge_result)
+            return True
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertEqual(
+                kwargs["assistant_dev_bridge_snapshot"],
+                {"changed": True, "state": bridge_result},
+            )
+            return True
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value={},
+            ),
+            mock.patch.object(
+                supervisor,
+                "drain_assistant_dev_packet_inbox",
+                side_effect=drain,
+            ),
+            mock.patch.object(
+                supervisor,
+                "probe_provider_reports",
+                return_value=({}, {}),
+            ),
+            mock.patch.object(
+                supervisor,
+                "runtime_state_lock",
+                side_effect=runtime_lock,
+            ),
+            mock.patch.object(
+                supervisor,
+                "_run_once_locked",
+                side_effect=locked_cycle,
+            ),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["bridge_drain", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
     def test_run_once_fetches_worker_base_before_taking_runtime_lock(self) -> None:
         """The exact origin/dev network refresh must precede admission."""
 
