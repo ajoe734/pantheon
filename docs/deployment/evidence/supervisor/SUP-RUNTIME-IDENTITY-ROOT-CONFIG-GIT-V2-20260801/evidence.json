@@ -5,12 +5,12 @@
   "owner": "Codex",
   "reviewer": "Human/Ops",
   "review_decision": "review_pending",
-  "recorded_at": "2026-08-02T07:17:53Z",
+  "recorded_at": "2026-08-02T07:41:54Z",
   "repository": "ajoe734/pantheon",
   "branch": "task/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
   "base_branch": "dev",
   "base_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
-  "pre_evidence_head": "03e167cda5932fd5b1637e90d674e74d42b27c3c",
+  "pre_evidence_head": "928b35259aa1ec713753b49eb4aec8179267898d",
   "pull_request": 4443,
   "implementation_commits": [
     "76baec723ab6ad11a6369c9c04a668b6badf2a6a",
@@ -19,7 +19,9 @@
     "4a788b6c5a9532fea03a5bc946b791355c5110cd",
     "59a5845446f7367a98b868508b769c9c168b875c",
     "2c751b122bbc28642d3ab09a3efb7edf760840d8",
-    "018b2193c907327a888aa6810fec4f5df28741ff"
+    "018b2193c907327a888aa6810fec4f5df28741ff",
+    "345a306b5c181d8fdb1f3fb38b7fd687a31a16c1",
+    "928b35259aa1ec713753b49eb4aec8179267898d"
   ],
   "dev_composition": {
     "origin_dev_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
@@ -33,11 +35,11 @@
     ]
   },
   "review_refresh": {
-    "previous_reviewed_head": "42cbc8f73df4d3521f8de9c1ef19a2348c6ba6ed",
+    "previous_reviewed_head": "167900b4b44e33daaec8708e87b456101880bbcc",
     "previous_reviewer": "Human/Ops",
     "previous_decision": "reopen",
     "current_reviewer": "Human/Ops",
-    "reason": "The exact prior head was behind current dev. The existing branch now composes origin/dev 79ba3f431127bf9718697d2ba9e9ddce97969ec3 through merge commit 03e167cda5932fd5b1637e90d674e74d42b27c3c without rewriting history; the four-path delivery scope and identity implementation remain unchanged.",
+    "reason": "Human/Ops rejected exact head 167900b4b44e33daaec8708e87b456101880bbcc because mode-160000 gitlink worktree content was invisible to Git status and diff checks. Implementation head 928b35259aa1ec713753b49eb4aec8179267898d now binds gitlinks from the accepted tracked tree to the index and descriptor-validates absent or empty worktree paths while rejecting all content, aliases, metadata, device escape, and replacement races.",
     "required_binding": "REVIEW_PR=4443 and REVIEW_HEAD_SHA=<final PR head>"
   },
   "dependency": {
@@ -74,6 +76,7 @@
       "fresh accepted dev resolution in an isolated bare repository with sanitized Git environment",
       "candidate commit ancestry and trusted tree equality",
       "tracked/index/worktree cleanliness including special index flags and ignored paths",
+      "mode-160000 trusted-tree/index identity and descriptor-bound gitlink worktree validation",
       "descriptor-bound regular-file validation for every generated untracked allowance",
       "directory-marker denial before generated-path normalization",
       "complete Git objects-tree symlink and cross-filesystem denial",
@@ -118,6 +121,9 @@
     "git_environment_rewrite_denial": "passed",
     "fresh_dev_commit_and_tree_binding": "passed",
     "tracked_staged_index_flag_and_worktree_drift_denial": "passed",
+    "gitlink_absent_or_empty_direct_directory_allowance": "passed",
+    "gitlink_file_symlink_nested_and_submodule_metadata_denial": "passed",
+    "gitlink_tree_index_device_parent_and_replacement_race_denial": "passed",
     "ordinary_ignored_allowed_and_forbidden_path_matrix": "passed",
     "allowlisted_symlink_and_directory_substitution_denial": "passed",
     "config_exact_leaf_parent_and_swap_denial": "passed",
@@ -131,7 +137,7 @@
   "verification": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
-      "result": "108 passed in 25.80s"
+      "result": "120 tests collected and passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
@@ -139,7 +145,7 @@
     },
     {
       "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
-      "result": "passed through the composed task history before this evidence refresh"
+      "result": "passed through implementation head 928b35259aa1ec713753b49eb4aec8179267898d before this evidence refresh"
     },
     {
       "command": "git diff --check origin/dev...HEAD",
@@ -153,11 +159,11 @@
   "artifacts": [
     {
       "path": "scripts/promote_supervisor_runtime.py",
-      "sha256": "5235dbdbdb336f7bf967dc1f32939f775dd5ad04a8143129f5baec337f8a8959"
+      "sha256": "8e4e4d2315a3a3fe3ae50ae29a16ee314501dcf51544bf749d06a67ad010a99c"
     },
     {
       "path": "scripts/test_promote_supervisor_runtime.py",
-      "sha256": "d8280593761a78d0beac0fd4f41fdeec9d610b5a14b4326eeb25d37d5b0660b8"
+      "sha256": "f227d269fca04ecca11cf10c18ca38eb52a9694f05e243e9c83b566aced33006"
     }
   ],
   "rollout": "source merge only",
