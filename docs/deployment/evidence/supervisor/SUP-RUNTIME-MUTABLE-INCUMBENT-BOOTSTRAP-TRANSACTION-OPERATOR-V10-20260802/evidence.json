@@ -15,7 +15,7 @@
     "incumbent_signalled": false,
     "candidate_launched": false,
     "rollback_launched": false,
-    "source_anchor": "e4879e8e3e317f434e54fc56d93ff45559ecf533",
+    "source_anchor": "3b38a78e6b0a0bf7d4c870e100aa1935d0072657",
     "source_branch": "task/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
     "merge_target": "dev"
   },
