@@ -18,9 +18,15 @@ from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
+    PromotionPlan,
+    PromotionState,
+    PromotionTransaction,
     ProcessCwdIdentity,
     ProcessGeneration,
+    ProcessLaunchError,
     ProcfsRuntimeProcessReader,
+    RuntimeAdmissionLock,
+    RuntimeObservation,
     SupervisorAdmissionLockIdentity,
     SupervisorProcessIdentity,
     build_candidate_runtime_identity,
@@ -3380,3 +3386,777 @@ def test_real_procfs_lock_capture_binds_kernel_owner_generation(
     assert captured.kernel_lock_mode == "WRITE"
     assert captured.kernel_lock_start == "0"
     assert captured.kernel_lock_end == "EOF"
+
+
+def _transaction_process_identity(
+    root: Path,
+    generation: ProcessGeneration,
+    *,
+    commit: str,
+    tree: str,
+) -> SupervisorProcessIdentity:
+    lock_path = root.parent / "status" / ".orchestrator" / "supervisor.lock"
+    return SupervisorProcessIdentity(
+        generation=generation,
+        executable=Path(sys.executable).resolve(),
+        argv=(
+            str(Path(sys.executable).resolve()),
+            "-u",
+            str(root / ".orchestrator" / "supervisor.py"),
+            "--config",
+            str(root.parent / "live-config.json"),
+            "--verbose",
+        ),
+        entrypoint=root / ".orchestrator" / "supervisor.py",
+        config_path=root.parent / "live-config.json",
+        cwd=ProcessCwdIdentity(path=root, device=11, inode=12),
+        cwd_commit=commit,
+        cwd_tree=tree,
+        environment_contract=(
+            ("PANTHEON_COMMAND_ROOT", str(root)),
+            ("PANTHEON_COMMAND_RUNTIME_SHA", commit),
+            ("PANTHEON_STATUS_ROOT", str(root.parent / "status")),
+        ),
+        admission_lock=SupervisorAdmissionLockIdentity(
+            path=lock_path,
+            device=21,
+            inode=22,
+            byte_length=4,
+            sha256="1" * 64,
+            mtime_ns=23,
+            ctime_ns=24,
+            kernel_lock_id="25",
+            kernel_lock_kind="FLOCK",
+            kernel_lock_class="ADVISORY",
+            kernel_lock_mode="WRITE",
+            kernel_lock_start="0",
+            kernel_lock_end="EOF",
+            owner_pid=generation.pid,
+            owner_starttime_ticks=generation.starttime_ticks,
+        ),
+    )
+
+
+def _transaction_identity(root: Path, commit: str, tree: str) -> Mock:
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    identity.candidate_root = root
+    identity.head_commit = commit
+    identity.tracked_tree_identity = tree
+    identity.config_sha256 = "c" * 64
+    return identity
+
+
+def _transaction_observation(
+    process: SupervisorProcessIdentity,
+    *,
+    second: int,
+    successful_loop: bool = True,
+    invariant_failures: tuple[str, ...] = (),
+    config_sha256: str = "c" * 64,
+    projection_sha256: str = "projection-baseline",
+    worker_queue_sha256: str = "worker-queue-baseline",
+    provider_baseline_sha256: str = "provider-baseline",
+) -> RuntimeObservation:
+    observed = datetime(2026, 8, 2, 10, 0, second, tzinfo=timezone.utc)
+    return RuntimeObservation(
+        process=process,
+        observed_at=observed,
+        successful_loop_at=observed if successful_loop else None,
+        state_sha256=f"state-{second}",
+        status_sha256="status-baseline",
+        provider_document_sha256="provider-document-baseline",
+        provider_baseline_sha256=provider_baseline_sha256,
+        projection_sha256=projection_sha256,
+        worker_queue_sha256=worker_queue_sha256,
+        config_sha256=config_sha256,
+        invariant_failures=invariant_failures,
+    )
+
+
+class _FakePromotionBackend:
+    def __init__(self, tmp_path: Path, *, fault: str | None = None) -> None:
+        self.fault = fault
+        self.clock = 0.0
+        self.wall_clock = datetime(2026, 8, 2, 10, 0, 1, tzinfo=timezone.utc)
+        self.intents: list[tuple[int, str]] = []
+        self.terminated: list[ProcessGeneration] = []
+        self.launches: list[str] = []
+        self.candidate_observe_count = 0
+        self.rollback_observe_count = 0
+        self.incumbent_generation = ProcessGeneration(100, 1000, "S")
+        self.candidate_generation = ProcessGeneration(200, 2000, "S")
+        self.rollback_generation = ProcessGeneration(300, 3000, "S")
+        self.alive = {100: True, 200: False, 300: False}
+
+        incumbent_root = tmp_path / ("a" * 40)
+        candidate_root = tmp_path / ("b" * 40)
+        self.incumbent_identity = _transaction_identity(
+            incumbent_root,
+            "a" * 40,
+            "1" * 40,
+        )
+        self.candidate_identity = _transaction_identity(
+            candidate_root,
+            "b" * 40,
+            "2" * 40,
+        )
+        self.incumbent_process = _transaction_process_identity(
+            incumbent_root,
+            self.incumbent_generation,
+            commit="a" * 40,
+            tree="1" * 40,
+        )
+        self.candidate_process = _transaction_process_identity(
+            candidate_root,
+            self.candidate_generation,
+            commit="b" * 40,
+            tree="2" * 40,
+        )
+        self.rollback_process = _transaction_process_identity(
+            incumbent_root,
+            self.rollback_generation,
+            commit="a" * 40,
+            tree="1" * 40,
+        )
+        self.candidate_contract = Mock(spec=GovernedSupervisorLaunchContract)
+        self.rollback_contract = Mock(spec=GovernedSupervisorLaunchContract)
+        self.baseline = _transaction_observation(
+            self.incumbent_process,
+            second=0,
+        )
+        self.plan = PromotionPlan(
+            candidate_identity=self.candidate_identity,
+            candidate_launch=self.candidate_contract,
+            incumbent_identity=self.incumbent_identity,
+            incumbent_process=self.incumbent_process,
+            rollback_launch=self.rollback_contract,
+            baseline=self.baseline,
+            runtime_admission_lock_path=(
+                tmp_path / "status" / ".orchestrator" / "runtime-admission.lock"
+            ),
+        )
+
+    def prepare(self, candidate_root: Path) -> PromotionPlan:
+        assert candidate_root == self.candidate_identity.candidate_root
+        return self.plan
+
+    def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
+        assert plan is self.plan
+        if self.fault == "snapshot_drift":
+            return replace(self.baseline, state_sha256="changed-under-lock")
+        return self.baseline
+
+    def observe(
+        self,
+        identity: CandidateRuntimeIdentity,
+        contract: GovernedSupervisorLaunchContract,
+        generation: ProcessGeneration,
+        *,
+        require_current_dev_identity: bool,
+    ) -> RuntimeObservation:
+        if identity is self.candidate_identity:
+            assert require_current_dev_identity is True
+            assert contract is self.candidate_contract
+            assert generation == self.candidate_generation
+            self.candidate_observe_count += 1
+            if self.fault in {
+                "wrong_candidate_cwd",
+                "wrong_candidate_commit",
+                "wrong_candidate_tree",
+            }:
+                raise ValueError(self.fault)
+            if self.fault == "missing_heartbeat":
+                return _transaction_observation(
+                    self.candidate_process,
+                    second=1,
+                    successful_loop=False,
+                )
+            failure_map = {
+                "projection_mismatch": "task_state_shadow_valid",
+                "lease_mismatch": "worker_lease_parity_and_no_duplicates",
+                "duplicate_worker": "worker_lease_parity_and_no_duplicates",
+                "provider_not_ready": "provider_readiness_baseline",
+            }
+            if self.fault in failure_map:
+                return _transaction_observation(
+                    self.candidate_process,
+                    second=1,
+                    invariant_failures=(failure_map[self.fault],),
+                )
+            if self.fault == "config_drift":
+                return _transaction_observation(
+                    self.candidate_process,
+                    second=1,
+                    config_sha256="d" * 64,
+                )
+            candidate_marker_sequences = {
+                "candidate_stale_loop": (0,),
+                "candidate_equal_boundary_loop": (1,),
+                "candidate_regressing_loop": (3, 2),
+                "candidate_out_of_order_loop": (2, 4, 3),
+            }
+            if self.fault in candidate_marker_sequences:
+                markers = candidate_marker_sequences[self.fault]
+                marker = markers[min(self.candidate_observe_count - 1, len(markers) - 1)]
+                return _transaction_observation(
+                    self.candidate_process,
+                    second=marker,
+                )
+            if self.fault in {
+                "rollback_launch_failure",
+                "rollback_config_drift",
+                "rollback_projection_drift",
+                "rollback_worker_drift",
+                "rollback_provider_drift",
+                "rollback_stale_loop",
+                "rollback_equal_boundary_loop",
+                "rollback_regressing_loop",
+                "rollback_out_of_order_loop",
+            }:
+                raise ValueError("candidate_postcheck_failure")
+            return _transaction_observation(
+                self.candidate_process,
+                second=1 + min(self.candidate_observe_count, 3),
+            )
+
+        assert identity is self.incumbent_identity
+        assert require_current_dev_identity is False
+        assert contract is self.rollback_contract
+        assert generation == self.rollback_generation
+        self.rollback_observe_count += 1
+        rollback_marker_sequences = {
+            "rollback_stale_loop": (0,),
+            "rollback_equal_boundary_loop": (1,),
+            "rollback_regressing_loop": (6, 5),
+            "rollback_out_of_order_loop": (5, 7, 6),
+        }
+        markers = rollback_marker_sequences.get(self.fault)
+        marker = (
+            markers[min(self.rollback_observe_count - 1, len(markers) - 1)]
+            if markers is not None
+            else 4 + min(self.rollback_observe_count, 3)
+        )
+        return _transaction_observation(
+            self.rollback_process,
+            second=marker,
+            config_sha256=(
+                "e" * 64 if self.fault == "rollback_config_drift" else "c" * 64
+            ),
+            projection_sha256=(
+                "projection-drift"
+                if self.fault == "rollback_projection_drift"
+                else "projection-baseline"
+            ),
+            worker_queue_sha256=(
+                "worker-queue-drift"
+                if self.fault == "rollback_worker_drift"
+                else "worker-queue-baseline"
+            ),
+            provider_baseline_sha256=(
+                "provider-drift"
+                if self.fault == "rollback_provider_drift"
+                else "provider-baseline"
+            ),
+        )
+
+    def record_intent(
+        self,
+        identity: CandidateRuntimeIdentity,
+        *,
+        old_pid: int,
+        target_sha: str,
+    ) -> None:
+        assert identity in {self.candidate_identity, self.incumbent_identity}
+        self.intents.append((old_pid, target_sha))
+
+    def launch(
+        self,
+        identity: CandidateRuntimeIdentity,
+        contract: GovernedSupervisorLaunchContract,
+        *,
+        require_current_dev_identity: bool,
+    ) -> ProcessGeneration:
+        if identity is self.candidate_identity:
+            assert require_current_dev_identity is True
+            self.launches.append("candidate")
+            if self.fault == "candidate_launch_failure":
+                raise ProcessLaunchError("candidate launch failure")
+            if self.fault == "candidate_identity_unknown_live":
+                self.alive[201] = True
+                raise ProcessLaunchError(
+                    "candidate generation capture failure",
+                    pid=201,
+                    child_absence_proven=False,
+                )
+            self.alive[200] = True
+            return self.candidate_generation
+        assert identity is self.incumbent_identity
+        assert require_current_dev_identity is False
+        self.launches.append("rollback")
+        if self.fault == "rollback_launch_failure":
+            raise ProcessLaunchError(
+                "rollback launch failure",
+                pid=301,
+                child_absence_proven=True,
+            )
+        self.alive[300] = True
+        return self.rollback_generation
+
+    def terminate(self, generation: ProcessGeneration, *, timeout: float) -> None:
+        assert timeout > 0
+        self.terminated.append(generation)
+        self.alive[generation.pid] = False
+
+    def generation_is_alive(self, generation: ProcessGeneration) -> bool:
+        return self.alive.get(generation.pid, False)
+
+    def pid_is_absent(self, pid: int) -> bool:
+        return not self.alive.get(pid, False)
+
+    def utcnow(self) -> datetime:
+        return self.wall_clock
+
+    def monotonic(self) -> float:
+        self.clock += 0.001
+        return self.clock
+
+    def sleep(self, seconds: float) -> None:
+        self.clock += seconds
+
+
+def _run_fake_transaction(
+    tmp_path: Path,
+    *,
+    fault: str | None = None,
+) -> tuple[dict[str, Any], _FakePromotionBackend, Path]:
+    backend = _FakePromotionBackend(tmp_path, fault=fault)
+    evidence_path = tmp_path / "evidence" / "transaction.json"
+    transaction = PromotionTransaction(
+        evidence_path=evidence_path,
+        backend=backend,
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        result = transaction.run(backend.candidate_identity.candidate_root)
+    kill.assert_not_called()
+    return result, backend, evidence_path
+
+
+def test_transaction_promotes_only_after_three_distinct_candidate_loops(
+    tmp_path: Path,
+) -> None:
+    result, backend, evidence_path = _run_fake_transaction(tmp_path)
+
+    assert result["outcome"] == "promoted"
+    assert result["exit_code"] == 0
+    assert result["state"] == PromotionState.PROMOTED.value
+    assert len(result["candidate_observations"]) == 3
+    assert backend.intents == [(100, "b" * 40)]
+    assert backend.terminated == [backend.incumbent_generation]
+    assert json.loads(evidence_path.read_text(encoding="utf-8")) == result
+
+
+def test_transaction_default_evidence_stays_outside_executable_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _FakePromotionBackend(tmp_path)
+    evidence_root = tmp_path / "runtime-evidence"
+    monkeypatch.setattr(
+        promotion,
+        "DEFAULT_PROMOTION_EVIDENCE_ROOT",
+        evidence_root,
+    )
+    transaction = PromotionTransaction(
+        backend=backend,
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        result = transaction.run(backend.candidate_identity.candidate_root)
+
+    kill.assert_not_called()
+    evidence_path = Path(result["evidence_path"])
+    assert result["outcome"] == "promoted"
+    assert result["requested_evidence_path"] is None
+    assert result["evidence_path_rejection"] is None
+    assert evidence_path.parent == evidence_root
+    assert evidence_path.is_file()
+    assert not evidence_path.is_relative_to(
+        backend.candidate_identity.candidate_root
+    )
+    assert not evidence_path.is_relative_to(
+        backend.incumbent_identity.candidate_root
+    )
+
+
+@pytest.mark.parametrize("root_kind", ["candidate", "incumbent"])
+def test_transaction_rejects_evidence_inside_executable_root_before_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_kind: str,
+) -> None:
+    backend = _FakePromotionBackend(tmp_path)
+    evidence_root = tmp_path / "safe-runtime-evidence"
+    monkeypatch.setattr(
+        promotion,
+        "DEFAULT_PROMOTION_EVIDENCE_ROOT",
+        evidence_root,
+    )
+    executable_root = (
+        backend.candidate_identity.candidate_root
+        if root_kind == "candidate"
+        else backend.incumbent_identity.candidate_root
+    )
+    requested_path = executable_root / "promotion-evidence.json"
+    transaction = PromotionTransaction(
+        evidence_path=requested_path,
+        backend=backend,
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        result = transaction.run(backend.candidate_identity.candidate_root)
+
+    kill.assert_not_called()
+    assert result["outcome"] == "aborted"
+    assert "outside executable command roots" in result["original_failure"]
+    assert result["requested_evidence_path"] == str(requested_path)
+    assert "outside executable command roots" in result["evidence_path_rejection"]
+    assert backend.intents == []
+    assert backend.terminated == []
+    assert backend.launches == []
+    assert not requested_path.exists()
+    persisted_path = Path(result["evidence_path"])
+    assert persisted_path.parent == evidence_root
+    assert json.loads(persisted_path.read_text(encoding="utf-8"))["outcome"] == "aborted"
+
+
+@pytest.mark.parametrize(
+    "fault,expected_fragment",
+    [
+        ("candidate_launch_failure", "candidate launch failure"),
+        ("missing_heartbeat", "last_successful_loop_at"),
+        ("wrong_candidate_cwd", "wrong_candidate_cwd"),
+        ("wrong_candidate_commit", "wrong_candidate_commit"),
+        ("wrong_candidate_tree", "wrong_candidate_tree"),
+        ("projection_mismatch", "task_state_shadow_valid"),
+        ("lease_mismatch", "worker_lease_parity_and_no_duplicates"),
+        ("duplicate_worker", "worker_lease_parity_and_no_duplicates"),
+        ("provider_not_ready", "provider_readiness_baseline"),
+        ("config_drift", "config bytes drifted"),
+    ],
+)
+def test_candidate_failure_matrix_rolls_back_to_new_verified_pid(
+    tmp_path: Path,
+    fault: str,
+    expected_fragment: str,
+) -> None:
+    result, backend, evidence_path = _run_fake_transaction(tmp_path, fault=fault)
+
+    assert result["outcome"] == "rolled_back"
+    assert result["exit_code"] != 0
+    assert result["rollback_pid"] == 300
+    assert result["rollback_pid"] != result["incumbent"]["pid"]
+    assert len(result["rollback_observations"]) == 3
+    assert expected_fragment in result["original_failure"]
+    if fault == "candidate_launch_failure":
+        assert result["candidate_pid"] is None
+        assert result["candidate_child_absence_proven"] is True
+    else:
+        assert backend.intents[-1] == (200, "a" * 40)
+        assert backend.terminated[-1] == backend.candidate_generation
+    assert json.loads(evidence_path.read_text(encoding="utf-8"))["outcome"] == "rolled_back"
+
+
+@pytest.mark.parametrize(
+    "fault,rollback_fragment",
+    [
+        ("rollback_launch_failure", "rollback launch failure"),
+        ("rollback_config_drift", "config bytes drifted"),
+        ("rollback_projection_drift", "Rollback baseline mismatch: projection"),
+        (
+            "rollback_worker_drift",
+            "Rollback baseline mismatch: worker_queue_lease_parity",
+        ),
+        ("rollback_provider_drift", "Rollback baseline mismatch: provider_baseline"),
+    ],
+)
+def test_rollback_failure_is_nonzero_and_records_both_failures(
+    tmp_path: Path,
+    fault: str,
+    rollback_fragment: str,
+) -> None:
+    result, _backend, evidence_path = _run_fake_transaction(tmp_path, fault=fault)
+
+    assert result["outcome"] == "rollback_failed"
+    assert result["exit_code"] != 0
+    assert "candidate_postcheck_failure" in result["original_failure"]
+    assert rollback_fragment in result["rollback_failure"]
+    assert result["candidate"]["root"]
+    assert result["incumbent"]["root"]
+    assert result["candidate"]["commit"] == "b" * 40
+    assert result["incumbent"]["commit"] == "a" * 40
+    assert result["candidate"]["tree"] == "2" * 40
+    assert result["incumbent"]["tree"] == "1" * 40
+    assert result["candidate"]["config_sha256"] == "c" * 64
+    assert json.loads(evidence_path.read_text(encoding="utf-8"))["state"] == "rollback_failed"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "candidate_stale_loop",
+        "candidate_equal_boundary_loop",
+        "candidate_regressing_loop",
+        "candidate_out_of_order_loop",
+    ],
+)
+def test_candidate_loop_markers_must_be_post_launch_and_strictly_increasing(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(tmp_path, fault=fault)
+
+    assert result["outcome"] == "rolled_back"
+    assert result["candidate_launch_boundary_at"] == "2026-08-02T10:00:01Z"
+    assert result["rollback_launch_boundary_at"] == "2026-08-02T10:00:01Z"
+    assert backend.launches == ["candidate", "rollback"]
+    assert len(result["rollback_observations"]) == 3
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "rollback_stale_loop",
+        "rollback_equal_boundary_loop",
+        "rollback_regressing_loop",
+        "rollback_out_of_order_loop",
+    ],
+)
+def test_rollback_loop_markers_must_be_post_launch_and_strictly_increasing(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(tmp_path, fault=fault)
+
+    assert result["outcome"] == "rollback_failed"
+    assert result["exit_code"] != 0
+    assert result["rollback_launch_boundary_at"] == "2026-08-02T10:00:01Z"
+    assert backend.launches == ["candidate", "rollback"]
+    assert (
+        "launch boundary" in result["rollback_failure"]
+        or "marker regressed" in result["rollback_failure"]
+    )
+
+
+def test_unknown_live_candidate_blocks_rollback_launch_and_is_durable(
+    tmp_path: Path,
+) -> None:
+    result, backend, evidence_path = _run_fake_transaction(
+        tmp_path,
+        fault="candidate_identity_unknown_live",
+    )
+
+    assert result["outcome"] == "rollback_failed"
+    assert result["candidate_pid"] == 201
+    assert result["candidate_child_absence_proven"] is False
+    assert result["rollback_pid"] is None
+    assert result["rollback_launch_boundary_at"] is None
+    assert "unknown generation" in result["rollback_failure"]
+    assert "rollback launch is prohibited" in result["rollback_failure"]
+    assert backend.alive[201] is True
+    assert backend.launches == ["candidate"]
+    persisted = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert persisted["outcome"] == "rollback_failed"
+    assert persisted["candidate_pid"] == 201
+    assert persisted["candidate_child_absence_proven"] is False
+
+
+def _exercise_os_launch_generation_failure(
+    tmp_path: Path,
+    process: Mock,
+) -> ProcessLaunchError:
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    contract = Mock(spec=GovernedSupervisorLaunchContract)
+    contract.argv = (str(Path(sys.executable).resolve()), "supervisor.py")
+    contract.cwd = tmp_path
+    contract.status_root = tmp_path / "status"
+    contract.required_environment = ()
+    contract.stdout_log_path = tmp_path / "supervisor.log"
+    process.pid = 4321
+    reader = Mock(spec=ProcfsRuntimeProcessReader)
+    reader.read_generation.side_effect = ValueError("injected procfs failure")
+    backend = promotion.OSPromotionBackend(reader=reader)
+
+    with patch(
+        "promote_supervisor_runtime.build_governed_supervisor_launch_contract",
+        return_value=contract,
+    ), patch(
+        "promote_supervisor_runtime.build_scrubbed_launch_environment",
+        return_value={},
+    ), patch(
+        "promote_supervisor_runtime._validate_governed_launch_environment",
+    ), patch(
+        "promote_supervisor_runtime.subprocess.Popen",
+        return_value=process,
+    ):
+        with pytest.raises(ProcessLaunchError) as captured:
+            backend.launch(
+                identity,
+                contract,
+                require_current_dev_identity=True,
+            )
+    return captured.value
+
+
+def test_os_launch_contains_and_reaps_child_when_generation_capture_fails(
+    tmp_path: Path,
+) -> None:
+    process = Mock()
+    process.poll.return_value = None
+    process.wait.return_value = 0
+
+    error = _exercise_os_launch_generation_failure(tmp_path, process)
+
+    assert error.pid == 4321
+    assert error.generation is None
+    assert error.child_absence_proven is True
+    assert "terminated and reaped" in str(error)
+    process.terminate.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=5.0)
+    process.kill.assert_not_called()
+
+
+def test_os_launch_reports_unknown_live_child_when_containment_cannot_prove_absence(
+    tmp_path: Path,
+) -> None:
+    process = Mock()
+    process.poll.return_value = None
+    process.terminate.side_effect = RuntimeError("terminate unavailable")
+    process.kill.side_effect = RuntimeError("kill unavailable")
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired("supervisor", 5.0),
+        subprocess.TimeoutExpired("supervisor", 5.0),
+    ]
+
+    error = _exercise_os_launch_generation_failure(tmp_path, process)
+
+    assert error.pid == 4321
+    assert error.generation is None
+    assert error.child_absence_proven is False
+    assert "containment could not be proven" in str(error)
+    assert "terminate:RuntimeError:terminate unavailable" in error.cleanup_error
+    assert "kill:RuntimeError:kill unavailable" in error.cleanup_error
+
+
+def test_snapshot_drift_under_admission_lock_aborts_without_termination(
+    tmp_path: Path,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(
+        tmp_path,
+        fault="snapshot_drift",
+    )
+
+    assert result["outcome"] == "aborted"
+    assert "snapshot changed before TERM" in result["original_failure"]
+    assert backend.intents == []
+    assert backend.terminated == []
+
+
+def test_runtime_admission_lock_is_same_owner_reentrant(tmp_path: Path) -> None:
+    lock = RuntimeAdmissionLock(tmp_path / "runtime-admission.lock", timeout=1.0)
+
+    with lock.held():
+        assert lock.depth == 1
+        with lock.held():
+            assert lock.depth == 2
+        assert lock.depth == 1
+
+    assert lock.depth == 0
+
+
+def test_runtime_admission_lock_preserves_bounded_external_contention(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "runtime-admission.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        lock = RuntimeAdmissionLock(lock_path, timeout=0.01)
+
+        with pytest.raises(TimeoutError, match="Timed out acquiring"):
+            lock.acquire()
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def test_runtime_admission_lock_composes_with_watchdog_intent_writer(
+    tmp_path: Path,
+) -> None:
+    status_root = tmp_path / "status"
+    state_path = status_root / ".orchestrator" / "state.json"
+    status_path = status_root / "ai-status.json"
+    write_json(state_path, {})
+    config = {
+        "paths": {
+            "state_file": str(state_path),
+            "status_file": str(status_path),
+        }
+    }
+    lock_path = status_root / ".orchestrator" / "runtime-admission.lock"
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    with patch.object(promotion, "_strict_live_config", return_value=config):
+        with RuntimeAdmissionLock(lock_path, timeout=1.0).held():
+            backend.record_intent(
+                identity,
+                old_pid=4321,
+                target_sha="a" * 40,
+            )
+
+    intent_path = status_root / ".orchestrator" / "supervisor-restart-intent.json"
+    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    assert intent["kind"] == "intentional_deploy_restart"
+    assert intent["old_pid"] == 4321
+    assert intent["target_sha"] == "a" * 40
+
+
+def test_os_backend_termination_signals_only_captured_generation(
+    tmp_path: Path,
+) -> None:
+    _identity, reader, _argv = _injected_process_fixture(tmp_path)
+    generation = reader.generations[1717]
+    reader.generation_sequences[1717] = [
+        generation,
+        ProcessLookupError(1717),
+    ]
+    backend = promotion.OSPromotionBackend(reader=reader)
+
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        backend.terminate(generation, timeout=1.0)
+
+    kill.assert_called_once_with(generation.pid, promotion.signal.SIGTERM)
+
+
+def test_os_backend_termination_never_signals_reused_pid(tmp_path: Path) -> None:
+    _identity, reader, _argv = _injected_process_fixture(tmp_path)
+    captured = reader.generations[1717]
+    reader.generations[1717] = replace(captured, starttime_ticks=999999)
+    backend = promotion.OSPromotionBackend(reader=reader)
+
+    with patch("promote_supervisor_runtime.os.kill") as kill:
+        backend.terminate(captured, timeout=1.0)
+
+    kill.assert_not_called()
