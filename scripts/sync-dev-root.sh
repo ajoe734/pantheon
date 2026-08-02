@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# Keep the supervisor's dev-root checkout in sync with origin/dev and self-heal
-# config drift. dev-root has no built-in auto-sync, so merged fixes (incl.
-# supervisor.py) never go live until someone manually deploys -- this closes
-# that gap. Safe to run on a cron: a no-op when already current.
+# Keep the mutable dev-root staging checkout in sync with origin/dev, then hand
+# supervisor changes to the immutable runtime promotion transaction.  dev-root
+# is never supervisor command authority and this script never directly signals
+# a supervisor.
 #
 #   - resolve the root the LIVE supervisor process actually runs from
-#     (/proc/<pid>/cwd) and sync that root too. Syncing only the default
-#     dev-root path is what let the live supervisor sit 63 commits behind
-#     origin/dev while this script reported success (SUP-PROVIDER-POOL-PROBE-
-#     GATE-001). Set SYNC_ACTIVE_ROOT=0 to report the split without repairing it.
-#   - fetch origin/dev; if a root is behind, stash dirty TRACKED changes
-#     (untracked runtime files like watchdog-state.json are left in place) and
-#     fast-forward via `git reset --hard origin/dev`.
-#   - re-provision the split-root live config so repo-owned schema migrations
-#     land while environment overrides and canonical status paths are preserved;
-#   - run check_config_drift.py --fix to realign non-allowlisted live config
-#     toggles (e.g. a hand-disabled chair_review) and report dev-root lag;
-#   - if code or live config changed, or the live process runs from a root other
-#     than dev-root, durably declare a PID-bound intentional restart before
-#     SIGTERM so the watchdog relaunches from the configured command root
-#     without charging the crash-loop budget (flock guarantees one instance).
+#     (/proc/<pid>/cwd) only to bind the incumbent.  An immutable active root is
+#     evidence and rollback authority: it is never fetched, stashed, reset, or
+#     otherwise updated in place.
+#   - fetch origin/dev into mutable dev-root and refresh that staging checkout.
+#   - materialize the accepted target as a standalone, clean
+#     command-runtimes/<40-hex> checkout when promotion is needed.
+#   - ask promote-supervisor-runtime.sh to perform the config/PID transaction.
+#     The promotion operator owns intent, TERM, config CAS, launch, and rollback.
 set -uo pipefail
 
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
@@ -27,6 +20,7 @@ LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroo
 STATUS_ROOT="${PANTHEON_STATUS_ROOT:-/home/lupin/pantheon}"
 REF="${SYNC_REF:-origin/dev}"
 PID_FILE="${PANTHEON_SUPERVISOR_PID:-/home/lupin/pantheon/.orchestrator/supervisor.pid}"
+COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
 
@@ -59,13 +53,14 @@ elif [[ "$ACTIVE_ROOT" == "$DEV_ROOT" ]]; then
   log "active supervisor root matches dev-root ($DEV_ROOT)"
 else
   root_split=1
-  log "ACTIVE_ROOT_SPLIT: live supervisor pid=$pid runs from $ACTIVE_ROOT, not $DEV_ROOT"
+  log "ACTIVE_ROOT_SPLIT_PROTECTED: live supervisor pid=$pid runs from $ACTIVE_ROOT, not $DEV_ROOT"
 fi
 
 updated=0
+source_advance=0
 sync_root() {
-  # $1 = repo root, $2 = label. Sets `updated=1` when the root moved.
-  local root="$1" label="$2" behind head_before
+  # $1 = repo root, $2 = label, $3 = whether this checkout may move.
+  local root="$1" label="$2" may_move="$3" behind head_before
   if ! git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
     log "ERROR: $label $root is not a git checkout; skipping"
     return 1
@@ -78,6 +73,11 @@ sync_root() {
   head_before="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo '?')"
   log "$label ($root) at $head_before, behind $REF by ${behind}"
   if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
+    source_advance=1
+    if [[ "$may_move" != "1" ]]; then
+      log "ACTIVE_MUTABLE_ROOT_PROTECTED: fetched $REF but will not stash or reset running root $root"
+      return 0
+    fi
     if ! git -C "$root" diff --quiet || ! git -C "$root" diff --cached --quiet; then
       git -C "$root" stash push -m "sync-dev-root-dirty-${head_before}-$(date -u +%Y%m%dT%H%M%SZ)" \
         >/dev/null 2>&1 && log "$label stashed dirty tracked changes (recoverable via git stash list)"
@@ -96,56 +96,136 @@ sync_root() {
 config_updated=0
 live_hash_before="$(sha256sum "$LIVE_CONFIG" 2>/dev/null | awk '{print $1}')"
 
-if ! sync_root "$DEV_ROOT" "dev-root"; then
+dev_root_may_move=1
+if [[ -n "$ACTIVE_ROOT" && "$ACTIVE_ROOT" == "$DEV_ROOT" ]]; then
+  dev_root_may_move=0
+fi
+if ! sync_root "$DEV_ROOT" "dev-root" "$dev_root_may_move"; then
   log "FATAL: cannot sync dev-root $DEV_ROOT"; exit 1
 fi
+target_sha="$(git -C "$DEV_ROOT" rev-parse "$REF")"
+if [[ ! "$target_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  log "FATAL: accepted target did not resolve to a lowercase full SHA: $target_sha"
+  exit 1
+fi
+candidate_root="${COMMAND_RUNTIME_PARENT}/${target_sha}"
+
 if [[ -n "$ACTIVE_ROOT" && "$ACTIVE_ROOT" != "$DEV_ROOT" ]]; then
-  if [[ "${SYNC_ACTIVE_ROOT:-1}" == "1" ]]; then
-    sync_root "$ACTIVE_ROOT" "active-supervisor-root" || log "active supervisor root sync failed; split persists"
-  else
-    log "SYNC_ACTIVE_ROOT=0; leaving active supervisor root $ACTIVE_ROOT unrepaired"
-  fi
+  log "leaving active immutable supervisor root untouched: $ACTIVE_ROOT"
   log "evidence: dev-root HEAD=$(git -C "$DEV_ROOT" rev-parse HEAD) active HEAD=$(git -C "$ACTIVE_ROOT" rev-parse HEAD 2>/dev/null || echo unknown) target=$(git -C "$DEV_ROOT" rev-parse "$REF")"
 fi
 
-if [[ -f scripts/provision_live_supervisor_config.py && -f .orchestrator/config.json ]]; then
-  if ! python3 scripts/provision_live_supervisor_config.py \
-    --repo-config .orchestrator/config.json \
+config_drift=0
+if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
+  drift_report="$(mktemp)"
+  if ! python3 "$DEV_ROOT/scripts/check_config_drift.py" \
+    --repo-config "$DEV_ROOT/.orchestrator/config.json" \
     --live-config "$LIVE_CONFIG" \
-    --command-root "$DEV_ROOT" \
-    --status-root "$STATUS_ROOT" >/dev/null; then
-    log "FATAL: live supervisor config provisioning failed"
-    exit 1
+    --dev-root "$DEV_ROOT" --ref "$REF" --json >"$drift_report"; then
+    config_drift=1
+    log "CONFIG_DRIFT_REQUIRES_PROMOTION: $(tr '\n' ' ' <"$drift_report")"
   fi
+  rm -f -- "$drift_report"
 fi
 
-if [[ -f scripts/check_config_drift.py ]]; then
-  python3 scripts/check_config_drift.py \
-    --repo-config .orchestrator/config.json \
-    --live-config "$LIVE_CONFIG" \
-    --dev-root "$DEV_ROOT" --ref "$REF" --fix || log "config-drift guard reported drift (auto-fixed where allowed)"
+materialize_candidate_runtime() {
+  local source_root="$1" destination="$2" sha="$3"
+  local temporary_parent runtime origin_url accepted_dev
+  python3 - "$COMMAND_RUNTIME_PARENT" <<'PY' || return 1
+import os
+import stat
+import sys
+from pathlib import Path
+
+parent = Path(sys.argv[1])
+if not parent.is_absolute() or any(part in {".", ".."} for part in parent.parts):
+    raise SystemExit(f"command runtime parent must be canonical absolute path: {parent}")
+for component in (parent, *parent.parents):
+    if component.is_symlink():
+        raise SystemExit(f"command runtime parent contains symlink component: {component}")
+parent.mkdir(parents=True, exist_ok=True)
+if not parent.is_dir() or stat.S_ISLNK(parent.lstat().st_mode):
+    raise SystemExit(f"command runtime parent is not a direct directory: {parent}")
+PY
+  if [[ -L "$destination" ]]; then
+    log "ERROR: immutable candidate destination is a symlink: $destination"
+    return 1
+  fi
+  if [[ ! -e "$destination" ]]; then
+    temporary_parent="$(mktemp -d "${COMMAND_RUNTIME_PARENT}/.runtime-materialize-${sha}.XXXXXX")"
+    runtime="${temporary_parent}/runtime"
+    if ! git clone --quiet --no-local --no-checkout "$source_root" "$runtime"; then
+      rm -rf -- "$temporary_parent"
+      return 1
+    fi
+    origin_url="$(git -C "$source_root" config --get remote.origin.url)"
+    accepted_dev="$(git -C "$source_root" rev-parse "$REF")"
+    git -C "$runtime" remote set-url origin "$origin_url" \
+      && git -C "$runtime" fetch --quiet --no-tags "$source_root" "$sha" \
+      && git -C "$runtime" update-ref refs/remotes/origin/dev "$accepted_dev" \
+      && git -C "$runtime" checkout --quiet --detach "$sha" \
+      || { rm -rf -- "$temporary_parent"; return 1; }
+    if ! python3 - "$runtime" "$destination" "$COMMAND_RUNTIME_PARENT" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+source, destination, parent = map(Path, sys.argv[1:])
+try:
+    os.rename(source, destination)
+except FileExistsError:
+    pass
+fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+    then
+      rm -rf -- "$temporary_parent"
+      return 1
+    fi
+    rm -rf -- "$temporary_parent"
+  fi
+  python3 "$destination/scripts/provision_live_supervisor_config.py" \
+    --command-root "$destination" \
+    --validate-command-root-only >/dev/null
+}
+
+if [[ -z "$ACTIVE_ROOT" ]]; then
+  if [[ "$source_advance" -eq 1 || "$config_drift" -eq 1 ]]; then
+    log "PROMOTION_HANDOFF_REQUIRED: no live incumbent is bound; run the governed dev first-install/deploy path"
+  fi
+  log "done (updated=${updated} source_advance=${source_advance} config_drift=${config_drift} root_split=${root_split} promotion=no-incumbent)"
+  exit "$config_drift"
+fi
+
+if [[ "$ACTIVE_ROOT" == "$candidate_root" ]]; then
+  if [[ "$config_drift" -eq 1 ]]; then
+    log "FATAL: active immutable runtime already equals target but config drift exists; select a new accepted runtime for governed promotion"
+    exit 1
+  fi
+  log "done (updated=${updated} source_advance=${source_advance} config_drift=0 root_split=${root_split} promotion=no-op-current-root)"
+  exit 0
+fi
+
+if ! materialize_candidate_runtime "$DEV_ROOT" "$candidate_root" "$target_sha"; then
+  log "FATAL: immutable candidate materialization/validation failed for $candidate_root"
+  exit 1
+fi
+
+promotion_args=(--promote --repo "$candidate_root")
+if [[ ! "$ACTIVE_ROOT" =~ ^${COMMAND_RUNTIME_PARENT}/[0-9a-f]{40}$ ]]; then
+  promotion_args+=(--bootstrap-mutable-incumbent)
+fi
+log "requesting governed supervisor promotion incumbent=$ACTIVE_ROOT candidate=$candidate_root"
+if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" "${promotion_args[@]}"; then
+  log "FATAL: governed supervisor promotion handoff failed; incumbent was not directly signalled by sync-dev-root"
+  exit 1
 fi
 
 live_hash_after="$(sha256sum "$LIVE_CONFIG" 2>/dev/null | awk '{print $1}')"
 if [[ "$live_hash_before" != "$live_hash_after" ]]; then
   config_updated=1
-  log "updated split-root live supervisor config"
 fi
-
-if [[ "$updated" -eq 1 || "$config_updated" -eq 1 || "$root_split" -eq 1 ]]; then
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    target_sha="$(git -C "$DEV_ROOT" rev-parse "$REF")"
-    if ! python3 "$DEV_ROOT/.orchestrator/supervisor_watchdog.py" \
-      --config "$LIVE_CONFIG" \
-      --record-intent-pid "$pid" \
-      --record-intent-target "$target_sha" >/dev/null; then
-      log "FATAL: failed to record intentional supervisor restart; leaving pid=$pid running"
-      exit 1
-    fi
-    log "recorded intentional supervisor restart pid=$pid target=${target_sha:0:10}"
-    log "restarting supervisor pid=$pid to load new code (watchdog cron will relaunch)"
-    kill -TERM "$pid" 2>/dev/null || true
-  fi
-fi
-
-log "done (updated=${updated} config_updated=${config_updated} root_split=${root_split})"
+log "done (updated=${updated} source_advance=${source_advance} config_updated=${config_updated} config_drift=${config_drift} root_split=${root_split} promotion=requested)"
