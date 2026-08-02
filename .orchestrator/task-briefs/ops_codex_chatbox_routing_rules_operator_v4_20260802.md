@@ -71,3 +71,20 @@ JSON, runtime state, product code, services, deployment, or the 28-task catalog.
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
+
+## Owner Validation Anchor (2026-08-02)
+
+- The account-neutral policy, this brief, and the pending review manifest were
+  made durable at anchor commit
+  `805b8b7003162197904dbf65768f53417705cc6a`.
+- The branch was created from and remains based on current `origin/dev`
+  `79e02ee059387044eec1d21a283e4848f814f49a`; the exact diff contains only the
+  three declared artifacts.
+- `git diff --check origin/dev...HEAD` and worktree `git diff --check` passed.
+- The manifest's executable policy check passed with 29 required retained
+  fragments and 6 forbidden stale/global-rule fragments.
+- `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD
+  --skip-merge` passed for the anchor, and the runtime-mirror guard inputs found
+  no generated-state or embedded frontend violation.
+- PRs #4401 and #4405 were confirmed open. They remain untouched until the
+  corrected replacement PR is published, per the supersession gate.

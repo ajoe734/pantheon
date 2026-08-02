@@ -52,7 +52,7 @@ required = [
     "reporting blockers without taking over implementation",
     "Codex extension subagents may perform read-only exploration",
     "must not apply patches,",
-    "act as a parallel implementation fleet",
+    "act as a parallel\nimplementation fleet",
     "Code-writing work belongs to supervisor-dispatched",
     "The Pantheon supervisor is the only routine implementation dispatcher",
     "must not create a parallel scheduling path",
@@ -84,8 +84,16 @@ print(f"policy assertions passed: {len(required)} required, {len(forbidden)} for
 - `review_status`: `review_pending`
 - `reviewer`: `Human/Ops`
 - `reviewed_head`: not yet assigned
-- Local validation and GitHub exact-head check results will be recorded after
-  the task-scoped commits and replacement PR exist.
+- `candidate_policy_commit`: `805b8b7003162197904dbf65768f53417705cc6a`
+- `git diff --check origin/dev...HEAD`: passed
+- Worktree `git diff --check`: passed
+- Deterministic policy assertions: passed, 29 required and 6 forbidden
+- `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD
+  --skip-merge`: passed for the anchor commit
+- Runtime mirror guard inputs: passed; no generated-state changes and no
+  embedded `execute-plans` mirror
+- Exact three-file scope: passed
+- Replacement PR publication and exact-head GitHub checks: pending
 
 ## Independent Decision
 
