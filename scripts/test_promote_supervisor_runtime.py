@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import fcntl
+import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +21,9 @@ from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
+    MutableIncumbentSnapshot,
     PromotionPlan,
+    PromotionLock,
     PromotionState,
     PromotionTransaction,
     ProcessCwdIdentity,
@@ -28,6 +33,7 @@ from promote_supervisor_runtime import (
     RuntimeAdmissionLock,
     RuntimeObservation,
     SupervisorAdmissionLockIdentity,
+    SupervisorConfigVariant,
     SupervisorProcessIdentity,
     build_candidate_runtime_identity,
     build_governed_supervisor_launch_contract,
@@ -444,6 +450,16 @@ def test_main_preserves_lexical_candidate_alias_for_identity_rejection(
         assert promotion.main() == 1
 
     capture.assert_called_once_with(alias, config_path_arg=None)
+
+
+def test_mutable_bootstrap_flag_requires_explicit_promote() -> None:
+    with patch.object(
+        sys,
+        "argv",
+        ["promote_supervisor_runtime.py", "--bootstrap-mutable-incumbent"],
+    ):
+        with pytest.raises(SystemExit, match="requires --promote"):
+            promotion.main()
 
 
 @patch("promote_supervisor_runtime.lock_held", return_value=True)
@@ -2525,6 +2541,143 @@ def test_live_config_revalidation_rejects_same_inode_parent_replacement(
             identity.verify_against_live_config(live_config)
 
 
+def test_config_variants_are_derived_from_one_capture_without_external_write(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, config_bytes = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+        candidate_variant = promotion.derive_supervisor_config_variant(
+            identity,
+            command_root=candidate,
+        )
+        rollback_root = parent / ("f" * 40)
+        rollback_variant = promotion.derive_supervisor_config_variant(
+            identity,
+            command_root=rollback_root,
+        )
+
+    assert live_config.read_bytes() == config_bytes
+    assert candidate_variant.supervisor_argv != rollback_variant.supervisor_argv
+    assert str(candidate / ".orchestrator" / "supervisor.py") in (
+        candidate_variant.supervisor_argv
+    )
+    assert str(rollback_root / ".orchestrator" / "supervisor.py") in (
+        rollback_variant.supervisor_argv
+    )
+    assert candidate_variant.sha256 == hashlib.sha256(
+        candidate_variant.content
+    ).hexdigest()
+    assert rollback_variant.sha256 == hashlib.sha256(
+        rollback_variant.content
+    ).hexdigest()
+
+
+def _config_install_fixture(
+    tmp_path: Path,
+) -> tuple[CandidateRuntimeIdentity, Path, bytes, SupervisorConfigVariant]:
+    identity, live_config, original = _build_test_candidate_identity(tmp_path)
+    target = b'{"generation":"candidate"}\n'
+    variant = SupervisorConfigVariant(
+        command_root=identity.candidate_root,
+        supervisor_argv=("python3", "supervisor.py"),
+        content=target,
+        byte_length=len(target),
+        sha256=hashlib.sha256(target).hexdigest(),
+    )
+    return identity, live_config, original, variant
+
+
+@pytest.mark.parametrize(
+    "fault_stage,replaced",
+    [
+        ("after_temp_fsync", False),
+        ("before_replace", False),
+        ("after_replace", True),
+        ("after_directory_fsync", True),
+    ],
+)
+def test_atomic_config_install_crash_windows_never_expose_partial_bytes(
+    tmp_path: Path,
+    fault_stage: str,
+    replaced: bool,
+) -> None:
+    identity, live_config, original, variant = _config_install_fixture(tmp_path)
+
+    def fail(stage: str) -> None:
+        if stage == fault_stage:
+            raise OSError(f"injected {stage}")
+
+    with patch("promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH", live_config):
+        with pytest.raises(OSError, match=fault_stage):
+            promotion.atomic_install_live_config(
+                identity,
+                variant,
+                allowed_predecessors={
+                    hashlib.sha256(original).hexdigest(): original
+                },
+                fault_hook=fail,
+            )
+
+    assert live_config.read_bytes() == (variant.content if replaced else original)
+    assert not tuple(live_config.parent.glob(f".{live_config.name}.promotion-*"))
+
+
+def test_atomic_config_install_rejects_last_moment_replacement_race(
+    tmp_path: Path,
+) -> None:
+    identity, live_config, original, variant = _config_install_fixture(tmp_path)
+    unknown = b'{"generation":"unknown-writer"}\n'
+
+    def race(stage: str) -> None:
+        if stage == "before_replace":
+            live_config.write_bytes(unknown)
+
+    with patch("promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH", live_config):
+        with pytest.raises(ValueError, match="raced at atomic replacement"):
+            promotion.atomic_install_live_config(
+                identity,
+                variant,
+                allowed_predecessors={
+                    hashlib.sha256(original).hexdigest(): original
+                },
+                fault_hook=race,
+            )
+
+    assert live_config.read_bytes() == unknown
+
+
+def test_atomic_config_install_directory_fsync_failure_is_fatal(
+    tmp_path: Path,
+) -> None:
+    identity, live_config, original, variant = _config_install_fixture(tmp_path)
+    real_fsync = os.fsync
+
+    def fail_directory(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("injected directory fsync failure")
+        real_fsync(descriptor)
+
+    with patch("promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH", live_config):
+        with patch("promote_supervisor_runtime.os.fsync", side_effect=fail_directory):
+            with pytest.raises(OSError, match="directory fsync failure"):
+                promotion.atomic_install_live_config(
+                    identity,
+                    variant,
+                    allowed_predecessors={
+                        hashlib.sha256(original).hexdigest(): original
+                    },
+                )
+
+    assert live_config.read_bytes() == variant.content
+
+
 class InjectedRuntimeProcessReader:
     def __init__(
         self,
@@ -2767,6 +2920,248 @@ def _replace_identity_live_config(
         config_byte_length=len(config_bytes),
         config_sha256=promotion.hashlib.sha256(config_bytes).hexdigest(),
     )
+
+
+def _mutable_binding_stub(
+    identity: CandidateRuntimeIdentity,
+) -> tuple[Any, ...]:
+    remote = validate_remote_url("https://github.com/ajoe734/pantheon.git")
+    return (
+        identity.head_commit,
+        identity.tracked_tree_identity,
+        promotion.TrustedDevIdentity(
+            commit=identity.accepted_dev_commit,
+            candidate_commit_tree=identity.tracked_tree_identity,
+        ),
+        "https://github.com/ajoe734/pantheon.git",
+        remote,
+        (),
+    )
+
+
+def test_mutable_incumbent_snapshot_binds_exact_process_and_sources(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    generation = reader.generations[1717]
+    cwd = reader.cwd[1717]
+    binding = _mutable_binding_stub(identity)
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=binding,
+    ):
+        snapshot = promotion.capture_mutable_incumbent_snapshot(
+            identity,
+            reader=reader,
+            seed_generation=generation,
+            seed_argv=argv,
+            seed_cwd=cwd,
+        )
+
+    assert snapshot.process.generation == generation
+    assert snapshot.process.argv == argv
+    assert snapshot.root == cwd.path
+    assert snapshot.head_commit == identity.head_commit
+    assert snapshot.tracked_tree_identity == identity.tracked_tree_identity
+    assert snapshot.repository_slug == "ajoe734/pantheon"
+
+
+def test_mutable_incumbent_snapshot_rejects_ambiguous_processes(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    second = ProcessGeneration(pid=1818, starttime_ticks=525252, state="S")
+    reader.pids = (1717, 1818)
+    reader.generations[1818] = second
+    reader.argv[1818] = argv
+    reader.executable[1818] = reader.executable[1717]
+    reader.cwd[1818] = reader.cwd[1717]
+    reader.environment[1818] = dict(reader.environment[1717])
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=_mutable_binding_stub(identity),
+    ):
+        with pytest.raises(ValueError, match="found 2"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_snapshot_rejects_pid_reuse(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    generation = reader.generations[1717]
+    reader.generation_sequences[1717] = [
+        generation,
+        replace(generation, starttime_ticks=generation.starttime_ticks + 1),
+    ]
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=_mutable_binding_stub(identity),
+    ):
+        with pytest.raises(ValueError, match="enumeration was incomplete"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=generation,
+                seed_argv=argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_root_rejects_tracked_source_drift(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+    source_stat = source.stat()
+    (source / "README.md").write_text("tracked drift\n", encoding="utf-8")
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=source,
+                    device=source_stat.st_dev,
+                    inode=source_stat.st_ino,
+                )
+            )
+
+
+def test_mutable_incumbent_root_rejects_unaccepted_git_head(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+    (source / "README.md").write_text("unaccepted\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "unaccepted incumbent")
+    source_stat = source.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError, match="git cat-file"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=source,
+                    device=source_stat.st_dev,
+                    inode=source_stat.st_ino,
+                )
+            )
+
+
+def test_materialize_rollback_runtime_binds_incumbent_commit_and_tree(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    rollback_parent = tmp_path / "fresh-command-runtimes"
+    rollback_parent.mkdir()
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config,
+    ):
+        identity = promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    assert identity.candidate_root == rollback_parent / commit
+    assert identity.head_commit == commit
+    assert identity.tracked_tree_identity == tree
+    assert identity.repository_slug == "ajoe734/pantheon"
+
+
+def test_materialize_rollback_runtime_directory_fsync_failure_fails_closed(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    rollback_parent = tmp_path / "fresh-command-runtimes"
+    rollback_parent.mkdir()
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+    real_fsync = os.fsync
+
+    def fail_directory(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("rollback parent fsync failed")
+        real_fsync(descriptor)
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.os.fsync",
+        side_effect=fail_directory,
+    ):
+        with pytest.raises(OSError, match="rollback parent fsync failed"):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    assert (rollback_parent / commit).is_dir()
 
 
 class InjectedLaunchFilesystem(promotion.OSLaunchFilesystem):
@@ -3443,6 +3838,11 @@ def _transaction_identity(root: Path, commit: str, tree: str) -> Mock:
     identity.head_commit = commit
     identity.tracked_tree_identity = tree
     identity.config_sha256 = "c" * 64
+    identity.config_bytes = b"captured-config"
+    identity.config_path = root.parent / "live-config.json"
+    identity.config_device = 41
+    identity.config_inode = 42
+    identity.config_byte_length = len(identity.config_bytes)
     return identity
 
 
@@ -3475,12 +3875,15 @@ def _transaction_observation(
 
 class _FakePromotionBackend:
     def __init__(self, tmp_path: Path, *, fault: str | None = None) -> None:
+        (tmp_path / "status" / ".orchestrator").mkdir(parents=True)
         self.fault = fault
         self.clock = 0.0
         self.wall_clock = datetime(2026, 8, 2, 10, 0, 1, tzinfo=timezone.utc)
         self.intents: list[tuple[int, str]] = []
         self.terminated: list[ProcessGeneration] = []
         self.launches: list[str] = []
+        self.config_installs: list[str] = []
+        self.events: list[str] = []
         self.candidate_observe_count = 0
         self.rollback_observe_count = 0
         self.incumbent_generation = ProcessGeneration(100, 1000, "S")
@@ -3520,28 +3923,72 @@ class _FakePromotionBackend:
         )
         self.candidate_contract = Mock(spec=GovernedSupervisorLaunchContract)
         self.rollback_contract = Mock(spec=GovernedSupervisorLaunchContract)
+        self.candidate_config = SupervisorConfigVariant(
+            command_root=candidate_root,
+            supervisor_argv=self.candidate_process.argv,
+            content=b"candidate-config",
+            byte_length=len(b"candidate-config"),
+            sha256="c" * 64,
+        )
+        self.rollback_config = SupervisorConfigVariant(
+            command_root=incumbent_root,
+            supervisor_argv=self.rollback_process.argv,
+            content=b"rollback-config",
+            byte_length=len(b"rollback-config"),
+            sha256="c" * 64,
+        )
+        self.mutable_incumbent = MutableIncumbentSnapshot(
+            root=incumbent_root.parent / "dev-root",
+            root_device=31,
+            root_inode=32,
+            head_commit="a" * 40,
+            tracked_tree_identity="1" * 40,
+            accepted_dev_commit="b" * 40,
+            remote_url="https://github.com/ajoe734/pantheon.git",
+            repository_slug="ajoe734/pantheon",
+            process=self.incumbent_process,
+            source_identities=(),
+        )
         self.baseline = _transaction_observation(
             self.incumbent_process,
             second=0,
         )
         self.plan = PromotionPlan(
             candidate_identity=self.candidate_identity,
+            candidate_config=self.candidate_config,
             candidate_launch=self.candidate_contract,
             incumbent_identity=self.incumbent_identity,
+            rollback_config=self.rollback_config,
             incumbent_process=self.incumbent_process,
+            mutable_incumbent=self.mutable_incumbent,
             rollback_launch=self.rollback_contract,
             baseline=self.baseline,
+            promotion_lock_path=(
+                tmp_path / "status" / ".orchestrator" / "promotion.lock"
+            ),
             runtime_admission_lock_path=(
                 tmp_path / "status" / ".orchestrator" / "runtime-admission.lock"
             ),
         )
 
-    def prepare(self, candidate_root: Path) -> PromotionPlan:
+    def promotion_lock_path(self, candidate_root: Path) -> Path:
         assert candidate_root == self.candidate_identity.candidate_root
+        return self.plan.promotion_lock_path
+
+    def prepare(
+        self,
+        candidate_root: Path,
+        *,
+        bootstrap_mutable_incumbent: bool,
+    ) -> PromotionPlan:
+        assert candidate_root == self.candidate_identity.candidate_root
+        assert bootstrap_mutable_incumbent is True
+        self.events.append("prepare")
         return self.plan
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
         assert plan is self.plan
+        self.events.append("revalidate")
         if self.fault == "snapshot_drift":
             return replace(self.baseline, state_sha256="changed-under-lock")
         return self.baseline
@@ -3603,6 +4050,7 @@ class _FakePromotionBackend:
                     second=marker,
                 )
             if self.fault in {
+                "rollback_config_install_failure",
                 "rollback_launch_failure",
                 "rollback_config_drift",
                 "rollback_projection_drift",
@@ -3667,7 +4115,29 @@ class _FakePromotionBackend:
         target_sha: str,
     ) -> None:
         assert identity in {self.candidate_identity, self.incumbent_identity}
+        self.events.append(f"intent:{target_sha[0]}")
         self.intents.append((old_pid, target_sha))
+
+    def install_config(
+        self,
+        identity: CandidateRuntimeIdentity,
+        variant: SupervisorConfigVariant,
+        *,
+        allowed_predecessors: dict[str, bytes],
+    ) -> CandidateRuntimeIdentity:
+        assert allowed_predecessors
+        if variant is self.candidate_config:
+            self.events.append("install:candidate")
+            self.config_installs.append("candidate")
+            if self.fault == "candidate_config_install_failure":
+                raise OSError("candidate config install failure")
+            return self.candidate_identity
+        assert variant is self.rollback_config
+        self.events.append("install:rollback")
+        self.config_installs.append("rollback")
+        if self.fault == "rollback_config_install_failure":
+            raise OSError("rollback config install failure")
+        return self.incumbent_identity
 
     def launch(
         self,
@@ -3679,6 +4149,7 @@ class _FakePromotionBackend:
         if identity is self.candidate_identity:
             assert require_current_dev_identity is True
             self.launches.append("candidate")
+            self.events.append("launch:candidate")
             if self.fault == "candidate_launch_failure":
                 raise ProcessLaunchError("candidate launch failure")
             if self.fault == "candidate_identity_unknown_live":
@@ -3693,6 +4164,7 @@ class _FakePromotionBackend:
         assert identity is self.incumbent_identity
         assert require_current_dev_identity is False
         self.launches.append("rollback")
+        self.events.append("launch:rollback")
         if self.fault == "rollback_launch_failure":
             raise ProcessLaunchError(
                 "rollback launch failure",
@@ -3704,6 +4176,7 @@ class _FakePromotionBackend:
 
     def terminate(self, generation: ProcessGeneration, *, timeout: float) -> None:
         assert timeout > 0
+        self.events.append(f"terminate:{generation.pid}")
         self.terminated.append(generation)
         self.alive[generation.pid] = False
 
@@ -3734,6 +4207,7 @@ def _run_fake_transaction(
     transaction = PromotionTransaction(
         evidence_path=evidence_path,
         backend=backend,
+        bootstrap_mutable_incumbent=True,
         postcheck_timeout=0.04,
         poll_interval=0.005,
         lock_timeout=1.0,
@@ -3759,6 +4233,122 @@ def test_transaction_promotes_only_after_three_distinct_candidate_loops(
     assert json.loads(evidence_path.read_text(encoding="utf-8")) == result
 
 
+def test_normal_promote_fails_closed_without_explicit_mutable_bootstrap(
+    tmp_path: Path,
+) -> None:
+    backend = _FakePromotionBackend(tmp_path)
+
+    def reject_mutable(
+        candidate_root: Path,
+        *,
+        bootstrap_mutable_incumbent: bool,
+    ) -> PromotionPlan:
+        assert candidate_root == backend.candidate_identity.candidate_root
+        assert bootstrap_mutable_incumbent is False
+        raise ValueError("mutable incumbent is not an immutable command runtime")
+
+    backend.prepare = reject_mutable  # type: ignore[method-assign]
+    transaction = PromotionTransaction(
+        evidence_path=tmp_path / "evidence.json",
+        backend=backend,
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+
+    result = transaction.run(backend.candidate_identity.candidate_root)
+
+    assert result["outcome"] == "aborted"
+    assert result["bootstrap_mutable_incumbent"] is False
+    assert "not an immutable command runtime" in result["original_failure"]
+    assert backend.intents == []
+    assert backend.terminated == []
+    assert backend.launches == []
+
+
+def test_transaction_serializes_prepare_config_and_launch_under_lock_order(
+    tmp_path: Path,
+) -> None:
+    backend = _FakePromotionBackend(tmp_path)
+    held = {"promotion": False, "admission": False}
+    original_prepare = backend.prepare
+    original_revalidate = backend.revalidate
+    original_install = backend.install_config
+    original_launch = backend.launch
+
+    class TrackingPromotionLock:
+        def acquire(self) -> None:
+            assert held == {"promotion": False, "admission": False}
+            held["promotion"] = True
+
+        def release(self) -> None:
+            assert held == {"promotion": True, "admission": False}
+            held["promotion"] = False
+
+    class TrackingAdmissionLock:
+        @contextmanager
+        def held(self):
+            assert held == {"promotion": True, "admission": False}
+            held["admission"] = True
+            try:
+                yield self
+            finally:
+                held["admission"] = False
+
+    def guarded_prepare(
+        candidate_root: Path,
+        *,
+        bootstrap_mutable_incumbent: bool,
+    ) -> PromotionPlan:
+        assert held == {"promotion": True, "admission": False}
+        return original_prepare(
+            candidate_root,
+            bootstrap_mutable_incumbent=bootstrap_mutable_incumbent,
+        )
+
+    def guarded_revalidate(plan: PromotionPlan) -> RuntimeObservation:
+        assert held == {"promotion": True, "admission": True}
+        return original_revalidate(plan)
+
+    def guarded_install(*args: Any, **kwargs: Any) -> CandidateRuntimeIdentity:
+        assert held == {"promotion": True, "admission": True}
+        return original_install(*args, **kwargs)
+
+    def guarded_launch(*args: Any, **kwargs: Any) -> ProcessGeneration:
+        assert held == {"promotion": True, "admission": True}
+        return original_launch(*args, **kwargs)
+
+    backend.prepare = guarded_prepare  # type: ignore[method-assign]
+    backend.revalidate = guarded_revalidate  # type: ignore[method-assign]
+    backend.install_config = guarded_install  # type: ignore[method-assign]
+    backend.launch = guarded_launch  # type: ignore[method-assign]
+    transaction = PromotionTransaction(
+        evidence_path=tmp_path / "evidence.json",
+        backend=backend,
+        bootstrap_mutable_incumbent=True,
+        promotion_lock_factory=lambda _path, _timeout: TrackingPromotionLock(),
+        lock_factory=lambda _path, _timeout: TrackingAdmissionLock(),
+        postcheck_timeout=0.04,
+        poll_interval=0.005,
+        lock_timeout=1.0,
+        termination_timeout=1.0,
+    )
+
+    result = transaction.run(backend.candidate_identity.candidate_root)
+
+    assert result["outcome"] == "promoted"
+    assert held == {"promotion": False, "admission": False}
+    assert backend.events[:6] == [
+        "prepare",
+        "revalidate",
+        "intent:b",
+        "terminate:100",
+        "install:candidate",
+        "launch:candidate",
+    ]
+
+
 def test_transaction_default_evidence_stays_outside_executable_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3772,6 +4362,7 @@ def test_transaction_default_evidence_stays_outside_executable_roots(
     )
     transaction = PromotionTransaction(
         backend=backend,
+        bootstrap_mutable_incumbent=True,
         postcheck_timeout=0.04,
         poll_interval=0.005,
         lock_timeout=1.0,
@@ -3818,6 +4409,7 @@ def test_transaction_rejects_evidence_inside_executable_root_before_signal(
     transaction = PromotionTransaction(
         evidence_path=requested_path,
         backend=backend,
+        bootstrap_mutable_incumbent=True,
         postcheck_timeout=0.04,
         poll_interval=0.005,
         lock_timeout=1.0,
@@ -3844,6 +4436,7 @@ def test_transaction_rejects_evidence_inside_executable_root_before_signal(
 @pytest.mark.parametrize(
     "fault,expected_fragment",
     [
+        ("candidate_config_install_failure", "candidate config install failure"),
         ("candidate_launch_failure", "candidate launch failure"),
         ("missing_heartbeat", "last_successful_loop_at"),
         ("wrong_candidate_cwd", "wrong_candidate_cwd"),
@@ -3868,10 +4461,14 @@ def test_candidate_failure_matrix_rolls_back_to_new_verified_pid(
     assert result["rollback_pid"] == 300
     assert result["rollback_pid"] != result["incumbent"]["pid"]
     assert len(result["rollback_observations"]) == 3
+    assert backend.config_installs == ["candidate", "rollback"]
     assert expected_fragment in result["original_failure"]
-    if fault == "candidate_launch_failure":
+    if fault in {"candidate_config_install_failure", "candidate_launch_failure"}:
         assert result["candidate_pid"] is None
-        assert result["candidate_child_absence_proven"] is True
+        if fault == "candidate_launch_failure":
+            assert result["candidate_child_absence_proven"] is True
+        else:
+            assert backend.intents == [(100, "b" * 40)]
     else:
         assert backend.intents[-1] == (200, "a" * 40)
         assert backend.terminated[-1] == backend.candidate_generation
@@ -3881,6 +4478,7 @@ def test_candidate_failure_matrix_rolls_back_to_new_verified_pid(
 @pytest.mark.parametrize(
     "fault,rollback_fragment",
     [
+        ("rollback_config_install_failure", "rollback config install failure"),
         ("rollback_launch_failure", "rollback launch failure"),
         ("rollback_config_drift", "config bytes drifted"),
         ("rollback_projection_drift", "Rollback baseline mismatch: projection"),
@@ -3909,6 +4507,7 @@ def test_rollback_failure_is_nonzero_and_records_both_failures(
     assert result["candidate"]["tree"] == "2" * 40
     assert result["incumbent"]["tree"] == "1" * 40
     assert result["candidate"]["config_sha256"] == "c" * 64
+    assert _backend.config_installs == ["candidate", "rollback"]
     assert json.loads(evidence_path.read_text(encoding="utf-8"))["state"] == "rollback_failed"
 
 
@@ -3976,6 +4575,7 @@ def test_unknown_live_candidate_blocks_rollback_launch_and_is_durable(
     assert "rollback launch is prohibited" in result["rollback_failure"]
     assert backend.alive[201] is True
     assert backend.launches == ["candidate"]
+    assert backend.config_installs == ["candidate"]
     persisted = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert persisted["outcome"] == "rollback_failed"
     assert persisted["candidate_pid"] == 201
@@ -4099,6 +4699,32 @@ def test_runtime_admission_lock_preserves_bounded_external_contention(
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
+
+
+def test_promotion_lock_preserves_bounded_external_contention(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "promotion.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        lock = PromotionLock(lock_path, timeout=0.01)
+
+        with pytest.raises(TimeoutError, match="Timed out acquiring promotion"):
+            lock.acquire()
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def test_promotion_lock_rejects_symlink_leaf(tmp_path: Path) -> None:
+    target = tmp_path / "target.lock"
+    target.touch()
+    alias = tmp_path / "promotion.lock"
+    alias.symlink_to(target)
+
+    with pytest.raises(ValueError, match="cannot be a symlink"):
+        PromotionLock(alias, timeout=1.0).acquire()
 
 
 def test_runtime_admission_lock_composes_with_watchdog_intent_writer(
