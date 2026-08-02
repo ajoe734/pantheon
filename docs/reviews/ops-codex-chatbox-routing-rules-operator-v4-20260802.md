@@ -8,8 +8,8 @@ Task ID: `OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802`
 - Merge target: `dev`
 - Starting base: `79e02ee059387044eec1d21a283e4848f814f49a`
 - Task branch: `task/OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802`
-- Pull request: pending publication
-- Exact head: pending publication
+- Pull request: `#4499`
+- Exact head: bind from GitHub after this publication artifact commit is pushed
 - Scope: `AGENTS.md`, this task's brief, and this review evidence only
 
 ## Owner Decision And Source Boundary
@@ -93,20 +93,23 @@ print(f"policy assertions passed: {len(required)} required, {len(forbidden)} for
 - Runtime mirror guard inputs: passed; no generated-state changes and no
   embedded `execute-plans` mirror
 - Exact three-file scope: passed
-- Replacement PR publication and exact-head GitHub checks: pending
+- Replacement PR publication: passed at preliminary head
+  `894bff475e85598e8d280724dc4d0657b12a457d`
+- Final exact-head GitHub checks: pending publication-artifact push
 
 ## Independent Decision
 
 - Decision: `review_pending`
-- Human/Ops must inspect the replacement PR exact head, confirm this exact
+- Human/Ops must inspect PR #4499's final exact head, confirm this exact
   three-file scope, run or independently verify the deterministic assertions,
-  and bind this manifest through the governed approval command.
+  and bind this manifest through the governed approval command with
+  `REVIEW_PR=4499` and GitHub's exact `headRefOid` as `REVIEW_HEAD_SHA`.
 - Until that approval exists, this document is owner-prepared evidence only and
   does not authorize merge or `done`.
 
 ## Supersession And Rollback
 
-- After the replacement PR exists, close PRs #4401 and #4405 as superseded and
-  link them to the replacement; do not delete their branches or history.
+- PRs #4401 and #4405 were closed as superseded after #4499 existed, with links
+  to the replacement. Their branches and history were not deleted.
 - After Human/Ops exact-head approval and governed merge, rollback is a revert
   of the replacement PR merge commit.

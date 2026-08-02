@@ -9,8 +9,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Reviewer: Human/Ops
 - Base: `origin/dev` at `79e02ee059387044eec1d21a283e4848f814f49a`
 - Branch: `task/OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802`
-- Next: Publish the corrected replacement PR, retire stale PRs #4401 and #4405
-  with links, then obtain Human/Ops exact-head approval.
+- Next: Human/Ops independently reviews replacement PR #4499 exact head and
+  records governed approval before integration.
 
 ## Summary
 Land the useful single-supervisor dispatch and chatbox coordination rules while removing the stale hardcoded Codex/Codex2 shared-account and review-disqualification claim.
@@ -57,12 +57,11 @@ JSON, runtime state, product code, services, deployment, or the 28-task catalog.
 
 ## Replacement And Review Gates
 
-- PR #4401 is a stale policy proposal because its final paragraph hardcodes an
-  account relationship and reviewer disqualification. Do not merge that patch.
-- PR #4405 publishes evidence for the same stale proposal and is superseded by
-  this task's corrected task brief and review manifest.
-- Close both stale PRs with links only after the corrected replacement PR
-  exists. Preserve their branches and history.
+- PR #4401 was a stale policy proposal because its final paragraph hardcoded an
+  account relationship and reviewer disqualification. It was closed as
+  superseded by corrected replacement PR #4499; its branch/history remains.
+- PR #4405 published evidence for the same stale proposal. It was closed as
+  superseded by #4499; its branch/history remains.
 - Evidence remains `review_pending` until Human/Ops reviews the replacement PR
   exact head. Green CI is necessary but does not replace that decision.
 - Merge target is `dev`; rollback is a revert of the replacement PR merge
@@ -86,5 +85,14 @@ JSON, runtime state, product code, services, deployment, or the 28-task catalog.
 - `python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD
   --skip-merge` passed for the anchor, and the runtime-mirror guard inputs found
   no generated-state or embedded frontend violation.
-- PRs #4401 and #4405 were confirmed open. They remain untouched until the
-  corrected replacement PR is published, per the supersession gate.
+- PRs #4401 and #4405 were confirmed open before replacement publication.
+
+## Publication Anchor (2026-08-02)
+
+- Corrected replacement PR #4499 targets `dev`; its canonical merge policy is
+  `review_before_merge` and auto-merge was verified off.
+- After #4499 existed, PRs #4401 and #4405 were closed with supersession links.
+  No stale branch, commit, or review history was deleted.
+- Human/Ops must review the final GitHub head after this publication metadata
+  commit is pushed. The governed approval must bind both `REVIEW_PR=4499` and
+  the exact `REVIEW_HEAD_SHA`; a prior head or green CI alone is insufficient.
