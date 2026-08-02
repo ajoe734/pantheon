@@ -1523,6 +1523,227 @@ def test_git_identity_rejects_assume_unchanged_hidden_drift(tmp_path: Path) -> N
             verify_working_tree_cleanliness(candidate)
 
 
+def _remove_gitlink_worktree(candidate: Path, relative_path: str = "lean") -> Path:
+    gitlink = candidate / relative_path
+    if gitlink.is_symlink() or gitlink.is_file():
+        gitlink.unlink()
+    elif gitlink.exists():
+        shutil.rmtree(gitlink)
+    return gitlink
+
+
+def test_git_identity_allows_absent_mode_160000_gitlink(tmp_path: Path) -> None:
+    candidate, parent, _remote, _commit, tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    assert _git(candidate, "ls-files", "--stage", "lean").startswith("160000 ")
+    _remove_gitlink_worktree(candidate)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        assert verify_working_tree_cleanliness(candidate) == tree
+
+
+def test_git_identity_allows_empty_direct_mode_160000_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    gitlink.mkdir()
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        assert verify_working_tree_cleanliness(candidate) == tree
+
+
+def test_git_identity_rejects_regular_file_at_mode_160000_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    gitlink.write_text("hidden payload\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Tracked gitlink worktree.*wrong type"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_symlink_at_mode_160000_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    external = tmp_path / "external-gitlink"
+    external.mkdir()
+    gitlink.symlink_to(external, target_is_directory=True)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Tracked gitlink worktree.*symlink"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_file_hidden_below_mode_160000_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    gitlink.mkdir()
+    (gitlink / "payload.py").write_text("raise SystemExit\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="must be absent or an empty"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_nested_directory_below_mode_160000_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    (gitlink / "nested").mkdir(parents=True)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="must be absent or an empty"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_initialized_metadata_below_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    (gitlink / ".git" / "objects").mkdir(parents=True)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="must be absent or an empty"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_external_metadata_gitfile_below_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    gitlink.mkdir()
+    external_metadata = tmp_path / "external-submodule-metadata"
+    external_metadata.mkdir()
+    (gitlink / ".git").write_text(
+        f"gitdir: {external_metadata}\n",
+        encoding="utf-8",
+    )
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="must be absent or an empty"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_symlinked_parent_component_for_nested_gitlink(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path, gitlink_path="vendor/lean")
+    )
+    vendor = candidate / "vendor"
+    if vendor.exists() or vendor.is_symlink():
+        shutil.rmtree(vendor)
+    external_vendor = tmp_path / "external-vendor"
+    (external_vendor / "lean").mkdir(parents=True)
+    vendor.symlink_to(external_vendor, target_is_directory=True)
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="path component.*symlink"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_gitlink_tree_index_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    _git(
+        candidate,
+        "update-index",
+        "--cacheinfo",
+        f"160000,{commit},lean",
+    )
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="gitlink tree/index identity mismatch"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_cross_filesystem_gitlink_directory(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    gitlink.mkdir()
+    gitlink_inode = gitlink.stat().st_ino
+    real_identity = promotion._filesystem_identity
+
+    def cross_filesystem_identity(descriptor: int) -> FilesystemIdentity:
+        identity = real_identity(descriptor)
+        if identity.inode == gitlink_inode:
+            return replace(identity, device=identity.device + 1)
+        return identity
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        parent,
+    ), patch(
+        "promote_supervisor_runtime._filesystem_identity",
+        side_effect=cross_filesystem_identity,
+    ):
+        with pytest.raises(ValueError, match="gitlink.*escaped.*filesystem"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_concurrent_gitlink_directory_replacement(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    gitlink = _remove_gitlink_worktree(candidate)
+    gitlink.mkdir()
+    original_assert = promotion._assert_relative_identity
+    replaced = False
+
+    def replace_before_identity_check(*args: Any, **kwargs: Any) -> None:
+        nonlocal replaced
+        if kwargs.get("label") == "Tracked gitlink worktree 'lean'" and not replaced:
+            replaced = True
+            old_gitlink = candidate / "lean-old"
+            gitlink.rename(old_gitlink)
+            gitlink.mkdir()
+        original_assert(*args, **kwargs)
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        parent,
+    ), patch(
+        "promote_supervisor_runtime._assert_relative_identity",
+        side_effect=replace_before_identity_check,
+    ):
+        with pytest.raises(ValueError, match="gitlink.*identity changed"):
+            verify_working_tree_cleanliness(candidate)
+
+
 @pytest.mark.parametrize(
     "relative_path",
     [

@@ -1407,7 +1407,7 @@ def _assert_tracked_gitlink_worktree(
     descriptors = [os.dup(handle.descriptor)]
     parent_chain: list[tuple[int, str, FilesystemIdentity, str]] = []
     try:
-        for position, component in enumerate(path.parts[:-1]):
+        for component in path.parts[:-1]:
             label = (
                 f"Tracked gitlink {gitlink.relative_path!r} "
                 f"path component {component!r}"
@@ -1549,6 +1549,7 @@ def verify_working_tree_cleanliness(
             "-z",
             "--untracked-files=all",
             "--ignored=matching",
+            "--ignore-submodules=all",
         ).stdout
         for record in status_output.split("\0"):
             if not record:
@@ -1579,7 +1580,13 @@ def verify_working_tree_cleanliness(
         except ValueError as exc:
             raise ValueError("Candidate index differs from HEAD") from exc
         try:
-            _run_git(handle, "diff-files", "--quiet", "--")
+            _run_git(
+                handle,
+                "diff-files",
+                "--quiet",
+                "--ignore-submodules=all",
+                "--",
+            )
         except ValueError as exc:
             raise ValueError("Candidate tracked worktree differs from index") from exc
 
