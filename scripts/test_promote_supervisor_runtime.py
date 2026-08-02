@@ -3477,8 +3477,10 @@ class _FakePromotionBackend:
     def __init__(self, tmp_path: Path, *, fault: str | None = None) -> None:
         self.fault = fault
         self.clock = 0.0
+        self.wall_clock = datetime(2026, 8, 2, 10, 0, 1, tzinfo=timezone.utc)
         self.intents: list[tuple[int, str]] = []
         self.terminated: list[ProcessGeneration] = []
+        self.launches: list[str] = []
         self.candidate_observe_count = 0
         self.rollback_observe_count = 0
         self.incumbent_generation = ProcessGeneration(100, 1000, "S")
@@ -3587,17 +3589,34 @@ class _FakePromotionBackend:
                     second=1,
                     config_sha256="d" * 64,
                 )
+            candidate_marker_sequences = {
+                "candidate_stale_loop": (0,),
+                "candidate_equal_boundary_loop": (1,),
+                "candidate_regressing_loop": (3, 2),
+                "candidate_out_of_order_loop": (2, 4, 3),
+            }
+            if self.fault in candidate_marker_sequences:
+                markers = candidate_marker_sequences[self.fault]
+                marker = markers[min(self.candidate_observe_count - 1, len(markers) - 1)]
+                return _transaction_observation(
+                    self.candidate_process,
+                    second=marker,
+                )
             if self.fault in {
                 "rollback_launch_failure",
                 "rollback_config_drift",
                 "rollback_projection_drift",
                 "rollback_worker_drift",
                 "rollback_provider_drift",
+                "rollback_stale_loop",
+                "rollback_equal_boundary_loop",
+                "rollback_regressing_loop",
+                "rollback_out_of_order_loop",
             }:
                 raise ValueError("candidate_postcheck_failure")
             return _transaction_observation(
                 self.candidate_process,
-                second=min(self.candidate_observe_count, 3),
+                second=1 + min(self.candidate_observe_count, 3),
             )
 
         assert identity is self.incumbent_identity
@@ -3605,9 +3624,21 @@ class _FakePromotionBackend:
         assert contract is self.rollback_contract
         assert generation == self.rollback_generation
         self.rollback_observe_count += 1
+        rollback_marker_sequences = {
+            "rollback_stale_loop": (0,),
+            "rollback_equal_boundary_loop": (1,),
+            "rollback_regressing_loop": (6, 5),
+            "rollback_out_of_order_loop": (5, 7, 6),
+        }
+        markers = rollback_marker_sequences.get(self.fault)
+        marker = (
+            markers[min(self.rollback_observe_count - 1, len(markers) - 1)]
+            if markers is not None
+            else 4 + min(self.rollback_observe_count, 3)
+        )
         return _transaction_observation(
             self.rollback_process,
-            second=3 + min(self.rollback_observe_count, 3),
+            second=marker,
             config_sha256=(
                 "e" * 64 if self.fault == "rollback_config_drift" else "c" * 64
             ),
@@ -3647,14 +3678,27 @@ class _FakePromotionBackend:
     ) -> ProcessGeneration:
         if identity is self.candidate_identity:
             assert require_current_dev_identity is True
+            self.launches.append("candidate")
             if self.fault == "candidate_launch_failure":
-                raise ProcessLaunchError("candidate launch failure", pid=201)
+                raise ProcessLaunchError("candidate launch failure")
+            if self.fault == "candidate_identity_unknown_live":
+                self.alive[201] = True
+                raise ProcessLaunchError(
+                    "candidate generation capture failure",
+                    pid=201,
+                    child_absence_proven=False,
+                )
             self.alive[200] = True
             return self.candidate_generation
         assert identity is self.incumbent_identity
         assert require_current_dev_identity is False
+        self.launches.append("rollback")
         if self.fault == "rollback_launch_failure":
-            raise ProcessLaunchError("rollback launch failure", pid=301)
+            raise ProcessLaunchError(
+                "rollback launch failure",
+                pid=301,
+                child_absence_proven=True,
+            )
         self.alive[300] = True
         return self.rollback_generation
 
@@ -3665,6 +3709,12 @@ class _FakePromotionBackend:
 
     def generation_is_alive(self, generation: ProcessGeneration) -> bool:
         return self.alive.get(generation.pid, False)
+
+    def pid_is_absent(self, pid: int) -> bool:
+        return not self.alive.get(pid, False)
+
+    def utcnow(self) -> datetime:
+        return self.wall_clock
 
     def monotonic(self) -> float:
         self.clock += 0.001
@@ -3738,7 +3788,8 @@ def test_candidate_failure_matrix_rolls_back_to_new_verified_pid(
     assert len(result["rollback_observations"]) == 3
     assert expected_fragment in result["original_failure"]
     if fault == "candidate_launch_failure":
-        assert result["candidate_pid"] == 201
+        assert result["candidate_pid"] is None
+        assert result["candidate_child_absence_proven"] is True
     else:
         assert backend.intents[-1] == (200, "a" * 40)
         assert backend.terminated[-1] == backend.candidate_generation
@@ -3777,6 +3828,76 @@ def test_rollback_failure_is_nonzero_and_records_both_failures(
     assert result["incumbent"]["tree"] == "1" * 40
     assert result["candidate"]["config_sha256"] == "c" * 64
     assert json.loads(evidence_path.read_text(encoding="utf-8"))["state"] == "rollback_failed"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "candidate_stale_loop",
+        "candidate_equal_boundary_loop",
+        "candidate_regressing_loop",
+        "candidate_out_of_order_loop",
+    ],
+)
+def test_candidate_loop_markers_must_be_post_launch_and_strictly_increasing(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(tmp_path, fault=fault)
+
+    assert result["outcome"] == "rolled_back"
+    assert result["candidate_launch_boundary_at"] == "2026-08-02T10:00:01Z"
+    assert result["rollback_launch_boundary_at"] == "2026-08-02T10:00:01Z"
+    assert backend.launches == ["candidate", "rollback"]
+    assert len(result["rollback_observations"]) == 3
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "rollback_stale_loop",
+        "rollback_equal_boundary_loop",
+        "rollback_regressing_loop",
+        "rollback_out_of_order_loop",
+    ],
+)
+def test_rollback_loop_markers_must_be_post_launch_and_strictly_increasing(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(tmp_path, fault=fault)
+
+    assert result["outcome"] == "rollback_failed"
+    assert result["exit_code"] != 0
+    assert result["rollback_launch_boundary_at"] == "2026-08-02T10:00:01Z"
+    assert backend.launches == ["candidate", "rollback"]
+    assert (
+        "launch boundary" in result["rollback_failure"]
+        or "marker regressed" in result["rollback_failure"]
+    )
+
+
+def test_unknown_live_candidate_blocks_rollback_launch_and_is_durable(
+    tmp_path: Path,
+) -> None:
+    result, backend, evidence_path = _run_fake_transaction(
+        tmp_path,
+        fault="candidate_identity_unknown_live",
+    )
+
+    assert result["outcome"] == "rollback_failed"
+    assert result["candidate_pid"] == 201
+    assert result["candidate_child_absence_proven"] is False
+    assert result["rollback_pid"] is None
+    assert result["rollback_launch_boundary_at"] is None
+    assert "unknown generation" in result["rollback_failure"]
+    assert "rollback launch is prohibited" in result["rollback_failure"]
+    assert backend.alive[201] is True
+    assert backend.launches == ["candidate"]
+    persisted = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert persisted["outcome"] == "rollback_failed"
+    assert persisted["candidate_pid"] == 201
+    assert persisted["candidate_child_absence_proven"] is False
 
 
 def test_snapshot_drift_under_admission_lock_aborts_without_termination(

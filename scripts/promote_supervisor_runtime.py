@@ -4045,10 +4045,20 @@ class ProcessLaunchError(RuntimeError):
         *,
         pid: int | None = None,
         generation: ProcessGeneration | None = None,
+        child_absence_proven: bool | None = None,
+        cleanup_error: str | None = None,
     ) -> None:
         super().__init__(message)
         self.pid = pid
         self.generation = generation
+        self.child_absence_proven = (
+            pid is None if child_absence_proven is None else child_absence_proven
+        )
+        self.cleanup_error = cleanup_error
+
+
+class LoopMarkerRegressionError(RuntimeError):
+    """A launched supervisor's successful-loop marker moved backwards."""
 
 
 def _canonical_json_sha256(payload: Any) -> str:
@@ -4419,6 +4429,10 @@ class PromotionBackend(Protocol):
 
     def generation_is_alive(self, generation: ProcessGeneration) -> bool: ...
 
+    def pid_is_absent(self, pid: int) -> bool: ...
+
+    def utcnow(self) -> datetime: ...
+
     def monotonic(self) -> float: ...
 
     def sleep(self, seconds: float) -> None: ...
@@ -4588,9 +4602,19 @@ class OSPromotionBackend:
         try:
             generation = self.reader.read_generation(process.pid)
         except Exception as exc:
+            child_absence_proven, cleanup_error = self._contain_spawned_child(
+                process
+            )
             raise ProcessLaunchError(
-                "Launched supervisor generation could not be captured",
+                "Launched supervisor generation could not be captured; "
+                + (
+                    "spawned child was terminated and reaped"
+                    if child_absence_proven
+                    else "spawned child containment could not be proven"
+                ),
                 pid=process.pid,
+                child_absence_proven=child_absence_proven,
+                cleanup_error=cleanup_error,
             ) from exc
         if generation.state == "Z":
             raise ProcessLaunchError(
@@ -4600,12 +4624,65 @@ class OSPromotionBackend:
             )
         return generation
 
+    @staticmethod
+    def _contain_spawned_child(
+        process: subprocess.Popen[Any],
+        *,
+        timeout: float = 5.0,
+    ) -> tuple[bool, str | None]:
+        """Boundedly stop and reap the exact child held by ``Popen``.
+
+        This path is used only when procfs generation capture failed after a
+        successful spawn.  The parent-owned child handle is the remaining
+        exact ownership proof; PID-only signalling is deliberately avoided.
+        """
+        errors: list[str] = []
+        try:
+            if process.poll() is not None:
+                return True, None
+        except Exception as exc:
+            errors.append(f"poll:{type(exc).__name__}:{exc}")
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            errors.append(f"terminate:{type(exc).__name__}:{exc}")
+        try:
+            process.wait(timeout=timeout)
+            return True, "; ".join(errors) or None
+        except subprocess.TimeoutExpired:
+            errors.append("terminate_wait:TimeoutExpired")
+        except Exception as exc:
+            errors.append(f"terminate_wait:{type(exc).__name__}:{exc}")
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            errors.append(f"kill:{type(exc).__name__}:{exc}")
+        try:
+            process.wait(timeout=timeout)
+            return True, "; ".join(errors) or None
+        except Exception as exc:
+            errors.append(f"kill_wait:{type(exc).__name__}:{exc}")
+        return False, "; ".join(errors)
+
     def generation_is_alive(self, generation: ProcessGeneration) -> bool:
         try:
             current = self.reader.read_generation(generation.pid)
         except ProcessLookupError:
             return False
         return current == generation and current.state != "Z"
+
+    def pid_is_absent(self, pid: int) -> bool:
+        try:
+            self.reader.read_generation(pid)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            return False
+        return False
 
     def terminate(self, generation: ProcessGeneration, *, timeout: float) -> None:
         if not self.generation_is_alive(generation):
@@ -4630,6 +4707,9 @@ class OSPromotionBackend:
 
     def monotonic(self) -> float:
         return time.monotonic()
+
+    def utcnow(self) -> datetime:
+        return datetime.now(timezone.utc)
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
@@ -4767,8 +4847,12 @@ class PromotionTransaction:
         self.plan: PromotionPlan | None = None
         self.candidate_generation: ProcessGeneration | None = None
         self.candidate_pid: int | None = None
+        self.candidate_child_absence_proven: bool | None = None
+        self.candidate_launch_boundary_at: datetime | None = None
         self.rollback_generation: ProcessGeneration | None = None
         self.rollback_pid: int | None = None
+        self.rollback_child_absence_proven: bool | None = None
+        self.rollback_launch_boundary_at: datetime | None = None
         self.candidate_observations: list[RuntimeObservation] = []
         self.rollback_observations: list[RuntimeObservation] = []
         self.original_failure: str | None = None
@@ -4817,11 +4901,15 @@ class PromotionTransaction:
         generation: ProcessGeneration,
         *,
         baseline: RuntimeObservation,
+        launch_boundary: datetime,
         rollback: bool,
     ) -> list[RuntimeObservation]:
+        if launch_boundary.tzinfo is None or launch_boundary.utcoffset() is None:
+            raise ValueError("Launch boundary must be timezone-aware")
+        launch_boundary = launch_boundary.astimezone(timezone.utc)
         deadline = self.backend.monotonic() + self.postcheck_timeout
         observations: list[RuntimeObservation] = []
-        markers: set[datetime] = set()
+        last_marker: datetime | None = None
         last_error: str | None = None
         while self.backend.monotonic() < deadline:
             try:
@@ -4841,10 +4929,18 @@ class PromotionTransaction:
                 marker = observation.successful_loop_at
                 if marker is None:
                     raise ValueError("Postcheck is missing last_successful_loop_at")
-                if marker == baseline.successful_loop_at:
-                    raise ValueError("Postcheck has not advanced beyond the baseline loop")
-                if marker not in markers:
-                    markers.add(marker)
+                if last_marker is not None and marker < last_marker:
+                    raise LoopMarkerRegressionError(
+                        "Postcheck successful-loop marker regressed: "
+                        f"{marker.isoformat()} < {last_marker.isoformat()}"
+                    )
+                if marker <= launch_boundary:
+                    raise ValueError(
+                        "Postcheck successful-loop marker is not strictly after "
+                        "the launch boundary"
+                    )
+                if marker != last_marker:
+                    last_marker = marker
                     observations.append(observation)
                     if len(observations) >= self.required_fresh_loops:
                         if rollback:
@@ -4864,6 +4960,8 @@ class PromotionTransaction:
                                     "Rollback baseline mismatch: " + ",".join(mismatches)
                                 )
                         return observations
+            except LoopMarkerRegressionError:
+                raise
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             self.backend.sleep(self.poll_interval)
@@ -4878,6 +4976,16 @@ class PromotionTransaction:
         try:
             with lock.held():
                 self._transition(PromotionState.ROLLBACK_LOCKED)
+                if self.candidate_generation is None and self.candidate_pid is not None:
+                    if not self.candidate_child_absence_proven:
+                        self.candidate_child_absence_proven = (
+                            self.backend.pid_is_absent(self.candidate_pid)
+                        )
+                    if not self.candidate_child_absence_proven:
+                        raise RuntimeError(
+                            "Candidate was spawned with unknown generation and its "
+                            "absence cannot be proven; rollback launch is prohibited"
+                        )
                 active_generation: ProcessGeneration | None = None
                 if (
                     self.candidate_generation is not None
@@ -4910,13 +5018,20 @@ class PromotionTransaction:
             except ProcessLaunchError as exc:
                 self.rollback_pid = exc.pid
                 self.rollback_generation = exc.generation
+                self.rollback_child_absence_proven = exc.child_absence_proven
                 raise
             if self.rollback_generation.pid == plan.incumbent_process.generation.pid:
                 raise ValueError("Rollback launch reused the incumbent PID")
+            self.rollback_launch_boundary_at = self.backend.utcnow().astimezone(
+                timezone.utc
+            )
             self._transition(
                 PromotionState.ROLLBACK_LAUNCHED,
                 pid=self.rollback_generation.pid,
                 starttime_ticks=self.rollback_generation.starttime_ticks,
+                launch_boundary_at=self.rollback_launch_boundary_at.isoformat().replace(
+                    "+00:00", "Z"
+                ),
             )
             self._transition(PromotionState.ROLLBACK_VERIFYING)
             self.rollback_observations = self._wait_for_fresh_loops(
@@ -4924,6 +5039,7 @@ class PromotionTransaction:
                 plan.rollback_launch,
                 self.rollback_generation,
                 baseline=plan.baseline,
+                launch_boundary=self.rollback_launch_boundary_at,
                 rollback=True,
             )
             self._transition(
@@ -4952,7 +5068,19 @@ class PromotionTransaction:
             "original_failure": self.original_failure,
             "rollback_failure": self.rollback_failure,
             "candidate_pid": self.candidate_pid,
+            "candidate_child_absence_proven": self.candidate_child_absence_proven,
+            "candidate_launch_boundary_at": (
+                self.candidate_launch_boundary_at.isoformat().replace("+00:00", "Z")
+                if self.candidate_launch_boundary_at is not None
+                else None
+            ),
             "rollback_pid": self.rollback_pid,
+            "rollback_child_absence_proven": self.rollback_child_absence_proven,
+            "rollback_launch_boundary_at": (
+                self.rollback_launch_boundary_at.isoformat().replace("+00:00", "Z")
+                if self.rollback_launch_boundary_at is not None
+                else None
+            ),
             "incumbent": (
                 {
                     "pid": plan.incumbent_process.generation.pid,
@@ -5034,11 +5162,18 @@ class PromotionTransaction:
             except ProcessLaunchError as exc:
                 self.candidate_pid = exc.pid
                 self.candidate_generation = exc.generation
+                self.candidate_child_absence_proven = exc.child_absence_proven
                 raise
+            self.candidate_launch_boundary_at = self.backend.utcnow().astimezone(
+                timezone.utc
+            )
             self._transition(
                 PromotionState.CANDIDATE_LAUNCHED,
                 pid=self.candidate_generation.pid,
                 starttime_ticks=self.candidate_generation.starttime_ticks,
+                launch_boundary_at=self.candidate_launch_boundary_at.isoformat().replace(
+                    "+00:00", "Z"
+                ),
             )
             self._transition(PromotionState.CANDIDATE_VERIFYING)
             self.candidate_observations = self._wait_for_fresh_loops(
@@ -5046,6 +5181,7 @@ class PromotionTransaction:
                 plan.candidate_launch,
                 self.candidate_generation,
                 baseline=plan.baseline,
+                launch_boundary=self.candidate_launch_boundary_at,
                 rollback=False,
             )
             self._transition(
