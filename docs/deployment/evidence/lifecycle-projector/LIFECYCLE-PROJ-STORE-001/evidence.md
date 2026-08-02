@@ -6,7 +6,7 @@ Owner: Codex
 
 Reviewer: Antigravity
 
-Base: `dev@66621e3484a690921032d93e26ec2c9867708d2a`
+Base: `dev@c92e60ceaff895a6fa5fdd7e39bcd96e9a409bc1`
 
 Branch: `task/LIFECYCLE-PROJ-STORE-001-V2`
 
@@ -29,7 +29,8 @@ branch restores only the four declared task artifact scopes onto current dev.
 Exact-head review must cover the final evidence commit on PR #4503.
 The branch then merged current `dev@66621e34` in
 `7e94409aa7e239042c300ef448991502d57f8aa3` without changing the seven declared
-task artifact paths.
+task artifact paths, and refreshed again to `dev@c92e60ce` in
+`9f47ae6be4b544d5c5169d0d0aeb3d09a135a91a`, also without task-path overlap.
 
 ## Exact verification commands
 
@@ -58,9 +59,9 @@ git diff --check
 Results:
 
 - focused real-PostgreSQL suite after current-dev merge:
-  `17 passed in 6.77s`;
+  `17 passed in 10.44s`;
 - adjacent Trade Journey regression after current-dev merge:
-  `136 passed in 31.54s`;
+  `136 passed in 35.00s`;
 - dedicated migration-twice, DML-only, and EXPLAIN slice:
   `3 passed, 14 deselected in 1.48s`;
 - Python compilation and whitespace validation: exit 0;

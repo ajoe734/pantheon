@@ -7,9 +7,9 @@
     "reviewer": "Antigravity",
     "status": "review",
     "base_branch": "dev",
-    "base_sha": "66621e3484a690921032d93e26ec2c9867708d2a",
+    "base_sha": "c92e60ceaff895a6fa5fdd7e39bcd96e9a409bc1",
     "task_branch": "task/LIFECYCLE-PROJ-STORE-001-V2",
-    "evidence_cut_at": "2026-08-02T09:50:14Z",
+    "evidence_cut_at": "2026-08-02T09:54:04Z",
     "evidence_cut_semantics": "Owner verification before independent exact-head review. The protected PR merge is future state and must be recorded by governed delivery metadata because this manifest cannot contain its own future merge commit."
   },
   "scope": {
@@ -34,7 +34,10 @@
     "anchor_commits": [
       "090e0a1cd115728236ad1d74633630ce1b9b3f30"
     ],
-    "base_refresh_merge": "7e94409aa7e239042c300ef448991502d57f8aa3",
+    "base_refresh_merges": [
+      "7e94409aa7e239042c300ef448991502d57f8aa3",
+      "9f47ae6be4b544d5c5169d0d0aeb3d09a135a91a"
+    ],
     "superseded_delivery": {
       "pull_request": "https://github.com/ajoe734/pantheon/pull/4476",
       "head_sha": "568160d599d172e27576808e1981515a4037e6b8",
@@ -72,11 +75,11 @@
     },
     {
       "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py",
-      "result": "pass; 17 passed in 6.77s against PostgreSQL 16.14 after merging current dev, including a real DML-only runtime login"
+      "result": "pass; 17 passed in 10.44s against PostgreSQL 16.14 after merging current dev, including a real DML-only runtime login"
     },
     {
       "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
-      "result": "pass; 136 passed in 31.54s after merging current dev"
+      "result": "pass; 136 passed in 35.00s after merging current dev"
     },
     {
       "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py -k 'runtime_role_has_dml_without_ddl or migration_applied_twice_and_prior_reader_compat or indexed_explain_paths'",
