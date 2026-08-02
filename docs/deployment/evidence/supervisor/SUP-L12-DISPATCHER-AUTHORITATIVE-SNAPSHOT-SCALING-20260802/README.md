@@ -9,7 +9,7 @@ and task-state integrity.
 | Owner | Codex |
 | Reviewer | Human/Ops |
 | Branch | `task/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802` |
-| Implementation candidate | `b1ce3eb42d3d8b4371e27972ae8f30cdda89aa1a` |
+| Implementation candidate | `2df9365891ed3008c21b14ede6a35b7d6e515820` |
 | Review state | `review_pending` |
 | Catalog bytes | unchanged, SHA-256 `7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca` |
 
@@ -19,12 +19,12 @@ The 2026-08-02 baseline used the live 2,174,900,966-byte, 8,632-event
 journal. `load_events()` plus `project_latest_state()` did not reach catalog
 admission within 30 seconds and peaked at 5,604,472 KiB RSS.
 
-Candidate `b1ce3eb42` used a shared-lock-consistent scratch clone of the later
-2,303,516,986-byte, 8,836-event generation. It verified the complete SHA-256
+Candidate `2df936589` used a shared-lock-consistent scratch clone of the later
+2,316,265,615-byte, 8,858-event generation. It verified the complete SHA-256
 prefix, accepted the checkpoint only after binding its cached head to the
 actual final prefix record, revalidated zero tail events, and reached the
-guarded admission verdict in 2.628 seconds at 58,740 KiB peak child RSS.
-Snapshot validation itself took 2.306 seconds at 43,896 KiB process peak RSS.
+guarded admission verdict in 1.958 seconds at 58,384 KiB peak child RSS.
+Snapshot validation itself took 1.709 seconds at 43,600 KiB process peak RSS.
 
 The admission verdict was a correct fail-closed decision, not a timeout:
 `L12-CONTROLLER-BFF-20260731` overlaps the currently live nonterminal
@@ -84,7 +84,7 @@ PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q \
   .orchestrator/rewrite/test_task_state_store.py \
   scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py \
   .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests
-→ 116 passed in 24.20s
+→ 116 passed in 19.36s
 
 .venv-pantheon/bin/python scripts/dispatch_twelve_loop_gap_2026_07_26.py \
   --validate-only --current
