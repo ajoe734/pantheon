@@ -426,8 +426,29 @@
     "evidence_rollback": "Revert this task evidence commit."
   },
   "validation": {
-    "status": "pending",
-    "commands": []
+    "status": "passed",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "passed; provisioned the task-worktree interpreter and verified repository imports from a foreign cwd"
+      },
+      {
+        "command": "<task-python> -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDecisionV2 or FailureStreakRecoveryDispatchConsumptionV2 or failure_loop'",
+        "result": "collection preflight failed from repo root because supervisor.py is intentionally rooted under .orchestrator; no test assertion ran"
+      },
+      {
+        "command": "cd .orchestrator && <task-python> -m pytest -q test_supervisor.py -k 'FailureStreakRecoveryDecisionV2 or FailureStreakRecoveryDispatchConsumptionV2 or failure_loop'",
+        "result": "passed: 22 tests, 45 subtests; 494 deselected"
+      },
+      {
+        "command": "jq acceptance assertions over evidence.json",
+        "result": "passed: 13 pairs, every recovery decision fail-closed, zero pair mutations/clears/threshold changes/signals, and capacity readback present for Codex and Codex2"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      }
+    ]
   },
   "review": {
     "status": "review_pending",
