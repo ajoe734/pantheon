@@ -101,6 +101,13 @@ class CodexAdapter(BaseAdapter):
             codex_settings.get("sandbox_mode", "workspace-write"),
             "--skip-git-repo-check",
         ]
+        model = str(
+            request.metadata.get("model_preference")
+            or codex_settings.get("model")
+            or ""
+        ).strip()
+        if model:
+            command.extend(["--model", model])
         if codex_settings.get("dangerously_bypass"):
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.append(request.message)
@@ -160,5 +167,10 @@ class CodexAdapter(BaseAdapter):
             metadata={
                 "heartbeat_path": str(runtime_paths["heartbeat_path"]),
                 "runner_status_path": str(runtime_paths["status_path"]),
+                **(
+                    {"model_preference": model}
+                    if model
+                    else {}
+                ),
             },
         )
