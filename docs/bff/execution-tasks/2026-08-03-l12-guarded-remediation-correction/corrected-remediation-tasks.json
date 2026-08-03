@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-twelve-loop-gap-current-proof-remediation-2026-08-03",
+  "supersedes_program_id": "pantheon-twelve-loop-gap-current-proof-remediation-2026-07-31",
+  "supersedes_source_pr": 4394,
+  "supersedes_source_head": "fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+  "generated_at": "2026-08-03T13:45:00Z",
+  "status": "DRAFT — not yet reviewed, not yet PR'd, not yet exact-head pinned. This is a proposal for the dispatched bootstrap task SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 to verify, refine, and land through the normal branch/PR/CI/review/merge flow. Do not run scripts/dispatch_twelve_loop_gap_2026_07_26.py against this file as-is; it has no dispatcher binding yet.",
+  "correction_basis": "Independent re-verification against origin/dev commit 1d0355768 on 2026-08-03, cross-checked against: (1) services/control-plane/bff/test_loop_inventory_read_model_contract.py RUNTIME_CONTROLLER_BINDINGS (the repo's own ground truth for 'canonical controller'), (2) docker-compose.yml PANTHEON_CONTROLLER_NAME entries, (3) git ancestry (git merge-base --is-ancestor) for every claimed implementation commit, (4) a live run of scripts/validate_twelve_loop_gap_evidence.py against each loop's evidence.json.",
+  "dispatch_contract": {
+    "bootstrap_task_id": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
+    "dispatcher": "scripts/dispatch_twelve_loop_gap_2026_07_26.py (to be extended with a new profile bound to this program_id)",
+    "mode": "program-specific-guarded-dispatch",
+    "generic_dev_task_packet_for_product_tasks": false,
+    "materialize_only_after_dispatcher_merge_and_live_promotion": true
+  },
+  "completion_authority": {
+    "final_task_id": "L12-CLOSE-001",
+    "requires_protected_human_ops_verdict": true
+  },
+  "execution_task_counts": {
+    "controller_registration_only": 1,
+    "controller_registration_plus_evidence_repair": 3,
+    "controller_build_missing_piece": 3,
+    "controller_build_from_scratch": 2,
+    "total_corrected_controller_tasks": 9,
+    "unchanged_from_original_catalog_out_of_scope_of_this_correction": [
+      "16 evidence-revalidation tasks (FLEET/CTRL/TEL/REC/SRC/ALPHA/AGORA/...)",
+      "shared-integration task",
+      "release-gate task",
+      "learning-verifier-rebuild task"
+    ],
+    "note": "This correction only re-scopes the 9 L12-CONTROLLER-* tasks. The other 19 tasks in the original 28-task catalog were not independently re-verified in this pass and should be carried forward as-is unless separately audited."
+  },
+  "verified_baseline_2026_08_03": {
+    "canonical_loop_count": 12,
+    "registered_canonical_controller_count": 3,
+    "registered_loop_ids": ["source_ingestion", "strategy_distillation", "alpha_replication"],
+    "not_registered_but_real_implementation_exists": ["persona_teaching", "human_imitation_shadow_evaluation", "consultation", "bff_health_monitoring"],
+    "not_registered_and_no_implementation_exists": ["agora_interaction_evidence", "promotion_deployment"],
+    "not_registered_adjacent_component_solves_different_problem": ["capital_pool_execution", "evolution", "telemetry_reconciliation"],
+    "original_7_31_audit_claim_missing_controller_count": 9,
+    "original_7_31_audit_claim_was_wrong_for_n_of_9": 4,
+    "ground_truth_source": "services/control-plane/bff/test_loop_inventory_read_model_contract.py:RUNTIME_CONTROLLER_BINDINGS"
+  },
+  "tasks": [
+    {
+      "id": "L12-CONTROLLER-TEACH-20260803",
+      "title": "Register the existing Persona Teaching worker as canonical controller and repair its evidence",
+      "summary_zh": "services/training-session/preview_eval_worker.py 已存在、已部署、有真實 L12-TEACH-001 commit 記錄，不需重寫。將它登記進 RUNTIME_CONTROLLER_BINDINGS + docker-compose.yml PANTHEON_CONTROLLER_NAME + BFF loop_inventory 讀模型，並修復其 evidence manifest（現在跑 scripts/validate_twelve_loop_gap_evidence.py 會有 21 條 rejection，多屬 current_cut_consistency 與 head_binding）。",
+      "task_shape": "registration_plus_evidence_repair",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "docker-compose.yml",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json"
+      ],
+      "verified_implementation": {
+        "module": "services/training-session/preview_eval_worker.py",
+        "compose_service_confirmed_running": true,
+        "commit_trail": ["184b5a54d L12-TEACH-001: anchor teaching authority and health", "b77795d25 LOOP-PROD-TEACH-001: anchor default preview worker runtime", "a25ce07dd LOOP-AUTO-KNOW-003: anchor teaching eval worker"],
+        "ancestor_of_origin_dev_confirmed": true,
+        "evidence_validator_result": "reject (21 rejections, mostly current_cut_consistency + head_binding)"
+      },
+      "acceptance": [
+        "Add persona_teaching to RUNTIME_CONTROLLER_BINDINGS with controller_name, module, compose_services, and module_literals matching the existing worker",
+        "Add PANTHEON_CONTROLLER_NAME to the preview_eval_worker compose service",
+        "Rewrite evidence.json to satisfy every rule in scripts/validate_twelve_loop_gap_evidence.py with zero rejections, using content-digest head binding, an explicit current_delivery_receipt anchor, and claim_scope on every validation command",
+        "Do not modify preview_eval_worker.py's runtime behavior in this task unless the registration test requires a literal it does not yet expose"
+      ],
+      "non_goals": ["No new controller implementation", "No panel-only closure", "No live-capital activation"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-IMIT-20260803",
+      "title": "Register the existing Human Imitation / Shadow Evaluation worker as canonical controller and repair its evidence",
+      "summary_zh": "services/policy-learning/scheduler_worker.py 已存在、已部署、lease-based 去重與 restart-safe，有真實 L12-IMIT-001 commit 記錄。登記進 canonical binding，並修復 evidence manifest（現有 31 條 rejection）。",
+      "task_shape": "registration_plus_evidence_repair",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "docker-compose.yml",
+        "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json"
+      ],
+      "verified_implementation": {
+        "module": "services/policy-learning/scheduler_worker.py",
+        "compose_service_confirmed_running": true,
+        "commit_trail": ["f3e55652b L12-MANIFEST-HC-IMIT-CAP-20260729: anchor worker health", "35538b0b5 L12-IMIT-001: anchor compose service credential wiring", "928638587 L12-IMIT-001: anchor tenant-safe authority and recovery", "6f985c9f1 L12-IMIT-001: anchor real-dataset scheduling and backlog leases", "949acef78 LOOP-AUTO-KNOW-005: add human imitation and shadow evaluation scheduler"],
+        "ancestor_of_origin_dev_confirmed": true,
+        "evidence_validator_result": "reject (31 rejections)"
+      },
+      "acceptance": [
+        "Add human_imitation_shadow_evaluation to RUNTIME_CONTROLLER_BINDINGS matching the existing scheduler_worker",
+        "Add PANTHEON_CONTROLLER_NAME to its compose service",
+        "Rewrite evidence.json to zero rejections under scripts/validate_twelve_loop_gap_evidence.py, in particular binding required_checks to actual recorded anchor_commits and adding observed_at/observations to every mutable-GitHub-surface command"
+      ],
+      "non_goals": ["No new controller implementation", "No panel-only closure", "No training activation beyond existing fail-closed gates"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-CONS-20260803",
+      "title": "Register the existing Consultation workflow executor as canonical controller and repair its evidence",
+      "summary_zh": "services/consultation/workflow_executor.py 已存在、自稱 tenant-scoped reconciler，有 SQLite lease+fencing+DLQ，真實 L12-CONS-001 commit 記錄。登記進 canonical binding，修復 evidence manifest（現有 19 條 rejection）。",
+      "task_shape": "registration_plus_evidence_repair",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "docker-compose.yml",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json"
+      ],
+      "verified_implementation": {
+        "module": "services/consultation/workflow_executor.py",
+        "compose_service_confirmed_running": true,
+        "commit_trail": ["238b4bf32 L12-CONS-001: finalize validation record", "56746d96c L12-CONS-001: anchor executor service integration", "9efc12a56 LOOP-PROD-CONS-001: require qualified participant reviews", "4bfda5678 LOOP-AUTO-KNOW-006: add consultation workflow executor"],
+        "ancestor_of_origin_dev_confirmed": true,
+        "evidence_validator_result": "reject (19 rejections)"
+      },
+      "acceptance": [
+        "Add consultation to RUNTIME_CONTROLLER_BINDINGS matching workflow_executor.py",
+        "Add PANTHEON_CONTROLLER_NAME to its compose service",
+        "Rewrite evidence.json to zero rejections"
+      ],
+      "non_goals": ["No new controller implementation", "No approval-authority grant to the consultation plane"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-BFF-20260803",
+      "title": "Register the existing BFF downstream health monitor as canonical controller",
+      "summary_zh": "services/control-plane/bff/downstream_health_monitor.py 已存在、已部署、SQLite WAL 去重+DLQ，真實 L12-BFF-001 commit 記錄，evidence 已經零違規通過驗證器。只需登記進 canonical binding，不需任何 evidence 修復。派工前必須先解決跟 LIFECYCLE-PROJ-BFF-001 / LIFECYCLE-PROJ-RETIRE-001 的 artifact-scope 衝突。",
+      "task_shape": "registration_only",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
+        "LIFECYCLE-PROJ-BFF-001",
+        "LIFECYCLE-PROJ-RETIRE-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "docker-compose.yml"
+      ],
+      "verified_implementation": {
+        "module": "services/control-plane/bff/downstream_health_monitor.py",
+        "compose_service_confirmed_running": true,
+        "commit_trail": ["774b7542e L12-BFF-001: anchor retention-safe recovery", "f2be990d5 L12-BFF-001: repair incident delivery semantics", "068cf511a L12-BFF-001: anchor strict health integration proof", "f66a748c9 L12-BFF-001: anchor durable health controller", "92245b8d3 LOOP-AUTO-BFF-002: add BFF downstream health monitor"],
+        "ancestor_of_origin_dev_confirmed": true,
+        "evidence_validator_result": "pass (zero rejections)"
+      },
+      "acceptance": [
+        "CONFIRMED BLOCKER (live dry-run 2026-08-03): scripts/dispatch_twelve_loop_gap_2026_07_26.py --dry-run --current fails closed with 'live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001'. Do not scope this task's artifacts as the whole services/control-plane/bff directory; scope to only the files downstream_health_monitor.py and its own tests actually touch, disjoint from trade_journeys.py/trade_journey_projection_store.py/read_store.py/main.py which LIFECYCLE-PROJ-BFF-001 owns",
+        "Add bff_health_monitoring to RUNTIME_CONTROLLER_BINDINGS matching downstream_health_monitor.py",
+        "Add PANTHEON_CONTROLLER_NAME to its compose service",
+        "No evidence rewrite needed -- confirm scripts/validate_twelve_loop_gap_evidence.py still passes after registration changes"
+      ],
+      "non_goals": ["No new controller implementation", "No touching main.py or the trade-journey read-API files owned by LIFECYCLE-PROJ-BFF-001"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-AGORA-20260803",
+      "title": "Implement canonical Agora Interaction Evidence controller contract (confirmed genuinely missing)",
+      "summary_zh": "查遍全 repo 沒有任何 L12-AGORA-* commit；原 catalog 指的 services/control-plane/specs/agora 只是一個 schema 檔案目錄，不是服務。agora_dataset_authority.py / agora_dataset_source.py / agora_seed_bridge.py 屬於其他 loop（多數是 L12-IMIT-001），不能替代。這是真的要從零建。",
+      "task_shape": "build_from_scratch",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/control-plane/bff/agora/",
+        "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/"
+      ],
+      "verified_implementation": {"module": null, "note": "no dedicated controller/worker/reconciler found anywhere in the repo for this loop"},
+      "acceptance": [
+        "Implement a durable canonical controller for agora_interaction_evidence: desired-state query, actual-state query, idempotency, heartbeat/liveness, restart/duplicate safety",
+        "Register in RUNTIME_CONTROLLER_BINDINGS + compose PANTHEON_CONTROLLER_NAME on first landing (not a follow-up), since there is no prior registration to reconcile",
+        "Route dataset extraction and learning-evidence handoff through this controller instead of any ad hoc caller"
+      ],
+      "non_goals": ["No panel-only closure", "No seed fixture as live proof"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-DEP-20260803",
+      "title": "Implement canonical Promotion / Deployment controller contract (confirmed genuinely missing)",
+      "summary_zh": "services/control-plane/governance 裡的 deployment_plan.py / deployment_saga.py 都只是靜態 model，governance 與 runtime-manager 裡找不到任何常駐 saga dispatcher/worker。這是真的要從零建。",
+      "task_shape": "build_from_scratch",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/control-plane/governance/",
+        "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/"
+      ],
+      "verified_implementation": {"module": null, "note": "deployment_plan.py and deployment_saga.py are static models only; no always-on dispatcher found"},
+      "acceptance": [
+        "Implement an always-on saga dispatcher that closes the plan-to-binding feedback loop: reads ApprovalDecision -> DeploymentPlan -> drives RuntimeBinding to terminal state -> writes back",
+        "Register in RUNTIME_CONTROLLER_BINDINGS + compose PANTHEON_CONTROLLER_NAME on first landing",
+        "Must not grant itself capital, broker, or live-execution authority beyond what existing runtime-manager authority already grants"
+      ],
+      "non_goals": ["No panel-only closure", "No approval-gate bypass", "No live-capital activation"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": true
+    },
+    {
+      "id": "L12-CONTROLLER-CAP-20260803",
+      "title": "Build the missing worker-supervision reconciler for Capital Pool Execution",
+      "summary_zh": "services/runtime-manager/runtime_truth_reconciler.py 已存在，但驗證過那是跨服務身分欄位一致性修補（MGMT-OPS-003-GAP-002），不是「每個 active RuntimeBinding 剛好一個受監督 worker、有 restart/stop/signal 隔離」。這個任務要建的是後者，可以呼叫 runtime_truth_reconciler.py 做身分檢查，但不能宣稱它已經解決這個問題。",
+      "task_shape": "build_missing_piece",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/runtime-manager/",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/"
+      ],
+      "verified_implementation": {
+        "module": "services/runtime-manager/runtime_truth_reconciler.py",
+        "note": "solves a DIFFERENT problem (identity-field truth reconciliation), verified via docstring + commit trail MGMT-OPS-003-GAP-002; must not be reused as-is for this task's acceptance"
+      },
+      "acceptance": [
+        "Implement exactly-one-supervised-worker-per-active-RuntimeBinding with restart, stop, and signal isolation",
+        "May call runtime_truth_reconciler.py for identity-field checks but must implement its own desired/actual-state reconciliation for worker supervision",
+        "Register in RUNTIME_CONTROLLER_BINDINGS + compose PANTHEON_CONTROLLER_NAME on first landing",
+        "Must remain paper-only unless a separate live-capital gate explicitly approves otherwise"
+      ],
+      "non_goals": ["No live-capital activation", "No claiming runtime_truth_reconciler.py already satisfies this loop"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": true
+    },
+    {
+      "id": "L12-CONTROLLER-TELREC-20260803",
+      "title": "Register the existing drift reconciliation worker and build the missing incident/postmortem/evolution-handoff chain",
+      "summary_zh": "services/reconciliation-drift/scheduler_worker.py 與 consumer.py 已存在、已部署（reconciliation-drift-scheduler / reconciliation-drift-consumer），有真實 L12-REC-001 commit 記錄，但只解決 drift 偵測那一半。查過 services/reconciliation-drift 與 services/telemetry，沒有找到把 drift-report -> incident-creation -> postmortem -> evolution-handoff 串成自動端到端鏈的東西。",
+      "task_shape": "registration_plus_build_missing_piece",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": ["SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"],
+      "artifacts": [
+        "services/reconciliation-drift/",
+        "services/telemetry/",
+        "docs/deployment/evidence/twelve-loop-gap/L12-TELREC-001/"
+      ],
+      "verified_implementation": {
+        "module": "services/reconciliation-drift/scheduler_worker.py + consumer.py",
+        "compose_service_confirmed_running": true,
+        "commit_trail": ["31d7eaebc L12-MANIFEST-HC-REC-20260729: add worker heartbeats", "e175b29c7 L12-REC-001: anchor leased reconciliation workers", "4673af97b LOOP-PROD-TEL-001: anchor actual-state telemetry chain", "3d7abb669 LOOP-AUTO-TEL-002: add scheduled reconciliation worker"],
+        "ancestor_of_origin_dev_confirmed": true,
+        "coverage": "drift detection only; no postmortem or evolution-handoff wiring found"
+      },
+      "acceptance": [
+        "Register telemetry_reconciliation in RUNTIME_CONTROLLER_BINDINGS + compose PANTHEON_CONTROLLER_NAME against the existing reconciliation-drift worker",
+        "Build the missing chain segment: DriftReport -> IncidentCase creation -> postmortem generation -> handoff into the evolution plane (feeding evolution's threshold/proposal pipeline, see L12-CONTROLLER-EVO-20260803)",
+        "Do not claim the loop reconciled until the full ingest-to-evolution-handoff chain has a passing restart/duplicate-safety test"
+      ],
+      "non_goals": ["No panel-only closure", "No rebuilding the existing drift scheduler/consumer"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "L12-CONTROLLER-EVO-20260803",
+      "title": "Build the missing threshold-sweep and proposal-generation piece for Evolution",
+      "summary_zh": "services/control-plane/governance/evolution_controller.py 已存在，但驗證過那是「已核准 EvolutionDecision 的安全派發邊界路由器」，不是 threshold sweep 與 incident/postmortem 提案生成迴圈。這個任務要建的是後者，餵給既有 evolution_controller.py 做派發，不能重複做一個派發邊界。",
+      "task_shape": "build_missing_piece",
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "todo",
+      "depends_on": [
+        "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
+        "L12-CONTROLLER-TELREC-20260803"
+      ],
+      "artifacts": [
+        "services/control-plane/governance/",
+        "services/evolution/",
+        "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/"
+      ],
+      "verified_implementation": {
+        "module": "services/control-plane/governance/evolution_controller.py",
+        "note": "solves a DIFFERENT problem (approved-decision dispatch boundary); docstring confirms scope is 'turns approved EvolutionDecision records into typed dispatch commands' -- must not be reused as-is for this task's acceptance"
+      },
+      "acceptance": [
+        "Implement a scheduled threshold sweep that evaluates telemetry/drift signals and generates candidate EvolutionDecision proposals with cooldown and single-active-decision enforcement",
+        "Feed approved proposals INTO the existing evolution_controller.py for dispatch; do not build a second dispatch boundary",
+        "Register in RUNTIME_CONTROLLER_BINDINGS + compose PANTHEON_CONTROLLER_NAME on first landing"
+      ],
+      "non_goals": ["No panel-only closure", "No approval-gate bypass", "No claiming evolution_controller.py already satisfies this loop"],
+      "product_level_required": true,
+      "requires_human_ops_signoff": true
+    }
+  ]
+}
