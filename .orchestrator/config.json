@@ -944,9 +944,9 @@
       "Copilot": 0
     },
     "max_tasks_per_agent_by_agent": {
-      "Claude": 1,
+      "Claude": 4,
       "Claude2": 1,
-      "Antigravity": 1,
+      "Antigravity": 4,
       "Antigravity2": 0,
       "Codex": 4,
       "Codex2": 4,
@@ -957,8 +957,8 @@
     "require_explicit_provider_accounts": true,
     "allow_legacy_provider_account_aliases": false,
     "max_concurrent_per_account": {
-      "claude_account_shared_max_1": 1,
-      "antigravity": 1,
+      "claude_account_shared_max_1": 4,
+      "antigravity": 4,
       "antigravity2": 0,
       "codex1": 4,
       "codex2": 4,
