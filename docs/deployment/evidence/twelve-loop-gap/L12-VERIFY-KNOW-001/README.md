@@ -44,11 +44,15 @@ connector, which is what keeps the drill from performing an external crawl.
 ## Result
 
 **11 of 16 checks pass. 4 fail and 1 is blocked. The loops-1-to-3 chain is not
-product-level.** Three consecutive runs at the recorded cut — each on a clean
-worktree at the recorded `git_sha` and `script_sha256` — produced identical
-per-check statuses and the identical gap set. The third is the archived
-`drill-run.json`; the other two correlation ids are listed in `evidence.json`
-under `drill.reproducibility`.
+product-level.** Four consecutive runs of this drill source — each on a clean
+worktree at the recorded `script_sha256` — produced identical per-check statuses
+and the identical gap set. Runs 1–3 ran at the recorded `git_sha`, and the third
+is the archived `drill-run.json`. Run 4 re-ran after `dev` was merged into the
+task branch, at `c2be9dcb`, and reproduced the same 11/4/1 split and the same
+five gaps; the merge touched `services/bff/assistant` and supervisor tooling,
+none of the source-ingest, registry, or research surfaces this drill exercises.
+All four correlation ids are listed in `evidence.json` under
+`drill.reproducibility`.
 
 | Acceptance criterion | Verdict |
 | --- | --- |

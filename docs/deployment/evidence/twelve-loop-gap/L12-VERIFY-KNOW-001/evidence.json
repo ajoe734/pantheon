@@ -110,13 +110,26 @@
       ]
     },
     "reproducibility": {
-      "consecutive_identical_runs": 3,
+      "consecutive_identical_runs": 4,
       "correlation_ids": [
         "8f32997352af4c9bb82108ebd1666bf8",
         "f993485ebfc34dd2ad23cac1486ba82a",
-        "d7cef595fcce49ca91aee70cf76d64f0"
+        "d7cef595fcce49ca91aee70cf76d64f0",
+        "ebe46747f80f49c0983b451fb63b40a4"
       ],
-      "note": "Three runs at this cut, each on a clean worktree at the recorded git_sha and the recorded script_sha256, produced identical per-check statuses and the identical gap set. The third run is the archived run record.",
+      "note": "Four runs at this drill source, each on a clean worktree at the recorded script_sha256, produced identical per-check statuses and the identical gap set. Runs 1-3 ran at the recorded git_sha; the third is the archived run record. Run 4 re-ran the same drill source after dev was merged into the task branch, at git_sha c2be9dcbeaec5717c29a4e4b2f10288cb4a7caa4, to confirm the merge changed no status and no gap.",
+      "post_merge_confirmation": {
+        "correlation_id": "ebe46747f80f49c0983b451fb63b40a4",
+        "finished_at": "2026-08-04T21:48:10Z",
+        "git_sha": "c2be9dcbeaec5717c29a4e4b2f10288cb4a7caa4",
+        "note": "Not archived as the run record: it reproduces the archived result rather than replacing it. The merge touched services/bff/assistant and supervisor tooling, none of the source-ingest, registry, or research surfaces this drill exercises.",
+        "summary": {
+          "blocked": 1,
+          "failed": 4,
+          "passed": 11,
+          "total": 16
+        }
+      },
       "run_record_is_run": 3
     },
     "run_record": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json",
