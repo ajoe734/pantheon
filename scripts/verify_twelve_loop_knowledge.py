@@ -361,6 +361,33 @@ def _git_sha() -> str:
         return "unknown"
 
 
+def _git_worktree_clean() -> bool | None:
+    """True when the repository has no tracked modifications at run time.
+
+    A clean worktree is what lets ``git_sha`` identify the exact drill source;
+    otherwise ``script_sha256`` is the only byte-level binding.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return not result.stdout.strip()
+    except Exception:  # noqa: BLE001 - lineage falls back to an explicit unknown
+        return None
+
+
+def _script_sha256() -> str:
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except Exception:  # noqa: BLE001 - lineage falls back to an explicit unknown
+        return "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Check bookkeeping
 # ---------------------------------------------------------------------------
@@ -2273,6 +2300,9 @@ class KnowledgeLoopDrill:
             "correlation_id": self.correlation_id,
             "run_dir": str(self.run_dir),
             "git_sha": _git_sha(),
+            "git_worktree_clean": _git_worktree_clean(),
+            "script": str(Path(__file__).resolve().relative_to(REPO_ROOT)),
+            "script_sha256": _script_sha256(),
             "python": sys.version.split()[0],
             "started_at": utc_now(),
             "primary_source_id": primary_source_id,
