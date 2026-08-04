@@ -2,6 +2,25 @@ name: Canonical Review Gate
 
 # Guarantees the "Pantheon canonical review gate" required status check is
 # posted for every PR into dev/master -- success or failure, never silence.
+#
+# v1 (SUP-REVIEW-PIPELINE-INTEGRITY-20260804) tried to re-derive the review
+# policy locally by reading ai-status.json out of this workflow's own
+# checkout. That is structurally wrong: a GitHub-hosted runner never sees
+# live task-board state, which lives entirely on the Pantheon host as a
+# git-independent event log. That version reported failure for every task,
+# registered or not, and had to be pulled from branch protection the same
+# day it shipped.
+#
+# v2 (SUP-REVIEW-GATE-GIT-NATIVE-PROOF-20260804) asks a question answerable
+# purely over the GitHub API, no live state needed: does a git tag exist at
+# the exact reviewed head (refs/tags/pantheon-review/approve/<sha>)? That tag
+# is pushed by scripts/git/github_review_bridge.py at approve time, on the
+# host that actually has the state -- a tag is part of the repository's own
+# object graph, so any `gh api` call sees it, including this runner. This
+# workflow does not re-derive policy; it only confirms the artifact the
+# trusted internal approve path already produced is present for this exact
+# head.
+#
 # This generic github-actions status is a separate lifecycle check; it cannot
 # satisfy the dedicated external-App-pinned canonical reviewer attestation.
 
@@ -18,7 +37,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
   statuses: write
 
 concurrency:
@@ -30,26 +48,25 @@ jobs:
     name: Pantheon canonical review gate
     runs-on: ubuntu-latest
     steps:
+      # Shallow checkout of the PR head only, to run this workflow's own
+      # script. No commit-history walking, no local git state -- the check
+      # itself is a single GitHub API call.
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Evaluate and post the canonical review gate status
+      - name: Check for the review-proof tag and post the gate status
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 scripts/git/canonical_review_gate_ci.py \
             --repo "$REPO" \
-            --pr-number "$PR_NUMBER" \
             --head-ref "$HEAD_REF" \
             --head-sha "$HEAD_SHA" \
             --target-url "$TARGET_URL"
