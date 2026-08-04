@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add a dispatch-explain diagnostic tool for supervisor.py
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.. Task returned to todo until Codex2 starts a fresh run.
+- Next: Independent review on PR #4532 head 4aae794273c6317ab8ef2c0754ef272887836283: traced primary dispatch order against dispatch_ready_tasks; 14/14 focused tests and py_compile passed; PANTHEON_STATUS_ROOT probe left config, state, and provider-capabilities byte-identical; no supervisor, poll_workers, process_queue, reconcile_queue_records, or BFF changes.
 
 ## Summary
 Composes existing pure dispatch-gate functions into a single read-only CLI that answers 'why was task X not dispatched this tick' without hand-writing a throwaway script against internal functions, as had to be done live on 2026-08-04.
