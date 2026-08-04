@@ -14854,6 +14854,7 @@ def poll_worker_failure_stage(
         "reassigned",
         "retried",
         "retry_backoff",
+        RETRY_QUARANTINED_STATUS,
         "superseded",
     }:
         return {"changed": False, "stop": True}
@@ -15322,6 +15323,15 @@ def poll_worker_assignment_stage(
         return {"changed": bool(changed), "stop": True}
 
     task = task_map.get(str(worker.get("task_id") or ""))
+    if (
+        worker.get("status") == RETRY_QUARANTINED_STATUS
+        and worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        and task_retry_quarantine_hold_reason(task, retry_was_held=True)
+    ):
+        # retry_due_workers owns release after a governed reopen. Until then,
+        # the expected assignment mismatch must not supersede this queue-backed
+        # parent or complete the queue event that reopen will release.
+        return {"changed": changed, "stop": True}
     handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
     lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:

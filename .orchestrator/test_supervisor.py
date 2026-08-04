@@ -16266,6 +16266,104 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
         self.assertEqual(worker["status"], "retried")
         self.assertEqual(worker["superseded_by_run_id"], "run-reopened")
 
+    def test_poll_workers_preserves_queue_backed_retry_hold_until_reopen(self) -> None:
+        """A poll cannot supersede the queue event that governed reopen releases."""
+
+        quarantined = self._task_row()
+        quarantined.update({"status": "quarantined", "failure_streak": 2})
+        self.status_path.write_text(
+            json.dumps({"tasks": [quarantined]}) + "\n",
+            encoding="utf-8",
+        )
+        event_id = "evt-held-poll-retry"
+        hold_reason = supervisor.task_retry_quarantine_hold_reason(
+            quarantined,
+            retry_was_held=True,
+        )
+        self.assertIsNotNone(hold_reason)
+        worker = {
+            **self._worker(run_id="run-held-poll-retry"),
+            "queue_event_id": event_id,
+            "status": supervisor.RETRY_QUARANTINED_STATUS,
+            "retry_hold_kind": supervisor.RETRY_HELD_BY_TASK_QUARANTINE,
+            "retry_hold_reason": hold_reason,
+            "retry_count": 1,
+            "attempt_count": 1,
+            "next_retry_at": "2026-08-04T00:00:00Z",
+        }
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {
+                "events": {
+                    event_id: {
+                        "status": supervisor.RETRY_QUARANTINED_STATUS,
+                        "retry_hold_kind": supervisor.RETRY_HELD_BY_TASK_QUARANTINE,
+                        "retry_hold_reason": hold_reason,
+                    }
+                }
+            },
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="queue-backed retry",
+            task_id=self.task["id"],
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("held retry must not launch before reopen"),
+            ) as start_worker,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertFalse(supervisor.poll_workers(self.config, state, provider_report={}))
+
+        start_worker.assert_not_called()
+        self.assertEqual(worker["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertIn(worker["run_id"], state["workers"])
+        self.assertEqual(
+            state["queue"]["events"][event_id]["status"],
+            supervisor.RETRY_QUARANTINED_STATUS,
+        )
+
+        reopened_status = {"tasks": [self._task_row()], "handoffs": [], "blockers": []}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_reopen(
+                reopened_status,
+                [self.task["id"], "Operator released the queue-backed retry hold."],
+            )
+        self.status_path.write_text(
+            json.dumps(reopened_status) + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "request_for_worker", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-after-reopen", None),
+            ) as start_worker,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.poll_workers(self.config, state, provider_report={}))
+            self.assertFalse(supervisor.poll_workers(self.config, state, provider_report={}))
+
+        start_worker.assert_called_once()
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-after-reopen")
+
     def test_worker_completion_resets_task_row_failure_streak(self) -> None:
         state: dict = {}
         worker = self._worker(run_id="run-completed")
