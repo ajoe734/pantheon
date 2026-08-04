@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Request changes on PR #4533 head 05226d98f091f3648ddb587a54d82d207675f54b: quarantine can be bypassed without reopen. scripts/ai_status.py command_start and command_handoff both accept status=quarantined, set status to in_progress/review, and reset failure_streak=0. That violates the brief's reopen-only clear gate and makes the task dispatchable after start or handoff. Reject start/handoff (and any other non-reopen transition that can leave quarantined) until governed reopen clears the streak; add focused regression coverage proving those commands preserve/reject quarantined and reopen alone returns it to dispatch eligibility.
+- Next: Required fix: command_start currently resets failure_streak=0 for an in_progress task below quarantine, so an ordinary start can erase consecutive worker_failed evidence before worker completion or a successful review/handoff. Remove/restrict that reset so only worker completion, successful review/handoff, or governed reopen clears the streak. Add regression coverage: a below-threshold failed task survives start with its streak intact, then its next worker_failed reaches quarantine. Rebase/merge current origin/dev and rerun focused checks before re-review.
 
 ## Summary
 Makes repeated dispatch failure visible on the board itself instead of only in raw activity-log JSONL, closing the exact gap that made SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 indistinguishable from an untouched task after 5 failed attempts.

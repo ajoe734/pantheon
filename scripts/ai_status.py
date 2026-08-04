@@ -5896,7 +5896,6 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     require_reopen_before_leaving_quarantine(task, command="start")
     timestamp = iso_now()
     task["status"] = "in_progress"
-    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)

@@ -15959,6 +15959,45 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
         self.assertEqual(quarantined["status"], "quarantined")
         self.assertIn("Reopen", quarantined["next"])
 
+    def test_start_preserves_subthreshold_streak_until_next_failure_quarantines(self) -> None:
+        state: dict = {}
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(
+                self._record_failure(state, self._worker(run_id="run-before-start")),
+                1,
+            )
+
+            started_status = {
+                "tasks": [self._task_row()],
+                "handoffs": [],
+                "blockers": [],
+            }
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+                mock.patch.object(ai_status, "append_log"),
+            ):
+                ai_status.command_start(
+                    started_status,
+                    [self.task["id"], "Resume work after the first failure."],
+                )
+
+            started = started_status["tasks"][0]
+            self.assertEqual(started["status"], "in_progress")
+            self.assertEqual(started["failure_streak"], 1)
+            self.status_path.write_text(
+                json.dumps(started_status) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                self._record_failure(state, self._worker(run_id="run-after-start")),
+                2,
+            )
+
+        quarantined = self._task_row()
+        self.assertEqual(quarantined["failure_streak"], 2)
+        self.assertEqual(quarantined["status"], "quarantined")
+
     def test_rotation_cleanup_keeps_task_counter_and_governed_reopen_unblocks_dispatch(self) -> None:
         """A rotated retry counts as a new task failure even after bucket cleanup."""
 
