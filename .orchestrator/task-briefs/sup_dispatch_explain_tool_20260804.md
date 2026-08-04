@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add a dispatch-explain diagnostic tool for supervisor.py
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.
+- Next: Independent review passed: PR #4532 head 5b5e1249 matches this task branch; 14/14 focused tests and py_compile pass; traced global and per-agent gate order against dispatch_ready_tasks; PANTHEON_STATUS_ROOT CLI probe leaves config, state, and provider capabilities byte-identical.
 
 ## Summary
 Composes existing pure dispatch-gate functions into a single read-only CLI that answers 'why was task X not dispatched this tick' without hand-writing a throwaway script against internal functions, as had to be done live on 2026-08-04.
