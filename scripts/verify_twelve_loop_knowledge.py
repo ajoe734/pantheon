@@ -69,6 +69,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_REL_PATH = Path(__file__).resolve().relative_to(REPO_ROOT).as_posix()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -2301,7 +2302,7 @@ class KnowledgeLoopDrill:
             "run_dir": str(self.run_dir),
             "git_sha": _git_sha(),
             "git_worktree_clean": _git_worktree_clean(),
-            "script": str(Path(__file__).resolve().relative_to(REPO_ROOT)),
+            "script": SCRIPT_REL_PATH,
             "script_sha256": _script_sha256(),
             "python": sys.version.split()[0],
             "started_at": utc_now(),
@@ -2369,13 +2370,115 @@ def _json_default(value: Any) -> str:
     return str(value)
 
 
+EVIDENCE_DIR = REPO_ROOT / "docs/deployment/evidence/twelve-loop-gap" / TASK_ID
+
+
+def verify_manifest(evidence_dir: Path) -> list[str]:
+    """Cross-check the reviewed manifest against the archived run record.
+
+    The manifest is hand-authored around a machine-written run record, so the
+    two can drift: a re-cut run, an ``observed`` string copied from an earlier
+    correlation id, a hand-typed sha. Every drift is a reason to distrust the
+    evidence, so each one is reported instead of the first one raising.
+    """
+
+    problems: list[str] = []
+    manifest_path = evidence_dir / "evidence.json"
+    checksum_path = evidence_dir / "evidence.sha256"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    drill = manifest["drill"]
+
+    record_path = REPO_ROOT / drill["run_record"]
+    record_bytes = record_path.read_bytes()
+    record = json.loads(record_bytes.decode("utf-8"))
+    identity = record["identity"]
+
+    def compare(label: str, claimed: Any, actual: Any) -> None:
+        if claimed != actual:
+            problems.append(f"{label}: manifest={claimed!r} run record={actual!r}")
+
+    for field in ("correlation_id", "git_sha", "script", "script_sha256", "python", "started_at", "finished_at"):
+        compare(f"drill.{field}", drill.get(field), identity.get(field))
+    compare("drill.git_worktree_clean", drill.get("git_worktree_clean"), identity.get("git_worktree_clean"))
+    compare("drill.service_start_counts", drill.get("service_start_counts"), identity.get("service_start_counts"))
+    compare("drill.summary", drill.get("summary"), record["summary"])
+    compare("task.evidence_cut_at", manifest["task"].get("evidence_cut_at"), identity.get("finished_at"))
+    compare(
+        "drill.run_record_sha256",
+        drill.get("run_record_sha256"),
+        hashlib.sha256(record_bytes).hexdigest(),
+    )
+
+    statuses = {check["check_id"]: check["status"] for check in record["checks"]}
+    for status, field in (("passed", "checks_passed"), ("failed", "checks_failed"), ("blocked", "checks_blocked")):
+        compare(
+            f"drill.{field}",
+            sorted(drill.get(field, ())),
+            sorted(check_id for check_id, value in statuses.items() if value == status),
+        )
+
+    recorded_gaps = {gap["gap_id"]: gap for gap in record["gaps"]}
+    compare("gap id set", sorted(gap["gap_id"] for gap in manifest["gaps"]), sorted(recorded_gaps))
+    for gap in manifest["gaps"]:
+        recorded = recorded_gaps.get(gap["gap_id"])
+        if recorded is None:
+            continue
+        for field in ("observed", "loop_id", "found_by_check"):
+            if field in recorded:
+                compare(f"gap {gap['gap_id']}.{field}", gap.get(field), recorded[field])
+
+    current_script = _script_sha256()
+    if identity.get("script_sha256") != current_script:
+        problems.append(
+            "the archived run was produced by different drill source than the working tree: "
+            f"run record={identity.get('script_sha256')!r} current {SCRIPT_REL_PATH}={current_script!r}. "
+            "Re-run the drill and re-cut the manifest in the same commit."
+        )
+
+    if checksum_path.exists():
+        for line in checksum_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            digest, _, name = line.partition("  ")
+            target = evidence_dir / name.strip()
+            if not target.exists():
+                problems.append(f"checksum entry {name.strip()}: file is missing")
+                continue
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+            if actual != digest.strip():
+                problems.append(f"checksum {name.strip()}: recorded={digest.strip()} actual={actual}")
+    else:
+        problems.append(f"{checksum_path} is missing")
+
+    return problems
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", default=None, help="working directory for the drill")
     parser.add_argument("--evidence-out", default=None, help="write the drill evidence JSON here")
     parser.add_argument("--keep-run-dir", action="store_true", help="do not delete an existing run dir")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--verify-manifest",
+        nargs="?",
+        const=str(EVIDENCE_DIR),
+        default=None,
+        metavar="EVIDENCE_DIR",
+        help="verify the reviewed evidence manifest against its archived run record and exit",
+    )
     args = parser.parse_args(argv)
+
+    if args.verify_manifest is not None:
+        evidence_dir = Path(args.verify_manifest)
+        problems = verify_manifest(evidence_dir)
+        if problems:
+            print(f"{TASK_ID} manifest verification FAILED ({len(problems)} problem(s)):", flush=True)
+            for problem in problems:
+                print(f"  - {problem}", flush=True)
+            return 1
+        print(f"{TASK_ID} manifest verification OK: {evidence_dir}", flush=True)
+        return 0
 
     correlation_id = uuid.uuid4().hex
     run_dir = Path(args.run_dir) if args.run_dir else Path("/tmp") / f"l12-verify-know-{correlation_id[:12]}"
