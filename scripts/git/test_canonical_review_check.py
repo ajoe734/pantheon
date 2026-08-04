@@ -950,6 +950,9 @@ class WorkflowContractTests(unittest.TestCase):
     def test_workflow_never_publishes_merge_authoritative_check(self) -> None:
         self.assertNotIn('"repos/$GITHUB_REPOSITORY/check-runs"', self.workflow)
         self.assertNotIn("check-runs/$existing_id", self.workflow)
+        self.assertNotIn("statuses: write", self.workflow)
+        self.assertNotIn("/statuses/", self.workflow)
+        self.assertNotIn("canonical_review_gate_ci.py", self.workflow)
         self.assertNotIn("EXPECTED_ACTIONS_APP_ID", self.workflow)
         self.assertIn("diagnostic", self.workflow)
         self.assertIn(check.CHECK_NAME, self.workflow)
