@@ -1,4 +1,6 @@
+import os
 import sys
+import tempfile
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -11,7 +13,12 @@ SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from explain_dispatch import explain_dispatch_for_task
+from explain_dispatch import (
+    DispatchStateLoadError,
+    bind_status_root_paths,
+    explain_dispatch_for_task,
+    load_orchestrator_state,
+)
 
 
 
@@ -66,29 +73,6 @@ class TestExplainDispatch(unittest.TestCase):
     def tearDown(self) -> None:
         self.admitted_patcher.stop()
 
-
-
-    def test_all_clear_case(self) -> None:
-        state = {"seen_event_keys": {}}
-        # Task is todo, assigned to Codex, dependencies met
-        task = {
-            "id": "TASK-001",
-            "title": "Test Task",
-            "status": "todo",
-            "owner": "Codex",
-            "reviewer": "Claude2",
-            "depends_on": [],
-        }
-        config = dict(self.config)
-        # Mock load_status_data indirectly by injecting tasks via config / state if needed,
-        # or testing explain_dispatch_for_task with mocked load_status_data.
-        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
-            res = explain_dispatch_for_task(config, state, "TASK-001", target_agent_filter="Codex")
-            self.assertNotIn("global_block_reason", res)
-            self.assertIn("Codex", res["agents"])
-            self.assertFalse(res["agents"]["Codex"]["blocked"])
-            self.assertEqual(res["agents"]["Codex"]["candidate_reason"], "owned_ready_dispatch")
-
     def test_all_clear_case(self) -> None:
         state = {"seen_event_keys": {}}
         task = {
@@ -133,6 +117,27 @@ class TestExplainDispatch(unittest.TestCase):
             self.assertTrue(res["agents"]["Antigravity"]["blocked"])
             self.assertEqual(res["agents"]["Antigravity"]["first_blocking_gate"], "agent_can_take_task")
             self.assertIn("sidecar-only restriction", res["agents"]["Antigravity"]["block_reason"])
+
+    def test_auto_dispatch_gate_is_reported_before_other_agent_gates(self) -> None:
+        state = {"seen_event_keys": {}}
+        task = {
+            "id": "TASK-AUTO-BLOCK",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+        }
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch(
+                 "explain_dispatch.agent_auto_dispatch_block_reason",
+                 return_value="dispatch is paused for Codex",
+             ):
+            res = explain_dispatch_for_task(self.config, state, task["id"], target_agent_filter="Codex")
+        self.assertTrue(res["agents"]["Codex"]["blocked"])
+        self.assertEqual(
+            res["agents"]["Codex"]["first_blocking_gate"],
+            "agent_auto_dispatch_block_reason",
+        )
+        self.assertEqual(res["agents"]["Codex"]["block_reason"], "dispatch is paused for Codex")
 
     def test_quota_exhausted_agent(self) -> None:
         import copy
@@ -247,6 +252,104 @@ class TestExplainDispatch(unittest.TestCase):
             res2 = explain_dispatch_for_task(self.config, state, "TASK-007", target_agent_filter="Codex")
             self.assertTrue(res2["agents"]["Codex"]["blocked"])
             self.assertEqual(res2["agents"]["Codex"]["first_blocking_gate"], "dispatch_event_is_in_unchanged_cooldown")
+
+    def test_review_cooldown_redispatch_is_not_reported_as_blocked(self) -> None:
+        state = {"seen_event_keys": {}}
+        task = {
+            "id": "TASK-REVIEW-REDISPATCH",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+        }
+        from supervisor import build_dispatch_event, task_resolver_for_config, utc_now
+
+        resolver = task_resolver_for_config(self.config, {task["id"]: task})
+        event = build_dispatch_event(task, "Claude2", "review_ready_dispatch", resolver)
+        state["seen_event_keys"][event["key"]] = utc_now()
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.pending_review_handoff", return_value={"id": "handoff-1"}), \
+             unittest.mock.patch("explain_dispatch.terminal_review_worker_for_redispatch", return_value={"run_id": "worker-1"}):
+            res = explain_dispatch_for_task(self.config, state, task["id"], target_agent_filter="Claude2")
+        self.assertFalse(res["agents"]["Claude2"]["blocked"])
+        self.assertTrue(res["agents"]["Claude2"]["review_redispatch"])
+
+    def test_failure_loop_skip_is_reported_as_blocked(self) -> None:
+        state = {"seen_event_keys": {}}
+        task = {
+            "id": "TASK-FAILURE-LOOP",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+        }
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch(
+                 "explain_dispatch.failure_loop_task_agents_for_task_map",
+                 return_value={(task["id"], "Codex")},
+             ):
+            res = explain_dispatch_for_task(self.config, state, task["id"], target_agent_filter="Codex")
+        self.assertTrue(res["agents"]["Codex"]["blocked"])
+        self.assertEqual(res["agents"]["Codex"]["first_blocking_gate"], "failure_loop_task_agents")
+
+    def test_chair_reassignment_skip_is_reported_as_blocked(self) -> None:
+        state = {"seen_event_keys": {}}
+        task = {
+            "id": "TASK-CHAIR-TRIAGE",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+        }
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch(
+                 "explain_dispatch.chair_reassignment_triage_needed_for_task",
+                 return_value=True,
+             ):
+            res = explain_dispatch_for_task(self.config, state, task["id"], target_agent_filter="Codex")
+        self.assertTrue(res["agents"]["Codex"]["blocked"])
+        self.assertEqual(
+            res["agents"]["Codex"]["first_blocking_gate"],
+            "chair_reassignment_triage_needed_for_task",
+        )
+
+    def test_relative_state_path_uses_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_root:
+            root = Path(temporary_root)
+            state_path = root / ".orchestrator" / "state.json"
+            state_path.parent.mkdir()
+            state_path.write_text('{"seen_event_keys": {}}', encoding="utf-8")
+            config = {"paths": {"state_file": ".orchestrator/state.json"}}
+            with unittest.mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(root)}, clear=False):
+                self.assertEqual(load_orchestrator_state(config), {"seen_event_keys": {}})
+
+    def test_runtime_paths_use_status_root_without_mutating_input_config(self) -> None:
+        config = {
+            "paths": {
+                "state_file": ".orchestrator/state.json",
+                "provider_capabilities": ".orchestrator/provider_capabilities.json",
+                "approval_queue": ".orchestrator/approval-queue.json",
+            }
+        }
+        with unittest.mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": "/tmp/status-root"}, clear=False):
+            bound = bind_status_root_paths(config)
+        self.assertEqual(
+            bound["paths"]["state_file"],
+            "/tmp/status-root/.orchestrator/state.json",
+        )
+        self.assertEqual(
+            bound["paths"]["provider_capabilities"],
+            "/tmp/status-root/.orchestrator/provider_capabilities.json",
+        )
+        self.assertEqual(
+            bound["paths"]["approval_queue"],
+            "/tmp/status-root/.orchestrator/approval-queue.json",
+        )
+        self.assertEqual(config["paths"]["state_file"], ".orchestrator/state.json")
+
+    def test_missing_state_fails_loudly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_root:
+            config = {"paths": {"state_file": ".orchestrator/state.json"}}
+            with unittest.mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": temporary_root}, clear=False):
+                with self.assertRaises(DispatchStateLoadError):
+                    load_orchestrator_state(config)
 
 
 if __name__ == "__main__":

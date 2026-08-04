@@ -24,13 +24,18 @@ from supervisor import (
     agent_quota_group_id,
     assistant_dev_bridge_task_is_admitted,
     build_dispatch_event,
+    chair_reassignment_triage_needed_for_task,
     dependencies_satisfied,
     display_name_for,
     dispatch_event_is_in_unchanged_cooldown,
+    failure_loop_task_agents_for_task_map,
+    failure_streak_recovery_activity_snapshot,
     load_config,
     load_status,
     load_provider_report,
     normalize_agent_id,
+    pending_review_handoff,
+    REASON_REVIEW_READY,
     outstanding_delivery_indexes,
     quota_group_concurrency_limit,
     queued_quota_group_counts,
@@ -40,9 +45,34 @@ from supervisor import (
     task_assignment_is_catalog_locked,
     task_execution_dispatch_candidate,
     task_resolver_for_config,
+    terminal_review_worker_for_redispatch,
     utc_now,
     weighted_dispatch_agent_ids,
 )
+
+
+class DispatchStateLoadError(RuntimeError):
+    """Raised when the diagnostic cannot read the canonical supervisor state."""
+
+
+def bind_status_root_paths(config: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy whose runtime-state paths resolve under PANTHEON_STATUS_ROOT."""
+    root = status_root_dir(config)
+    paths = dict(config.get("paths", {}) or {})
+    for name in (
+        "status_file",
+        "state_file",
+        "event_queue",
+        "approval_queue",
+        "activity_log",
+        "provider_capabilities",
+    ):
+        value = paths.get(name)
+        if value and not Path(str(value)).is_absolute():
+            paths[name] = str(root / str(value))
+    bound_config = dict(config)
+    bound_config["paths"] = paths
+    return bound_config
 
 
 def status_root_dir(config: dict[str, Any]) -> Path:
@@ -60,14 +90,27 @@ def status_root_dir(config: dict[str, Any]) -> Path:
 
 
 def load_orchestrator_state(config: dict[str, Any]) -> dict[str, Any]:
-    state_file = config.get("paths", {}).get("state_file")
-    if state_file and os.path.exists(state_file):
-        try:
-            with open(state_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    configured_path = config.get("paths", {}).get("state_file")
+    if not configured_path:
+        raise DispatchStateLoadError("Supervisor state path is not configured")
+
+    state_path = Path(str(configured_path))
+    if not state_path.is_absolute():
+        state_path = status_root_dir(config) / state_path
+
+    try:
+        with state_path.open("r", encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DispatchStateLoadError(
+            f"Unable to read canonical supervisor state at {state_path}: {exc}"
+        ) from exc
+
+    if not isinstance(state, dict):
+        raise DispatchStateLoadError(
+            f"Canonical supervisor state at {state_path} must be a JSON object"
+        )
+    return state
 
 
 def load_status_data(config: dict[str, Any]) -> dict[str, Any]:
@@ -112,6 +155,7 @@ def explain_dispatch_for_task(
     target_agent_filter: str | None = None,
     provider_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    config = bind_status_root_paths(config)
     settings = ready_dispatch_settings(config)
     status = load_status_data(config)
     schema = config.get("schema", {})
@@ -120,7 +164,10 @@ def explain_dispatch_for_task(
 
     if provider_report is None:
         try:
-            provider_report = load_provider_report(config)
+            # The diagnostic must only inspect the last provider report.  The
+            # supervisor default may refresh and write this file, which is not
+            # safe for a read-only command.
+            provider_report = load_provider_report(config, refresh=False)
         except Exception:
             provider_report = None
 
@@ -159,6 +206,16 @@ def explain_dispatch_for_task(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.get("seen_event_keys", {})
+    if not isinstance(seen, dict):
+        seen = {}
+    activity_events = failure_streak_recovery_activity_snapshot(config, state)
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(
+        config,
+        state,
+        task_map,
+        provider_report=provider_report,
+        activity_events=activity_events,
+    )
 
     all_config_agent_ids = list(config.get("agents", {}).keys())
     agent_ids = weighted_dispatch_agent_ids(config, settings)
@@ -274,6 +331,34 @@ def explain_dispatch_for_task(
             results["agents"][target_agent] = agent_trace
             continue
 
+        # dispatch_ready_tasks silently skips primary candidates that require
+        # failure-loop recovery or chair reassignment before an event is built.
+        if (task_id, target_agent) in failure_loop_task_agents:
+            agent_trace["blocked"] = True
+            agent_trace["first_blocking_gate"] = "failure_loop_task_agents"
+            agent_trace["block_reason"] = (
+                "Task-agent pair is held by failure-loop reassignment recovery"
+            )
+            results["agents"][target_agent] = agent_trace
+            continue
+
+        if chair_reassignment_triage_needed_for_task(
+            config,
+            state,
+            task_id,
+            target_agent,
+            task=task,
+            provider_report=provider_report,
+            activity_events=activity_events,
+        ):
+            agent_trace["blocked"] = True
+            agent_trace["first_blocking_gate"] = "chair_reassignment_triage_needed_for_task"
+            agent_trace["block_reason"] = (
+                "Task-agent pair requires chair reassignment triage before dispatch"
+            )
+            results["agents"][target_agent] = agent_trace
+            continue
+
         # Gate 6: Event build & Cooldown check
         event = build_dispatch_event(task, target_agent, reason, task_resolver)
         if event["key"] in pending_event_keys:
@@ -289,11 +374,41 @@ def explain_dispatch_for_task(
             cooldown_seconds=unchanged_cooldown_seconds,
             now=dispatch_started_at,
         ):
-            agent_trace["blocked"] = True
-            agent_trace["first_blocking_gate"] = "dispatch_event_is_in_unchanged_cooldown"
-            agent_trace["block_reason"] = f"Dispatch event is in unchanged cooldown"
-            results["agents"][target_agent] = agent_trace
-            continue
+            if reason != REASON_REVIEW_READY:
+                agent_trace["blocked"] = True
+                agent_trace["first_blocking_gate"] = "dispatch_event_is_in_unchanged_cooldown"
+                agent_trace["block_reason"] = "Dispatch event is in unchanged cooldown"
+                results["agents"][target_agent] = agent_trace
+                continue
+
+            handoff = pending_review_handoff(
+                config,
+                status,
+                task_id=task_id,
+                reviewer=target_agent,
+            )
+            terminal_worker = (
+                terminal_review_worker_for_redispatch(
+                    config,
+                    state,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                    event_key=event["key"],
+                    handoff=handoff,
+                )
+                if handoff is not None
+                else None
+            )
+            if terminal_worker is None:
+                agent_trace["blocked"] = True
+                agent_trace["first_blocking_gate"] = "dispatch_event_is_in_unchanged_cooldown"
+                agent_trace["block_reason"] = (
+                    "Dispatch event is in unchanged cooldown and is not eligible "
+                    "for governed review redispatch"
+                )
+                results["agents"][target_agent] = agent_trace
+                continue
+            agent_trace["review_redispatch"] = True
 
         # Helper-claim notes for operator awareness (non-primary gates)
         helper_notes = []
@@ -321,8 +436,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    config = load_config()
-    state = load_orchestrator_state(config)
+    config = bind_status_root_paths(load_config())
+    try:
+        state = load_orchestrator_state(config)
+    except DispatchStateLoadError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     explanation = explain_dispatch_for_task(config, state, args.task_id, target_agent_filter=args.agent)
 
