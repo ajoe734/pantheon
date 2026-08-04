@@ -5,10 +5,15 @@
 Repository delivery now separates signed-review evaluation from
 merge-authoritative check issuance.
 
-`canonical-review-gate.yml` is a read-only diagnostic workflow. It rejects any
-PR base other than `dev` or `master` before checkout, captures `.base.sha`, and
-checks out that immutable SHA. It has no `checks: write` permission and makes
-no check-runs API call.
+`canonical-review-attestation-audit.yml` is a read-only diagnostic workflow.
+It rejects any PR base other than `dev` or `master` before checkout, captures
+`.base.sha`, and checks out that immutable SHA. It has no `checks: write` or
+`statuses: write` permission and makes no check-runs or status API call.
+
+`canonical-review-gate.yml` remains the mainline generic lifecycle-status
+workflow for the distinct `Pantheon canonical review gate` context. It runs as
+the generic `github-actions` App and cannot satisfy the dedicated
+external-App-pinned reviewer-attestation check.
 
 The required `Pantheon canonical reviewer attestation` check must instead be
 issued by a dedicated external GitHub App owned outside the shared repository
@@ -23,19 +28,16 @@ activation remain Human/Ops operations.
 
 ## Current-dev composition
 
-The current task branch merged `origin/dev` at
-`d04d2862b9a1f64d69f31ac10e47629b3f97cc01` in
-`5c3e363c849b6a0043f02b810d06e1efadb81f75`. That merge encountered a
-same-path workflow which checked out candidate code and granted
-`statuses: write` to post the legacy `Pantheon canonical review gate` context.
-It was deliberately not retained: a generic `github-actions` App status can
-never satisfy the dedicated App-pinned required check.
+The task branch composes `origin/dev`
+`e1c014e20b4edc96dba09d19e876d4d04ac8ffd0`, which retains the generic
+`Pantheon canonical review gate` status workflow. The trusted-base attestation
+audit is now isolated in `canonical-review-attestation-audit.yml`, so it can
+remain read-only without removing the separately governed mainline gate.
 
-The compatibility helper `canonical_review_gate_ci.py` remains in the repo for
-the existing non-authoritative status path, but the trusted-base audit workflow
-cannot invoke it and has neither `statuses: write` nor any status/check API
-call. Anchor `d9a7203aea7106bfafacee90f5b453a274887691` adds regression
-coverage for those three prohibitions.
+The generic helper `canonical_review_gate_ci.py` remains solely on that
+distinct lifecycle-status path. The attestation audit workflow cannot invoke
+it and has neither `statuses: write` nor any status/check API call. The
+regression contract verifies both sides of this boundary.
 
 ## Why GitHub Actions is not an issuer
 
@@ -80,8 +82,9 @@ forgery model.
 9. Authorized branch protection pins the exact check name to the verified
    dedicated App id retained in the machine plan.
 
-The repository workflow remains useful diagnostics, but its Actions check is
-never merge authority.
+The attestation audit workflow remains useful diagnostics, but its Actions
+check is never merge authority. The mainline generic lifecycle status remains
+separate and likewise cannot satisfy the external App-pinned attestation.
 
 ## Trusted-base workflow correction
 
@@ -160,7 +163,8 @@ an activation payload.
 
 Reviewer should independently verify:
 
-- repository workflow permissions are read-only and it cannot write checks;
+- attestation-audit workflow permissions are read-only and it cannot write
+  checks or statuses;
 - every workflow event path rejects non-`dev|master` bases before checkout;
 - checkout uses the captured base SHA, not a mutable branch ref;
 - App id `15368` and slug `github-actions` cannot generate a protection plan;
@@ -171,5 +175,6 @@ Reviewer should independently verify:
 - baseline strict and every pre-existing `context/app_id` pair are preserved;
 - no command in this task mutated GitHub protection, App installation, or
   auto-merge.
-- the trusted-base audit workflow cannot invoke `canonical_review_gate_ci.py`
-  or post any generic commit status.
+- the trusted-base attestation audit cannot invoke
+  `canonical_review_gate_ci.py` or post any generic commit status, while the
+  distinct mainline lifecycle gate remains present.

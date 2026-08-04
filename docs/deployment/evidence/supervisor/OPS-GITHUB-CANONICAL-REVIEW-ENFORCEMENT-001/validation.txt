@@ -1,109 +1,53 @@
 OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 validation
-Captured: 2026-07-29
+Captured: 2026-08-04
 
-Post-mainline composition: 2026-08-04
+Post-mainline composition:
 
-The task branch merged current `origin/dev`
-`d04d2862b9a1f64d69f31ac10e47629b3f97cc01` as
-`5c3e363c849b6a0043f02b810d06e1efadb81f75`. The conflicting generic
-status-writing workflow was not retained. Anchor
-`d9a7203aea7106bfafacee90f5b453a274887691` adds a regression that fails if
-the trusted-base audit workflow gains `statuses: write`, a statuses API path,
-or a call to `canonical_review_gate_ci.py`.
+The task branch composes `origin/dev`
+`e1c014e20b4edc96dba09d19e876d4d04ac8ffd0`. The generic
+`Pantheon canonical review gate` lifecycle-status workflow remains at
+`.github/workflows/canonical-review-gate.yml`. The trusted-base, read-only
+attestation audit is isolated at
+`.github/workflows/canonical-review-attestation-audit.yml`; it cannot invoke
+the generic status writer or publish the external-App-pinned reviewer
+attestation.
 
-Post-mainline focused command:
+Focused commands:
 
-    .venv-pantheon/bin/python3 -m pytest -q \
-      scripts/git/test_canonical_review_check.py \
-      scripts/git/test_task_review_merge_gate.py \
-      scripts/git/test_github_review_bridge.py \
-      scripts/git/test_canonical_review_gate_workflow.py
+    python3 scripts/git/test_canonical_review_check.py
+    python3 scripts/git/test_canonical_review_gate_workflow.py
+    python3 scripts/git/test_task_review_merge_gate.py
+    python3 .orchestrator/test_github_bus.py
 
-PASS — 148 passed.
+PASS — 171 tests: 38 canonical-review-check, 13 generic-gate workflow,
+92 task-review-merge-gate, and 28 GitHub-bus tests.
 
-Post-mainline static checks:
+Static checks:
 
-- `py_compile` for the checker, generic compatibility helper, review gate,
-  bridge, and focused tests: PASS.
-- task evidence JSON parse: PASS.
+- `python3 -m py_compile scripts/git/canonical_review_check.py
+  scripts/git/canonical_review_gate_ci.py`: PASS.
+- JSON parse of task `evidence.json`: PASS.
+- YAML safe-load of both canonical-review workflows: PASS.
 - `git diff --check`: PASS.
-- `actionlint`: not run on 2026-08-04 because no `actionlint` executable was
-  available in this worker environment; the prior captured actionlint result
-  below remains historical evidence only.
+- `actionlint`: not run because no `actionlint` executable is available in
+  this worker environment.
 
-Completed:
+Focused assertions covered:
 
-1. python3 scripts/dev/provision_python_distribution.py
-   PASS — checkout-scoped .venv-pantheon provisioned and foreign-cwd imports verified.
-
-2. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_canonical_review_check.py
-   PASS — 37 passed. New regressions reject github-actions app id 15368,
-   slug github-actions, an App owned by ajoe734, a same-name Actions check
-   against an external-App plan, and attacker-controlled task-branch bases.
-
-3. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py
-   PASS — 92 passed.
-
-4. .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_github_review_bridge.py
-   PASS — 6 passed.
-
-5. Aggregate focused command across the three suites above.
-   PASS — 135 passed.
-
-6. .venv-pantheon/bin/python3 -m py_compile
-   scripts/git/canonical_review_check.py
-   scripts/git/test_canonical_review_check.py
-   PASS.
-
-7. JSON parse for baseline.json, activation-plan.json,
-   issuer-provenance.json, merge-entrypoint-matrix.json, and evidence.json.
-   PASS.
-
-8. YAML safe-load of .github/workflows/canonical-review-gate.yml plus
-   WorkflowContractTests.
-   PASS — dev/master allowlist precedes comment fetch and checkout; checkout
-   uses captured base SHA; repository permissions are read-only; no check-runs
-   API call or Actions App-id trust remains.
-
-9. actionlint v1.7.12 .github/workflows/canonical-review-gate.yml
-   PASS — release asset checksum verified before running the temporary binary.
-
-10. canonical_review_check.py protection-plan with a synthetic dedicated
-    external App canary (id 987654, slug pantheon-canonical-review, owner
-    pantheon-review-security), followed by verify-protection against the exact
-    activated fixture.
-    PASS — schema-v2 plan binds App id/slug/external owner, canary
-    check-run/head/payload digest, credential boundary, and explicit rejection
-    of github-actions id 15368. Readback returned ok=true while preserving
-    baseline strict and both existing Actions context/app_id pairs.
-
-11. canonical_review_check.py protection-plan with an otherwise identical
-    same-name canary from app id 15368/slug github-actions.
-    EXPECTED FAIL-CLOSED (exit 1) — reason=issuer_provenance_invalid and
-    summary states the generic github-actions App cannot be the issuer.
-
-12. canonical_review_check.py verify-protection using the valid external-App
-    machine plan but a same-name required check from app id 15368.
-    EXPECTED FAIL-CLOSED (exit 1) — readback expected app id 987654 and also
-    rejected the full context/app_id set mismatch.
-
-13. canonical_review_check.py verify-protection using the same plan after
-    removing the pre-existing Smoke acceptance/App 15368 pair.
-    EXPECTED FAIL-CLOSED (exit 1) — readback returned ok=false with
-    "required status checks do not match the activation plan's full
-    context/app_id set".
-
-14. Read-only GitHub evidence:
-    gh api commits/293cb1d.../check-runs; repository Actions permissions;
-    repository rulesets.
-    PASS — all observed successful workflow checks were app id 15368/slug
-    github-actions; Actions allowed_actions=all; sha_pinning_required=false;
-    rulesets=[].
-
-15. git diff --check
-    PASS.
-
-Aggregate focused Python result: 135 passed.
+1. Exact-head signed attestations fail closed for missing, rejected, stale,
+   expired, self-owned, forged, cross-PR, cross-repository, and key-mismatch
+   envelopes.
+2. A canary from generic `github-actions` App id 15368, a same-name Actions
+   required check, or an App owned by the shared repository account cannot
+   satisfy the dedicated external issuer plan.
+3. The attestation audit rejects non-`dev|master` bases before comment fetch
+   or checkout and uses the captured immutable base SHA with persisted
+   credentials disabled.
+4. The attestation audit has no checks/status write capability and cannot call
+   `canonical_review_gate_ci.py`; the distinct generic lifecycle gate remains
+   present under its own context.
+5. Plan-bound readback rejects changed App identity, strict drift, missing
+   pre-existing checks, admin bypass, or enabled auto-merge.
 
 Not run:
 

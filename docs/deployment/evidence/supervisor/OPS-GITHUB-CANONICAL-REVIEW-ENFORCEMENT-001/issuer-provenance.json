@@ -43,7 +43,8 @@
     "required_app_slug": null,
     "required_app_owner": "must differ from ajoe734",
     "credential_boundary": "installation token minted outside repository Actions and shared owner runtime",
-    "repository_workflow_check_write_removed": true,
+    "attestation_audit_check_write_removed": true,
+    "mainline_review_gate_status_write_retained": true,
     "successful_external_app_canary_present": false,
     "activation_eligible": false,
     "next_gate": "Human/Ops provisions the external App and verifier, then supplies a read-only successful canary check-run JSON to protection-plan."
@@ -67,7 +68,12 @@
     {
       "test": "test_workflow_never_publishes_merge_authoritative_check",
       "result": "pass",
-      "meaning": "The repository workflow has no checks:write permission or check-runs API call."
+      "meaning": "The isolated attestation audit workflow has no checks:write permission, status write permission, or check-runs API call."
+    },
+    {
+      "test": "test_mainline_gate_remains_a_separate_generic_status",
+      "result": "pass",
+      "meaning": "The mainline generic lifecycle status remains present under its distinct name and cannot be confused with the external-App-pinned attestation."
     }
   ],
   "live_mutations_performed_by_task": []

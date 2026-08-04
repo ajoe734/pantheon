@@ -890,7 +890,7 @@ class WorkflowContractTests(unittest.TestCase):
             Path(__file__).resolve().parents[2]
             / ".github"
             / "workflows"
-            / "canonical-review-gate.yml"
+            / "canonical-review-attestation-audit.yml"
         ).read_text(encoding="utf-8")
 
     def test_workflow_runs_trusted_base_for_pr_and_comment_changes(self) -> None:
@@ -956,6 +956,19 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("EXPECTED_ACTIONS_APP_ID", self.workflow)
         self.assertIn("diagnostic", self.workflow)
         self.assertIn(check.CHECK_NAME, self.workflow)
+
+    def test_mainline_gate_remains_a_separate_generic_status(self) -> None:
+        mainline_gate = (
+            Path(__file__).resolve().parents[2]
+            / ".github"
+            / "workflows"
+            / "canonical-review-gate.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("name: Canonical Review Gate", mainline_gate)
+        self.assertIn("statuses: write", mainline_gate)
+        self.assertIn("Pantheon canonical review gate", mainline_gate)
+        self.assertIn("canonical_review_gate_ci.py", mainline_gate)
+        self.assertNotIn(check.CHECK_NAME, mainline_gate)
 
 
 if __name__ == "__main__":
