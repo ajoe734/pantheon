@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -128,8 +129,17 @@ STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
 STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
+SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
+SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
+SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
+GLOBAL_STATUS_LOCK_ORDER = (
+    "runtime_admission",
+    "task_state",
+    "activity_audit",
+)
 _ACTIVITY_TRANSACTION_LOCAL = local()
 _TASK_STATE_TRANSACTION_LOCAL = local()
+_STATUS_COMMAND_LEASE_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -380,6 +390,90 @@ def validate_status_command_runtime_binding() -> None:
         )
 
 
+STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
+STATUS_WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
+
+
+def status_worker_process_generation_id(
+    *,
+    task_id: str,
+    worker_run_id: str,
+    queue_event_id: str,
+    pid: int,
+    pid_start_ticks: int,
+) -> str:
+    payload = {
+        "schema_version": STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "worker_run_id": str(worker_run_id),
+        "queue_event_id": str(queue_event_id),
+        "pid": int(pid),
+        "pid_start_ticks": int(pid_start_ticks),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return STATUS_WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def _clear_status_command_lease_binding() -> None:
+    try:
+        delattr(_STATUS_COMMAND_LEASE_LOCAL, "binding")
+    except AttributeError:
+        pass
+
+
+def _validated_status_command_worker_lease(
+    worker: Mapping[str, Any],
+    *,
+    run_id: str,
+    task_id: str,
+) -> dict[str, Any]:
+    worker_run_id = str(worker.get("run_id") or "").strip()
+    worker_task_id = str(worker.get("task_id") or "").strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    pid = worker.get("pid")
+    pid_start_ticks = worker.get("pid_start_ticks")
+    if worker_run_id != run_id or worker_task_id != task_id:
+        raise RuntimeError("active status command process generation has mismatched run/task identity")
+    if (
+        not queue_event_id
+        or not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(pid_start_ticks, int)
+        or isinstance(pid_start_ticks, bool)
+        or pid_start_ticks <= 0
+    ):
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} has no exact process generation"
+        )
+    expected = status_worker_process_generation_id(
+        task_id=task_id,
+        worker_run_id=run_id,
+        queue_event_id=queue_event_id,
+        pid=pid,
+        pid_start_ticks=pid_start_ticks,
+    )
+    if process_generation != expected:
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} has invalid process generation"
+        )
+    return {
+        "schema_version": STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": task_id,
+        "worker_run_id": run_id,
+        "queue_event_id": queue_event_id,
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+    }
+
+
 def status_command_metadata() -> dict[str, Any] | None:
     raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
     raw_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
@@ -397,6 +491,9 @@ def status_command_metadata() -> dict[str, Any] | None:
         "delivery_root": str(delivery_root) if delivery_root is not None else None,
         "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,
     }
+    worker_lease = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
+    if isinstance(worker_lease, Mapping):
+        payload["worker_lease"] = dict(worker_lease)
     return {key: value for key, value in payload.items() if value not in (None, "")}
 
 
@@ -613,9 +710,16 @@ def normalize_logical_actor(name: str | None) -> str:
     return canonical_agent_name(trimmed).casefold()
 
 
-def validate_active_status_command_lease(command: str, args: list[str]) -> None:
+def validate_active_status_command_lease(
+    command: str,
+    args: list[str],
+    *,
+    runtime_state_snapshot: Mapping[str, Any] | None = None,
+    config_snapshot: dict[str, Any] | None = None,
+) -> None:
     """Validate the supervisor-issued worker lease before canonical mutation."""
 
+    _clear_status_command_lease_binding()
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
     actor = current_actor()
 
@@ -647,8 +751,12 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
                 raise RuntimeError(f"status command lease required for auto worker: {actor}")
         return
 
-    config = load_config()
-    runtime_state = load_runtime_state_snapshot(config)
+    config = config_snapshot if isinstance(config_snapshot, dict) else load_config()
+    runtime_state = (
+        runtime_state_snapshot
+        if isinstance(runtime_state_snapshot, Mapping)
+        else load_runtime_state_snapshot(config)
+    )
     workers = runtime_state.get("workers", {})
     if not isinstance(workers, Mapping):
         raise RuntimeError("central runtime state has no worker records")
@@ -774,6 +882,12 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
             raise RuntimeError(
                 f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
             )
+
+    _STATUS_COMMAND_LEASE_LOCAL.binding = _validated_status_command_worker_lease(
+        worker,
+        run_id=run_id,
+        task_id=worker_task_id or str(expected_task_id or ""),
+    )
 
 
 def _path_parent_under_root(path: Path, root: Path) -> bool:
@@ -2895,6 +3009,24 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                     continue
                 expected_value = expected_fields.get(field_name)
                 if expected_value and actual_value != expected_value:
+                    if field_name == "LLM-Agent":
+                        commit_timestamp = run_git_command(
+                            ["show", "-s", "--format=%cI", "HEAD"],
+                            cwd=repository_root,
+                            failure_message=(
+                                "Cannot finalize task: delivered commit timestamp is "
+                                "unavailable for owner reassignment verification."
+                            ),
+                        )
+                        delivery["commit_owner_reassignment"] = (
+                            _verified_done_owner_reassignment(
+                                task,
+                                commit_owner=actual_value,
+                                current_owner=actor,
+                                commit_timestamp=commit_timestamp,
+                            )
+                        )
+                        continue
                     mismatched_fields.append((field_name, expected_value))
         else:
             delivery["commit_trailer_check_skipped"] = True
@@ -6076,6 +6208,129 @@ def _verified_reviewer_reassignment(
     )
 
 
+def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
+    payload = (
+        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
+        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
+        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
+        f"{event.get('message') or ''}"
+    )
+    return "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _verified_done_owner_reassignment(
+    task: dict[str, Any],
+    *,
+    commit_owner: str,
+    current_owner: str,
+    commit_timestamp: str,
+) -> dict[str, Any]:
+    """Prove that the latest audited supervisor reassignment explains owner drift."""
+
+    try:
+        payload = read_regular_file_bytes(
+            LOG_FILE,
+            source="canonical done owner reassignment evidence",
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
+            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+        ) from exc
+
+    task_id = str(task.get("id") or "").strip()
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    audited: list[tuple[datetime, dict[str, Any]]] = []
+    for raw_line in payload.splitlines():
+        if not raw_line.strip():
+            continue
+        event = strict_activity_json_loads(raw_line)
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("type") != "task_reassigned"
+            or str(event.get("task_id") or "").strip() != task_id
+            or event.get("agent") != "Orchestrator"
+            or not event.get("old_owner")
+            or not event.get("new_owner")
+            or str(event.get("event_id") or "")
+            != _supervisor_reassignment_event_id(event)
+        ):
+            continue
+        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        if event_timestamp is None:
+            continue
+        audited.append((event_timestamp, event))
+
+    owner_changes = [
+        item
+        for item in audited
+        if canonical_agent_name(item[1].get("old_owner"))
+        != canonical_agent_name(item[1].get("new_owner"))
+    ]
+    if not owner_changes:
+        raise SystemExit(
+            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
+            "audited supervisor task_reassigned event."
+        )
+
+    latest_timestamp = max(item[0] for item in owner_changes)
+    latest_owner_changes = [
+        item for item in owner_changes if item[0] == latest_timestamp
+    ]
+    if len(latest_owner_changes) != 1:
+        raise SystemExit(
+            "Cannot finalize task: latest audited owner reassignment ordering is ambiguous."
+        )
+    event_timestamp, event = latest_owner_changes[0]
+    if not (
+        canonical_agent_name(event.get("old_owner")) == canonical_agent_name(commit_owner)
+        and canonical_agent_name(event.get("new_owner")) == canonical_agent_name(current_owner)
+        and canonical_agent_name(event.get("old_reviewer")) == reviewer
+        and canonical_agent_name(event.get("new_reviewer")) == reviewer
+    ):
+        raise SystemExit(
+            "Cannot finalize task: the latest audited owner reassignment does not "
+            "bind the commit owner to the current owner with reviewer continuity."
+        )
+    later_reviewer_change = next(
+        (
+            later_event
+            for later_timestamp, later_event in audited
+            if later_timestamp > event_timestamp
+            and canonical_agent_name(later_event.get("old_reviewer"))
+            != canonical_agent_name(later_event.get("new_reviewer"))
+        ),
+        None,
+    )
+    if later_reviewer_change is not None:
+        raise SystemExit(
+            "Cannot finalize task: reviewer continuity changed after the audited "
+            "owner reassignment."
+        )
+
+    delivered_at = _parse_utc_timestamp(commit_timestamp)
+    if delivered_at is None:
+        raise SystemExit(
+            "Cannot finalize task: delivered commit timestamp is unavailable for "
+            "owner reassignment ordering."
+        )
+    if event_timestamp < delivered_at:
+        raise SystemExit(
+            "Cannot finalize task: audited owner reassignment must follow the delivered commit."
+        )
+
+    return {
+        "event_id": str(event.get("event_id")),
+        "ts": str(event.get("ts")),
+        "old_owner": canonical_agent_name(event.get("old_owner")),
+        "new_owner": canonical_agent_name(event.get("new_owner")),
+        "reviewer": reviewer,
+        "message": str(event.get("message") or ""),
+        "commit_timestamp": commit_timestamp,
+    }
+
+
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     """Validate immutable, dev-merged review and delivery evidence.
 
@@ -6312,9 +6567,30 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
-    # Allow owner to supply review evidence at done time when reviewer did not set it.
+    # Allow owner to supply review evidence at done time when reviewer did not set it,
+    # but only when it was already present at the head the reviewer actually
+    # approved -- not added afterward. See review_evidence_file_committed().
     done_review_file = os.environ.get("REVIEW_FILE", "").strip()
     if done_review_file and not task.get("review_file"):
+        approved_head_sha = str((task.get(APPROVAL_BINDING_KEY) or {}).get("head_sha") or "").strip()
+        if approved_head_sha:
+            config = load_config()
+            repository_id = task_primary_repository_id(config, task)
+            repository_slug_value = repository_slug(config, repository_id)
+            if not repository_slug_value or not review_evidence_file_committed(
+                repository=repository_slug_value,
+                head_sha=approved_head_sha,
+                review_file=done_review_file,
+            ):
+                raise SystemExit(
+                    f"{task_id}: REVIEW_FILE={done_review_file!r} was not present at "
+                    f"the reviewed head {approved_head_sha[:12]} the reviewer actually "
+                    "approved. Evidence added after approval invalidates the exact-head "
+                    "binding and requires a fresh independent review of the commit that "
+                    "adds it -- see task-closeout-finalization.md 'Review Evidence "
+                    "Manifest Rule'. Do not bind a manifest that was only added "
+                    "post-approval."
+                )
         task["review_file"] = done_review_file
     validate_loop_completion_claim(task)
     timestamp = iso_now()
@@ -6490,6 +6766,34 @@ def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
     return False
 
 
+def review_evidence_file_committed(
+    *, repository: str, head_sha: str, review_file: str
+) -> bool:
+    """Return whether `review_file` exists as a real file at `head_sha` on GitHub.
+
+    Queries the GitHub Contents API directly against the exact commit rather
+    than local git objects, because the head being checked (an approved PR
+    head, or the head at approval time) is not guaranteed to be fetched into
+    the local checkout at command-run time.
+
+    SUP-REVIEW-EVIDENCE-BINDING-ENFORCEMENT-20260804: this is what makes the
+    "owner may bind the same already committed and reviewed manifest" fallback
+    in task-closeout-finalization.md actually true instead of merely
+    documented. Without it, `done` accepted any REVIEW_FILE string at face
+    value, including one that only exists in a commit added *after* approval
+    -- exactly the SHA-shifting, re-review-forcing loop diagnosed in
+    SUP-REVIEW-PIPELINE-INTEGRITY-20260804.
+    """
+    review_file = (review_file or "").strip().lstrip("/")
+    if not repository or not head_sha or not review_file:
+        return False
+    encoded_path = urllib.parse.quote(review_file, safe="/")
+    result = run_gh_json_command(
+        ["api", f"repos/{repository}/contents/{encoded_path}", "-f", f"ref={head_sha}"]
+    )
+    return isinstance(result, Mapping) and str(result.get("type") or "") == "file"
+
+
 def bridge_github_review_decision(
     task: dict[str, Any],
     *,
@@ -6595,6 +6899,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
     binding = resolve_approval_binding(task)
+    if review_file and binding:
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task)
+        repository_slug_value = repository_slug(config, repository_id)
+        if not repository_slug_value or not review_evidence_file_committed(
+            repository=repository_slug_value,
+            head_sha=binding["head_sha"],
+            review_file=review_file,
+        ):
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={review_file!r} was not found at the reviewed "
+                f"head {binding['head_sha'][:12]} in {repository_slug_value or '?'}. "
+                "The evidence manifest must already be committed and present in the PR "
+                "diff before approval."
+            )
     transition_candidate = dict(task)
     if review_notes:
         transition_candidate["review_notes_zh"] = review_notes
@@ -7154,6 +7473,168 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
+def load_supervisor_dispatch_batch(path_value: str) -> list[dict[str, Any]]:
+    """Load one bounded, exact dispatch mutation packet from a regular file."""
+
+    if not path_value:
+        raise SystemExit(
+            f"Usage: {SUPERVISOR_DISPATCH_BATCH_COMMAND} <absolute-payload-path>"
+        )
+    path = Path(os.path.expanduser(path_value))
+    if not path.is_absolute():
+        raise SystemExit("Supervisor dispatch batch payload path must be absolute")
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"Unable to inspect supervisor dispatch batch payload: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+        raise SystemExit("Supervisor dispatch batch payload must be a non-symlink regular file")
+    if metadata.st_size > 1024 * 1024:
+        raise SystemExit("Supervisor dispatch batch payload exceeds 1 MiB")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Invalid supervisor dispatch batch payload: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "mutations"}:
+        raise SystemExit("Supervisor dispatch batch payload schema is not exact")
+    if payload.get("schema_version") != SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION:
+        raise SystemExit("Unsupported supervisor dispatch batch schema version")
+    mutations = payload.get("mutations")
+    if (
+        not isinstance(mutations, list)
+        or not mutations
+        or len(mutations) > SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS
+    ):
+        raise SystemExit(
+            "Supervisor dispatch batch mutations must contain between 1 and "
+            f"{SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS} rows"
+        )
+
+    allowed_commands = {"start", "progress", "note"}
+    normalized: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    exact_keys = {
+        "actor",
+        "command",
+        "expected_statuses",
+        "message",
+        "run_id",
+        "task_id",
+        "workspace_path",
+    }
+    for index, mutation in enumerate(mutations):
+        if not isinstance(mutation, dict) or set(mutation) != exact_keys:
+            raise SystemExit(f"Supervisor dispatch batch row {index} schema is not exact")
+        row = {key: mutation.get(key) for key in exact_keys}
+        for field, limit in (
+            ("actor", 80),
+            ("command", 32),
+            ("message", 4096),
+            ("run_id", 256),
+            ("task_id", 256),
+            ("workspace_path", 4096),
+        ):
+            value = row[field]
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise SystemExit(
+                    f"Supervisor dispatch batch row {index} has invalid {field}"
+                )
+            row[field] = value.strip()
+        if row["command"] not in allowed_commands:
+            raise SystemExit(
+                f"Supervisor dispatch batch row {index} command is not dispatch-safe"
+            )
+        expected_statuses = row["expected_statuses"]
+        if (
+            not isinstance(expected_statuses, list)
+            or not expected_statuses
+            or len(expected_statuses) > 4
+            or any(
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > 64
+                for value in expected_statuses
+            )
+        ):
+            raise SystemExit(
+                f"Supervisor dispatch batch row {index} has invalid expected_statuses"
+            )
+        row["expected_statuses"] = sorted(
+            {str(value).strip().lower() for value in expected_statuses}
+        )
+        task_id = str(row["task_id"])
+        if task_id in seen_task_ids:
+            raise SystemExit(
+                f"Supervisor dispatch batch repeats task mutation: {task_id}"
+            )
+        seen_task_ids.add(task_id)
+        normalized.append(row)
+    return normalized
+
+
+@contextmanager
+def supervisor_dispatch_mutation_environment(mutation: Mapping[str, Any]):
+    """Bind one batch row to the exact worker lease it claims."""
+
+    bindings = {
+        "AI_NAME": str(mutation["actor"]),
+        "ORCH_RUN_ID": str(mutation["run_id"]),
+        "ORCH_TASK_ID": str(mutation["task_id"]),
+        "PANTHEON_WORKTREE_ROOT": str(mutation["workspace_path"]),
+        "ORCH_WORKSPACE_PATH": str(mutation["workspace_path"]),
+    }
+    previous = {name: os.environ.get(name) for name in bindings}
+    try:
+        os.environ.update(bindings)
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        _clear_status_command_lease_binding()
+
+
+def run_supervisor_dispatch_batch(
+    state: dict[str, Any],
+    mutations: list[dict[str, Any]],
+    *,
+    commands: Mapping[str, Any],
+    runtime_snapshot: Mapping[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Apply dispatch status CAS rows to one in-memory canonical snapshot."""
+
+    for mutation in mutations:
+        task_id = str(mutation["task_id"])
+        actor = str(mutation["actor"])
+        command = str(mutation["command"])
+        task = get_task(state, task_id)
+        if task is None:
+            raise RuntimeError(f"Supervisor dispatch batch task is missing: {task_id}")
+        if str(task.get("owner") or "").strip() != actor:
+            raise RuntimeError(
+                f"Supervisor dispatch batch owner CAS failed for {task_id}: "
+                f"{task.get('owner')} != {actor}"
+            )
+        current_status = str(task.get("status") or "").strip().lower()
+        if current_status not in set(mutation["expected_statuses"]):
+            raise RuntimeError(
+                f"Supervisor dispatch batch status CAS failed for {task_id}: "
+                f"{current_status or 'missing'} not in {mutation['expected_statuses']}"
+            )
+        command_args = [task_id, str(mutation["message"])]
+        with supervisor_dispatch_mutation_environment(mutation):
+            validate_active_status_command_lease(
+                command,
+                command_args,
+                runtime_state_snapshot=runtime_snapshot,
+                config_snapshot=config,
+            )
+            commands[command](state, command_args)
+
+
 def main(argv: list[str]) -> int:
     validate_status_command_runtime_binding()
     validate_status_root_binding()
@@ -7185,6 +7666,50 @@ def main(argv: list[str]) -> int:
         "sync": command_sync,
         "wave": command_wave,
     }
+
+    if command == SUPERVISOR_DISPATCH_BATCH_COMMAND:
+        if len(args) != 1:
+            raise SystemExit(
+                f"Usage: {SUPERVISOR_DISPATCH_BATCH_COMMAND} <absolute-payload-path>"
+            )
+        # Payload/config reads and command-runtime git validation happen before
+        # the global lock order begins.  The transaction below is strictly:
+        # runtime_admission(shared) -> task_state(exclusive) -> activity_audit.
+        mutations = load_supervisor_dispatch_batch(args[0])
+        config = load_config()
+        committed_state: dict[str, Any] | None = None
+        with runtime_state_lock(config, shared=True):
+            runtime_snapshot = load_runtime_state_snapshot(config)
+            with canonical_task_state_lock(shared=False):
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    recover_status_archive_outbox(state)
+                    recover_status_activity_outbox(state)
+                    with buffer_activity_events():
+                        run_supervisor_dispatch_batch(
+                            state,
+                            mutations,
+                            commands=commands,
+                            runtime_snapshot=runtime_snapshot,
+                            config=config,
+                        )
+                        sync_all(state, refresh_views=False)
+                    committed_state = deepcopy(state)
+        if committed_state is not None:
+            refresh_derived_status_views_if_current(committed_state)
+        print(
+            json.dumps(
+                {
+                    "status": "committed",
+                    "mutation_count": len(mutations),
+                    "task_ids": [mutation["task_id"] for mutation in mutations],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
     if command == "recover":
         if args:

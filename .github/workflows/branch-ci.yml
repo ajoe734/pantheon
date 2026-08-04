@@ -107,6 +107,10 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           RANGE: ${{ steps.range.outputs.range }}
         run: |
+          if [[ "$EVENT" == "workflow_dispatch" && "$REF_NAME" == promote/* ]]; then
+            echo "Skipping commit trailer re-scan for exact-head promote dispatch ${REF_NAME}; publish history was already validated before snapshot cut."
+            exit 0
+          fi
           if [[ "$EVENT" == "pull_request" && "$HEAD_REF" == promote/* ]]; then
             echo "Skipping commit trailer re-scan for promote PR ${HEAD_REF}; publish history was already validated before snapshot cut."
             exit 0
