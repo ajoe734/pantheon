@@ -1,0 +1,231 @@
+{
+  "acceptance_verdicts": [
+    {
+      "acceptance": "Real Persona requirement produces SourceRecord and one mutable StrategySpec draft",
+      "checks": [
+        "C01",
+        "C02",
+        "C03"
+      ],
+      "note": "C02 and C03 pass: a bounded persona-bound scheduled pull commits one normalized SourceRecord and the distillation controller turns it into exactly one mutable StrategySpec draft in the real Registry, with lineage bound to the committed source digest. C01 fails: the source-ingestion controller cannot reach terminal reconciled truth for a persona requirement bound to an operator-managed connector (G2).",
+      "verdict": "partially_proven"
+    },
+    {
+      "acceptance": "Approved StrategySpec produces authoritative ExperimentRun",
+      "checks": [
+        "C05"
+      ],
+      "note": "The approved immutable StrategySpec is never admitted as alpha replication desired state (G1), and even when the discovery join is supplied by hand the queue rejects the entry for a missing tenant binding (G3). No authoritative ExperimentRun is produced by the product path.",
+      "verdict": "not_proven"
+    },
+    {
+      "acceptance": "Unapproved spec and immutable approved artifact negative gates pass",
+      "checks": [
+        "C04",
+        "C06",
+        "C16"
+      ],
+      "note": "C04 and C06 pass: an unapproved draft produces no replication work, and a re-delivering controller replica records an immutable skip without rewriting the approved artifact. C16 fails: the approved artifact does not survive a restart of its own authority, because the Registry has no durable storage (G5).",
+      "verdict": "partially_proven"
+    },
+    {
+      "acceptance": "Duplicate concurrency provider Registry research failure and restart cases pass",
+      "checks": [
+        "C07",
+        "C08",
+        "C09",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "note": "Duplicate ticks (C07), two-process concurrency (C08), bounded provider failure with DLQ replay (C09), Registry outage with replay-once (C10), and service/controller restart (C12) all pass for loops 1 and 2. C11 is blocked: research-authority failure and restart semantics cannot be exercised because no approved StrategySpec can reach the alpha replication queue (G1, G3).",
+      "verdict": "partially_proven"
+    },
+    {
+      "acceptance": "BFF and controller terminal truth match every authority",
+      "checks": [
+        "C13",
+        "C14",
+        "C15"
+      ],
+      "note": "C13 and C14 pass: the source_ingestion and strategy_distillation controller records conform to the shared loop contract and project BFF truth that matches the authorities' own readbacks. C15 fails: alpha_replication projects a healthy loop with zero backlog and no evidence refs while the Registry holds an approved StrategySpec, so operator truth actively hides the break (G4).",
+      "verdict": "partially_proven"
+    }
+  ],
+  "conclusion": {
+    "next_action": "Repairs belong to the DIST, ALPHA, SRC, and Registry lanes, not to this verification task's artifact scope. This task delivers the reusable drill and the reproducible gap evidence; the chain should be re-drilled with the same script once each gap is closed.",
+    "verdict": "The loops-1-to-3 knowledge chain is not product-level. Loop 1 to loop 2 is proven end to end for the artifact path, including duplicate, concurrency, provider failure, Registry outage, and restart behaviour. Loop 2 to loop 3 does not connect at all, and the approved artifact it depends on is not durable."
+  },
+  "corroboration": {
+    "deployed_configuration": "docker-compose.yml points both the distillation controller and the alpha replication worker at STRATEGY_SPEC_SEED_STORE_PATH=/data/source-ingest/distill_seeds.jsonl, so the deployed wiring has the same discovery break the drill reproduces. The registry service mounts no volume for entries and serves the in-memory store.",
+    "live_deployment_observation": "The running pantheon-alpha-replication-worker-1 container's durable controller state recorded 23197 ticks and 22980 successes with desired_state.approved_spec_count = 0 and no created ExperimentRun ids, which is the same shape G1 and G4 predict."
+  },
+  "drill": {
+    "bounded_provider": {
+      "connector_id": "conn-l12-know-bounded-paper",
+      "external_crawl_performed": false,
+      "mode": "static_records",
+      "note": "The only provider input is an allowlisted static_records payload on one operator-registered connector. Every SourceRecord, StrategySpec, seed, and queue entry in this evidence was produced by a real controller against a real service; none is a pre-seeded fixture."
+    },
+    "checks_blocked": [
+      "C11"
+    ],
+    "checks_failed": [
+      "C01",
+      "C05",
+      "C15",
+      "C16"
+    ],
+    "checks_passed": [
+      "C02",
+      "C03",
+      "C04",
+      "C06",
+      "C07",
+      "C08",
+      "C09",
+      "C10",
+      "C12",
+      "C13",
+      "C14"
+    ],
+    "command": "python3 scripts/verify_twelve_loop_knowledge.py --run-dir <dir> --evidence-out docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json",
+    "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+    "finished_at": "2026-08-04T21:02:32Z",
+    "git_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+    "python": "3.12.3",
+    "reproducibility": {
+      "consecutive_identical_runs": 3,
+      "note": "Three runs at this cut produced identical per-check statuses and the identical gap set."
+    },
+    "run_record": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json",
+    "run_record_sha256": "fc7009b7e86489117ba5073fc05bf93e9206054a97672fd8d761879b92dede7c",
+    "script": "scripts/verify_twelve_loop_knowledge.py",
+    "service_start_counts": {
+      "registry": 3,
+      "research": 2,
+      "source_ingest": 2
+    },
+    "services": {
+      "registry": {
+        "app_module": "services.registry.service"
+      },
+      "research": {
+        "app_module": "services.research.main"
+      },
+      "source_ingest": {
+        "app_module": "services.source_ingestion.main"
+      }
+    },
+    "started_at": "2026-08-04T21:02:21Z",
+    "summary": {
+      "blocked": 1,
+      "failed": 4,
+      "passed": 11,
+      "total": 16
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Changes require a task-scoped commit and PR; re-running the drill must replace drill-run.json and both checksums in the same commit.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "gaps": [
+    {
+      "detail": "run_controller_tick reads discovery keys from the distillation seed store field 'source_id' and passes each one to _get_approved_specs_for_strategy, which queries /api/registry/strategies/{strategy_id}/strategy-specs. The distillation controller registers the spec under strategy_id 'strat-<source_id>-<digest12>' (distillation_controller._build_registry_payload), and the seed record carries no registry or strategy identity at all. The two keys can never match, so an approved StrategySpec is never admitted as alpha replication desired state. docker-compose.yml points both services at the same STRATEGY_SPEC_SEED_STORE_PATH, so the deployed configuration has the same break.",
+      "found_by_check": "C05",
+      "gap_id": "G1",
+      "loop_id": "alpha_replication",
+      "observed": "approved_spec_count=0 while the Registry holds approved reg-strategy-spec-src-l12-know-11e5a4ae-001-2ee97552a68f under strategy_id strat-src-l12-know-11e5a4ae-001-6d015cec1b77",
+      "owning_surface": "services/research/alpha_replication/replication_controller.py",
+      "recommended_owner_lane": "L12-ALPHA-001 lane (alpha replication controller)",
+      "severity": "blocking",
+      "title": "Alpha replication discovery joins the distillation seed store's source_id against the Registry strategy_id"
+    },
+    {
+      "detail": "_queue_payload_from_registry_entry requires metadata['tenant_id'] or an embedded strategy_spec['tenant_id'] on the approved Registry entry. The distillation controller builds the entry from StrategySpecConversionService.convert_seed and adds only a metadata['distillation'] block, so no tenant binding is ever written. Even with the discovery join repaired, every approved distilled spec is rejected at queue admission.",
+      "found_by_check": "C05",
+      "gap_id": "G3",
+      "loop_id": "strategy_distillation",
+      "observed": "ValueError: approved StrategySpec tenant_id is required",
+      "owning_surface": "services/source_ingestion/distillation_controller.py -> services/research/alpha_replication/replication_controller.py",
+      "recommended_owner_lane": "L12-DIST-001 lane (distillation Registry payload contract)",
+      "severity": "blocking",
+      "title": "Distilled StrategySpec Registry entries carry no tenant binding, so alpha replication rejects them even when discovery succeeds"
+    },
+    {
+      "detail": "services/registry/storage.RegistryStore is a process-local in-memory dict behind a module singleton, and services/registry/main.py mounts that app unchanged. The deployed registry container receives DATABASE_URL and an object-store config but never uses them for entry storage and mounts no volume. Every StrategySpec \u2014 including approved, immutable, review-decided ones \u2014 is lost when the process restarts. The L12-DIST-001 immutability guarantee and the L12-ALPHA-001 approved-only admission gate both rest on this authority.",
+      "found_by_check": "C16",
+      "gap_id": "G5",
+      "loop_id": "strategy_distillation",
+      "observed": "reg-strategy-spec-src-l12-know-11e5a4ae-001-2ee97552a68f was approved at 2026-08-04T21:00:27Z and returns 404 after 1 restart(s)",
+      "owning_surface": "services/registry/storage.py",
+      "recommended_owner_lane": "Registry service owner (artifact authority persistence)",
+      "severity": "blocking",
+      "title": "The Registry artifact authority has no durable storage, so approved immutable StrategySpecs do not survive a restart"
+    },
+    {
+      "detail": "SourceProvisioningReconciler._reconcile_requirement returns 'verified_existing_custom_connector' without calling _ensure_connector, so metadata['persona_source_reconciliation'] is never written. /api/source-ingest/controller/readback therefore reports an empty desired_state for the connector, and controller_worker._validate_terminal_readback fails closed on desired_dataset_mismatch (and, because cadence is unknown, source_data_stale). Loop 1 can only reach terminal reconciled truth through the two built-in TW live providers, never through an operator-approved bounded connector.",
+      "found_by_check": "C01",
+      "gap_id": "G2",
+      "loop_id": "source_ingestion",
+      "observed": "terminal source readback failed closed: conn-l12-know-bounded-paper:desired_dataset_mismatch, conn-l12-know-bounded-paper:source_data_stale",
+      "owning_surface": "services/source_ingestion/persona_source_reconciler.py",
+      "recommended_owner_lane": "L12-SRC-001 lane (persona source provisioning reconciler)",
+      "severity": "high",
+      "title": "Operator-managed connectors bound to a Persona requirement never receive the persona_source_reconciliation desired-state marker"
+    },
+    {
+      "detail": "Because discovery (G1) never admits the approved spec, the controller records a successful tick with approved_spec_count=0, backlog 0, and no evidence refs. The projected BFF truth is therefore 'healthy' and shows no backlog, so an operator cannot see that an approved artifact is waiting. The live deployment shows the same shape: the running alpha-replication controller has recorded tens of thousands of successful ticks with approved_spec_count=0.",
+      "found_by_check": "C15",
+      "gap_id": "G4",
+      "loop_id": "alpha_replication",
+      "observed": "controller approved_spec_count=0 while the Registry holds 1 approved StrategySpec and the research authority holds 0 ExperimentRun(s)",
+      "owning_surface": "services/research/alpha_replication/replication_controller.py",
+      "recommended_owner_lane": "L12-ALPHA-001 lane (operator truth for a stranded artifact)",
+      "severity": "high",
+      "title": "alpha_replication operator truth reports a healthy, empty loop while an approved StrategySpec is stranded"
+    }
+  ],
+  "loops": [
+    "source_ingestion",
+    "strategy_distillation",
+    "alpha_replication"
+  ],
+  "proof": {
+    "level": "EP3",
+    "level_basis": "Multiple services operate together in one environment with real service boundaries: source-ingest, registry, and research-orchestrator each run as an independent OS process on its own TCP port, and every controller reads and writes only through their HTTP APIs.",
+    "not_claimed": [
+      "EP4 governed paper execution",
+      "hosted or shared-deployment runtime activation",
+      "live or canary capital behaviour",
+      "Postgres-backed loop-control row storage (the drill uses the real writer SDK and the real record validation, with the durable row write captured instead of executed)"
+    ]
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-VERIFY-KNOW-001 product drill for loops 1-3.",
+    "note": "Owner manifest over an executed EP3 knowledge-loop drill. The drill runs the real source-ingest, registry, and research-orchestrator services as separate OS processes and drives the three real loop controllers across those boundaries. This manifest records what the drill proved and what it disproved; it is not an approval claim.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-04T21:02:32Z",
+    "evidence_cut_semantics": "One executed drill run against locally started real services at the recorded git sha. No hosted-runtime, shared-deployment, or live-capital claim is made.",
+    "id": "L12-VERIFY-KNOW-001",
+    "overall_admission": "gaps_found_not_admitted",
+    "owner": "Claude2",
+    "phase": "Twelve Loop Remediation / Product Drills",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "reviewer": "Antigravity",
+    "target_maturity": "product-level",
+    "task_branch": "task/L12-VERIFY-KNOW-001",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-VERIFY-KNOW-001.md",
+    "title": "Verify source/distillation/alpha loop proof"
+  }
+}

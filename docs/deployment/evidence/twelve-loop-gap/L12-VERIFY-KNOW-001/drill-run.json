@@ -1,0 +1,868 @@
+{
+  "checks": [
+    {
+      "acceptance": [
+        "Real Persona requirement produces SourceRecord and one mutable StrategySpec draft"
+      ],
+      "check_id": "C01",
+      "duration_seconds": 0.349,
+      "evidence": {
+        "connector_desired_state": {},
+        "connector_freshness": {
+          "age_seconds": 3,
+          "is_due": false,
+          "last_failure_at": null,
+          "last_ingest_run_id": "ingest-674bb4648f3f",
+          "last_success_at": "2026-08-04T21:02:24Z",
+          "last_typed_failure": null,
+          "last_watermark": null,
+          "latest_receipt": {
+            "connector_id": "conn-l12-know-bounded-paper",
+            "created_at": "2026-08-04T21:02:24Z",
+            "evidence_refs": {
+              "evidence_bundle_id": "evbundle-ingest-674bb4648f3f-915e8307f0b0",
+              "evidence_item_ids": [
+                "evi-e515d2470d285334"
+              ],
+              "knowledge_object_ids": [
+                "ko-evi-e515d2470d285334-8bbcd2addccc"
+              ],
+              "source_ids": [
+                "src-l12-know-f96f7d72-001"
+              ]
+            },
+            "finished_at": "2026-08-04T21:02:24Z",
+            "ingest_run_id": "ingest-674bb4648f3f",
+            "normalized_count": 1,
+            "raw_count": 1,
+            "rejected_count": 0,
+            "schema_version": "source_ingest_receipt.v1",
+            "source_timestamp": "2026-08-04T21:02:21Z",
+            "source_timestamp_status": "valid",
+            "started_at": "2026-08-04T21:02:24Z",
+            "status": "completed",
+            "storage_refs": {
+              "created_at": "2026-08-04T21:02:24Z",
+              "feature_refs": [],
+              "ingest_run_id": "ingest-674bb4648f3f",
+              "normalized_refs": [
+                {
+                  "dataset": "tw_equity_momentum_papers",
+                  "date": "2026-08-04",
+                  "ref_type": "normalized_rows",
+                  "row_count": 1,
+                  "schema_hash": "sha256:58f08568041aec807590113742f0cb7980a81893e7a8317c98023112ecb01bef",
+                  "uri": "/tmp/l12-verify-know-final/source-ingest/market_data_store/normalized/tw_equity_momentum_papers/date=2026-08-04/ingest-674bb4648f3f.jsonl"
+                }
+              ],
+              "raw_refs": [
+                {
+                  "compression": "none",
+                  "dataset": "tw_equity_momentum_papers",
+                  "date": "2026-08-04",
+                  "ref_type": "raw_object",
+                  "retention_days": null,
+                  "retention_policy_ref": null,
+                  "row_count": 1,
+                  "source": "conn-l12-know-bounded-paper",
+                  "storage_class": null,
+                  "uri": "/tmp/l12-verify-know-final/source-ingest/market_data_store/raw/conn-l12-know-bounded-paper/tw_equity_momentum_papers/date=2026-08-04/ingest-674bb4648f3f.jsonl"
+                }
+              ],
+              "schema_version": "market_data_storage_manifest.v1",
+              "summary": {
+                "feature_ref_count": 0,
+                "normalized_ref_count": 1,
+                "normalized_row_count": 1,
+                "raw_ref_count": 1
+              }
+            },
+            "trace_id": "scheduled-conn-l12-know-bounded-paper-1785877344",
+            "trigger_type": "scheduled",
+            "typed_failure": null,
+            "watermark": null
+          },
+          "latest_run": {
+            "finished_at": "2026-08-04T21:02:24Z",
+            "ingest_run_id": "ingest-674bb4648f3f",
+            "normalized_count": 1,
+            "raw_count": 1,
+            "rejected_count": 0,
+            "status": "completed",
+            "trigger_type": "scheduled"
+          },
+          "next_due_at": "2026-08-05T21:02:24Z",
+          "next_run_at": "2026-08-05T21:02:24Z",
+          "schedule_enabled": true,
+          "schema_version": "source_connector_freshness.v2",
+          "seconds_until_due": 86399,
+          "source_timestamp": "2026-08-04T21:02:21Z",
+          "source_timestamp_status": "valid",
+          "stale": false,
+          "stale_threshold_seconds": 172800,
+          "staleness_seconds": 0,
+          "status": "fresh"
+        },
+        "connector_present_in_readback": true,
+        "readback_route": "/api/source-ingest/controller/readback",
+        "reconcile_actions": [
+          {
+            "connector_action": "verified_existing_custom_connector",
+            "connector_id": "conn-l12-know-bounded-paper",
+            "dataset": "tw_equity_momentum_papers",
+            "details": {
+              "provider": "existing_custom_connector",
+              "schedule": {
+                "connector_id": "conn-l12-know-bounded-paper",
+                "enabled": true,
+                "interval_seconds": 86400
+              }
+            },
+            "idempotency_key": "persona-l12-know-001:TW:tw_equity_momentum_papers:daily:live_pull:conn-l12-know-bounded-paper",
+            "persona_id": "persona-l12-know-001",
+            "schedule_action": "created",
+            "status": "mutated"
+          }
+        ],
+        "reconcile_summary": {
+          "conflicts": 0,
+          "mutated": 1,
+          "persona_count": 1,
+          "satisfied": 0,
+          "skipped": 0,
+          "total": 1,
+          "unsupported": 0
+        },
+        "requirement_snapshot": {
+          "authoritative": true,
+          "authority": "drill://L12-VERIFY-KNOW-001/persona-data-requirement",
+          "binding_count": 1,
+          "bindings": {
+            "persona-l12-know-001:TW:tw_equity_momentum_papers:daily:live_pull:conn-l12-know-bounded-paper": "conn-l12-know-bounded-paper"
+          },
+          "desired_state_sha256": "1bd74f462f6eb7754b3afd196b6fb73abca32639400ddc4151923a690459c37a",
+          "persona_count": 1,
+          "schema_version": "source_ingest_requirement_snapshot.v1",
+          "sequence": 1
+        },
+        "tick_error": "terminal source readback failed closed: conn-l12-know-bounded-paper:desired_dataset_mismatch, conn-l12-know-bounded-paper:source_data_stale",
+        "tick_stage": "actual_readback"
+      },
+      "failure": "DrillError: source-ingestion controller tick failed: terminal source readback failed closed: conn-l12-know-bounded-paper:desired_dataset_mismatch, conn-l12-know-bounded-paper:source_data_stale",
+      "finished_at": "2026-08-04T21:02:24Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "failed",
+      "title": "Real Persona data requirement reaches terminal reconciled source truth"
+    },
+    {
+      "acceptance": [
+        "Real Persona requirement produces SourceRecord and one mutable StrategySpec draft"
+      ],
+      "check_id": "C02",
+      "duration_seconds": 0.007,
+      "evidence": {
+        "connector_id": "conn-l12-know-bounded-paper",
+        "content_hash": "sha256:5c794fa39a6157f9b20140b685cd8ec321e03126f2f25a3a17ba87972a669a6e",
+        "ingest_run_id": "ingest-674bb4648f3f",
+        "readback_route": "/api/source-ingest/source-records/{source_id}",
+        "readback_source_id": "src-l12-know-f96f7d72-001",
+        "readback_status": "200",
+        "source_id": "src-l12-know-f96f7d72-001",
+        "status": "normalized"
+      },
+      "finished_at": "2026-08-04T21:02:24Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "passed",
+      "title": "Scheduled bounded pull commits one normalized SourceRecord"
+    },
+    {
+      "acceptance": [
+        "Real Persona requirement produces SourceRecord and one mutable StrategySpec draft"
+      ],
+      "check_id": "C03",
+      "duration_seconds": 0.145,
+      "evidence": {
+        "artifact_state": "draft",
+        "checksum": "sha256:2d27fda05f1c9ac18edd0bf4e3e664665eaf426bc5ab0d4b0da294c3d548f5d9",
+        "controller_id": "distill-controller-1d750aba",
+        "distillation_lineage": {
+          "distillation_job_id": "distill-2f131f3f34c5fbba9a191b88",
+          "schema_version": "source_to_draft.v1",
+          "source_digest": "sha256:0288992de43a1d111317e970f095d81307e5f38b177eb1da2054e61eb0869f51",
+          "source_event_version": "source_record.normalized.v1",
+          "source_id": "src-l12-know-f96f7d72-001"
+        },
+        "job_status": "done",
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a",
+        "registry_route": "/api/registry/strategy-specs/reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a",
+        "strategy_id": "strat-src-l12-know-f96f7d72-001-e61eb0869f51"
+      },
+      "finished_at": "2026-08-04T21:02:24Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "passed",
+      "title": "Committed SourceRecord distills into exactly one mutable StrategySpec draft"
+    },
+    {
+      "acceptance": [
+        "Unapproved spec and immutable approved artifact negative gates pass"
+      ],
+      "check_id": "C04",
+      "duration_seconds": 0.067,
+      "evidence": {
+        "approved_spec_count": 0,
+        "artifact_state": "draft",
+        "authority_experiment_run_count": 0,
+        "authority_route": "/api/research-orchestrator/runs",
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a"
+      },
+      "finished_at": "2026-08-04T21:02:24Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "passed",
+      "title": "Unapproved StrategySpec produces no replication work"
+    },
+    {
+      "acceptance": [
+        "Approved StrategySpec produces authoritative ExperimentRun"
+      ],
+      "check_id": "C05",
+      "duration_seconds": 0.07,
+      "evidence": {
+        "approval_decision_id": "decision-f96f7d72db044112bc3c9eae4e54eb65-0288992de43a",
+        "approved_at": "2026-08-04T21:02:24Z",
+        "approved_spec_count": 0,
+        "approver": "reviewer-f96f7d72",
+        "controller_id": "alpha-replication-controller-471c8d83",
+        "created_experiment_run_ids": [],
+        "discovery_bypass_isolation": {
+          "authority_experiment_run_count": 0,
+          "authority_receipts": null,
+          "created_experiment_run_ids": [],
+          "errors": null,
+          "note": "Discovery join supplied by the drill; every stage after the lookup key is the shipped implementation.",
+          "processed": 0
+        },
+        "discovery_probe": {
+          "approved_by_registry_strategy_id": [
+            "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a"
+          ],
+          "approved_by_seed_source_id": [],
+          "registry_route_used_by_controller": "/api/registry/strategies/src-l12-know-f96f7d72-001/strategy-specs?artifact_state=approved",
+          "registry_strategy_id": "strat-src-l12-know-f96f7d72-001-e61eb0869f51",
+          "seed_store_discovery_keys": [
+            "src-l12-know-f96f7d72-001"
+          ]
+        },
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a",
+        "strategy_id": "strat-src-l12-know-f96f7d72-001-e61eb0869f51"
+      },
+      "failure": "DrillError: approved StrategySpec was not discovered as alpha replication desired state: seed discovery key='src-l12-know-f96f7d72-001', registry strategy_id='strat-src-l12-know-f96f7d72-001-e61eb0869f51'",
+      "finished_at": "2026-08-04T21:02:24Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "failed",
+      "title": "Approved immutable StrategySpec produces one authoritative ExperimentRun"
+    },
+    {
+      "acceptance": [
+        "Unapproved spec and immutable approved artifact negative gates pass"
+      ],
+      "check_id": "C06",
+      "duration_seconds": 0.079,
+      "evidence": {
+        "entry_digest_after": "sha256:70c14a935029d8b1c01aca98b1f577c065be90dc8d5191188d80f3a813eed111",
+        "entry_digest_before": "sha256:70c14a935029d8b1c01aca98b1f577c065be90dc8d5191188d80f3a813eed111",
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a",
+        "replica_queue": "/tmp/l12-verify-know-final/distillation-replica/job_queue.sqlite3",
+        "skipped_immutable_count": 1,
+        "synced_count": 0,
+        "tick_error": null
+      },
+      "finished_at": "2026-08-04T21:02:24Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "passed",
+      "title": "An approved StrategySpec is never rewritten by a re-delivering controller replica"
+    },
+    {
+      "acceptance": [
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C07",
+      "duration_seconds": 0.421,
+      "evidence": {
+        "artifact_state": "draft",
+        "committed_version_count": 1,
+        "distillation_tick_count": 3,
+        "duplicate_source_id": "src-l12-know-f96f7d72-dup",
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-dup-b1d69bf59f4f",
+        "scheduled_pull_count": 3,
+        "seed_count": 1,
+        "source_record_count": 1
+      },
+      "finished_at": "2026-08-04T21:02:25Z",
+      "started_at": "2026-08-04T21:02:24Z",
+      "status": "passed",
+      "title": "Duplicate ingest and distillation ticks converge instead of duplicating"
+    },
+    {
+      "acceptance": [
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C08",
+      "duration_seconds": 1.692,
+      "evidence": {
+        "admitted_jobs": 8,
+        "created_total": 8,
+        "per_worker": [
+          {
+            "error": null,
+            "totals": {
+              "created": 4,
+              "failed": 0,
+              "processed": 4,
+              "skipped": 0
+            },
+            "worker_id": "worker-0"
+          },
+          {
+            "error": null,
+            "totals": {
+              "created": 4,
+              "failed": 0,
+              "processed": 4,
+              "skipped": 0
+            },
+            "worker_id": "worker-1"
+          }
+        ],
+        "processed_total": 8,
+        "queue_metrics": {
+          "dead_letter": 0,
+          "done": 8,
+          "failed": 0,
+          "leased": 0,
+          "pending": 0,
+          "retry_wait": 0,
+          "skipped": 0
+        },
+        "seed_count": 8,
+        "worker_processes": 2
+      },
+      "finished_at": "2026-08-04T21:02:27Z",
+      "started_at": "2026-08-04T21:02:25Z",
+      "status": "passed",
+      "title": "Two independent worker processes never double-claim or lose a distillation job"
+    },
+    {
+      "acceptance": [
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C09",
+      "duration_seconds": 0.276,
+      "evidence": {
+        "committed_after_replay": 1,
+        "dlq_after_failure": {
+          "duplicate_skipped": 0,
+          "pending": 1,
+          "replay_failed": 0,
+          "replayed": 0,
+          "schema_rejected": 0
+        },
+        "dlq_after_replay": {
+          "duplicate_skipped": 0,
+          "pending": 0,
+          "replay_failed": 0,
+          "replayed": 1,
+          "schema_rejected": 0
+        },
+        "failed_pull_summary": {
+          "exclusive_connector_count": 0,
+          "forced_connector_count": 1,
+          "max_concurrency": 2,
+          "recovered_frontier_count": 0,
+          "resolved_dlq_count": 0,
+          "total_enqueued": 1,
+          "total_excluded": 0,
+          "total_failed": 1,
+          "total_ran": 0,
+          "total_skipped": 0
+        },
+        "failing_source_id": "src-l12-know-f96f7d72-dlq",
+        "replay_summary": {
+          "applied": 1,
+          "correlated_resolution_count": 1,
+          "duplicate_skipped": 0,
+          "failed": 0,
+          "schema_rejected": 0
+        }
+      },
+      "finished_at": "2026-08-04T21:02:27Z",
+      "started_at": "2026-08-04T21:02:27Z",
+      "status": "passed",
+      "title": "A bounded provider failure dead-letters and replays to a committed SourceRecord"
+    },
+    {
+      "acceptance": [
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C10",
+      "duration_seconds": 1.976,
+      "evidence": {
+        "committed_version_count": 1,
+        "outage_job_status": "retry_wait",
+        "outage_source_id": "src-l12-know-f96f7d72-outage",
+        "outage_stage": "registry_sync",
+        "recovered_job_status": "done",
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-outage-b8ee519e23c8",
+        "registry_restart_count": 2
+      },
+      "finished_at": "2026-08-04T21:02:29Z",
+      "started_at": "2026-08-04T21:02:27Z",
+      "status": "passed",
+      "title": "A Registry outage parks a durable retry and replays to exactly one draft"
+    },
+    {
+      "acceptance": [
+        "Unapproved spec and immutable approved artifact negative gates pass",
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C16",
+      "duration_seconds": 0.005,
+      "evidence": {
+        "approved_at": "2026-08-04T21:02:24Z",
+        "approver": "reviewer-f96f7d72",
+        "artifact_state_after_restart": null,
+        "entry_present_after_restart": false,
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a",
+        "registry_start_count": 2
+      },
+      "failure": "DrillError: the approved artifact reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a did not survive an authority restart",
+      "finished_at": "2026-08-04T21:02:29Z",
+      "started_at": "2026-08-04T21:02:29Z",
+      "status": "failed",
+      "title": "An approved immutable StrategySpec survives an artifact-authority restart"
+    },
+    {
+      "acceptance": [
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C11",
+      "duration_seconds": 0.0,
+      "evidence": {
+        "blocking_gaps": [
+          "G1",
+          "G3"
+        ],
+        "queue_metrics": {
+          "claimed": 0,
+          "completed": 0,
+          "dlq": 0,
+          "last_revalidation_failed": 0,
+          "pending": 0,
+          "revalidated": 0,
+          "total": 0
+        },
+        "registry_approved_spec": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a"
+      },
+      "failure": "The alpha replication queue is empty because no approved StrategySpec can be admitted: discovery never matches (G1) and queue admission rejects the entry for a missing tenant binding (G3). Research-authority failure and restart semantics cannot be exercised against a real approved artifact until those are repaired.",
+      "finished_at": "2026-08-04T21:02:29Z",
+      "started_at": "2026-08-04T21:02:29Z",
+      "status": "blocked",
+      "title": "A research-authority outage leaves no phantom ExperimentRun"
+    },
+    {
+      "acceptance": [
+        "Duplicate concurrency provider Registry research failure and restart cases pass"
+      ],
+      "check_id": "C12",
+      "duration_seconds": 3.353,
+      "evidence": {
+        "controller_id_after": "distill-controller-c91777ce",
+        "controller_id_before": "distill-controller-1d750aba",
+        "queue_metrics_after": {
+          "dead_letter": 0,
+          "done": 12,
+          "failed": 0,
+          "leased": 0,
+          "pending": 0,
+          "retry_wait": 0,
+          "skipped": 0
+        },
+        "queue_metrics_before": {
+          "dead_letter": 0,
+          "done": 12,
+          "failed": 0,
+          "leased": 0,
+          "pending": 0,
+          "retry_wait": 0,
+          "skipped": 0
+        },
+        "sequence_no_after": 7,
+        "sequence_no_before": 6,
+        "service_start_counts": {
+          "registry": 3,
+          "research": 2,
+          "source_ingest": 2
+        },
+        "source_record_count": 12
+      },
+      "finished_at": "2026-08-04T21:02:32Z",
+      "started_at": "2026-08-04T21:02:29Z",
+      "status": "passed",
+      "title": "Service and controller restart reload durable truth without duplicating work"
+    },
+    {
+      "acceptance": [
+        "BFF and controller terminal truth match every authority"
+      ],
+      "check_id": "C13",
+      "duration_seconds": 0.036,
+      "evidence": {
+        "actual_state_query": "http://127.0.0.1:43137/api/source-ingest/controller/readback",
+        "authority_unresolved_dlq_count": 0,
+        "controller_status": "unhealthy",
+        "desired_state_presence": "configured_unobserved",
+        "projected_dlq_count": 0,
+        "truth_level": "scheduled_tick"
+      },
+      "finished_at": "2026-08-04T21:02:32Z",
+      "started_at": "2026-08-04T21:02:32Z",
+      "status": "passed",
+      "title": "source_ingestion controller record projects the same truth the service reports"
+    },
+    {
+      "acceptance": [
+        "BFF and controller terminal truth match every authority"
+      ],
+      "check_id": "C14",
+      "duration_seconds": 0.008,
+      "evidence": {
+        "authority_queue_metrics": {
+          "dead_letter": 0,
+          "done": 12,
+          "failed": 0,
+          "leased": 0,
+          "pending": 0,
+          "retry_wait": 0,
+          "skipped": 0
+        },
+        "controller_status": "healthy",
+        "projected_outbox": {
+          "dead_letter": 0,
+          "done": 12,
+          "failed": 0,
+          "leased": 0,
+          "pending": 0,
+          "retry_wait": 0,
+          "skipped": 0
+        },
+        "registry_artifact_state": null,
+        "registry_entry_present": false,
+        "registry_id": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a",
+        "truth_level": "reconciled_live_proof"
+      },
+      "finished_at": "2026-08-04T21:02:32Z",
+      "started_at": "2026-08-04T21:02:32Z",
+      "status": "passed",
+      "title": "strategy_distillation controller record projects the same truth the queue and Registry report"
+    },
+    {
+      "acceptance": [
+        "BFF and controller terminal truth match every authority"
+      ],
+      "check_id": "C15",
+      "duration_seconds": 0.011,
+      "evidence": {
+        "authority_experiment_run_count": 0,
+        "controller_approved_spec_count": 0,
+        "controller_status": "healthy",
+        "projected_backlog": 0,
+        "projected_evidence_refs": [],
+        "queue_truth": {
+          "claimed": 0,
+          "completed": 0,
+          "dlq": 0,
+          "last_revalidation_failed": 0,
+          "pending": 0,
+          "revalidated": 0,
+          "total": 0
+        },
+        "registry_approved_spec_count": 1,
+        "registry_entry_present_now": false,
+        "truth_level": "reconciled_live_proof"
+      },
+      "failure": "DrillError: alpha_replication operator truth contradicts the Registry: controller sees 0 approved spec(s), Registry holds 1",
+      "finished_at": "2026-08-04T21:02:32Z",
+      "started_at": "2026-08-04T21:02:32Z",
+      "status": "failed",
+      "title": "alpha_replication operator truth matches the Registry and research authority"
+    }
+  ],
+  "controller_records": {
+    "alpha_replication": {
+      "actual_state_query": null,
+      "backlog": 0,
+      "controller_id": "alpha-replication-controller-471c8d83",
+      "controller_name": "alpha-replication-controller",
+      "deployment_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+      "desired_state": null,
+      "desired_state_query": null,
+      "dlq_count": null,
+      "downstream_actual_state": null,
+      "environment": "drill",
+      "evidence_refs": [],
+      "lag": null,
+      "last_failure_at": null,
+      "last_failure_reason": null,
+      "last_heartbeat_at": "2026-08-04T21:02:24.876599Z",
+      "last_repair_at": null,
+      "last_repair_reason": null,
+      "last_success_at": "2026-08-04T21:02:24.876599Z",
+      "last_tick_at": null,
+      "lease_expires_at": "2026-08-04T21:07:24.876635Z",
+      "lease_token": "c7880d9ab509448bbafb0d8208b9e3e4",
+      "loop_id": "alpha_replication",
+      "payload": {
+        "last_success_summary": "Processed 0 queue entries",
+        "queue": {
+          "claimed": 0,
+          "completed": 0,
+          "dlq": 0,
+          "last_revalidation_failed": 0,
+          "pending": 0,
+          "revalidated": 0,
+          "total": 0
+        },
+        "worker": {
+          "error_count": 0,
+          "last_failure_at": null,
+          "last_failure_reason": null,
+          "last_run_strategy_spec_ids": [],
+          "last_success_at": null,
+          "run_count": 0
+        }
+      },
+      "tenant_id": "default",
+      "truth_level": "reconciled_live_proof"
+    },
+    "source_ingestion": {
+      "actual_state_query": "http://127.0.0.1:43137/api/source-ingest/controller/readback",
+      "backlog": null,
+      "controller_id": "source-ingestion-pantheon-lupin-dev.c.pantheon-lupin-dev-20260719.internal:ec2bc3df4c7b",
+      "controller_name": "source-ingestion-controller",
+      "deployment_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+      "desired_state": null,
+      "desired_state_query": "persona/data requirement snapshot",
+      "dlq_count": 0,
+      "downstream_actual_state": null,
+      "environment": "drill",
+      "evidence_refs": [],
+      "lag": null,
+      "last_failure_at": "2026-08-04T21:02:24.601021Z",
+      "last_failure_reason": "actual_readback: terminal source readback failed closed: conn-l12-know-bounded-paper:desired_dataset_mismatch, conn-l12-know-bounded-paper:source_data_stale",
+      "last_heartbeat_at": "2026-08-04T21:02:24.601021Z",
+      "last_repair_at": null,
+      "last_repair_reason": null,
+      "last_success_at": null,
+      "last_tick_at": "2026-08-04T21:02:24.494956Z",
+      "lease_expires_at": "2026-08-04T21:07:24.601034Z",
+      "lease_token": "506c6feb3aac472baaf49875e04f54ec",
+      "loop_id": "source_ingestion",
+      "payload": {
+        "deployment": {
+          "build_time": "2026-08-03T05:49:11Z",
+          "deployment_id": "drill:f96f7d72db04",
+          "git_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+          "identity_complete": true,
+          "identity_observed_at": "2026-08-04T21:02:24Z",
+          "image_digest": "application-sha256:c4a1f2af0576150efea41685bbf84af6b661528069ef4083efa9c9e958654e5b",
+          "runtime_instance_id": "pantheon-lupin-dev.c.pantheon-lupin-dev-20260719.internal"
+        },
+        "desired_state": {
+          "authority": "drill://L12-VERIFY-KNOW-001/persona-data-requirement",
+          "persona_count": 1,
+          "read_at": "2026-08-04T21:02:24Z",
+          "requirement_count": 1,
+          "sha256": "1bd74f462f6eb7754b3afd196b6fb73abca32639400ddc4151923a690459c37a",
+          "transport": "deployment_file"
+        },
+        "failure_stage": "actual_readback",
+        "state_sequence_no": 1
+      },
+      "tenant_id": "default",
+      "truth_level": "scheduled_tick"
+    },
+    "strategy_distillation": {
+      "actual_state_query": null,
+      "backlog": 0,
+      "controller_id": "distill-controller-c91777ce",
+      "controller_name": "strategy-distillation-controller",
+      "deployment_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+      "desired_state": null,
+      "desired_state_query": null,
+      "dlq_count": null,
+      "downstream_actual_state": null,
+      "environment": "drill",
+      "evidence_refs": [],
+      "lag": null,
+      "last_failure_at": null,
+      "last_failure_reason": null,
+      "last_heartbeat_at": "2026-08-04T21:02:32.692567Z",
+      "last_repair_at": null,
+      "last_repair_reason": null,
+      "last_success_at": "2026-08-04T21:02:32.692567Z",
+      "last_tick_at": "2026-08-04T21:02:27.897471Z",
+      "lease_expires_at": "2026-08-04T21:07:32.692586Z",
+      "lease_token": "70376f3523be4208956c20fe00411222",
+      "loop_id": "strategy_distillation",
+      "payload": {
+        "actual": {
+          "outbox": {
+            "dead_letter": 0,
+            "done": 12,
+            "failed": 0,
+            "leased": 0,
+            "pending": 0,
+            "retry_wait": 0,
+            "skipped": 0
+          },
+          "pending_dead_letter_count": 0,
+          "skipped_immutable_count": 0,
+          "sync_failures_count": 0,
+          "synced_count": 0
+        },
+        "desired": {
+          "eligible_source_ids": [
+            "src-l12-know-f96f7d72-001",
+            "src-l12-know-f96f7d72-conc-00",
+            "src-l12-know-f96f7d72-conc-01",
+            "src-l12-know-f96f7d72-conc-02",
+            "src-l12-know-f96f7d72-conc-03",
+            "src-l12-know-f96f7d72-conc-04",
+            "src-l12-know-f96f7d72-conc-05",
+            "src-l12-know-f96f7d72-conc-06",
+            "src-l12-know-f96f7d72-conc-07",
+            "src-l12-know-f96f7d72-dlq",
+            "src-l12-know-f96f7d72-dup",
+            "src-l12-know-f96f7d72-outage"
+          ]
+        },
+        "error_reason": "Distillation Registry delivery is degraded; durable retry or DLQ remains",
+        "error_stage": "registry_sync",
+        "last_success_summary": "Distilled and synchronized strategy specs. Processed: 0. Synced: 0.",
+        "reconcile": {
+          "created": 0,
+          "dead_lettered": 0,
+          "enqueued": 0,
+          "failed": 0,
+          "processed": 0,
+          "refreshed": 0,
+          "registry_synced": 0,
+          "retried": 0,
+          "skipped": 0
+        }
+      },
+      "tenant_id": "default",
+      "truth_level": "reconciled_live_proof"
+    }
+  },
+  "gaps": [
+    {
+      "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+      "detail": "SourceProvisioningReconciler._reconcile_requirement returns 'verified_existing_custom_connector' without calling _ensure_connector, so metadata['persona_source_reconciliation'] is never written. /api/source-ingest/controller/readback therefore reports an empty desired_state for the connector, and controller_worker._validate_terminal_readback fails closed on desired_dataset_mismatch (and, because cadence is unknown, source_data_stale). Loop 1 can only reach terminal reconciled truth through the two built-in TW live providers, never through an operator-approved bounded connector.",
+      "found_at": "2026-08-04T21:02:24Z",
+      "gap_id": "G2",
+      "loop_id": "source_ingestion",
+      "observed": "terminal source readback failed closed: conn-l12-know-bounded-paper:desired_dataset_mismatch, conn-l12-know-bounded-paper:source_data_stale",
+      "owning_surface": "services/source_ingestion/persona_source_reconciler.py",
+      "title": "Operator-managed connectors bound to a Persona requirement never receive the persona_source_reconciliation desired-state marker"
+    },
+    {
+      "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+      "detail": "_queue_payload_from_registry_entry requires metadata['tenant_id'] or an embedded strategy_spec['tenant_id'] on the approved Registry entry. The distillation controller builds the entry from StrategySpecConversionService.convert_seed and adds only a metadata['distillation'] block, so no tenant binding is ever written. Even with the discovery join repaired, every approved distilled spec is rejected at queue admission.",
+      "found_at": "2026-08-04T21:02:24Z",
+      "gap_id": "G3",
+      "loop_id": "strategy_distillation",
+      "observed": "ValueError: approved StrategySpec tenant_id is required",
+      "owning_surface": "services/source_ingestion/distillation_controller.py -> services/research/alpha_replication/replication_controller.py",
+      "title": "Distilled StrategySpec Registry entries carry no tenant binding, so alpha replication rejects them even when discovery succeeds"
+    },
+    {
+      "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+      "detail": "run_controller_tick reads discovery keys from the distillation seed store field 'source_id' and passes each one to _get_approved_specs_for_strategy, which queries /api/registry/strategies/{strategy_id}/strategy-specs. The distillation controller registers the spec under strategy_id 'strat-<source_id>-<digest12>' (distillation_controller._build_registry_payload), and the seed record carries no registry or strategy identity at all. The two keys can never match, so an approved StrategySpec is never admitted as alpha replication desired state. docker-compose.yml points both services at the same STRATEGY_SPEC_SEED_STORE_PATH, so the deployed configuration has the same break.",
+      "found_at": "2026-08-04T21:02:24Z",
+      "gap_id": "G1",
+      "loop_id": "alpha_replication",
+      "observed": "approved_spec_count=0 while the Registry holds approved reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a under strategy_id strat-src-l12-know-f96f7d72-001-e61eb0869f51",
+      "owning_surface": "services/research/alpha_replication/replication_controller.py",
+      "title": "Alpha replication discovery joins the distillation seed store's source_id against the Registry strategy_id"
+    },
+    {
+      "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+      "detail": "services/registry/storage.RegistryStore is a process-local in-memory dict behind a module singleton, and services/registry/main.py mounts that app unchanged. The deployed registry container receives DATABASE_URL and an object-store config but never uses them for entry storage and mounts no volume. Every StrategySpec \u2014 including approved, immutable, review-decided ones \u2014 is lost when the process restarts. The L12-DIST-001 immutability guarantee and the L12-ALPHA-001 approved-only admission gate both rest on this authority.",
+      "found_at": "2026-08-04T21:02:29Z",
+      "gap_id": "G5",
+      "loop_id": "strategy_distillation",
+      "observed": "reg-strategy-spec-src-l12-know-f96f7d72-001-0288992de43a was approved at 2026-08-04T21:02:24Z and returns 404 after 1 restart(s)",
+      "owning_surface": "services/registry/storage.py",
+      "title": "The Registry artifact authority has no durable storage, so approved immutable StrategySpecs do not survive a restart"
+    },
+    {
+      "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+      "detail": "Because discovery (G1) never admits the approved spec, the controller records a successful tick with approved_spec_count=0, backlog 0, and no evidence refs. The projected BFF truth is therefore 'healthy' and shows no backlog, so an operator cannot see that an approved artifact is waiting. The live deployment shows the same shape: the running alpha-replication controller has recorded tens of thousands of successful ticks with approved_spec_count=0.",
+      "found_at": "2026-08-04T21:02:32Z",
+      "gap_id": "G4",
+      "loop_id": "alpha_replication",
+      "observed": "controller approved_spec_count=0 while the Registry holds 1 approved StrategySpec and the research authority holds 0 ExperimentRun(s)",
+      "owning_surface": "services/research/alpha_replication/replication_controller.py",
+      "title": "alpha_replication operator truth reports a healthy, empty loop while an approved StrategySpec is stranded"
+    }
+  ],
+  "identity": {
+    "connector_id": "conn-l12-know-bounded-paper",
+    "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
+    "environment": "drill",
+    "finished_at": "2026-08-04T21:02:32Z",
+    "git_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+    "persona_id": "persona-l12-know-001",
+    "primary_source_id": "src-l12-know-f96f7d72-001",
+    "python": "3.12.3",
+    "run_dir": "/tmp/l12-verify-know-final",
+    "service_start_counts": {
+      "registry": 3,
+      "research": 2,
+      "source_ingest": 2
+    },
+    "services": {
+      "registry": {
+        "app_module": "services.registry.service",
+        "base_url": "http://127.0.0.1:42969",
+        "pid": 3275024
+      },
+      "research": {
+        "app_module": "services.research.main",
+        "base_url": "http://127.0.0.1:38669",
+        "pid": 3275303
+      },
+      "source_ingest": {
+        "app_module": "services.source_ingestion.main",
+        "base_url": "http://127.0.0.1:43137",
+        "pid": 3275140
+      }
+    },
+    "started_at": "2026-08-04T21:02:21Z",
+    "tenant_id": "default"
+  },
+  "loops": [
+    "source_ingestion",
+    "strategy_distillation",
+    "alpha_replication"
+  ],
+  "proof_level": "EP3",
+  "schema_version": "twelve_loop_knowledge_drill.v1",
+  "summary": {
+    "blocked": 1,
+    "failed": 4,
+    "passed": 11,
+    "total": 16
+  },
+  "task_id": "L12-VERIFY-KNOW-001"
+}
