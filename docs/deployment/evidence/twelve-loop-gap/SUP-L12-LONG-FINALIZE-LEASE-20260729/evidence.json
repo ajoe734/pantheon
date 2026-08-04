@@ -4,7 +4,17 @@
   "owner": "Antigravity",
   "reviewer": "Codex2",
   "status": "review",
-  "summary": "Implemented worker_lease_status_description and task_l12_review_priority_rank in supervisor.py to distinguish healthy long finalize/review leases from stuck leases, summarize active worker lease status, protect L12 priority review dispatches, and restrict preemption protection strictly to SUP-L12 tasks.",
+  "summary": "Implemented worker_lease_status_description and task_l12_review_priority_rank in supervisor.py to distinguish healthy long finalize/review leases from stuck leases, summarize active worker lease status, protect L12 priority review dispatches, and handle missing or null request_snapshot gracefully without crashing summarize_runtime.",
+  "review_acceptance": {
+    "decision": "approved",
+    "reviewer": "Codex2",
+    "criteria_verified": [
+      "Distinguishes healthy long finalize/review leases from stuck leases",
+      "Protects L12 priority review dispatch against lower-priority leases",
+      "Gracefully handles missing or null request_snapshot in summarize_runtime",
+      "All L12 focused and supervisor suite tests pass"
+    ]
+  },
   "verification": {
     "command": "PYTHONPATH=.orchestrator $PANTHEON_COMMAND_ROOT/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
     "result": "passed",
@@ -15,7 +25,8 @@
       "test_lease_lifecycle_recovery_and_healthy_worker_preservation",
       "test_sup_l12_task_priority_preemption_protected",
       "test_l12_priority_gate_is_limited_to_review_dispatch",
-      "test_dispatcher_prioritizes_l12_review_over_unrelated_review_for_claude2"
+      "test_dispatcher_prioritizes_l12_review_over_unrelated_review_for_claude2",
+      "test_summarize_runtime_null_request_snapshot_regression"
     ]
   }
 }
