@@ -1,0 +1,57 @@
+{
+  "schema_version": "supervisor_task_failure_streak_schema_review.v1",
+  "task": {
+    "id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+    "title": "Add a failure_streak counter and quarantined status to the task schema",
+    "phase": "Supervisor Dispatch Reliability",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+  },
+  "scope": {
+    "owned_layer": "Task-row failure-streak projection, threshold quarantine, governed lifecycle resets, and the completion cleanup of per-provider runtime evidence.",
+    "not_changing": "Provider classification, retry budgets, dispatch priority, review authority, or live runtime configuration.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ]
+  },
+  "review_remediation": {
+    "rejected_head": "62b1b83db8249f6ac6aea257168cf4dadbb608f5",
+    "reviewer": "Codex2",
+    "required_change": "A worker completion must clear every task-provider bucket, not only the completing worker's bucket; the regression must prove a rotated provider retries at streak one after the task-row reset.",
+    "evidence_requirement": "This manifest is committed in PR #4533 before independent re-review and must be bound with REVIEW_FILE during exact-head approval."
+  },
+  "acceptance": {
+    "failure_projection": "Repeated distinct worker failures increment the task-row failure_streak.",
+    "quarantine": "The configured failure-loop threshold changes the task status to quarantined and normal dispatch ignores it until governed reopen.",
+    "success_reset": "Worker completion resets the task-row failure_streak and clears detailed records for every provider on that task.",
+    "cross_provider_reset": "A later failure from a provider that had a pre-completion record starts at one and leaves the task in_progress."
+  },
+  "verification": {
+    "status": "pending_remediation_validation",
+    "planned_commands": [
+      "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py",
+      "python3 .orchestrator/test_supervisor.py TaskFailureStreakTaskSchemaTests",
+      "python3 scripts/test_ai_status.py ReviewApprovedWorkflowTests",
+      "git diff --check"
+    ]
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "required_reviewer": "Codex2",
+    "approval_protocol": "Review this committed manifest and the exact PR head, then approve with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
+    "prior_review": "The canonical review bridge rejected the prior head because completion left rotated provider buckets and no REVIEW_FILE-eligible manifest was in the PR diff."
+  },
+  "delivery": {
+    "pull_request": 4533,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4533",
+    "merge_policy": "review_before_merge",
+    "candidate_head": "to be supplied by the exact-head independent review"
+  }
+}

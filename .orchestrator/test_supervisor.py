@@ -16075,6 +16075,58 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
         self.assertEqual(self._task_row()["failure_streak"], 0)
         self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
+    def test_worker_completion_clears_all_provider_buckets_before_rotated_retry(self) -> None:
+        """A completed task cannot retain a rotated provider's stale count."""
+
+        state: dict = {}
+        completed_worker = self._worker(run_id="run-completed-codex")
+        stale_claude_worker = self._worker(
+            run_id="run-stale-claude",
+            provider="claude",
+        )
+        retry_claude_worker = self._worker(
+            run_id="run-retry-claude",
+            provider="claude",
+        )
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, completed_worker), 1)
+            self.assertEqual(
+                supervisor.record_task_failure_streak(
+                    state,
+                    stale_claude_worker,
+                    "stale provider failure before successful completion",
+                    failure_kind="generic_exit",
+                    reason_class="generic_exit",
+                    raw_ref=".orchestrator/failure-evidence/run-stale-claude.json",
+                    rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+                ),
+                1,
+            )
+            self.assertEqual(
+                set(state["provider_guardrails"]["task_failure_streaks"]),
+                {
+                    f"{self.task['id']}:codex",
+                    f"{self.task['id']}:claude",
+                },
+            )
+
+            supervisor.clear_task_failure_streak_after_worker_completion(
+                self.config,
+                state,
+                completed_worker,
+            )
+
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+            self.assertEqual(
+                state["provider_guardrails"]["task_failure_streak_projection_generations"],
+                {},
+            )
+            self.assertEqual(self._record_failure(state, retry_claude_worker), 1)
+
+        retried = self._task_row()
+        self.assertEqual(retried["failure_streak"], 1)
+        self.assertEqual(retried["status"], "in_progress")
+
     def test_quarantined_task_blocks_ready_dispatch_until_explicit_reset(self) -> None:
         state: dict = {}
         self.assertEqual(

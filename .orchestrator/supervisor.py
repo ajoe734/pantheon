@@ -8818,10 +8818,13 @@ def clear_task_failure_streak_after_worker_completion(
     state: dict[str, Any],
     worker: dict[str, Any],
 ) -> None:
-    """Clear both detailed runtime evidence and the task-row projection."""
+    """Clear every task runtime bucket and its task-row projection on completion."""
 
-    clear_task_failure_streak(state, worker=worker)
-    clear_task_failure_streak_projection_generations_for_task(state, worker.get("task_id"))
+    # A task-row completion acknowledges the full prior failure generation, not
+    # only the provider that happened to run the successful worker.  Retaining
+    # another provider's record would make its next failure inherit a stale
+    # count after the task row was reset and could quarantine immediately.
+    clear_task_failure_streaks_for_task(state, worker.get("task_id"))
     if not config.get("paths", {}).get("status_file"):
         return
     status_path = config_path(config, "status_file")
