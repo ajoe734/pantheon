@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -6591,9 +6592,30 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
-    # Allow owner to supply review evidence at done time when reviewer did not set it.
+    # Allow owner to supply review evidence at done time when reviewer did not set it,
+    # but only when it was already present at the head the reviewer actually
+    # approved -- not added afterward. See review_evidence_file_committed().
     done_review_file = os.environ.get("REVIEW_FILE", "").strip()
     if done_review_file and not task.get("review_file"):
+        approved_head_sha = str((task.get(APPROVAL_BINDING_KEY) or {}).get("head_sha") or "").strip()
+        if approved_head_sha:
+            config = load_config()
+            repository_id = task_primary_repository_id(config, task)
+            repository_slug_value = repository_slug(config, repository_id)
+            if not repository_slug_value or not review_evidence_file_committed(
+                repository=repository_slug_value,
+                head_sha=approved_head_sha,
+                review_file=done_review_file,
+            ):
+                raise SystemExit(
+                    f"{task_id}: REVIEW_FILE={done_review_file!r} was not present at "
+                    f"the reviewed head {approved_head_sha[:12]} the reviewer actually "
+                    "approved. Evidence added after approval invalidates the exact-head "
+                    "binding and requires a fresh independent review of the commit that "
+                    "adds it -- see task-closeout-finalization.md 'Review Evidence "
+                    "Manifest Rule'. Do not bind a manifest that was only added "
+                    "post-approval."
+                )
         task["review_file"] = done_review_file
     validate_loop_completion_claim(task)
     timestamp = iso_now()
@@ -6769,6 +6791,34 @@ def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
     return False
 
 
+def review_evidence_file_committed(
+    *, repository: str, head_sha: str, review_file: str
+) -> bool:
+    """Return whether `review_file` exists as a real file at `head_sha` on GitHub.
+
+    Queries the GitHub Contents API directly against the exact commit rather
+    than local git objects, because the head being checked (an approved PR
+    head, or the head at approval time) is not guaranteed to be fetched into
+    the local checkout at command-run time.
+
+    SUP-REVIEW-EVIDENCE-BINDING-ENFORCEMENT-20260804: this is what makes the
+    "owner may bind the same already committed and reviewed manifest" fallback
+    in task-closeout-finalization.md actually true instead of merely
+    documented. Without it, `done` accepted any REVIEW_FILE string at face
+    value, including one that only exists in a commit added *after* approval
+    -- exactly the SHA-shifting, re-review-forcing loop diagnosed in
+    SUP-REVIEW-PIPELINE-INTEGRITY-20260804.
+    """
+    review_file = (review_file or "").strip().lstrip("/")
+    if not repository or not head_sha or not review_file:
+        return False
+    encoded_path = urllib.parse.quote(review_file, safe="/")
+    result = run_gh_json_command(
+        ["api", f"repos/{repository}/contents/{encoded_path}", "-f", f"ref={head_sha}"]
+    )
+    return isinstance(result, Mapping) and str(result.get("type") or "") == "file"
+
+
 def bridge_github_review_decision(
     task: dict[str, Any],
     *,
@@ -6874,6 +6924,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
     binding = resolve_approval_binding(task)
+    if review_file and binding:
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task)
+        repository_slug_value = repository_slug(config, repository_id)
+        if not repository_slug_value or not review_evidence_file_committed(
+            repository=repository_slug_value,
+            head_sha=binding["head_sha"],
+            review_file=review_file,
+        ):
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={review_file!r} was not found at the reviewed "
+                f"head {binding['head_sha'][:12]} in {repository_slug_value or '?'}. "
+                "The evidence manifest must already be committed and present in the PR "
+                "diff before approval."
+            )
     transition_candidate = dict(task)
     if review_notes:
         transition_candidate["review_notes_zh"] = review_notes

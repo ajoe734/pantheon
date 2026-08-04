@@ -21,6 +21,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         disable_auto_clears_request: bool = True,
         disable_auto_returncode: int = 0,
         auto_merge_read_fails: bool = False,
+        merge_lands_synchronously: bool = True,
+        landed_merged_at: str = "2026-06-12T01:01:07Z",
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -30,6 +32,14 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.disable_auto_clears_request = disable_auto_clears_request
         self.disable_auto_returncode = disable_auto_returncode
         self.auto_merge_read_fails = auto_merge_read_fails
+        # SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804: models whether an actual
+        # (non --auto, non --disable-auto) `gh pr merge` call lands
+        # immediately -- true is the pre-merge-queue default; a caller
+        # models a merge-queue-required branch by passing False, which
+        # leaves `self.pr["state"]` unchanged (still OPEN) after the merge
+        # call, the way a request that was only *enqueued* would.
+        self.merge_lands_synchronously = merge_lands_synchronously
+        self.landed_merged_at = landed_merged_at
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
         if "--state" not in command:
@@ -73,12 +83,20 @@ class FakeRunner(auto_integrator.CommandRunner):
         if command[:3] == ["git", "worktree", "remove"]:
             return completed(command)
         if command[:3] == ["gh", "pr", "merge"]:
-            if "--disable-auto" in command and self.disable_auto_clears_request and self.pr is not None:
-                self.pr = {**self.pr, "autoMergeRequest": None}
-            return completed(
-                command,
-                returncode=self.disable_auto_returncode if "--disable-auto" in command else 0,
-            )
+            if "--disable-auto" in command:
+                if self.disable_auto_clears_request and self.pr is not None:
+                    self.pr = {**self.pr, "autoMergeRequest": None}
+                return completed(command, returncode=self.disable_auto_returncode)
+            if "--auto" not in command and self.merge_lands_synchronously and self.pr is not None:
+                # A direct (non-queued) merge request that GitHub completes
+                # immediately -- the next `gh pr view` should see it MERGED.
+                self.pr = {
+                    **self.pr,
+                    "state": "MERGED",
+                    "mergedAt": self.landed_merged_at,
+                    "mergeCommit": {"oid": "merge123"},
+                }
+            return completed(command)
         if "scripts/ai_status.py" in joined:
             return completed(command)
         return completed(command)
@@ -302,6 +320,68 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-REBASE-CONFLICT")
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_execute_merges_when_gh_pr_merge_lands_synchronously(self) -> None:
+        """SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804: the common case today
+        (no merge queue) -- `gh pr merge` completes immediately, the
+        post-merge re-check already sees MERGED, and reconcile_done still
+        fires in the same pass exactly as before this change."""
+
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44))
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "merged")
+        self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertTrue(
+            any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
+        )
+
+    def test_execute_defers_reconcile_when_merge_has_not_landed_yet(self) -> None:
+        """A branch that requires a merge queue does not merge synchronously
+        -- `gh pr merge` enqueues the request instead (see `gh pr merge
+        --help`). The integrator must not call reconcile_done (mark the task
+        `done`) for a merge that has not actually happened."""
+
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        # merge_lands_synchronously=False models a merge-queue-required
+        # branch: `gh pr merge` is accepted (enqueued) but the PR has not
+        # actually landed within this process's lifetime.
+        runner = FakeRunner(pr=green_pr(number=44), merge_lands_synchronously=False)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "queued_for_merge")
+        self.assertFalse(result.dry_run)
+        self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertFalse(
+            any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
+        )
 
     def test_execute_reconciles_already_merged_pr_without_unblock(self) -> None:
         candidate = auto_integrator.TaskCandidate(
