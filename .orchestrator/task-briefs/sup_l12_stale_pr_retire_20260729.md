@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Retire stale L12 PRs after 1025Z gap audit
-- Status: review_approved
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Independent review: PR #4372 remote exact head eedccf8c6aaf495d85e6ff2b07fa4a678b000db4 verified; committed manifest checksum and JSON parse match, net diff is only the four scoped evidence/brief files, #4367 is CLOSED/unmerged, #4364/#4297/#4313 remain OPEN with canonical review/review_approved/blocked evidence, and #4365/#4366 merge commits are ancestors of origin/dev. Reviewed disclosed ac6ee7f2 provenance: its actual patch is only this task brief; no BFF content enters the PR.
+- Next: Rework required before approval of PR #4372 head 95b3ddaf4b38f8b3eddbf29aa94b4c3b90968b29: (1) committed README.md has a trailing blank line; git diff --check origin/dev...HEAD reports docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/README.md:21 new blank line at EOF. Remove it and regenerate evidence.sha256. (2) the pushed task brief falsely records status review_approved and claims an independent review at old head eedccf8c6aaf495d85e6ff2b07fa4a678b000db4, while evidence.json correctly says pending_independent_review and canonical task state is review at head 95b3ddaf4b38f8b3eddbf29aa94b4c3b90968b29. Commit and push the brief correction (do not amend), then request a fresh exact-head review.
 
 ## Summary
 Retire or supersede stale L12 PRs without closing active product proof.
