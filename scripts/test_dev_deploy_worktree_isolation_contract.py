@@ -15,6 +15,7 @@ STAGE_ZERO_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "stage-0-ci.yml"
 DEPLOYMENT_PROBE = REPO_ROOT / "scripts" / "run_loop_prod_dep_001_hosted.py"
 
 COMMAND_ROOT = "/home/lupin/pantheon-ci-deploy/dev-root"
+COMMAND_RUNTIME_PARENT = "/home/lupin/pantheon-ci-deploy/command-runtimes"
 DEPLOY_ROOT = "/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees"
 DEV_ROOT_WORKTREE = f"{DEPLOY_ROOT}/dev-root"
 CONTRACT_VERSION = "dev-root-isolation-v1"
@@ -66,6 +67,21 @@ def test_deploy_script_keeps_dev_isolated_and_staging_layout_stable() -> None:
     assert 'root="${HOME}/pantheon-ci-deploy"' in script
     assert '[[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]' in script
     assert "BEGIN_DEV_DEPLOY_PATH_ISOLATION_PY" in script
+    assert f'DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT="{COMMAND_RUNTIME_PARENT}"' in script
+
+
+def test_mutable_dev_root_is_transport_only_not_supervisor_authority() -> None:
+    script = deploy_script()
+    provision = script.split(
+        "provision_dev_supervisor_watchdog() {", 1
+    )[1].split("\n}", 1)[0]
+
+    assert "dev_supervisor_staging_root=" in script
+    assert "dev_supervisor_command_runtime_parent=" in script
+    assert 'local staging_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:' in provision
+    assert 'command_root="$(materialize_dev_supervisor_command_runtime "$source_root")"' in provision
+    assert '--command-root "$staging_root"' not in provision
+    assert '--repo "$staging_root"' not in provision
 
 
 def test_path_guard_accepts_disjoint_dev_roots(tmp_path: Path) -> None:

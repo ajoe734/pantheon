@@ -1,0 +1,162 @@
+{
+  "admission_plan": {
+    "message": "live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001",
+    "verdict": "failed_closed"
+  },
+  "baseline": {
+    "checkpoint_prefix_sha256": "903d83718159c9b401cc9bdc682abfe213793396c008cb227581804d8902f656",
+    "elapsed_seconds": 30.52,
+    "event_count": 8632,
+    "implementation": "load_events_then_project_latest_state",
+    "journal_bytes": 2174900966,
+    "observed_at": "2026-08-02T09:13:00Z",
+    "peak_rss_kib": 5604472,
+    "result": "timed_out_before_catalog_admission",
+    "timeout_seconds": 30.0
+  },
+  "candidate": {
+    "branch": "task/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+    "catalog_file_sha256": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+    "dispatcher_sha256": "9677b0512fd7daf1426122280e371d36434f9df421dd138eace5b68ba5658e9a",
+    "implementation_paths_clean_at_candidate": true,
+    "repository": "ajoe734/pantheon",
+    "source_sha": "2df9365891ed3008c21b14ede6a35b7d6e515820"
+  },
+  "guarded_dry_run": {
+    "completed": true,
+    "elapsed_seconds": 1.958,
+    "output": null,
+    "peak_rss_kib": 58384,
+    "returncode": 2,
+    "stderr": "dispatch failed closed: live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001",
+    "timed_out": false,
+    "timeout_seconds": 30.0,
+    "verdict": "failed_closed"
+  },
+  "input": {
+    "checkpoint_event_count": 8858,
+    "checkpoint_last_event_id": "task-state-2296af095a490ab79aba614e0c3d3e9f7195c65d36efcee81e03378ed37c72bb",
+    "checkpoint_last_event_sha256": "2296af095a490ab79aba614e0c3d3e9f7195c65d36efcee81e03378ed37c72bb",
+    "checkpoint_prefix_bytes": 2316265615,
+    "checkpoint_prefix_sha256": "61c4dac7256d10e183362cdea53f445ef6f2fd41b28eb5b19d8812fb619f347a",
+    "checkpoint_sha256": "4b0608568a1945aedbd051c4bbf46119db655aba2c8b42acf639dd4b840bdc47",
+    "checkpoint_state_sha256": "1df88a1728d12a1c5af9fb5748d66c90247e11df127fa3f8c9455c610d1c4531",
+    "clone_bytes": 2316265615,
+    "clone_checkpoint_sha256": "4b0608568a1945aedbd051c4bbf46119db655aba2c8b42acf639dd4b840bdc47",
+    "clone_lock_mode": "0o600",
+    "clone_lock_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "clone_path": "/tmp/pantheon-l12-snapshot-scale-0cgd4pnb/task-state-events.jsonl",
+    "clone_strategy": "reflink_auto_physical_fallback",
+    "elapsed_seconds": 4.197,
+    "journal_bytes": 2316265615,
+    "reflink_always_rejection": "cp: failed to clone '/tmp/pantheon-l12-snapshot-scale-0cgd4pnb/task-state-events.jsonl' from '/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl': Operation not supported",
+    "source_device": 2049,
+    "source_inode": 2186507,
+    "source_path": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl"
+  },
+  "meets_target": true,
+  "non_interference": {
+    "benchmark_journal": "scratch clone removed after run",
+    "catalog_materialization": "none; dry-run only",
+    "scratch_read_only_surface_after": {
+      "checkpoint": {
+        "ctime_ns": 1785665209310107474,
+        "exists": true,
+        "inode": 1084736,
+        "mode": "0o664",
+        "mtime_ns": 1785665209310107474,
+        "sha256": "4b0608568a1945aedbd051c4bbf46119db655aba2c8b42acf639dd4b840bdc47",
+        "size": 577127
+      },
+      "checkpoint_temp_files": [],
+      "directory_entries": [
+        "live-config.json",
+        "task-state-events.jsonl",
+        "task-state-events.jsonl.checkpoint.json",
+        "task-state-events.jsonl.lock"
+      ],
+      "journal": {
+        "ctime_ns": 1785665209307793946,
+        "exists": true,
+        "inode": 1084735,
+        "mode": "0o600",
+        "mtime_ns": 1785665209307793946,
+        "sha256": null,
+        "size": 2316265615
+      },
+      "lock": {
+        "ctime_ns": 1785665209310793942,
+        "exists": true,
+        "inode": 1084737,
+        "mode": "0o600",
+        "mtime_ns": 1784532215961249899,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 0
+      }
+    },
+    "scratch_read_only_surface_before": {
+      "checkpoint": {
+        "ctime_ns": 1785665209310107474,
+        "exists": true,
+        "inode": 1084736,
+        "mode": "0o664",
+        "mtime_ns": 1785665209310107474,
+        "sha256": "4b0608568a1945aedbd051c4bbf46119db655aba2c8b42acf639dd4b840bdc47",
+        "size": 577127
+      },
+      "checkpoint_temp_files": [],
+      "directory_entries": [
+        "live-config.json",
+        "task-state-events.jsonl",
+        "task-state-events.jsonl.checkpoint.json",
+        "task-state-events.jsonl.lock"
+      ],
+      "journal": {
+        "ctime_ns": 1785665209307793946,
+        "exists": true,
+        "inode": 1084735,
+        "mode": "0o600",
+        "mtime_ns": 1785665209307793946,
+        "sha256": null,
+        "size": 2316265615
+      },
+      "lock": {
+        "ctime_ns": 1785665209310793942,
+        "exists": true,
+        "inode": 1084737,
+        "mode": "0o600",
+        "mtime_ns": 1784532215961249899,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 0
+      }
+    },
+    "scratch_read_only_surface_preserved": true,
+    "source_checkpoint_opened_for_write": false,
+    "source_event_log_opened_for_write": false,
+    "source_lock_opened_for_write": false
+  },
+  "phases": {
+    "admission_plan_seconds": 0.027,
+    "clone_under_shared_lock_seconds": 4.197,
+    "guarded_dry_run_seconds": 1.958,
+    "validated_snapshot_seconds": 1.709
+  },
+  "schema_version": "l12_dispatcher_snapshot_scale_benchmark.v1",
+  "snapshot": {
+    "byte_size": 2316265615,
+    "checkpoint_used": true,
+    "event_count": 8858,
+    "last_event_id": "task-state-2296af095a490ab79aba614e0c3d3e9f7195c65d36efcee81e03378ed37c72bb",
+    "last_event_sha256": "2296af095a490ab79aba614e0c3d3e9f7195c65d36efcee81e03378ed37c72bb",
+    "peak_rss_kib": 43600,
+    "revalidated_tail_events": 0,
+    "state_sha256": "1df88a1728d12a1c5af9fb5748d66c90247e11df127fa3f8c9455c610d1c4531"
+  },
+  "target": {
+    "maximum_guarded_dry_run_seconds": 30.0,
+    "minimum_bytes": 2030000000,
+    "minimum_events": 8400,
+    "requires_catalog_admission_verdict": true,
+    "requires_checkpoint": true
+  }
+}
