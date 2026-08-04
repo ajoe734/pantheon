@@ -12268,7 +12268,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
             mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
             mock.patch.object(supervisor, "worker_is_chair_review", return_value=True),
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12282,7 +12284,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "completed")
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with({}, {}, worker)
         self.assertIn("Chair review worker exited", write_activity_log.call_args.args[1]["message"])
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
 
@@ -12298,7 +12300,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
             mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
             mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12312,7 +12316,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "completed")
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with(config, {}, worker)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
         finalize_queue_event_record.assert_called_once()
 
@@ -12606,7 +12610,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
             mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
             mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12622,7 +12628,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(worker["status"], "completed")
         record_blocker.assert_not_called()
         record_streak.assert_not_called()
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with({}, {}, worker)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
 
@@ -12704,7 +12710,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=True),
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12722,7 +12730,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "completed")
         terminate_worker_pid.assert_called_once_with(1234)
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with({}, {}, worker)
         self.assertIn("artifacts were accepted", write_activity_log.call_args.args[1]["message"])
         finalize_queue_event_record.assert_called_once()
 
