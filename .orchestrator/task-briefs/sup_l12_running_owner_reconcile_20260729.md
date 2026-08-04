@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Reconcile running workers with authoritative row owners
 - Status: review_approved
-- Owner: Antigravity
-- Reviewer: Codex2
-- Next: Auto-reassigned ownership from Codex2 to Antigravity after repeated Codex2 terminal: fatal: bad object d3178e6dd08f6945246d54675d379a63da6b00ea
+- Owner: Codex2
+- Reviewer: Codex
+- Next: Auto-reassigned SUP-L12-RUNNING-OWNER-RECONCILE-20260729 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.
 
 ## Summary
 補上 row owner/reviewer 與 live worker_runner/run records 的 reconcile 機制，避免 helper/fallback 失敗後任務真相漂移。
