@@ -10,23 +10,24 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import canonical_review_gate_ci as gate_ci
-from task_review_merge_gate import GateDecision, TaskReviewGateError
+
+HEAD = "b" * 40
+REPOSITORY = "ajoe734/pantheon"
 
 
-def _decision(*, allow: bool, policy: str = "review_before_merge", reason: str = "ok") -> GateDecision:
-    return GateDecision(
-        allow_merge=allow,
-        allow_auto_merge=False,
-        task_id="SUP-X",
-        policy=policy,
-        reason=reason,
-        detail="detail",
-    )
+def _lookup(found_refs: dict) -> gate_ci.TagLookup:
+    def lookup(repository: str, ref: str):
+        return found_refs.get((repository, ref))
+
+    return lookup
 
 
 class ResolveTaskIdTests(unittest.TestCase):
     def test_matches_task_branch_prefix(self) -> None:
-        self.assertEqual(gate_ci.resolve_task_id("task/SUP-DISPATCH-EXPLAIN-TOOL-20260804"), "SUP-DISPATCH-EXPLAIN-TOOL-20260804")
+        self.assertEqual(
+            gate_ci.resolve_task_id("task/SUP-DISPATCH-EXPLAIN-TOOL-20260804"),
+            "SUP-DISPATCH-EXPLAIN-TOOL-20260804",
+        )
 
     def test_rejects_non_task_branch(self) -> None:
         self.assertIsNone(gate_ci.resolve_task_id("feature/some-branch"))
@@ -37,131 +38,160 @@ class ResolveTaskIdTests(unittest.TestCase):
         self.assertIsNone(gate_ci.resolve_task_id("task/"))
 
     def test_honors_custom_prefix(self) -> None:
-        self.assertEqual(
-            gate_ci.resolve_task_id("wk/FOO-1", prefix="wk/"),
-            "FOO-1",
+        self.assertEqual(gate_ci.resolve_task_id("wk/FOO-1", prefix="wk/"), "FOO-1")
+
+
+class ReviewProofTagExistsTests(unittest.TestCase):
+    """Pure logic, no live `gh` calls -- the lookup is injected."""
+
+    def test_true_when_the_exact_ref_is_returned(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        lookup = _lookup({(REPOSITORY, ref): {"ref": ref, "object": {"sha": "x"}}})
+        self.assertTrue(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
+        )
+
+    def test_false_when_lookup_returns_nothing(self) -> None:
+        lookup = _lookup({})
+        self.assertFalse(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
+        )
+
+    def test_false_when_lookup_returns_a_mismatched_ref(self) -> None:
+        # Defends against a hypothetically sloppy lookup implementation
+        # returning some other ref's payload.
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        other_ref = f"refs/tags/pantheon-review/approve/{'c' * 40}"
+        lookup = _lookup({(REPOSITORY, ref): {"ref": other_ref, "object": {"sha": "x"}}})
+        self.assertFalse(
+            gate_ci.review_proof_tag_exists(repository=REPOSITORY, head_sha=HEAD, lookup=lookup)
         )
 
 
 class BuildStatusPayloadTests(unittest.TestCase):
-    """These are the cases that were silently unrepresented before this
-    module existed: SUP-REVIEW-PIPELINE-INTEGRITY-20260804 requires that
-    every one of them yields an explicit posted status, never nothing."""
+    """SUP-REVIEW-GATE-GIT-NATIVE-PROOF-20260804: every case here must yield
+    an explicit posted status, success or failure, never silence -- and none
+    of these cases touch the network beyond the single injected lookup."""
 
     def test_non_task_branch_fails_closed_with_explicit_reason(self) -> None:
-        payload = gate_ci.build_status_payload(head_ref="feature/x", pr={"number": 1})
+        payload = gate_ci.build_status_payload(
+            head_ref="feature/x", repository=REPOSITORY, head_sha=HEAD, lookup=_lookup({})
+        )
         self.assertEqual(payload["state"], "failure")
         self.assertEqual(payload["context"], "Pantheon canonical review gate")
         self.assertIn("does not match", payload["description"])
 
-    def test_missing_pr_payload_fails_closed(self) -> None:
-        payload = gate_ci.build_status_payload(head_ref="task/SUP-X", pr=None)
+    def test_task_branch_without_proof_tag_fails_closed(self) -> None:
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X", repository=REPOSITORY, head_sha=HEAD, lookup=_lookup({})
+        )
         self.assertEqual(payload["state"], "failure")
         self.assertIn("SUP-X", payload["description"])
+        self.assertIn("no review-proof tag", payload["description"])
 
-    def test_unregistered_task_fails_closed_via_gate_error(self) -> None:
-        with mock.patch.object(
-            gate_ci, "gate_for_task", side_effect=TaskReviewGateError("canonical task state for SUP-X is missing")
-        ):
-            payload = gate_ci.build_status_payload(head_ref="task/SUP-X", pr={"number": 1})
-        self.assertEqual(payload["state"], "failure")
-        self.assertIn("gate evaluation failed", payload["description"])
-
-    def test_allowed_gate_decision_posts_success(self) -> None:
-        with mock.patch.object(gate_ci, "gate_for_task", return_value=_decision(allow=True)):
-            payload = gate_ci.build_status_payload(head_ref="task/SUP-X", pr={"number": 1})
+    def test_task_branch_with_proof_tag_at_this_head_succeeds(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup({(REPOSITORY, ref): {"ref": ref}}),
+        )
         self.assertEqual(payload["state"], "success")
         self.assertIn("SUP-X", payload["description"])
 
-    def test_blocked_gate_decision_posts_failure(self) -> None:
-        with mock.patch.object(
-            gate_ci, "gate_for_task", return_value=_decision(allow=False, reason="head_moved_after_approval")
-        ):
-            payload = gate_ci.build_status_payload(head_ref="task/SUP-X", pr={"number": 1})
+    def test_proof_tag_at_a_different_head_does_not_count(self) -> None:
+        """This is the exact-head-binding property: a new commit after
+        approval must not silently keep passing on the strength of an old
+        head's tag."""
+
+        old_head = "c" * 40
+        ref = f"refs/tags/pantheon-review/approve/{old_head}"
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup({(REPOSITORY, ref): {"ref": ref}}),
+        )
         self.assertEqual(payload["state"], "failure")
-        self.assertIn("head_moved_after_approval", payload["description"])
 
     def test_description_is_truncated_to_github_limit(self) -> None:
-        with mock.patch.object(
-            gate_ci,
-            "gate_for_task",
-            return_value=_decision(allow=False, reason="x" * 300),
-        ):
-            payload = gate_ci.build_status_payload(head_ref="task/SUP-X", pr={"number": 1})
+        payload = gate_ci.build_status_payload(
+            head_ref="task/" + "X" * 300,
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup({}),
+        )
         self.assertLessEqual(len(payload["description"]), 140)
 
 
 class MainDryRunTests(unittest.TestCase):
-    """`--dry-run` must never shell out to `gh`, so these exercise the real
-    CLI wiring without live GitHub credentials."""
+    """`--dry-run` must never shell out to `gh`."""
 
     def test_dry_run_never_calls_gh_for_unregistered_branch(self) -> None:
-        with mock.patch.object(gate_ci, "_run_gh_json") as run_gh_json, mock.patch.object(
-            gate_ci, "_post_status"
-        ) as post_status:
+        with (
+            mock.patch.object(gate_ci, "default_tag_lookup") as lookup,
+            mock.patch.object(gate_ci, "_post_status") as post_status,
+        ):
             exit_code = gate_ci.main(
                 [
                     "--repo",
-                    "ajoe734/pantheon",
-                    "--pr-number",
-                    "1",
+                    REPOSITORY,
                     "--head-ref",
                     "feature/not-a-task",
                     "--head-sha",
-                    "deadbeef",
+                    HEAD,
                     "--dry-run",
                 ]
             )
-        run_gh_json.assert_not_called()
+        lookup.assert_not_called()
         post_status.assert_not_called()
         self.assertEqual(exit_code, 1)
 
-    def test_dry_run_still_evaluates_task_branch_via_gh_pr_view(self) -> None:
+    def test_dry_run_checks_the_tag_but_never_posts(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
         with (
-            mock.patch.object(gate_ci, "_run_gh_json", return_value={"number": 1}) as run_gh_json,
+            mock.patch.object(gate_ci, "default_tag_lookup", return_value={"ref": ref}) as lookup,
             mock.patch.object(gate_ci, "_post_status") as post_status,
-            mock.patch.object(gate_ci, "gate_for_task", return_value=_decision(allow=True)),
         ):
             exit_code = gate_ci.main(
-                [
-                    "--repo",
-                    "ajoe734/pantheon",
-                    "--pr-number",
-                    "1",
-                    "--head-ref",
-                    "task/SUP-X",
-                    "--head-sha",
-                    "deadbeef",
-                    "--dry-run",
-                ]
+                ["--repo", REPOSITORY, "--head-ref", "task/SUP-X", "--head-sha", HEAD, "--dry-run"]
             )
-        run_gh_json.assert_called_once()
+        lookup.assert_called_once()
         post_status.assert_not_called()
         self.assertEqual(exit_code, 0)
 
-    def test_pr_view_failure_posts_and_returns_infra_failure_code(self) -> None:
+    def test_non_dry_run_posts_the_computed_payload(self) -> None:
         with (
-            mock.patch.object(
-                gate_ci,
-                "_run_gh_json",
-                side_effect=subprocess.CalledProcessError(1, ["gh"]),
-            ),
+            mock.patch.object(gate_ci, "default_tag_lookup", return_value=None),
             mock.patch.object(gate_ci, "_post_status") as post_status,
         ):
             exit_code = gate_ci.main(
-                [
-                    "--repo",
-                    "ajoe734/pantheon",
-                    "--pr-number",
-                    "1",
-                    "--head-ref",
-                    "task/SUP-X",
-                    "--head-sha",
-                    "deadbeef",
-                ]
+                ["--repo", REPOSITORY, "--head-ref", "task/SUP-X", "--head-sha", HEAD]
             )
         post_status.assert_called_once()
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(post_status.call_args.kwargs["payload"]["state"], "failure")
+        self.assertEqual(exit_code, 1)
+
+
+class DefaultTagLookupTests(unittest.TestCase):
+    """The one function in this module that actually shells out to `gh` --
+    exercised with a mocked subprocess, not a live call."""
+
+    def test_returns_mapping_on_success(self) -> None:
+        ref = f"refs/tags/pantheon-review/approve/{HEAD}"
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=f'{{"ref": "{ref}"}}', stderr=""
+        )
+        with mock.patch("subprocess.run", return_value=completed):
+            result = gate_ci.default_tag_lookup(REPOSITORY, ref)
+        self.assertEqual(result, {"ref": ref})
+
+    def test_returns_none_on_404(self) -> None:
+        completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="Not Found")
+        with mock.patch("subprocess.run", return_value=completed):
+            result = gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

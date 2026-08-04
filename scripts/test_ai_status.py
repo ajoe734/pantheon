@@ -2348,6 +2348,107 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["review_file"], review_file)
 
+    def test_done_refuses_review_file_added_after_approval(self) -> None:
+        """SUP-REVIEW-EVIDENCE-BINDING-ENFORCEMENT-20260804: an owner cannot bind
+        a manifest that only exists in a commit pushed after the reviewer's
+        approved head -- that is precisely the SHA-shifting closeout loop
+        diagnosed in SUP-REVIEW-PIPELINE-INTEGRITY-20260804."""
+
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task.pop("review_file", None)
+        task["review_binding"] = {
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        review_file = ".orchestrator/task-briefs/reg_002_review.md"
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex", "REVIEW_FILE": review_file}, clear=False),
+            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False) as check,
+            self.assertRaisesRegex(SystemExit, "was not present at"),
+        ):
+            ai_status.command_done(self.state, ["REG-002", "Owner adds evidence post-approval"])
+
+        check.assert_called_once_with(
+            repository=mock.ANY,
+            head_sha="b" * 40,
+            review_file=review_file,
+        )
+        # The task must not have silently accepted the unverified manifest.
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review_approved")
+        self.assertNotIn("review_file", ai_status.get_task(self.state, "REG-002"))
+
+    def test_done_accepts_review_file_present_at_the_approved_head(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task.pop("review_file", None)
+        task["review_binding"] = {
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        review_file = ".orchestrator/task-briefs/reg_002_review.md"
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex", "REVIEW_FILE": review_file}, clear=False),
+            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=True),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_done(self.state, ["REG-002", "Owner binds the already-reviewed manifest"])
+
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+        self.assertEqual(archive_task["status"], "done")
+        self.assertEqual(archive_task["review_file"], review_file)
+
+    def test_approve_refuses_a_review_file_not_present_at_the_reviewed_head(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_PR": "4218",
+                    "REVIEW_HEAD_SHA": "b" * 40,
+                    "REVIEW_FILE": ".orchestrator/task-briefs/reg_002_review.md",
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False),
+            self.assertRaisesRegex(SystemExit, "was not found at the reviewed"),
+        ):
+            ai_status.command_approve(self.state, ["REG-002", "Claiming evidence that is not really there"])
+
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+    def test_approve_accepts_a_review_file_present_at_the_reviewed_head(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_PR": "4218",
+                    "REVIEW_HEAD_SHA": "b" * 40,
+                    "REVIEW_FILE": ".orchestrator/task-briefs/reg_002_review.md",
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=True),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                return_value={},
+            ),
+        ):
+            ai_status.command_approve(self.state, ["REG-002", "Evidence verified present at the head"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["review_file"], ".orchestrator/task-briefs/reg_002_review.md")
+
     def test_done_consumes_protected_verdict_before_terminal_mutation(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "review_approved"
