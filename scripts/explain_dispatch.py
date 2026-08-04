@@ -29,6 +29,7 @@ from supervisor import (
     dispatch_event_is_in_unchanged_cooldown,
     load_config,
     load_status,
+    load_provider_report,
     normalize_agent_id,
     outstanding_delivery_indexes,
     quota_group_concurrency_limit,
@@ -43,6 +44,19 @@ from supervisor import (
     weighted_dispatch_agent_ids,
 )
 
+
+def status_root_dir(config: dict[str, Any]) -> Path:
+    env_root = os.environ.get("PANTHEON_STATUS_ROOT")
+    if env_root:
+        return Path(env_root).resolve()
+    try:
+        from supervisor import config_path
+        status_file_path = config_path(config, "status_file")
+        if status_file_path.exists():
+            return status_file_path.parent
+    except Exception:
+        pass
+    return ROOT
 
 
 def load_orchestrator_state(config: dict[str, Any]) -> dict[str, Any]:
@@ -60,8 +74,8 @@ def load_status_data(config: dict[str, Any]) -> dict[str, Any]:
     try:
         return load_status(config)
     except Exception:
-        status_root = Path(os.environ.get("PANTHEON_STATUS_ROOT") or ROOT).resolve()
-        status_path = status_root / "ai-status.json"
+        s_root = status_root_dir(config)
+        status_path = s_root / "ai-status.json"
         if status_path.exists():
             with open(status_path, "r", encoding="utf-8") as f:
                 return json.load(f)
@@ -72,18 +86,43 @@ def load_status_data(config: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
+def check_assistant_dev_bridge_admitted(config: dict[str, Any], task: dict[str, Any]) -> bool:
+    try:
+        if assistant_dev_bridge_task_is_admitted(config, task):
+            return True
+    except Exception:
+        pass
+
+    # Fallback with config pointing to status_root_dir if root split
+    config_copy = dict(config)
+    s_root = status_root_dir(config)
+    paths = dict(config_copy.get("paths", {}) or {})
+    paths["status_file"] = str(s_root / "ai-status.json")
+    config_copy["paths"] = paths
+    try:
+        return assistant_dev_bridge_task_is_admitted(config_copy, task)
+    except Exception:
+        return False
+
 
 def explain_dispatch_for_task(
     config: dict[str, Any],
     state: dict[str, Any],
     task_id: str,
     target_agent_filter: str | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     settings = ready_dispatch_settings(config)
     status = load_status_data(config)
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
+
+    if provider_report is None:
+        try:
+            provider_report = load_provider_report(config)
+        except Exception:
+            provider_report = None
 
     tasks = [t for t in status.get(tasks_path, []) if str(t.get(task_id_field) or "") == task_id]
     if not tasks:
@@ -134,7 +173,6 @@ def explain_dispatch_for_task(
             if norm_filter in config.get("agents", {}):
                 agent_ids = [norm_filter]
 
-
     results: dict[str, Any] = {
         "task_id": task_id,
         "task_status": task.get("status"),
@@ -168,7 +206,7 @@ def explain_dispatch_for_task(
         results["global_block_reason"] = f"Task {task_id} is already pending delivery"
         return results
 
-    if not assistant_dev_bridge_task_is_admitted(config, task):
+    if not check_assistant_dev_bridge_admitted(config, task):
         results["global_block_reason"] = f"Task {task_id} signed dev-bridge packet is not admitted"
         return results
 
@@ -182,7 +220,7 @@ def explain_dispatch_for_task(
         }
 
         # Gate 1: agent_auto_dispatch_block_reason
-        agent_block = agent_auto_dispatch_block_reason(config, state, agent_id)
+        agent_block = agent_auto_dispatch_block_reason(config, state, agent_id, provider_report)
         if agent_block:
             agent_trace["blocked"] = True
             agent_trace["first_blocking_gate"] = "agent_auto_dispatch_block_reason"
@@ -190,15 +228,7 @@ def explain_dispatch_for_task(
             results["agents"][target_agent] = agent_trace
             continue
 
-        # Gate 2: agent_can_take_task
-        if not agent_can_take_task(config, target_agent, task, state=state):
-            agent_trace["blocked"] = True
-            agent_trace["first_blocking_gate"] = "agent_can_take_task"
-            agent_trace["block_reason"] = f"Agent {target_agent} capabilities do not match task requirements"
-            results["agents"][target_agent] = agent_trace
-            continue
-
-        # Gate 3: quota_group_concurrency_limit
+        # Gate 2: quota_group_concurrency_limit
         quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
         quota_group = agent_quota_group_id(config, agent_id)
         quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
@@ -209,7 +239,7 @@ def explain_dispatch_for_task(
             results["agents"][target_agent] = agent_trace
             continue
 
-        # Gate 4: agent_dispatch_capacity
+        # Gate 3: agent_dispatch_capacity
         agent_capacity = agent_dispatch_capacity(config, agent_id, settings)
         current_agent_load = len(agent_loads.get(target_agent, []))
         if current_agent_load >= agent_capacity:
@@ -219,23 +249,7 @@ def explain_dispatch_for_task(
             results["agents"][target_agent] = agent_trace
             continue
 
-        # Gate 5: task_assignment_is_catalog_locked
-        if task_assignment_is_catalog_locked(task):
-            agent_trace["blocked"] = True
-            agent_trace["first_blocking_gate"] = "task_assignment_is_catalog_locked"
-            agent_trace["block_reason"] = f"Task assignment is catalog locked"
-            results["agents"][target_agent] = agent_trace
-            continue
-
-        # Gate 6: dependencies_satisfied
-        if not dependencies_satisfied(task, task_resolver, dependency_done_statuses):
-            agent_trace["blocked"] = True
-            agent_trace["first_blocking_gate"] = "dependencies_satisfied"
-            agent_trace["block_reason"] = f"Task dependencies not satisfied"
-            results["agents"][target_agent] = agent_trace
-            continue
-
-        # Gate 7: task_execution_dispatch_candidate
+        # Gate 4: task_execution_dispatch_candidate
         candidate = task_execution_dispatch_candidate(
             config,
             task,
@@ -246,13 +260,21 @@ def explain_dispatch_for_task(
         if candidate is None:
             agent_trace["blocked"] = True
             agent_trace["first_blocking_gate"] = "task_execution_dispatch_candidate"
-            agent_trace["block_reason"] = f"Task role/status not eligible for candidate dispatch to {target_agent}"
+            agent_trace["block_reason"] = f"Task role/status not eligible for primary dispatch candidate to {target_agent}"
             results["agents"][target_agent] = agent_trace
             continue
 
         reason, priority = candidate
 
-        # Gate 8: Event build & Cooldown check
+        # Gate 5: agent_can_take_task
+        if not agent_can_take_task(config, target_agent, task, state=state):
+            agent_trace["blocked"] = True
+            agent_trace["first_blocking_gate"] = "agent_can_take_task"
+            agent_trace["block_reason"] = f"Agent {target_agent} cannot take task (disabled, paused, provider auth blocked, unknown, or sidecar-only restriction)"
+            results["agents"][target_agent] = agent_trace
+            continue
+
+        # Gate 6: Event build & Cooldown check
         event = build_dispatch_event(task, target_agent, reason, task_resolver)
         if event["key"] in pending_event_keys:
             agent_trace["blocked"] = True
@@ -273,13 +295,20 @@ def explain_dispatch_for_task(
             results["agents"][target_agent] = agent_trace
             continue
 
-        # No blocking gate found
+        # Helper-claim notes for operator awareness (non-primary gates)
+        helper_notes = []
+        if task_assignment_is_catalog_locked(task):
+            helper_notes.append("task is catalog locked (helper-claim ineligible)")
+        if not dependencies_satisfied(task, task_resolver, dependency_done_statuses):
+            helper_notes.append("task dependencies not satisfied (helper-claim ineligible)")
+
+        # No primary blocking gate found
         agent_trace["candidate_reason"] = reason
         agent_trace["candidate_priority"] = priority
-        agent_trace["verdict"] = "no blocking gate found (eligible for dispatch)"
+        agent_trace["verdict"] = "no blocking gate found (eligible for primary dispatch)"
+        if helper_notes:
+            agent_trace["helper_notes"] = helper_notes
         results["agents"][target_agent] = agent_trace
-
-
 
     return results
 

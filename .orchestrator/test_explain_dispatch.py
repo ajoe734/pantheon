@@ -89,37 +89,70 @@ class TestExplainDispatch(unittest.TestCase):
             self.assertFalse(res["agents"]["Codex"]["blocked"])
             self.assertEqual(res["agents"]["Codex"]["candidate_reason"], "owned_ready_dispatch")
 
+    def test_all_clear_case(self) -> None:
+        state = {"seen_event_keys": {}}
+        task = {
+            "id": "TASK-001",
+            "title": "Test Task",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "depends_on": [],
+        }
+        config = dict(self.config)
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
+            res = explain_dispatch_for_task(config, state, "TASK-001", target_agent_filter="Codex")
+            self.assertNotIn("global_block_reason", res)
+            self.assertIn("Codex", res["agents"])
+            self.assertFalse(res["agents"]["Codex"]["blocked"])
+            self.assertEqual(res["agents"]["Codex"]["candidate_reason"], "owned_ready_dispatch")
+
     def test_capability_blocked_agent(self) -> None:
         import copy
         config = copy.deepcopy(self.config)
-        config["ready_dispatcher"]["disabled_agents"] = ["antigravity"]
         state = {"seen_event_keys": {}}
         task = {
+            "id": "TASK-002",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "depends_on": [],
+        }
+        # agent_can_take_task returns False when agent is sidecar-only for non-sidecar task
+        config["ready_dispatcher"]["sidecar_only_agents"] = ["Antigravity"]
+        task_antigravity = {
             "id": "TASK-002",
             "status": "todo",
             "owner": "Antigravity",
             "reviewer": "Claude2",
             "depends_on": [],
         }
-        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task_antigravity]}):
             res = explain_dispatch_for_task(config, state, "TASK-002", target_agent_filter="Antigravity")
             self.assertNotIn("global_block_reason", res)
             self.assertTrue(res["agents"]["Antigravity"]["blocked"])
-            self.assertEqual(res["agents"]["Antigravity"]["first_blocking_gate"], "agent_auto_dispatch_block_reason")
-
+            self.assertEqual(res["agents"]["Antigravity"]["first_blocking_gate"], "agent_can_take_task")
+            self.assertIn("sidecar-only restriction", res["agents"]["Antigravity"]["block_reason"])
 
     def test_quota_exhausted_agent(self) -> None:
         import copy
         config = copy.deepcopy(self.config)
+        config["providers"] = {
+            "codex": {
+                "account": "codex_group",
+            }
+        }
         config["ready_dispatcher"]["max_tasks_per_agent"] = 10
-        config["ready_dispatcher"]["max_concurrent_per_account"] = {"codex": 1}
+        config["ready_dispatcher"]["max_concurrent_per_quota_group"] = {"codex_group": 1}
+        config["agents"]["codex"]["provider"] = "codex"
+        config["agents"]["codex"].pop("quota_group_concurrency_limit", None)
         state = {
-            "workers": {
-                "w1": {
-                    "status": "running",
-                    "agent_id": "codex",
-                    "task_id": "OTHER-TASK",
-                    "request_snapshot": {"reason": "owned_ready_dispatch"},
+            "queue": {
+                "events": {
+                    "e1": {
+                        "event_id": "e1",
+                        "status": "pending",
+                    }
                 }
             }
         }
@@ -129,21 +162,17 @@ class TestExplainDispatch(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude2",
         }
-        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
+        with unittest.mock.patch("supervisor.load_event_queue", return_value=[{"event_id": "e1", "target_agent": "codex"}]), \
+             unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
             res = explain_dispatch_for_task(config, state, "TASK-003", target_agent_filter="Codex")
             self.assertTrue(res["agents"]["Codex"]["blocked"])
-            self.assertIn(res["agents"]["Codex"]["first_blocking_gate"], ("agent_auto_dispatch_block_reason", "quota_group_concurrency_limit"))
-
-
-
-
-
+            self.assertEqual(res["agents"]["Codex"]["first_blocking_gate"], "quota_group_concurrency_limit")
+            self.assertIn("Quota group codex_group limit reached", res["agents"]["Codex"]["block_reason"])
 
     def test_capacity_exhausted_agent(self) -> None:
         import copy
         config = copy.deepcopy(self.config)
         config["ready_dispatcher"]["max_tasks_per_agent"] = 1
-        # Unset quota limit so capacity gate is hit first
         config["agents"]["codex"].pop("quota_group_concurrency_limit", None)
         state = {
             "workers": {
@@ -166,9 +195,6 @@ class TestExplainDispatch(unittest.TestCase):
             self.assertTrue(res["agents"]["Codex"]["blocked"])
             self.assertEqual(res["agents"]["Codex"]["first_blocking_gate"], "agent_dispatch_capacity")
 
-
-
-
     def test_unmet_dependency(self) -> None:
         state = {}
         dep_task = {"id": "DEP-001", "status": "in_progress"}
@@ -182,7 +208,7 @@ class TestExplainDispatch(unittest.TestCase):
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [dep_task, task]}):
             res = explain_dispatch_for_task(self.config, state, "TASK-005", target_agent_filter="Codex")
             self.assertTrue(res["agents"]["Codex"]["blocked"])
-            self.assertEqual(res["agents"]["Codex"]["first_blocking_gate"], "dependencies_satisfied")
+            self.assertEqual(res["agents"]["Codex"]["first_blocking_gate"], "task_execution_dispatch_candidate")
 
     def test_catalog_locked_task(self) -> None:
         state = {}
@@ -195,11 +221,9 @@ class TestExplainDispatch(unittest.TestCase):
         }
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
             res = explain_dispatch_for_task(self.config, state, "TASK-006", target_agent_filter="Codex")
-            self.assertTrue(res["agents"]["Codex"]["blocked"])
-            self.assertEqual(res["agents"]["Codex"]["first_blocking_gate"], "task_assignment_is_catalog_locked")
-
-
-
+            self.assertFalse(res["agents"]["Codex"]["blocked"])
+            self.assertIn("helper_notes", res["agents"]["Codex"])
+            self.assertTrue(any("catalog locked" in note for note in res["agents"]["Codex"]["helper_notes"]))
 
     def test_cooldown_suppressed_event(self) -> None:
         state = {
@@ -212,24 +236,17 @@ class TestExplainDispatch(unittest.TestCase):
             "reviewer": "Claude2",
         }
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
-            # First run to get event key
             res1 = explain_dispatch_for_task(self.config, state, "TASK-007", target_agent_filter="Codex")
             self.assertFalse(res1["agents"]["Codex"]["blocked"])
 
-            # Mock seen_event_keys with wildcard match for this task key
-            for key in list(state.get("seen_event_keys", {}).keys()):
-                pass
-            # Or manually construct the event key prefix
-            seen_key = [k for k in state.get("seen_event_keys", {}) if "TASK-007" in k]
-            # Set time in seen to now
-            import time
-            from supervisor import utc_now
-            state["seen_event_keys"]["dispatcher:Codex:TASK-007:owned_ready_dispatch:mock"] = utc_now()
+            from supervisor import build_dispatch_event, task_resolver_for_config, utc_now
+            resolver = task_resolver_for_config(self.config, {"TASK-007": task})
+            evt = build_dispatch_event(task, "Codex", "owned_ready_dispatch", resolver)
+            state["seen_event_keys"][evt["key"]] = utc_now()
 
-            with unittest.mock.patch("explain_dispatch.dispatch_event_is_in_unchanged_cooldown", return_value=True):
-                res2 = explain_dispatch_for_task(self.config, state, "TASK-007", target_agent_filter="Codex")
-                self.assertTrue(res2["agents"]["Codex"]["blocked"])
-                self.assertEqual(res2["agents"]["Codex"]["first_blocking_gate"], "dispatch_event_is_in_unchanged_cooldown")
+            res2 = explain_dispatch_for_task(self.config, state, "TASK-007", target_agent_filter="Codex")
+            self.assertTrue(res2["agents"]["Codex"]["blocked"])
+            self.assertEqual(res2["agents"]["Codex"]["first_blocking_gate"], "dispatch_event_is_in_unchanged_cooldown")
 
 
 if __name__ == "__main__":
