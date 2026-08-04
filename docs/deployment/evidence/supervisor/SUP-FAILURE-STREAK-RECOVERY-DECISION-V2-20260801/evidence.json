@@ -1,0 +1,95 @@
+{
+  "schema_version": "supervisor_failure_streak_recovery_decision.v1",
+  "task": {
+    "id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+    "title": "Build a pure bounded retry recovery decision matrix",
+    "phase": "Supervisor Retry V2 / 2 Pure Decision",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801"
+  },
+  "scope": {
+    "owned_layer": "Pure immutable recovery decision over the merged exact V3 failure aggregate and normalized progress generation.",
+    "not_changing": "Failure/progress recording, consumption, failure clearing, counters, canonical state, queues, reservations, workers, worktree leases, provider policy, configuration, dispatch, product controllers, and live services.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "contract": {
+    "allowed_failure_kinds": [
+      "generic_exit",
+      "missing_process"
+    ],
+    "owner_statuses": [
+      "todo",
+      "in_progress"
+    ],
+    "identity": "Current task id/owner/reviewer, target owner, normalized logical provider, latest failure generation, and exact reviewer progress generation must agree; owner and reviewer remain independent.",
+    "reviewer_progress": "Only governed reviewer reopen strictly newer than the failure qualifies; a bound head equals rejected_head and an unbound reopen uses ABSENT.",
+    "one_shot": "Proposes failure-recovery:<sha256> over exact task/provider/failure/progress identities and denies a previously consumed token without mutating the supplied set.",
+    "occupancy": "Exact-task active worker, pending/started queue event, delivery reservation, or active worktree lease denies.",
+    "provider_gate": "Exact logical provider must be ready with auth_paused=false, quota_paused=false, and policy_paused=false.",
+    "output": "Nested MappingProxyType containing allow/deny, stable reason code, exact identities, prior failure facts, qualifying event, and proposed token.",
+    "purity": "No input, canonical state, runtime state, queue, reservation, worker, lease, provider state, counter, or audit mutation."
+  },
+  "deny_matrix": [
+    "invalid or legacy failure/progress record",
+    "empty, unknown, terminal, timeout, parse_error, exit_code, auth, quota, policy, overlap, dirty_worktree, wrong_branch, wrong_task, or provider_unready failure kind",
+    "cross failure generation, task, or provider progress",
+    "stale progress or same rejected owner-commit replay",
+    "task outside todo/in_progress owner lane",
+    "changed owner or reviewer, wrong target, or owner equal to reviewer",
+    "owner commit in place of independent reviewer progress",
+    "already-consumed exact recovery token",
+    "active exact-task worker, pending/started queue event, reservation, or worktree lease",
+    "provider unavailable or auth/quota/policy paused"
+  ],
+  "verification": [
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakRecoveryDecisionV2'",
+      "result": "8 passed, 491 deselected, 45 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'FailureStreakV3 or FailureStreakActivityNormalizerV3 or FailureStreakRecoveryDecisionV2 or immediate_start_failure_captures_v3 or active_worker_failure_captures_v3 or generic_exit_captures_v3 or reconcile_runtime_retries_missing_owner_with_bounded_evidence or reconcile_runtime_uses_log_failure_for_missing_process_quota or reconcile_runtime_uses_log_failure_for_copilot_monthly_quota or failure_streaks_aggregate_dispatch_slots'",
+      "result": "25 passed, 474 deselected, 135 subtests passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "499 passed, 147 subtests passed"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "rejected_ancestry_absent": [
+    "07316c73b8f9b574d659aa95616680301198392f",
+    "77af55015c5630c18f10670f5cb877ef7c40b115",
+    "94e3b6f34bda69711b16254f7623085bd41eecf5",
+    "d616beaae7249dd76ee32749b7daa5096a9b484d",
+    "35056b716108812d784cf9d902fd0a0d5a07777c"
+  ],
+  "review": {
+    "decision": "review_pending",
+    "reviewer": "Human/Ops",
+    "reviewed_head": null,
+    "reviewed_at": null,
+    "note": "Owner-authored evidence only. Independent review of the final exact PR head is required before approval or merge."
+  },
+  "delivery": {
+    "base_sha": "5cb03dd5ebe3ce13435c848175c5dab5450e9ea5",
+    "implementation_anchor": "e84fabefe45f4e53d81d554b56956e45d0ff4e0f",
+    "candidate_head": "dd819f3f2cf40d4c14d34097a95f7cf064a48202",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4489",
+    "rollout": "source merge only",
+    "rollback": "revert this task merge commit"
+  }
+}
