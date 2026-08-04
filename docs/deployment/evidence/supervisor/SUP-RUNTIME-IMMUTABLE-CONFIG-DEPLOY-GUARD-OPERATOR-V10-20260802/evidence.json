@@ -3,9 +3,9 @@
   "task": {
     "id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
     "owner": "Codex2",
-    "reviewer": "Human/Ops",
+    "reviewer": "Codex",
     "phase": "Supervisor immutable runtime / deploy and sync regression guard V10",
-    "status": "review_pending",
+    "status": "review_ready",
     "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802/evidence.json"
   },
   "outcome": {
@@ -112,12 +112,16 @@
     "provider_homes_changed": false,
     "codex_and_codex2_identity_or_quota_group_changed": false,
     "global_mutual_review_rule_added": false,
-    "explicit_human_ops_reviewer_preserved": true
+    "source_did_not_modify_reviewer_assignment": true,
+    "canonical_reviewer_at_review_handoff": "Codex"
   },
   "review": {
-    "decision": "not_requested_yet",
-    "reviewer": "Human/Ops",
-    "required": "Review and bind the final exact PR head plus this evidence manifest after required checks are green."
+    "decision": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "pull_request": 4526,
+    "reviewed_head": null,
+    "required": "Codex must independently review the final exact GitHub PR head, source scope, validation record, and this manifest after required checks are green.",
+    "exact_head_binding": "The governed approval binds GitHub headRefOid through REVIEW_PR and REVIEW_HEAD_SHA. This committed manifest intentionally does not self-reference its containing commit."
   },
   "rollout": {
     "this_task": "source merge only",

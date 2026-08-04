@@ -1,9 +1,9 @@
 # SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802
 
-Status: `review_pending`
+Status: `review_ready`
 
 Owner: Codex2
-Reviewer: Human/Ops
+Reviewer: Codex
 
 ## Result
 
@@ -17,6 +17,10 @@ watchdog supervisor command.
 This task changed source and tests only. It did not run a deploy, invoke
 `--promote`, write the live supervisor config, signal a live PID, install a
 watchdog, start a candidate, or test rollback against the live VM.
+
+The owner handoff decision is `ready_for_independent_review`. The canonical
+reviewer at this handoff is Codex; this source change did not alter reviewer
+assignment or any review policy.
 
 ## Immutable admission and config guard
 
@@ -108,12 +112,15 @@ The source commits are:
 - `9230f4baa` — no-replace runtime installation and config durability.
 
 No supervisor scheduling, canonical status JSON, queue/lease policy, provider
-readiness, provider homes, account/quota grouping, Human/Ops authority, or
+readiness, provider homes, account/quota grouping, review authority, or
 Codex/Codex2 identity relationship changed. No global mutual-review rule was
 added.
 
-Human/Ops must review the final exact PR head and bind `evidence.json` before
-merge. Green checks alone are not review authority. Rollout remains blocked to
-the separate V9 canary, which must select a candidate containing the merge and
-perform the actual transactional promotion, ten-cycle acceptance, and rollback
-proof. Source rollback is a normal revert of this task PR before that canary.
+Codex must independently review PR #4526's final exact GitHub `headRefOid` and
+bind `evidence.json` through the governed approval before merge. The committed
+manifest cannot self-reference its containing commit, so the approval records
+the exact head through `REVIEW_PR` and `REVIEW_HEAD_SHA`. Green checks alone are
+not review authority. Rollout remains blocked to the separate V9 canary, which
+must select a candidate containing the merge and perform the actual
+transactional promotion, ten-cycle acceptance, and rollback proof. Source
+rollback is a normal revert of this task PR before that canary.
