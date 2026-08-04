@@ -39,8 +39,28 @@ The full commands and results are in [`evidence.json`](evidence.json).
 
 This is owner evidence only. It does not approve PR #4452's current task head, merge
 the task PR, close the original subject task, prove live promotion, or resume
-Wave 0. Antigravity must review the exact task PR head, after which the normal
+Wave 0. Codex2 must review the exact task PR head, after which the normal
 protected merge and governed owner closeout remain mandatory.
+
+## Current-dev revalidation
+
+On 2026-08-04, the open task branch was composed with the current GitHub
+`dev` head `4361a26ad9ff375ae61667ceb689b6fa28ff8058`. The resulting merge
+head `5b3b522fc75a8597de2025927170ace9aa16677f` keeps the task head
+`4a25e17074565c9854666d9cb5f0d8dd55fd19d8` in its first-parent ancestry and
+the current `dev` head as its direct second parent.
+
+The single supervisor conflict preserves the stale missing-process reaper,
+the current provider/activity failure-loop calculation, and the reserved
+pre/post worker-poll architecture. It deliberately does not restore the
+retired in-lock `poll_workers` invocation. The five focused stale-reaper tests
+and the full 584-test supervisor suite passed on this composition; no
+`.orchestrator/config.json` change was introduced.
+
+The exact review target is the PR head after this evidence revalidation commit,
+not the pre-composition or invalid historical approval SHA. The current
+assigned reviewer is Codex2; its independent exact-head decision must bind
+this manifest before protected merge and governed `done`.
 
 ## Owner closeout audit
 

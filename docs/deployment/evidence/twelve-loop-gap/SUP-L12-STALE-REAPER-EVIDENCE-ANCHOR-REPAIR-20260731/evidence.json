@@ -4,14 +4,14 @@
     "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
     "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head",
     "owner": "Codex",
-    "reviewer": "Antigravity",
-    "status": "review_approved_closeout_blocked_invalid_review_head",
+    "reviewer": "Codex2",
+    "status": "current_dev_composed_exact_head_review_pending",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json",
-    "evidence_cut_at": "2026-08-01T14:28:11Z"
+    "evidence_cut_at": "2026-08-04T15:06:06Z"
   },
   "scope": {
     "owned_layer": "Superseding composition of the PR #4385 stale L12 missing_process failure-streak reaper and repair of its invalid evidence anchor.",
@@ -25,7 +25,7 @@
     "composes_with": [
       "PR #4385 exact rejected head f5e70e86e01bde005dae5fed94b151c9bc07f389",
       "PR #4395 exact-head reconciliation evidence at f68827c8e17d6a1f081afe24f62ba85c116166e8",
-      "Antigravity independent review of the resulting task PR exact head"
+      "Codex2 independent review of the resulting task PR exact head after current-dev composition"
     ],
     "changed_files": [
       ".orchestrator/supervisor.py",
@@ -127,6 +127,10 @@
     "task_pull_request_url": "https://github.com/ajoe734/pantheon/pull/4452",
     "owner_evidence_head_before_pr_binding": "380f704dada325b112da6332a94a949ef2a14cf1",
     "auto_merge_enabled": false,
+    "current_composed_head": "5b3b522fc75a8597de2025927170ace9aa16677f",
+    "current_base_head": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+    "current_base_branch": "origin/dev",
+    "review_target": "the exact PR #4452 head after this evidence revalidation commit",
     "reviewed_head_sha": null,
     "reviewed_head_claim": "14487789314c4495e865a7d7ef1aae9c43d70650",
     "actual_pr_head_at_closeout_audit": "1448778931c2058fceb715ad13423e639f5c0865",
@@ -135,20 +139,25 @@
     "governed_closeout_complete": false
   },
   "review": {
-    "reviewer": "Antigravity",
-    "status": "approval_record_requires_exact_head_correction",
+    "reviewer": "Codex2",
+    "status": "pending_independent_exact_head_review",
     "decision": null,
     "reviewed_task_pr": 4452,
     "reviewed_head_sha": null,
-    "reviewed_head_claim": "14487789314c4495e865a7d7ef1aae9c43d70650",
-    "reviewed_at": "2026-08-01T14:41:16Z",
-    "approval_event_id": "ai-status-event-b096995d1461ef4a03d90e4e5ec9c4f4873504963535a1f8e6daaf56d5ef91bc",
+    "reviewed_head_claim": null,
+    "reviewed_at": null,
+    "approval_event_id": null,
     "notes": [
-      "The approval event claims a SHA that does not resolve as a commit.",
-      "PR #4452, the local task branch, and the remote task ref all resolved to 1448778931c2058fceb715ad13423e639f5c0865 during owner closeout.",
-      "PR #4452 has no GitHub review and the canonical task row has no review_file.",
-      "A corrected independent review of the then-current PR head must bind this committed manifest before protected merge and done."
-    ]
+      "No GitHub review or governed review_file is currently recorded for the composed PR head.",
+      "Codex2 must independently review the exact PR #4452 head after this evidence commit and bind this manifest before protected merge and done."
+    ],
+    "historical_invalid_approval": {
+      "reviewer": "Antigravity",
+      "reviewed_head_claim": "14487789314c4495e865a7d7ef1aae9c43d70650",
+      "reviewed_at": "2026-08-01T14:41:16Z",
+      "approval_event_id": "ai-status-event-b096995d1461ef4a03d90e4e5ec9c4f4873504963535a1f8e6daaf56d5ef91bc",
+      "disposition": "invalid_nonexistent_head_and_no_github_review"
+    }
   },
   "admission": {
     "owner_implementation_complete": true,
@@ -194,6 +203,42 @@
         "command": "git diff --quiet origin/dev HEAD -- .orchestrator/config.json; git cat-file and merge-base anchor checks",
         "result": "pass",
         "conclusion": "Config remains unchanged; the corrected anchor and subject head exist in ancestry while both invalid SHA claims fail object lookup."
+      }
+    ]
+  },
+  "current_dev_revalidation": {
+    "revalidated_at": "2026-08-04T15:06:06Z",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "task_pull_request": 4452,
+    "composed_head": "5b3b522fc75a8597de2025927170ace9aa16677f",
+    "task_parent": "4a25e17074565c9854666d9cb5f0d8dd55fd19d8",
+    "current_dev_parent": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+    "delivery_state": "open_pr_pending_independent_exact_head_review",
+    "composition": {
+      "supervisor_conflict_resolution": "Preserved the stale missing_process reaper, the current provider/activity failure-loop calculation, and the reserved pre/post poll architecture without reviving the retired in-lock poll call.",
+      "current_dev_merge": "The final head has the current GitHub dev head as a direct parent; an earlier stale local tracking ref is not the delivery base."
+    },
+    "verification": [
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest <five focused stale-reaper tests>",
+        "result": "pass",
+        "conclusion": "Ran 5 focused stale-reaper regressions after conflict resolution."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "Ran 584 supervisor tests on the final current-dev composition."
+      },
+      {
+        "command": "git diff --quiet origin/dev HEAD -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "No supervisor configuration change."
+      },
+      {
+        "command": "git cat-file and merge-base checks for the corrected anchor and rejected subject head",
+        "result": "pass",
+        "conclusion": "The corrected anchor and rejected subject head remain ancestors; the invalid anchor does not resolve as a commit."
       }
     ]
   }
