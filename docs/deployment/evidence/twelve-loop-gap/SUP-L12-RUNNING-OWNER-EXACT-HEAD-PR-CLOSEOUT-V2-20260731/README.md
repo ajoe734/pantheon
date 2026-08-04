@@ -26,9 +26,22 @@ canonical reviewer (Codex).
 PR #4386 remains open with a conflicting current head. No protected merge or
 governed owner closeout exists for it.
 
+## V2 delivery PR
+
+This evidence is on ReviewBus PR [#4468](https://github.com/ajoe734/pantheon/pull/4468)
+at `9636815e1102da9f3257f8a26f26e30d05d9b087`; auto-merge is disabled by the
+review-before-merge policy. The Python packaging and runtime-mirror checks pass.
+
+The canonical review gate is intentionally unsatisfied until Codex2 records a
+review-proof tag for this exact head. The trailer gate also rejects two
+overlength subjects, including pre-existing pushed commit `7cc9b02…`. This task
+does not rewrite a pushed commit; maintainer-approved replacement or rewrite
+authority is required before #4468 can pass CI and merge.
+
 ## Required next actions
 
-1. Codex2 independently reviews this V2 evidence and the current facts.
+1. Codex2 independently reviews this V2 evidence and decides the safe
+   remediation for #4468's pre-existing pushed trailer failure.
 2. The authorized reviewer/root-freeze path must bind a valid current-head
    review for #4396 and resolve its merge gate.
 3. #4386 must be protected-merged and its actual owner must run governed

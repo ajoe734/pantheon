@@ -81,6 +81,35 @@
     "done_transition_performed": false,
     "reason": "Neither a non-draft PR, successful CI, nor a review_approved row satisfies the required exact-head review, protected merge, and governed closeout gates."
   },
+  "task_delivery_pr": {
+    "number": 4468,
+    "url": "https://github.com/ajoe734/pantheon/pull/4468",
+    "current_head": "9636815e1102da9f3257f8a26f26e30d05d9b087",
+    "merge_policy": "review_before_merge",
+    "auto_merge_request": null,
+    "branch_ci": {
+      "python_packaging_provision": "success",
+      "runtime_mirror_guard": "success",
+      "smoke_acceptance": "skipped_after_failed_prerequisite",
+      "commit_trailers": "failure",
+      "canonical_review_gate": "failure_pending_Codex2_review-proof"
+    },
+    "commit_trailer_failure": {
+      "affected_commits": [
+        {
+          "sha": "9636815e1102da9f3257f8a26f26e30d05d9b087",
+          "subject_length": 78
+        },
+        {
+          "sha": "7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e",
+          "subject_length": 112,
+          "preexisting_pushed_commit": true
+        }
+      ],
+      "required_remediation": "A maintainer-approved replacement branch or an authorized rewrite is required because the earlier failing commit was already pushed before this worker's dispatch."
+    },
+    "canonical_review_gate_failure": "Expected until assigned reviewer Codex2 records review proof for this exact head."
+  },
   "scope_boundary": {
     "runtime_implementation_changed": false,
     "config_changed": false,

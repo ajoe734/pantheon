@@ -32,3 +32,7 @@ Observed: 2026-08-04T15:07:46Z
    result: pass.
    command: git diff --check
    result: pass.
+
+7. V2 delivery PR checks
+   command: gh pr checks 4468 --repo ajoe734/pantheon; gh run view 30922760521 --repo ajoe734/pantheon --log-failed; gh run view 30922765436 --repo ajoe734/pantheon --log-failed
+   result: Python packaging provision and runtime mirror guard pass. Smoke acceptance is skipped after prerequisite failure. Commit trailers fails because 9636815e1102da9f3257f8a26f26e30d05d9b087 has a 78-character subject and already-pushed 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e has a 112-character subject. Canonical review gate fails as expected because no pantheon-review/approve/9636815e1102da9f3257f8a26f26e30d05d9b087 review-proof tag exists.
