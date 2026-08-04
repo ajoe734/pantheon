@@ -21,6 +21,22 @@ No GitHub App, live protection, repository setting, reviewer key, merge, or
 auto-merge state was created or changed. External App provisioning and live
 activation remain Human/Ops operations.
 
+## Current-dev composition
+
+The current task branch merged `origin/dev` at
+`d04d2862b9a1f64d69f31ac10e47629b3f97cc01` in
+`5c3e363c849b6a0043f02b810d06e1efadb81f75`. That merge encountered a
+same-path workflow which checked out candidate code and granted
+`statuses: write` to post the legacy `Pantheon canonical review gate` context.
+It was deliberately not retained: a generic `github-actions` App status can
+never satisfy the dedicated App-pinned required check.
+
+The compatibility helper `canonical_review_gate_ci.py` remains in the repo for
+the existing non-authoritative status path, but the trusted-base audit workflow
+cannot invoke it and has neither `statuses: write` nor any status/check API
+call. Anchor `d9a7203aea7106bfafacee90f5b453a274887691` adds regression
+coverage for those three prohibitions.
+
 ## Why GitHub Actions is not an issuer
 
 Read-only metadata for rejected PR #4303 head
@@ -155,3 +171,5 @@ Reviewer should independently verify:
 - baseline strict and every pre-existing `context/app_id` pair are preserved;
 - no command in this task mutated GitHub protection, App installation, or
   auto-merge.
+- the trusted-base audit workflow cannot invoke `canonical_review_gate_ci.py`
+  or post any generic commit status.

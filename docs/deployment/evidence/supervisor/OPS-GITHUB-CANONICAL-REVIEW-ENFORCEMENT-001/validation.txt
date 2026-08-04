@@ -1,6 +1,36 @@
 OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 validation
 Captured: 2026-07-29
 
+Post-mainline composition: 2026-08-04
+
+The task branch merged current `origin/dev`
+`d04d2862b9a1f64d69f31ac10e47629b3f97cc01` as
+`5c3e363c849b6a0043f02b810d06e1efadb81f75`. The conflicting generic
+status-writing workflow was not retained. Anchor
+`d9a7203aea7106bfafacee90f5b453a274887691` adds a regression that fails if
+the trusted-base audit workflow gains `statuses: write`, a statuses API path,
+or a call to `canonical_review_gate_ci.py`.
+
+Post-mainline focused command:
+
+    .venv-pantheon/bin/python3 -m pytest -q \
+      scripts/git/test_canonical_review_check.py \
+      scripts/git/test_task_review_merge_gate.py \
+      scripts/git/test_github_review_bridge.py \
+      scripts/git/test_canonical_review_gate_workflow.py
+
+PASS — 148 passed.
+
+Post-mainline static checks:
+
+- `py_compile` for the checker, generic compatibility helper, review gate,
+  bridge, and focused tests: PASS.
+- task evidence JSON parse: PASS.
+- `git diff --check`: PASS.
+- `actionlint`: not run on 2026-08-04 because no `actionlint` executable was
+  available in this worker environment; the prior captured actionlint result
+  below remains historical evidence only.
+
 Completed:
 
 1. python3 scripts/dev/provision_python_distribution.py
