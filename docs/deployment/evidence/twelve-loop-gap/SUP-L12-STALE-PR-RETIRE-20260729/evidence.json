@@ -1,18 +1,122 @@
 {
+  "schema_version": 1,
   "task_id": "SUP-L12-STALE-PR-RETIRE-20260729",
-  "audit_timestamp": "2026-07-29T11:46:00Z",
+  "audit_timestamp": "2026-08-04T15:06:41Z",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md",
+  "audit_method": {
+    "github": "gh pr view <number> --repo aJoe734/pantheon --json number,title,state,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,mergedAt,closedAt,updatedAt,autoMergeRequest,url",
+    "canonical_status": "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task-id>",
+    "ancestry": "git merge-base --is-ancestor <commit> origin/dev"
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "required_reviewer": "Codex2",
+    "decision": null
+  },
+  "supporting_merged_prs": [
+    {
+      "pr_number": 4365,
+      "title": "SUP-L12-REVIEW-PRIORITY-GATE-20260729: prioritize L12 reviews",
+      "state": "MERGED",
+      "head_sha": "cbcb4574da48e353e3e33673f81dce5dc13e790d",
+      "merge_commit": "18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d",
+      "merged_at": "2026-07-29T10:06:25Z",
+      "is_ancestor_of_origin_dev": true
+    },
+    {
+      "pr_number": 4366,
+      "title": "SUP-L12-REVIEW-PRIORITY-GATE-20260729: closeout evidence",
+      "state": "MERGED",
+      "head_sha": "9e0c9b735550a83ed4888416fdd1d2e006b9d4d8",
+      "merge_commit": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+      "merged_at": "2026-07-29T10:14:21Z",
+      "is_ancestor_of_origin_dev": true
+    }
+  ],
+  "pr_decisions": [
+    {
+      "pr_number": 4367,
+      "title": "SUP-L12-REVIEW-PRIORITY-GATE-20260729: record closeout receipt",
+      "url": "https://github.com/ajoe734/pantheon/pull/4367",
+      "state": "CLOSED",
+      "head_branch": "task/SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "head_sha": "574e420ec4e78b58a6fdc530fffe2d9ab4220295",
+      "base_branch": "dev",
+      "merge_state_status": "BEHIND",
+      "auto_merge_request": false,
+      "associated_task": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "task_status": "archived (per 1025Z gap audit)",
+      "action": "RETIRED_ALREADY_CLOSED",
+      "rationale": "The receipt duplicates the delivery and closeout evidence already merged by #4365 and #4366. It remains closed and unmerged; no further PR mutation is necessary."
+    },
     {
       "pr_number": 4364,
       "title": "L12-VERIFY-OBS-001: anchor evidence manifest update",
+      "url": "https://github.com/ajoe734/pantheon/pull/4364",
       "state": "OPEN",
-      "head_sha": "ecf17e9d088e37102b4128ebc2a7d77e4328be8a",
+      "head_branch": "task/L12-VERIFY-OBS-001",
+      "head_sha": "f3756cec99a8c44d47c075a475c25cf86a4d3171",
+      "base_branch": "dev",
       "merge_state_status": "BEHIND",
-      "owner": "Antigravity",
-      "reviewer": "Claude2",
+      "auto_merge_request": false,
       "associated_task": "L12-VERIFY-OBS-001",
+      "task_owner": "Antigravity",
+      "task_reviewer": "Claude2",
       "task_status": "review",
       "action": "PRESERVED_OPEN",
-      "rationale": "Active product proof PR for active task row L12-VERIFY-OBS-001 (owner Antigravity, reviewer Claude2) currently in review (head SHA verified as-of 2026-07-29T13:05:14Z)"
+      "rationale": "This remains active product-proof work. The canonical task row's next field names a different stale head, but that discrepancy is not an exact reviewer finding that the product proof is invalid. Closing it would violate this task's explicit non-closure condition; the assigned owner/reviewer must refresh and review the exact current head."
+    },
+    {
+      "pr_number": 4297,
+      "title": "L12-FLEET-STATUS-SYNC-001: anchor closeout evidence",
+      "url": "https://github.com/ajoe734/pantheon/pull/4297",
+      "state": "OPEN",
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "head_sha": "23a7d3244ad89d093a006ff6ace86f13053d794c",
+      "base_branch": "dev",
+      "merge_state_status": "BEHIND",
+      "auto_merge_request": false,
+      "associated_task": "L12-FLEET-STATUS-SYNC-001",
+      "task_owner": "Codex2",
+      "task_reviewer": "Codex",
+      "task_status": "review_approved",
+      "review_binding_head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+      "action": "PRESERVED_REFRESH_REQUIRED",
+      "rationale": "The active row is already review-approved, while the live PR head differs from its canonical review binding and is behind dev. It must be refreshed and independently reviewed at an exact new head, not closed as duplicate proof."
+    },
+    {
+      "pr_number": 4313,
+      "title": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728: record refresh blocker",
+      "url": "https://github.com/ajoe734/pantheon/pull/4313",
+      "state": "OPEN",
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+      "head_sha": "88a2c7b6bd96e23c8323b15f2675f413b7f9a5c2",
+      "base_branch": "dev",
+      "merge_state_status": "BEHIND",
+      "auto_merge_request": false,
+      "associated_task": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+      "task_owner": "Codex",
+      "task_reviewer": "Codex2",
+      "task_status": "blocked",
+      "waiting_for": "Codex2",
+      "action": "PRESERVED_BLOCKED",
+      "rationale": "This is the current task-scoped refresh/closeout path, with a canonical blocker and no accepted replacement. It must remain open until the declared owner/reviewer resolve its refresh and closeout gate."
     }
+  ],
+  "conclusion": {
+    "retired_prs": [4367],
+    "preserved_prs": [4297, 4313, 4364],
+    "github_mutations_by_this_task": [],
+    "reason_no_additional_pr_was_closed": "Every other scoped PR belongs to a nonterminal canonical task row; #4364 is also explicitly protected active product proof."
+  },
+  "verification": [
+    "git fetch origin dev --quiet",
+    "git merge-base --is-ancestor 18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d origin/dev (pass)",
+    "git merge-base --is-ancestor 8ea01a8e3993b3dabc6cd475c7058d299eaf4a01 origin/dev (pass)",
+    "git merge-base --is-ancestor 23a7d3244ad89d093a006ff6ace86f13053d794c origin/dev (not ancestor; expected for open refresh path)",
+    "git merge-base --is-ancestor 88a2c7b6bd96e23c8323b15f2675f413b7f9a5c2 origin/dev (not ancestor; expected for open refresh path)",
+    "git merge-base --is-ancestor f3756cec99a8c44d47c075a475c25cf86a4d3171 origin/dev (not ancestor; expected for active review path)"
   ]
 }
