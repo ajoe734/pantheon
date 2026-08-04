@@ -6283,7 +6283,8 @@ def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now:
 def worker_lease_status_description(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> str:
     """Return explicit lease state description: healthy_long_finalize, healthy_running, stuck_lease, or expired."""
     now_dt = now or datetime.now(timezone.utc)
-    reason = str(worker.get("request_snapshot", {}).get("reason") or "")
+    req_snap = worker.get("request_snapshot")
+    reason = str((req_snap if isinstance(req_snap, dict) else {}).get("reason") or "")
     is_finalize_or_review = reason in {"owned_finalize_dispatch", "review_ready_dispatch"}
     if worker_lease_is_expired(config, worker, now_dt):
         return "expired"
@@ -6294,6 +6295,7 @@ def worker_lease_status_description(config: dict[str, Any], worker: dict[str, An
     if is_finalize_or_review:
         return "healthy_long_finalize" if reason == "owned_finalize_dispatch" else "healthy_long_review"
     return "healthy_running"
+
 
 
 _QUOTA_RETRY_AT_PATTERN = re.compile(
@@ -17225,6 +17227,7 @@ def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> i
 
 def task_l12_dispatch_priority_rank(task: dict[str, Any], base_priority: int) -> int:
     return task_l12_review_priority_rank(task, base_priority)
+
 
 
 

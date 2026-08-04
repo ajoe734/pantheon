@@ -23784,6 +23784,7 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
             mock_queue.assert_called_once()
             self.assertEqual(mock_queue.call_args[0][1]["task_id"], "LONG-FINALIZE-001")
 
+
     def test_distinguish_healthy_long_run_from_stuck_lease(self) -> None:
         """Acceptance 2: Distinguish healthy long run from stuck lease."""
         now = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
@@ -23995,6 +23996,27 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
             res = supervisor.reconcile_runtime_on_boot(self.config, state_healthy)
             mock_terminate.assert_not_called()
             self.assertEqual(healthy_worker["status"], "running")
+
+    def test_summarize_runtime_null_request_snapshot_regression(self) -> None:
+        """Verify summarize_runtime does not crash when active worker request_snapshot is None or missing."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state = {
+            "workers": {
+                "w-null-snapshot": {
+                    "run_id": "w-null-snapshot",
+                    "task_id": "TEST-TASK-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": None,
+                    "last_heartbeat_at": now_iso,
+                }
+            },
+            "queue": {"events": {}},
+        }
+        approval_state = {"pending": []}
+        summary = supervisor.summarize_runtime(state, approval_state)
+        self.assertEqual(len(summary["active_workers"]), 1)
+        self.assertEqual(summary["active_workers"][0]["lease_status_description"], "healthy_running")
 
 
 
