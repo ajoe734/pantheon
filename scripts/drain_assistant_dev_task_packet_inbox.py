@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Mapping
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(
+    os.environ.get("PANTHEON_STATUS_ROOT") or Path(__file__).resolve().parent.parent
+).resolve()
 BFF_DIR = REPO_ROOT / "services" / "control-plane" / "bff"
 if str(BFF_DIR) not in sys.path:
     sys.path.insert(0, str(BFF_DIR))
