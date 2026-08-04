@@ -16,7 +16,9 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -49,6 +51,7 @@ from common import (
     normalize_agent_id,
     is_github_cli_auth_failure,
     preserve_github_cli_auth_env,
+    read_activity_log_tail_bytes,
     resolved_coordinator_status_root,
     config_status_root,
     relpath,
@@ -58,13 +61,14 @@ from common import (
     snapshot_task,
     spawn_background_process,
     status_command_runtime_env,
+    strict_activity_json_loads,
     task_state_store_runtime_env,
     summarize_failure_reason,
     utc_now,
     write_failure_evidence,
     write_json,
     write_status,
-    write_activity_log,
+    write_activity_log as _write_activity_log_immediate,
     worker_runtime_paths,
 )
 from coordination_file_watcher import sync_coordination_files
@@ -82,6 +86,7 @@ from dispatch_policy import (
 from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from provider_permissions import (
     probe_provider_auth,
+    provider_auth_probe_due,
     provider_capabilities as build_provider_capabilities,
     write_provider_capabilities,
 )
@@ -143,10 +148,214 @@ _DEFERRED_AUTO_COMMIT_ARCHIVES: ContextVar[
     "deferred_auto_commit_archives",
     default=None,
 )
+_DEFERRED_ACTIVITY_EVENTS: ContextVar[
+    list[tuple[dict[str, Any], dict[str, Any]]] | None
+] = ContextVar(
+    "deferred_supervisor_activity_events",
+    default=None,
+)
 _PREFETCHED_WORKER_BASE_REFS: ContextVar[frozenset[str] | None] = ContextVar(
     "prefetched_worker_base_refs",
     default=None,
 )
+_CYCLE_METRICS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "supervisor_cycle_metrics",
+    default=None,
+)
+_SCHEDULED_CYCLE_SAMPLE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "supervisor_scheduled_cycle_sample",
+    default=None,
+)
+_RUNTIME_PHASE_RESERVATION: ContextVar[str | None] = ContextVar(
+    "supervisor_runtime_phase_reservation",
+    default=None,
+)
+_RUNTIME_PHASE_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "supervisor_runtime_phase_context",
+    default=None,
+)
+
+
+CYCLE_PHASE_METRICS_MAX = 64
+CYCLE_BATCH_COUNT_MAX = 16
+RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
+RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
+
+
+def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
+    """Defer audit filesystem I/O while runtime admission is exclusive.
+
+    The entry is copied at the call boundary so later runtime-state mutation
+    cannot change the audit payload.  Outside a supervisor transaction the
+    canonical writer is used immediately, preserving direct-call behavior.
+    """
+
+    deferred = _DEFERRED_ACTIVITY_EVENTS.get()
+    if deferred is not None:
+        deferred.append((config, deepcopy(entry)))
+        return
+    _write_activity_log_immediate(config, entry)
+
+
+def _record_cycle_phase_elapsed(name: str, elapsed_seconds: float) -> None:
+    """Accumulate one bounded phase timing for the active cycle.
+
+    Phase names are source-owned constants passed to ``_safe_phase``.  Keeping
+    one aggregate row per name avoids placing task ids, provider output, or an
+    ever-growing timing history in runtime state.
+    """
+
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return
+    phases = metrics.setdefault("phases", {})
+    if name not in phases and len(phases) >= CYCLE_PHASE_METRICS_MAX - 1:
+        name = "other"
+    row = phases.setdefault(
+        name,
+        {"count": 0, "elapsed_seconds": 0.0, "max_seconds": 0.0},
+    )
+    elapsed = max(0.0, float(elapsed_seconds))
+    row["count"] = int(row.get("count", 0)) + 1
+    row["elapsed_seconds"] = float(row.get("elapsed_seconds", 0.0)) + elapsed
+    row["max_seconds"] = max(float(row.get("max_seconds", 0.0)), elapsed)
+
+
+def _record_cycle_batch_count(name: str, count: int) -> None:
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return
+    batches = metrics.setdefault("batch_counts", {})
+    if name not in batches and len(batches) >= CYCLE_BATCH_COUNT_MAX - 1:
+        name = "other"
+    batches[name] = int(batches.get(name, 0)) + max(0, int(count))
+
+
+def _record_cycle_runtime_lock_hold(elapsed_seconds: float) -> None:
+    """Retain the longest *transaction* hold, never slow reserved phase work."""
+
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return
+    metrics["runtime_lock_hold_seconds"] = max(
+        float(metrics.get("runtime_lock_hold_seconds", 0.0)),
+        max(0.0, float(elapsed_seconds)),
+    )
+
+
+@contextmanager
+def _measured_runtime_state_lock(config: dict[str, Any]):
+    """Acquire runtime admission and measure only the exclusive hold.
+
+    ``runtime_lock_hold_seconds`` is canary evidence about the time other
+    writers are excluded.  Starting the clock before the blocking acquisition
+    conflates contention with ownership and can report an arbitrarily long
+    hold even when the critical section is bounded.
+    """
+
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        acquired_at = time.monotonic()
+        try:
+            yield
+        finally:
+            _record_cycle_runtime_lock_hold(time.monotonic() - acquired_at)
+
+
+def _bounded_cycle_metrics_snapshot(*, finished_monotonic: float) -> dict[str, Any] | None:
+    metrics = _CYCLE_METRICS.get()
+    if not isinstance(metrics, dict):
+        return None
+    started = float(metrics.get("started_monotonic", finished_monotonic))
+    phases = {
+        str(name)[:80]: {
+            "count": int(row.get("count", 0)),
+            "elapsed_seconds": round(float(row.get("elapsed_seconds", 0.0)), 3),
+            "max_seconds": round(float(row.get("max_seconds", 0.0)), 3),
+        }
+        for name, row in list((metrics.get("phases") or {}).items())[
+            :CYCLE_PHASE_METRICS_MAX
+        ]
+        if isinstance(row, dict)
+    }
+    snapshot: dict[str, Any] = {
+        "schema_version": 1,
+        "cycle_elapsed_seconds": round(max(0.0, finished_monotonic - started), 3),
+        "phase_elapsed": phases,
+        "batch_counts": {
+            str(name)[:80]: max(0, int(count))
+            for name, count in list((metrics.get("batch_counts") or {}).items())[
+                :CYCLE_BATCH_COUNT_MAX
+            ]
+        },
+    }
+    cadence = metrics.get("cadence")
+    if isinstance(cadence, dict):
+        snapshot["cadence"] = {
+            "scheduled_deadline": round(float(cadence.get("scheduled_deadline", 0.0)), 6),
+            "start_overshoot_seconds": round(
+                max(0.0, float(cadence.get("start_overshoot_seconds", 0.0))),
+                3,
+            ),
+            "skipped_deadlines_before_start": max(
+                0,
+                int(cadence.get("skipped_deadlines_before_start", 0)),
+            ),
+        }
+    queue_latency = metrics.get("queue_to_start")
+    if isinstance(queue_latency, dict) and int(queue_latency.get("count", 0)) > 0:
+        count = int(queue_latency["count"])
+        total = float(queue_latency.get("total_seconds", 0.0))
+        snapshot["queue_to_start"] = {
+            "count": count,
+            "average_seconds": round(total / count, 3),
+            "max_seconds": round(float(queue_latency.get("max_seconds", 0.0)), 3),
+        }
+    if "runtime_lock_hold_seconds" in metrics:
+        snapshot["runtime_lock_hold_seconds"] = round(
+            max(0.0, float(metrics["runtime_lock_hold_seconds"])),
+            3,
+        )
+    return snapshot
+
+
+def record_queue_to_start_latency(
+    state: dict[str, Any],
+    event: Mapping[str, Any],
+    *,
+    started_at: datetime,
+) -> float | None:
+    """Publish bounded queue latency without retaining task/event payloads."""
+
+    queued_at = None
+    for field in ("created_at", "issued_at", "queued_at", "ts"):
+        queued_at = _parse_iso_utc(str(event.get(field) or ""))
+        if queued_at is not None:
+            break
+    if queued_at is None:
+        return None
+    latency = max(
+        0.0,
+        (started_at.astimezone(timezone.utc) - queued_at.astimezone(timezone.utc)).total_seconds(),
+    )
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["queue_to_start_latency_seconds"] = round(latency, 3)
+    supervisor_state["queue_to_start_latency_peak_seconds"] = round(
+        max(
+            latency,
+            float(supervisor_state.get("queue_to_start_latency_peak_seconds", 0.0)),
+        ),
+        3,
+    )
+    metrics = _CYCLE_METRICS.get()
+    if isinstance(metrics, dict):
+        row = metrics.setdefault(
+            "queue_to_start",
+            {"count": 0, "total_seconds": 0.0, "max_seconds": 0.0},
+        )
+        row["count"] = int(row.get("count", 0)) + 1
+        row["total_seconds"] = float(row.get("total_seconds", 0.0)) + latency
+        row["max_seconds"] = max(float(row.get("max_seconds", 0.0)), latency)
+    return latency
 
 
 SESSION_ID_PATTERNS = [
@@ -1791,9 +2000,6 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
-WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS = 30
-
-
 def _fetch_worker_base_ref(
     repo_root: Path,
     base_ref: str,
@@ -1808,10 +2014,9 @@ def _fetch_worker_base_ref(
     ``master``).  Worktree creation and freshness checks consume the remote-
     tracking ref, so fetch it with an explicit source and destination.
 
-    ``timeout_seconds`` bounds the network wait. The pre-admission caller leaves
-    it unset because it runs outside every lock; the recovery caller sets it
-    because it runs inside the supervisor cycle, where an unbounded fetch would
-    charge its wait to the runtime-admission hold.
+    ``timeout_seconds`` is available to standalone callers.  The supervisor
+    cycle invokes this function only during its pre-admission phase; dispatch
+    itself never performs a recovery fetch while holding runtime admission.
     """
 
     normalized = str(base_ref or "").strip()
@@ -1854,8 +2059,10 @@ def _worker_base_ref_precondition(
     repository.  Treating the missing flag as proof of a missing fetch stalled
     the scheduler with ``base_ref_not_prefetched:origin/dev``.
 
-    Recovery order: trust the context, else refresh the ref and require it to
-    resolve.  Fail closed only when the ref truly does not resolve.
+    Recovery order: trust the context, else accept an already-resolving local
+    remote-tracking ref.  A missing ref fails closed and waits for the next
+    cycle's pre-admission fetch; it never starts a network operation from the
+    runtime mutation transaction.
     """
 
     prefetched = _PREFETCHED_WORKER_BASE_REFS.get()
@@ -1870,22 +2077,14 @@ def _worker_base_ref_precondition(
     if repo_root is None:
         return False, f"base_ref_not_prefetched:{normalized}"
 
-    _fetched, fetch_error = _fetch_worker_base_ref(
-        repo_root,
-        normalized,
-        timeout_seconds=WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
-    )
     if not _git_ref_exists(repo_root, normalized):
-        return False, (
-            f"base_ref_unresolved:{normalized}:"
-            f"{fetch_error or 'ref missing after refresh'}"
-        )
+        return False, f"base_ref_unresolved:{normalized}:pre_admission_fetch_required"
     # Cache the recovered ref for the rest of this cycle so a redispatch storm
-    # does not re-fetch once per worktree operation.
+    # does not re-run even the local ref check once per worktree operation.
     _PREFETCHED_WORKER_BASE_REFS.set(prefetched | {normalized})
     console_log(
-        f"worker base {normalized} recovered outside the per-loop prefetch context "
-        f"(fetch_error={fetch_error or 'none'}); ref resolves, dispatch continues",
+        f"worker base {normalized} resolves outside the per-loop prefetch context; "
+        "dispatch continues without a locked network refresh",
         quiet=SUPERVISOR_LOG_QUIET,
     )
     return True, None
@@ -2781,6 +2980,18 @@ def start_worker_for_request(
     issued_command_env = status_command_runtime_env(config)
     issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
     request.metadata["status_command_runtime"] = issued_command_runtime
+    _persist_runtime_phase_launch_intent(
+        config,
+        state,
+        request=request,
+        queue_event_id=queue_event_id,
+        attempt_count=attempt_count,
+        event_id_for_log=event_id_for_log,
+        parent_run_id=parent_run_id,
+        adapter_name=str(adapter_name),
+        activity_type=activity_type,
+        activity_message=activity_message,
+    )
     result = adapter.deliver(request)
     if not result.ok:
         failure_run_id = (
@@ -2819,10 +3030,26 @@ def start_worker_for_request(
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
+    result_pid = result.pid if isinstance(result.pid, int) and not isinstance(result.pid, bool) else None
+    result_pid_start_ticks = worker_pid_start_ticks(result_pid)
+    result_process_generation = (
+        worker_process_generation_id(
+            task_id=str(request.task_id or ""),
+            worker_run_id=str(worker_run_id),
+            queue_event_id=str(queue_event_id or ""),
+            pid=result_pid,
+            pid_start_ticks=result_pid_start_ticks,
+        )
+        if request.task_id
+        and queue_event_id
+        and result_pid is not None
+        and result_pid_start_ticks is not None
+        else None
+    )
     now_dt = datetime.now(timezone.utc)
     now = _isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    state.setdefault("workers", {})[worker_run_id] = {
+    worker_record = {
         "run_id": worker_run_id,
         "provider": request.provider,
         "agent_id": agent["id"],
@@ -2857,7 +3084,9 @@ def start_worker_for_request(
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
         "status_command_runtime": issued_command_runtime,
-        "pid": result.pid,
+        "pid": result_pid,
+        "pid_start_ticks": result_pid_start_ticks,
+        "process_generation": result_process_generation,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
         "notes": result.notes,
@@ -2871,6 +3100,7 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    state.setdefault("workers", {})[worker_run_id] = worker_record
     record_worker_runtime_measurement(
         config,
         state,
@@ -2882,6 +3112,9 @@ def start_worker_for_request(
         details={
             "worker_run_id": worker_run_id,
             "queue_event_id": queue_event_id,
+            "pid": result_pid,
+            "pid_start_ticks": result_pid_start_ticks,
+            "process_generation": result_process_generation,
             "task_id": request.task_id,
             "agent_id": agent["id"],
             "provider": request.provider,
@@ -2889,9 +3122,14 @@ def start_worker_for_request(
         },
         emit_activity=False,
     )
-    # Persist immediately after launch so a supervisor crash cannot orphan
-    # a live worker before the end-of-tick state save.
-    save_runtime_state(config, state)
+    # Direct callers retain the immediate whole-state save. Reserved slow
+    # phases instead publish an exact-token launch receipt into their durable
+    # reservation. A restart can adopt that receipt (or the runner marker tied
+    # to the pre-launch intent) without bypassing the phase's whole-state CAS.
+    if _RUNTIME_PHASE_RESERVATION.get() is None:
+        save_runtime_state(config, state)
+    else:
+        _persist_runtime_phase_launch_receipt(config, state, worker_record)
     write_activity_log(
         config,
         {
@@ -2903,6 +3141,9 @@ def start_worker_for_request(
             "message": activity_message or f"Worker started via {result.adapter}: {request.reason}",
             "queue_event_id": event_id_for_log,
             "worker_run_id": worker_run_id,
+            "pid": result_pid,
+            "pid_start_ticks": result_pid_start_ticks,
+            "process_generation": result_process_generation,
             "parent_run_id": parent_run_id,
             "command": result.command,
             "log_path": result.log_path,
@@ -2971,12 +3212,21 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         if active_worker:
             desired_status = "manual_pending" if active_worker.get("status") in {"manual_pending", "waiting_approval"} else "started"
             if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
+                observed_started_at = (
+                    _parse_iso_utc(str(active_worker.get("lease_acquired_at") or ""))
+                    or datetime.now(timezone.utc)
+                )
                 record["status"] = desired_status
                 record["run_id"] = active_worker.get("run_id") or event_id
                 record["lease_owner"] = active_worker.get("run_id") or event_id
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
+                record_queue_to_start_latency(
+                    state,
+                    event,
+                    started_at=observed_started_at,
+                )
                 sync_dispatched_task_status(
                     config,
                     event,
@@ -3343,6 +3593,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
+        record_queue_to_start_latency(
+            state,
+            event,
+            started_at=queue_started_at,
+        )
         record_failure_streak_recovery_worker_started(
             config,
             state,
@@ -3407,6 +3662,78 @@ def worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> in
         return int(fields[19])
     except (TypeError, ValueError):
         return None
+
+
+WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
+WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
+
+
+def worker_process_generation_id(
+    *,
+    task_id: str,
+    worker_run_id: str,
+    queue_event_id: str,
+    pid: int,
+    pid_start_ticks: int,
+) -> str:
+    """Bind one worker lease to the exact Linux process generation it launched."""
+
+    payload = {
+        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "worker_run_id": str(worker_run_id),
+        "queue_event_id": str(queue_event_id),
+        "pid": int(pid),
+        "pid_start_ticks": int(pid_start_ticks),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
+def worker_process_identity(worker: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return a validated immutable worker/process generation binding."""
+
+    task_id = str(worker.get("task_id") or "").strip()
+    worker_run_id = str(worker.get("run_id") or "").strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    pid = worker.get("pid")
+    pid_start_ticks = worker.get("pid_start_ticks")
+    if (
+        not task_id
+        or not worker_run_id
+        or not queue_event_id
+        or not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(pid_start_ticks, int)
+        or isinstance(pid_start_ticks, bool)
+        or pid_start_ticks <= 0
+    ):
+        return None
+    expected_generation = worker_process_generation_id(
+        task_id=task_id,
+        worker_run_id=worker_run_id,
+        queue_event_id=queue_event_id,
+        pid=pid,
+        pid_start_ticks=pid_start_ticks,
+    )
+    if process_generation != expected_generation:
+        return None
+    return {
+        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": task_id,
+        "worker_run_id": worker_run_id,
+        "queue_event_id": queue_event_id,
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+    }
 
 
 def _proc_activity_record(pid: int, proc_root: Path) -> dict[str, Any] | None:
@@ -3562,9 +3889,27 @@ def active_worker_refs_for_agent_id(
     return sorted(set(refs))
 
 
-def terminate_worker_pid(pid: int | None) -> bool:
+def terminate_worker_pid(
+    pid: int | None,
+    *,
+    expected_start_ticks: int | None = None,
+) -> bool:
     if not pid:
         return False
+    if (
+        expected_start_ticks is not None
+        and worker_pid_start_ticks(pid) != expected_start_ticks
+    ):
+        return False
+
+    def identity_bound_is_alive(candidate_pid: int) -> bool:
+        if not pid_is_alive(candidate_pid):
+            return False
+        return (
+            expected_start_ticks is None
+            or worker_pid_start_ticks(candidate_pid) == expected_start_ticks
+        )
+
     deferred = _DEFERRED_WORKER_TERMINATIONS.get()
     if deferred is not None:
         # A terminal state must never be published until the process is
@@ -3573,9 +3918,9 @@ def terminate_worker_pid(pid: int | None) -> bool:
         # while the worker can still mutate state.
         if any(item[0] == pid for item in deferred):
             return False
-        if not pid_is_alive(pid):
+        if not identity_bound_is_alive(pid):
             return True
-        start_ticks = worker_pid_start_ticks(pid)
+        start_ticks = expected_start_ticks or worker_pid_start_ticks(pid)
         if start_ticks is None:
             # Without Linux's immutable process-start token, a reused PID is
             # indistinguishable from the intended worker. Fail closed: do not
@@ -3594,7 +3939,7 @@ def terminate_worker_pid(pid: int | None) -> bool:
         try:
             return rewrite_worker_lifecycle.confirm_kill(
                 pid,
-                is_alive=pid_is_alive,
+                is_alive=identity_bound_is_alive,
                 send_signal=os.kill,
                 sleep=time.sleep,
                 monotonic=time.monotonic,
@@ -3606,6 +3951,28 @@ def terminate_worker_pid(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+def terminate_worker_process_generation(worker: Mapping[str, Any]) -> bool:
+    """Signal only the exact process generation captured when this run started."""
+
+    identity = worker_process_identity(worker)
+    if identity is None:
+        return False
+    if worker_pid_start_ticks(identity["pid"]) != identity["pid_start_ticks"]:
+        return False
+    return terminate_worker_pid(
+        identity["pid"],
+        expected_start_ticks=identity["pid_start_ticks"],
+    )
+
+
+def worker_process_generation_is_current(worker: Mapping[str, Any]) -> bool:
+    identity = worker_process_identity(worker)
+    return bool(
+        identity is not None
+        and worker_pid_start_ticks(identity["pid"]) == identity["pid_start_ticks"]
+    )
 
 
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
@@ -6090,6 +6457,7 @@ def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
         int(provider_auth.get("failed_probe_interval_seconds", 60) or 60),
     )
     settings.setdefault("recovery_probe_max_per_cycle", 2)
+    settings.setdefault("stale_cache_readmission_probe_max_per_cycle", 1)
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
 
@@ -6345,6 +6713,7 @@ def mark_provider_dispatch_paused(
     failure_kind: str | None = None,
     pause_kind: str | None = None,
     raw_ref: str | None = None,
+    quota_reset_at: str | None = None,
 ) -> bool:
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
@@ -6367,10 +6736,13 @@ def mark_provider_dispatch_paused(
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     hinted_blocked_until: str | None = None
     hint_capped = False
+    explicit_quota_reset = _parse_iso_utc(quota_reset_at)
     if probe_gated_auth_pause:
         blocked_until = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     if effective_pause_kind == "quota_terminal":
-        hinted = parse_quota_retry_hint(reason, now=now)
+        hinted = explicit_quota_reset
+        if hinted is None:
+            hinted = parse_quota_retry_hint(reason, now=now)
         if hinted is not None and hinted > blocked_until:
             hinted = hinted.replace(microsecond=0)
             hinted_blocked_until = hinted.isoformat().replace("+00:00", "Z")
@@ -6424,6 +6796,8 @@ def mark_provider_dispatch_paused(
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
+    if effective_pause_kind == "quota_terminal" and explicit_quota_reset is not None:
+        bucket[pause_provider_id]["quota_reset_at"] = _isoformat_utc(explicit_quota_reset)
     if changed:
         if effective_pause_kind == "quota_terminal":
             pause_description = "terminal quota failure"
@@ -8426,13 +8800,18 @@ def reconcile_provider_pause_recovery(
             )
             continue
 
-        failure_kind = str(
-            current.get("probe_failure_kind")
-            or rewrite_provider_health.classify_probe_failure_kind(
-                probe.get("ready"),
-                status=probe.get("status"),
+        probe_status = str(probe.get("status") or "").strip().lower()
+        failure_kind = (
+            "capacity_retryable"
+            if probe_status.startswith("models_cache_")
+            else str(
+                current.get("probe_failure_kind")
+                or rewrite_provider_health.classify_probe_failure_kind(
+                    probe.get("ready"),
+                    status=probe.get("status"),
+                )
+                or "capacity_retryable"
             )
-            or "capacity_retryable"
         )
         next_probe_at = _isoformat_utc(checked_at + timedelta(seconds=interval_seconds))
         if str(entry.get("last_recovery_probe_at") or "") == checked_at_iso:
@@ -8827,27 +9206,100 @@ def apply_provider_probe_to_report(
     if not isinstance(capability, dict):
         capability = {}
         providers[provider_key] = capability
-    health = rewrite_provider_health.classify_probe(
-        probe.get("ready"),
-        status=probe.get("status"),
-    )
-    if health is None:
-        return None
-    failure_kind = rewrite_provider_health.classify_probe_failure_kind(
-        probe.get("ready"),
-        status=probe.get("status"),
-    )
-    capability["auth_ready"] = probe.get("ready") is True
     capability["auth_error"] = probe.get("error")
     capability["auth_method"] = probe.get("method")
     capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
     capability["auth_probe"] = probe
+    probe_status = str(probe.get("status") or "").strip().lower()
+    cache_compatibility_failure = probe_status.startswith("models_cache_")
+    health = (
+        rewrite_provider_health.AccountHealth.DEGRADED
+        if cache_compatibility_failure
+        else rewrite_provider_health.classify_probe(
+            probe.get("ready"),
+            status=probe.get("status"),
+        )
+    )
+    if health is None:
+        return None
+    failure_kind = (
+        "capacity_retryable"
+        if cache_compatibility_failure
+        else rewrite_provider_health.classify_probe_failure_kind(
+            probe.get("ready"),
+            status=probe.get("status"),
+        )
+    )
+    capability["auth_ready"] = probe.get("ready") is True
     capability["account_health"] = health.value
     capability["probe_failure_kind"] = failure_kind
     ready = health is rewrite_provider_health.AccountHealth.HEALTHY
     capability["local_cli_worker_supported"] = ready
     capability["supports_auto_approve"] = ready
     return health
+
+
+def reconcile_fresh_provider_probe_failures(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    previous_report: dict[str, Any] | None,
+    current_report: dict[str, Any] | None,
+) -> bool:
+    """Persist new pre-lock live probe failures through dispatch guardrails.
+
+    Provider CLI/cache work is intentionally completed before runtime admission.
+    This small in-lock projection consumes only its sanitized result: quota and
+    cache/tooling failures become recoverable account pauses, credential failures
+    become auth-probe-gated pauses, and an identical persisted probe is ignored.
+    """
+
+    changed = False
+    providers = (current_report or {}).get("providers") or {}
+    if not isinstance(providers, dict):
+        return False
+    for provider_key, current in providers.items():
+        if not isinstance(current, dict) or current.get("auth_ready") is not False:
+            continue
+        probe = current.get("auth_probe")
+        if not isinstance(probe, dict) or str(probe.get("source") or "").strip().lower() != "live":
+            continue
+        checked_at = str(probe.get("checked_at") or probe.get("last_auth_probe_at") or "")
+        previous = _provider_report_entry(previous_report, str(provider_key))
+        previous_probe = previous.get("auth_probe") if isinstance(previous.get("auth_probe"), dict) else {}
+        if (
+            checked_at
+            and checked_at
+            == str(previous_probe.get("checked_at") or previous_probe.get("last_auth_probe_at") or "")
+            and str(probe.get("status") or "") == str(previous_probe.get("status") or "")
+        ):
+            continue
+
+        failure_kind = str(
+            current.get("probe_failure_kind")
+            or rewrite_provider_health.classify_probe_failure_kind(
+                probe.get("ready"),
+                status=probe.get("status"),
+            )
+            or "capacity_retryable"
+        )
+        if failure_kind == "auth":
+            changed = mark_provider_auth_probe_not_ready(
+                config,
+                state,
+                str(provider_key),
+                probe,
+            ) or changed
+            continue
+        changed = mark_provider_dispatch_paused(
+            config,
+            state,
+            str(provider_key),
+            str(probe.get("error") or probe.get("status") or "provider live probe failed"),
+            failure_kind=failure_kind,
+            pause_kind=failure_kind,
+            quota_reset_at=str(probe.get("quota_reset_at") or "") or None,
+        ) or changed
+    return changed
 
 
 def refresh_provider_auth_before_dispatch(
@@ -8914,6 +9366,7 @@ def refresh_provider_auth_before_dispatch(
                 str(probe.get("error") or probe.get("status") or "provider capacity probe failed"),
                 failure_kind=failure_kind,
                 pause_kind=failure_kind,
+                quota_reset_at=str(probe.get("quota_reset_at") or "") or None,
             )
     return health
 
@@ -8953,12 +9406,27 @@ def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | 
     return out
 
 
+EXPLICIT_HUMAN_REVIEWER = "Human/Ops"
+
+
+def reviewer_is_explicit_human_gate(reviewer: str | None) -> bool:
+    """Return whether the canonical task explicitly requires Human/Ops review.
+
+    Human/Ops is a governance actor, not an auto-worker lane. Availability
+    planning must therefore preserve this reviewer even when ordinary worker
+    eligibility checks correctly report that it cannot be dispatched.
+    """
+
+    return str(reviewer or "").strip().casefold() == EXPLICIT_HUMAN_REVIEWER.casefold()
+
+
 def agent_can_take_task(
     config: dict[str, Any],
     agent_name: str | None,
     task: dict[str, Any] | None,
     *,
     state: dict[str, Any] | None = None,
+    allow_stale_provider_auth: bool = False,
 ) -> bool:
     name = str(agent_name or "").strip()
     if not name:
@@ -8967,7 +9435,7 @@ def agent_can_take_task(
         return False
     if state is not None and agent_dispatch_paused(config, state, name):
         return False
-    if agent_provider_auth_blocked(config, name):
+    if not allow_stale_provider_auth and agent_provider_auth_blocked(config, name):
         return False
     if not agent_is_known(config, name):
         return False
@@ -9066,6 +9534,7 @@ def plan_task_assignment_pair(
 
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    explicit_human_reviewer = reviewer_is_explicit_human_gate(reviewer)
     task_status = str(task.get("status") or "").strip().lower()
     allowed_reviewer_keys = (
         {
@@ -9093,7 +9562,10 @@ def plan_task_assignment_pair(
                 or reviewer.casefold() in allowed_reviewer_keys
             )
             and agent_can_take_task(config, owner, task, state=state)
-            and agent_can_take_task(config, reviewer, task, state=state)
+            and (
+                explicit_human_reviewer
+                or agent_can_take_task(config, reviewer, task, state=state)
+            )
         ):
             return owner, reviewer
         return None
@@ -9137,24 +9609,30 @@ def plan_task_assignment_pair(
         if not agent_can_take_task(config, candidate_owner, task, state=owner_state):
             continue
 
-        reviewer_order = list(preferred_reviewers or ([reviewer] if reviewer else []))
-        if preferred_reviewers is None and owner and owner not in reviewer_order:
-            reviewer_order.append(owner)
-        reviewer_order.extend(
-            bounded_fallback_candidates(
-                config,
-                reviewer_mapping,
-                roots=[name for name in (reviewer, owner, candidate_owner) if name],
-                preferred=[lane for lane in preferred_lanes if lane != candidate_owner],
+        if explicit_human_reviewer:
+            # An explicit human gate is not a fallback candidate. Keep it as
+            # the only reviewer while owner/helper recovery searches for a
+            # viable auto-worker; incompatible constraints fail closed below.
+            reviewer_order = [reviewer]
+        else:
+            reviewer_order = list(preferred_reviewers or ([reviewer] if reviewer else []))
+            if preferred_reviewers is None and owner and owner not in reviewer_order:
+                reviewer_order.append(owner)
+            reviewer_order.extend(
+                bounded_fallback_candidates(
+                    config,
+                    reviewer_mapping,
+                    roots=[name for name in (reviewer, owner, candidate_owner) if name],
+                    preferred=[lane for lane in preferred_lanes if lane != candidate_owner],
+                )
             )
-        )
-        reviewer_order.extend(
-            bounded_fallback_candidates(
-                config,
-                owner_mapping,
-                roots=[name for name in (owner, candidate_owner) if name],
+            reviewer_order.extend(
+                bounded_fallback_candidates(
+                    config,
+                    owner_mapping,
+                    roots=[name for name in (owner, candidate_owner) if name],
+                )
             )
-        )
 
         seen_reviewers: set[str] = set()
         for candidate_reviewer in reviewer_order:
@@ -9178,11 +9656,14 @@ def plan_task_assignment_pair(
                 if incumbent_reviewer and preserve_in_progress_incumbents and task_status == "in_progress"
                 else state
             )
-            if agent_can_take_task(
-                config,
-                candidate_reviewer,
-                task,
-                state=reviewer_state,
+            if (
+                reviewer_is_explicit_human_gate(candidate_reviewer)
+                or agent_can_take_task(
+                    config,
+                    candidate_reviewer,
+                    task,
+                    state=reviewer_state,
+                )
             ):
                 return candidate_owner, candidate_reviewer
     return None
@@ -9193,6 +9674,8 @@ def agent_auto_dispatch_block_reason(
     state: dict[str, Any],
     agent_id: str | None,
     provider_report: dict[str, Any] | None = None,
+    *,
+    allow_stale_provider_auth: bool = False,
 ) -> str | None:
     """Return a human-readable reason when an agent must not receive auto dispatch."""
     normalized_agent = normalize_agent_id(agent_id or "")
@@ -9235,7 +9718,11 @@ def agent_auto_dispatch_block_reason(
             notes = str(agent_capability.get("notes") or "").strip()
             return notes or f"{normalized_agent} cannot auto-deliver in the current workspace"
 
-    if provider_capability:
+    stale_auth_readmission = bool(
+        allow_stale_provider_auth
+        and provider_capability.get("auth_ready") is False
+    )
+    if provider_capability and not stale_auth_readmission:
         if provider_capability.get("local_cli_worker_supported") is False:
             return f"{provider_id} local CLI worker is not ready"
         if provider_capability.get("supports_auto_approve") is False:
@@ -9523,12 +10010,97 @@ def sync_dispatched_task_status(
     run_id: str | None = None,
     workspace_path: str | Path | None = None,
 ) -> bool:
+    mutation = prepare_dispatched_task_status_mutation(
+        config,
+        event,
+        run_id=run_id,
+        workspace_path=workspace_path,
+    )
+    if mutation is None:
+        return False
+
+    script, env = status_command_subprocess_context(
+        config,
+        workspace_path=mutation["workspace_path"],
+    )
+    if not script.exists():
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": mutation["task_id"],
+                "message": f"Dispatch status sync script not found at {script}.",
+            },
+        )
+        return False
+
+    env["AI_NAME"] = mutation["actor"]
+    _apply_dispatch_status_worker_binding(
+        config,
+        env,
+        run_id=mutation["run_id"],
+        task_id=mutation["task_id"],
+        workspace_path=mutation["workspace_path"],
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            mutation["command"],
+            mutation["task_id"],
+            mutation["message"],
+        ],
+        cwd=str(config_path(config, "status_file").parent),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode == 0:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_synced",
+                "task_id": mutation["task_id"],
+                "target_agent": mutation["actor"],
+                "dispatch_reason": mutation["dispatch_reason"],
+                "message": mutation["message"],
+            },
+        )
+        return True
+
+    write_activity_log(
+        config,
+        {
+            "type": "task_dispatch_sync_failed",
+            "task_id": mutation["task_id"],
+            "target_agent": mutation["actor"],
+            "dispatch_reason": mutation["dispatch_reason"],
+            "message": (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Dispatch status sync failed."
+            )[:1000],
+        },
+    )
+    return False
+
+
+def prepare_dispatched_task_status_mutation(
+    config: dict[str, Any],
+    event: Mapping[str, Any],
+    *,
+    run_id: str | None = None,
+    workspace_path: str | Path | None = None,
+    task_map: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Build one lease-bound compare-and-set row without mutating state."""
+
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
-        return False
+        return None
     if not config.get("paths", {}).get("status_file"):
-        return False
+        return None
 
     deferred = _DEFERRED_DISPATCH_STATUS_SYNCS.get()
     if deferred is not None:
@@ -9539,7 +10111,7 @@ def sync_dispatched_task_status(
                 str(workspace_path) if workspace_path is not None else None,
             )
         )
-        return False
+        return None
 
     lease_run_id = str(run_id or "").strip()
     workspace_binding = str(workspace_path or "").strip()
@@ -9556,70 +10128,149 @@ def sync_dispatched_task_status(
                 ),
             },
         )
-        return False
-
-    script, env = status_command_subprocess_context(
-        config,
-        workspace_path=workspace_binding or None,
-    )
-    if not script.exists():
-        write_activity_log(
-            config,
-            {
-                "type": "task_dispatch_sync_failed",
-                "task_id": event.get("task_id"),
-                "message": f"Dispatch status sync script not found at {script}.",
-            },
-        )
-        return False
+        return None
 
     task_id = str(event.get("task_id") or "").strip()
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or ""))).strip()
     if not task_id or not target_agent:
-        return False
+        return None
 
     command_name, eligible_statuses = action
-    task = task_index_from_status(config, load_status(config)).get(task_id)
+    tasks = task_map
+    if tasks is None:
+        tasks = task_index_from_status(config, load_status(config))
+    task = tasks.get(task_id)
     if not task:
-        return False
+        return None
     if str(task.get("owner") or "").strip() != target_agent:
-        return False
+        return None
     if str(task.get("status") or "").lower() not in eligible_statuses:
-        return False
+        return None
 
     message = {
         REASON_OWNED_READY: f"Supervisor auto-started {task_id} after successful dispatch.",
         REASON_OWNED_FINALIZE: f"Supervisor resumed {task_id} for finalize after successful dispatch.",
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
     }[reason]
-    env["AI_NAME"] = target_agent
-    # The status command runs as the dispatched agent, so ai_status.py treats it as an
-    # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
-    # the no-lease branch and raised "status command lease required for auto worker",
-    # which failed every dispatch sync. Both call sites already hold the worker run id.
-    _apply_dispatch_status_worker_binding(
-        config,
-        env,
-        run_id=lease_run_id,
-        task_id=task_id,
-        workspace_path=workspace_binding or None,
-    )
-    result = subprocess.run(
-        [sys.executable, str(script), command_name, task_id, message],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    return {
+        "actor": target_agent,
+        "command": command_name,
+        "dispatch_reason": reason,
+        "expected_statuses": sorted(eligible_statuses),
+        "message": message,
+        "run_id": lease_run_id,
+        "task_id": task_id,
+        "workspace_path": workspace_binding,
+    }
+
+
+def sync_dispatched_task_status_batch(
+    config: dict[str, Any],
+    deferred: list[tuple[dict[str, Any], str | None, str | None]],
+) -> bool:
+    """Commit lease-bound dispatch mutations through one ai-status process.
+
+    Slow payload rendering and subprocess work happen after runtime admission is
+    released.  ``ai_status.py`` revalidates every worker lease against one
+    runtime snapshot, applies every owner/status CAS to one authoritative task
+    snapshot, and publishes one activity outbox transaction.  One invalid row
+    aborts the whole canonical batch.
+    """
+
+    if not deferred:
+        return False
+    try:
+        status = load_status(config)
+    except (KeyError, OSError, RuntimeError):
+        return False
+    task_map = task_index_from_status(config, status)
+    mutations: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    for event, run_id, workspace_path in deferred:
+        mutation = prepare_dispatched_task_status_mutation(
+            config,
+            event,
+            run_id=run_id,
+            workspace_path=workspace_path,
+            task_map=task_map,
+        )
+        if mutation is None:
+            continue
+        task_id = str(mutation["task_id"])
+        if task_id in seen_task_ids:
+            continue
+        seen_task_ids.add(task_id)
+        mutation.pop("dispatch_reason", None)
+        mutations.append(mutation)
+    if not mutations:
+        return False
+
+    script, env = status_command_subprocess_context(config)
+    if not script.exists():
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_batch_sync_failed",
+                "mutation_count": len(mutations),
+                "message": f"Dispatch batch status script not found at {script}.",
+            },
+        )
+        return False
+
+    payload_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="pantheon-dispatch-status-batch-",
+            suffix=".json",
+            delete=False,
+        ) as handle:
+            json.dump(
+                {"schema_version": 1, "mutations": mutations},
+                handle,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            payload_path = Path(handle.name)
+
+        for env_name in DISPATCH_STATUS_WORKER_ENV_NAMES:
+            env.pop(env_name, None)
+        env["AI_NAME"] = "Human/Ops"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "supervisor-dispatch-batch",
+                str(payload_path),
+            ],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    finally:
+        if payload_path is not None:
+            try:
+                payload_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    task_ids = [str(mutation["task_id"]) for mutation in mutations]
     if result.returncode == 0:
         write_activity_log(
             config,
             {
-                "type": "task_dispatch_synced",
-                "task_id": task_id,
-                "target_agent": target_agent,
-                "dispatch_reason": reason,
-                "message": message,
+                "type": "task_dispatch_batch_synced",
+                "mutation_count": len(mutations),
+                "task_ids": task_ids,
+                "message": (
+                    f"Committed {len(mutations)} dispatch status mutations in one "
+                    "authoritative snapshot transaction."
+                ),
             },
         )
         return True
@@ -9627,79 +10278,1152 @@ def sync_dispatched_task_status(
     write_activity_log(
         config,
         {
-            "type": "task_dispatch_sync_failed",
-            "task_id": task_id,
-            "target_agent": target_agent,
-            "dispatch_reason": reason,
-            "message": result.stderr.strip() or result.stdout.strip() or "Dispatch status sync failed.",
+            "type": "task_dispatch_batch_sync_failed",
+            "mutation_count": len(mutations),
+            "task_ids": task_ids,
+            "message": (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or "Dispatch status batch failed."
+            )[:1000],
         },
     )
     return False
 
 
-def _run_with_deferred_dispatch_status_syncs(
+def _confirm_deferred_worker_terminations(
+    deferred_terminations: list[tuple[int, int]],
+) -> None:
+    """Confirm exact process generations only after runtime admission is free."""
+
+    for pid, expected_start_ticks in deferred_terminations:
+        if worker_pid_start_ticks(pid) != expected_start_ticks:
+            continue
+
+        def deferred_worker_is_alive(candidate_pid: int) -> bool:
+            if not pid_is_alive(candidate_pid):
+                return False
+            return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
+
+        rewrite_worker_lifecycle.confirm_kill(
+            pid,
+            is_alive=deferred_worker_is_alive,
+            send_signal=os.kill,
+            sleep=time.sleep,
+            monotonic=time.monotonic,
+        )
+
+
+def _flush_deferred_runtime_side_effects(
     config: dict[str, Any],
-    operation: Any,
+    *,
+    dispatch_status_syncs: list[tuple[dict[str, Any], str | None, str | None]],
+    worker_terminations: list[tuple[int, int]],
+    auto_commit_archives: list[dict[str, Any]],
+    activity_events: list[tuple[dict[str, Any], dict[str, Any]]],
 ) -> bool:
-    """Run one supervisor mutation, then sync task status after its lock is free.
+    """Run all subprocess/audit side effects after the short state commit."""
 
-    The status command validates the worker lease under a shared runtime lock. Running
-    it synchronously from ``process_queue`` while the supervisor owns the exclusive
-    runtime lock deadlocks the parent and child. Queueing only for the duration of the
-    locked operation preserves that validation while keeping subprocess work outside
-    the critical section.
-    """
-
-    deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
-    deferred_terminations: list[tuple[int, int]] = []
-    deferred_archives: list[dict[str, Any]] = []
-    token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
-    termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
-    archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
-    try:
-        with runtime_state_lock(config, shared=False, nonblocking=False):
-            changed = bool(operation())
-    finally:
-        _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
-        _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
-        _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
-        # Keep confirmation outside runtime admission. The start-time token is
-        # checked before the first signal and throughout confirmation, so PID
-        # reuse can only turn the request into a fail-closed no-op.
-        for pid, expected_start_ticks in deferred_terminations:
-            if worker_pid_start_ticks(pid) != expected_start_ticks:
-                continue
-
-            def deferred_worker_is_alive(candidate_pid: int) -> bool:
-                if not pid_is_alive(candidate_pid):
-                    return False
-                return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
-
-            rewrite_worker_lifecycle.confirm_kill(
-                pid,
-                is_alive=deferred_worker_is_alive,
-                send_signal=os.kill,
-                sleep=time.sleep,
-                monotonic=time.monotonic,
-            )
+    _confirm_deferred_worker_terminations(worker_terminations)
+    for activity_config, activity_event in activity_events:
+        _write_activity_log_immediate(activity_config, activity_event)
+    _record_cycle_batch_count("runtime_activity_events", len(activity_events))
 
     archive_changed = False
-    for action in deferred_archives:
+    for action in auto_commit_archives:
         result = execute_auto_commit_archive(config, action)
         archive_changed = (
             apply_auto_commit_archive_result(config, action, result)
             or archive_changed
         )
 
-    sync_changed = False
-    for event, run_id, workspace_path in deferred:
-        sync_changed = sync_dispatched_task_status(
+    sync_changed = sync_dispatched_task_status_batch(
+        config,
+        dispatch_status_syncs,
+    )
+    return archive_changed or sync_changed
+
+
+def _runtime_state_cas_digest(state: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        state,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _runtime_phase_reservation_record(
+    state: Mapping[str, Any],
+    phase_name: str,
+    reservation_token: str,
+) -> dict[str, Any] | None:
+    supervisor_state = state.get("supervisor")
+    if not isinstance(supervisor_state, Mapping):
+        return None
+    reservations = supervisor_state.get("runtime_phase_reservations")
+    if not isinstance(reservations, Mapping):
+        return None
+    reservation = reservations.get(phase_name)
+    if not isinstance(reservation, dict):
+        return None
+    if str(reservation.get("token") or "") != reservation_token:
+        return None
+    return reservation
+
+
+def _persist_runtime_phase_launch_intent(
+    config: dict[str, Any],
+    scratch: dict[str, Any],
+    *,
+    request: DeliveryRequest,
+    queue_event_id: str | None,
+    attempt_count: int,
+    event_id_for_log: str | None,
+    parent_run_id: str | None,
+    adapter_name: str,
+    activity_type: str,
+    activity_message: str | None,
+) -> None:
+    """Publish an exact-token intent before an adapter may create a process."""
+
+    context = _RUNTIME_PHASE_CONTEXT.get()
+    if not isinstance(context, dict):
+        return
+    phase_name = str(context.get("phase_name") or "")
+    reservation_token = str(context.get("reservation_token") or "")
+    expected_digest = str(context.get("expected_digest") or "")
+    if not phase_name or not reservation_token or not expected_digest:
+        raise RuntimeError("reserved runtime phase launch context is incomplete")
+
+    prepared_at = utc_now()
+    prepared_epoch_seconds = time.time()
+    prepared_boottime_ticks = _runtime_launch_prepared_boottime_ticks()
+    intent = {
+        "schema_version": 1,
+        "status": "prepared",
+        "prepared_at": prepared_at,
+        "prepared_epoch_seconds": prepared_epoch_seconds,
+        "task_id": request.task_id,
+        "queue_event_id": queue_event_id,
+        "event_id_for_log": event_id_for_log,
+        "agent_id": request.agent_id,
+        "provider": request.provider,
+        "attempt_count": max(1, int(attempt_count)),
+        "parent_run_id": parent_run_id,
+        "adapter_name": adapter_name,
+        "activity_type": activity_type,
+        "activity_message": activity_message,
+        "request_snapshot": request_snapshot(request),
+        "event": {
+            "event_id": queue_event_id,
+            "task_id": request.task_id,
+            "target_agent": request.agent_id,
+            "target_display_name": request.metadata.get("target_display_name")
+            or display_name_for(config, request.agent_id),
+            "provider": request.provider,
+            "reason": request.reason,
+        },
+    }
+    if prepared_boottime_ticks is not None:
+        # Linux process start ticks and CLOCK_BOOTTIME share the same boot
+        # epoch.  Persisting the pre-spawn boundary avoids the one-second
+        # precision loss in /proc/stat's wall-clock ``btime`` value.
+        intent["prepared_boottime_ticks"] = prepared_boottime_ticks
+
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if reservation is None or _runtime_state_cas_digest(current) != expected_digest:
+            raise RuntimeError(
+                "runtime phase changed before durable worker launch intent"
+            )
+        reservation["launch_intent"] = deepcopy(intent)
+        save_runtime_state(config, current)
+        context["expected_digest"] = _runtime_state_cas_digest(current)
+
+    scratch_reservation = _runtime_phase_reservation_record(
+        scratch,
+        phase_name,
+        reservation_token,
+    )
+    if scratch_reservation is None:
+        raise RuntimeError("detached runtime phase lost its worker launch reservation")
+    scratch_reservation["launch_intent"] = deepcopy(intent)
+
+
+def _persist_runtime_phase_launch_receipt(
+    config: dict[str, Any],
+    scratch: dict[str, Any],
+    worker: Mapping[str, Any],
+) -> None:
+    """Durably bind a launched worker to its reservation before phase CAS."""
+
+    context = _RUNTIME_PHASE_CONTEXT.get()
+    if not isinstance(context, dict):
+        return
+    phase_name = str(context.get("phase_name") or "")
+    reservation_token = str(context.get("reservation_token") or "")
+    expected_digest = str(context.get("expected_digest") or "")
+    receipt = {
+        "schema_version": 1,
+        "recorded_at": utc_now(),
+        "worker": deepcopy(dict(worker)),
+    }
+    conflict = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if reservation is None or _runtime_state_cas_digest(current) != expected_digest:
+            conflict = True
+        else:
+            reservation["launch_receipt"] = deepcopy(receipt)
+            save_runtime_state(config, current)
+            context["expected_digest"] = _runtime_state_cas_digest(current)
+
+    if conflict:
+        # The detached snapshot no longer has commit authority. Termination is
+        # deliberately outside runtime admission and is generation-bound.
+        terminate_worker_process_generation(worker)
+        raise RuntimeError(
+            "runtime phase changed before durable worker launch receipt"
+        )
+
+    scratch_reservation = _runtime_phase_reservation_record(
+        scratch,
+        phase_name,
+        reservation_token,
+    )
+    if scratch_reservation is None:
+        terminate_worker_process_generation(worker)
+        raise RuntimeError("detached runtime phase lost its worker launch reservation")
+    scratch_reservation["launch_receipt"] = deepcopy(receipt)
+
+
+def _runtime_launch_marker_candidates(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+) -> list[tuple[dict[str, Any], Path]]:
+    """Find markers whose immutable start time proves post-intent order."""
+
+    task_id = str(intent.get("task_id") or "")
+    agent_ids = {
+        normalize_agent_id(str(intent.get("agent_id") or "")),
+        normalize_agent_id(str(intent.get("provider") or "")),
+        normalize_agent_id(str(intent.get("adapter_name") or "")),
+    }
+    agent_ids.discard("")
+    prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
+    if prepared_epoch is None:
+        return []
+    status_dir = worker_runtime_paths(config, "launch-recovery-probe")[
+        "status_path"
+    ].parent
+    if not status_dir.is_dir():
+        return []
+
+    candidates: list[tuple[dict[str, Any], Path]] = []
+    for path in sorted(status_dir.glob("*.json")):
+        try:
+            if path.is_symlink():
+                continue
+        except OSError:
+            continue
+        marker = _load_runtime_marker(path)
+        if not isinstance(marker, dict):
+            continue
+        if str(marker.get("task_id") or "") != task_id:
+            continue
+        marker_agent = normalize_agent_id(str(marker.get("agent") or ""))
+        if agent_ids and marker_agent and marker_agent not in agent_ids:
+            continue
+        if not str(marker.get("run_id") or ""):
+            continue
+        marker_started_at = _parse_iso_utc(str(marker.get("started_at") or ""))
+        if marker_started_at is None:
+            continue
+        if marker_started_at.tzinfo is None:
+            marker_started_at = marker_started_at.replace(tzinfo=timezone.utc)
+        # worker_runner timestamps have one-second resolution.  A marker in
+        # the same wall-clock second as a fractional intent boundary, or equal
+        # to a legacy second-resolution boundary, cannot prove strictly
+        # post-intent order and must fail closed.  A matching live process may
+        # still be recovered through the boot-tick proof below.
+        if marker_started_at.timestamp() <= prepared_epoch:
+            continue
+        candidates.append((marker, path))
+
+    return candidates
+
+
+def _runtime_launch_marker_candidate(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+) -> tuple[dict[str, Any], Path] | None:
+    """Compatibility helper returning only unambiguous marker evidence."""
+
+    candidates = _runtime_launch_marker_candidates(config, intent)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _runtime_launch_marker_is_terminal_or_dead(
+    marker: Mapping[str, Any],
+) -> bool:
+    """Return whether marker-only recovery cannot claim a live generation."""
+
+    marker_status = str(marker.get("status") or "").lower()
+    if marker_status in {"completed", "failed", "terminated", "cancelled"}:
+        return True
+    raw_pid = marker.get("pid")
+    pid = raw_pid if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) else None
+    return not pid_is_alive(pid)
+
+
+def _runtime_launch_intent_stale_seconds(config: Mapping[str, Any]) -> float:
+    supervisor_settings = config.get("supervisor")
+    settings = supervisor_settings if isinstance(supervisor_settings, Mapping) else {}
+    raw = settings.get(
+        "runtime_phase_launch_intent_stale_seconds",
+        RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS,
+    )
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        seconds = RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS
+    if not math.isfinite(seconds):
+        seconds = RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS
+    return min(
+        RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS,
+        max(1.0, seconds),
+    )
+
+
+def _runtime_launch_prepared_epoch_seconds(
+    intent: Mapping[str, Any],
+) -> float | None:
+    try:
+        prepared_epoch = float(intent.get("prepared_epoch_seconds") or 0.0)
+    except (TypeError, ValueError):
+        prepared_epoch = 0.0
+    if prepared_epoch > 0 and math.isfinite(prepared_epoch):
+        return prepared_epoch
+    prepared_at = _parse_iso_utc(str(intent.get("prepared_at") or ""))
+    if prepared_at is None:
+        return None
+    if prepared_at.tzinfo is None:
+        prepared_at = prepared_at.replace(tzinfo=timezone.utc)
+    return prepared_at.timestamp()
+
+
+def _linux_clock_ticks_per_second() -> float | None:
+    try:
+        ticks = float(os.sysconf("SC_CLK_TCK"))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    return ticks if ticks > 0 and math.isfinite(ticks) else None
+
+
+def _runtime_launch_prepared_boottime_ticks() -> int | None:
+    """Return the current Linux boot-relative tick boundary when available."""
+
+    ticks_per_second = _linux_clock_ticks_per_second()
+    clock_boottime = getattr(time, "CLOCK_BOOTTIME", None)
+    if ticks_per_second is None or clock_boottime is None:
+        return None
+    try:
+        boottime_seconds = float(time.clock_gettime(clock_boottime))
+    except (OSError, TypeError, ValueError):
+        return None
+    if boottime_seconds < 0 or not math.isfinite(boottime_seconds):
+        return None
+    return math.floor(boottime_seconds * ticks_per_second)
+
+
+def _proc_boot_epoch_seconds(proc_root: Path) -> float | None:
+    """Read Linux's boot wall-clock epoch from one procfs root."""
+
+    try:
+        lines = (proc_root / "stat").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        ).splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split()
+        if len(fields) != 2 or fields[0] != "btime":
+            continue
+        try:
+            boot_epoch = float(fields[1])
+        except (TypeError, ValueError):
+            return None
+        return boot_epoch if boot_epoch > 0 and math.isfinite(boot_epoch) else None
+    return None
+
+
+def _proc_process_started_epoch_seconds(
+    proc_root: Path,
+    pid_start_ticks: int,
+) -> float | None:
+    boot_epoch = _proc_boot_epoch_seconds(proc_root)
+    ticks_per_second = _linux_clock_ticks_per_second()
+    if boot_epoch is None or ticks_per_second is None or pid_start_ticks < 0:
+        return None
+    return boot_epoch + (pid_start_ticks / ticks_per_second)
+
+
+def _runtime_launch_intent_is_stale(
+    config: Mapping[str, Any],
+    intent: Mapping[str, Any],
+) -> bool:
+    prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
+    if prepared_epoch is None:
+        return True
+    return max(0.0, time.time() - prepared_epoch) >= _runtime_launch_intent_stale_seconds(config)
+
+
+def _proc_worker_runner_launch_marker(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+    entry: Path,
+) -> tuple[dict[str, Any], Path] | None:
+    """Return exact task/agent launch evidence for one live worker wrapper.
+
+    Worker prompts are not an identity boundary.  The adapter binds the exact
+    task, logical agent/provider, and run id in the wrapper environment before
+    ``Popen``.  Reading those fields together with Linux PID start ticks gives
+    recovery process-generation evidence even when the runner has not yet
+    published its first atomic JSON marker.
+    """
+
+    raw_cmdline = (entry / "cmdline").read_bytes()
+    if not raw_cmdline or b"worker_runner.py" not in raw_cmdline:
+        return None
+    raw_environ = (entry / "environ").read_bytes()
+    env: dict[str, str] = {}
+    for item in raw_environ.split(b"\0"):
+        if b"=" not in item:
+            continue
+        key, value = item.split(b"=", 1)
+        env[key.decode("utf-8", errors="ignore")] = value.decode(
+            "utf-8",
+            errors="ignore",
+        )
+
+    task_id = str(intent.get("task_id") or "")
+    if not task_id or env.get("ORCH_TASK_ID") != task_id:
+        return None
+    intent_agents = {
+        normalize_agent_id(str(intent.get("agent_id") or "")),
+        normalize_agent_id(str(intent.get("provider") or "")),
+    }
+    intent_agents.discard("")
+    process_agents = {
+        normalize_agent_id(env.get("ORCH_AGENT_ID", "")),
+        normalize_agent_id(env.get("ORCH_PROVIDER", "")),
+    }
+    process_agents.discard("")
+    if not process_agents or (
+        intent_agents and intent_agents.isdisjoint(process_agents)
+    ):
+        return None
+
+    try:
+        pid = int(entry.name)
+    except ValueError:
+        return None
+    pid_start_ticks = worker_pid_start_ticks(pid, proc_root=entry.parent)
+    if pid_start_ticks is None:
+        raise RuntimeError("exact worker-runner PID generation is unreadable")
+    process_started_epoch = _proc_process_started_epoch_seconds(
+        entry.parent,
+        pid_start_ticks,
+    )
+    prepared_epoch = _runtime_launch_prepared_epoch_seconds(intent)
+    if process_started_epoch is None or prepared_epoch is None:
+        raise RuntimeError("worker-runner launch epoch is unreadable")
+
+    raw_prepared_boottime_ticks = intent.get("prepared_boottime_ticks")
+    if raw_prepared_boottime_ticks is not None:
+        try:
+            prepared_boottime_ticks = int(raw_prepared_boottime_ticks)
+        except (TypeError, ValueError):
+            raise RuntimeError("worker launch boot-tick boundary is invalid")
+        if prepared_boottime_ticks < 0:
+            raise RuntimeError("worker launch boot-tick boundary is invalid")
+        if pid_start_ticks < prepared_boottime_ticks:
+            return None
+
+    # ``btime`` is intentionally whole-second procfs data, so its reconstructed
+    # wall epoch can lead real time by less than one second.  The persisted
+    # boot-tick boundary above provides the exact check for newly written
+    # intents; this fallback keeps older intents recoverable while rejecting
+    # process generations that are definitively earlier than the intent.
+    if process_started_epoch + 1.0 < prepared_epoch:
+        return None
+    argv = [
+        value.decode("utf-8", errors="ignore")
+        for value in raw_cmdline.split(b"\0")
+        if value
+    ]
+    run_id = str(env.get("ORCH_RUN_ID") or "")
+    if not run_id and "--run-id" in argv:
+        index = argv.index("--run-id") + 1
+        if index < len(argv):
+            run_id = argv[index]
+    if not run_id:
+        raise RuntimeError("exact worker-runner run id is unreadable")
+    status_path = worker_runtime_paths(config, run_id)["status_path"]
+    return (
+        {
+            "run_id": run_id,
+            "agent": env.get("ORCH_AGENT_ID") or env.get("ORCH_PROVIDER"),
+            "task_id": task_id,
+            "status": "running",
+            "pid": pid,
+            "pid_start_ticks": pid_start_ticks,
+            "started_at": _isoformat_utc(
+                datetime.fromtimestamp(process_started_epoch, tz=timezone.utc)
+            ),
+            "process_started_epoch_seconds": process_started_epoch,
+            "command": [],
+            "launch_recovered_from": "proc_environ",
+        },
+        status_path,
+    )
+
+
+def _runtime_launch_process_candidates(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+    *,
+    proc_root: Path | None = None,
+) -> tuple[list[tuple[dict[str, Any], Path]], bool]:
+    """Return exact live launch processes and whether the scan was conclusive."""
+
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return [], False
+    candidates: list[tuple[dict[str, Any], Path]] = []
+    conclusive = True
+    for entry in entries:
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            candidate = _proc_worker_runner_launch_marker(config, intent, entry)
+        except PermissionError:
+            # Workers are spawned under the supervisor uid. An unreadable
+            # same-uid process might therefore be the missing wrapper; a
+            # different-uid process cannot be this launch generation.
+            try:
+                same_uid = entry.stat().st_uid == os.geteuid()
+            except OSError:
+                same_uid = False
+            if same_uid:
+                conclusive = False
+            continue
+        except RuntimeError:
+            conclusive = False
+            continue
+        except OSError:
+            # A disappearing PID is proof that it is no longer live. Other
+            # unreadable same-uid processes fail closed.
+            try:
+                same_uid = entry.exists() and entry.stat().st_uid == os.geteuid()
+            except OSError:
+                same_uid = False
+            if same_uid:
+                conclusive = False
+            continue
+        if candidate is not None:
+            candidates.append(candidate)
+    unique: dict[tuple[str, int], tuple[dict[str, Any], Path]] = {}
+    for marker, path in candidates:
+        unique[(str(marker.get("run_id") or ""), int(marker.get("pid") or 0))] = (
+            marker,
+            path,
+        )
+    return list(unique.values()), conclusive
+
+
+def _worker_record_from_runtime_launch_marker(
+    config: dict[str, Any],
+    intent: Mapping[str, Any],
+    marker: Mapping[str, Any],
+    status_path: Path,
+) -> dict[str, Any] | None:
+    snapshot = intent.get("request_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    run_id = str(marker.get("run_id") or "")
+    task_id = str(intent.get("task_id") or snapshot.get("task_id") or "")
+    queue_event_id = str(intent.get("queue_event_id") or "") or None
+    raw_pid = marker.get("pid")
+    pid = raw_pid if isinstance(raw_pid, int) and not isinstance(raw_pid, bool) else None
+    pid_start_ticks = worker_pid_start_ticks(pid) if pid_is_alive(pid) else None
+    if pid_start_ticks is None:
+        pid = None
+    marker_status = str(marker.get("status") or "").lower()
+    if marker_status == "completed":
+        worker_status = "completed"
+    elif marker_status in {"failed", "terminated", "cancelled"}:
+        worker_status = "failed"
+    elif pid is not None:
+        worker_status = "running"
+    else:
+        worker_status = "failed"
+    started_at = str(marker.get("started_at") or intent.get("prepared_at") or utc_now())
+    started_dt = _parse_iso_utc(started_at) or datetime.now(timezone.utc)
+    metadata = snapshot.get("metadata")
+    metadata = deepcopy(metadata) if isinstance(metadata, dict) else {}
+    runtime_paths = worker_runtime_paths(config, run_id)
+    metadata.update(
+        {
+            "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+            "runner_status_path": str(status_path),
+            "launch_recovered": True,
+        }
+    )
+    provider = str(intent.get("provider") or snapshot.get("provider") or "")
+    agent_id = str(intent.get("agent_id") or snapshot.get("agent_id") or provider)
+    process_generation = (
+        worker_process_generation_id(
+            task_id=task_id,
+            worker_run_id=run_id,
+            queue_event_id=str(queue_event_id or ""),
+            pid=pid,
+            pid_start_ticks=pid_start_ticks,
+        )
+        if task_id and queue_event_id and pid is not None and pid_start_ticks is not None
+        else None
+    )
+    return {
+        "run_id": run_id,
+        "provider": provider,
+        "agent_id": agent_id,
+        "logical_agent_id": str(metadata.get("logical_agent_id") or agent_id),
+        "dispatch_slot_id": metadata.get("dispatch_slot_id"),
+        "dispatch_slot": metadata.get("dispatch_slot"),
+        "account": provider_dispatch_group_id(config, provider),
+        "quota_group": provider_dispatch_group_id(config, provider),
+        "task_id": task_id,
+        "session_id": None,
+        "mode": snapshot.get("delivery_mode"),
+        "status": worker_status,
+        "last_event_at": utc_now(),
+        "last_heartbeat_at": marker.get("last_heartbeat_at"),
+        "lease_acquired_at": _isoformat_utc(started_dt),
+        "lease_expires_at": worker_lease_expiry(config, started_dt),
+        "deferred_action": None,
+        "resume_token": None,
+        "pr_url": None,
+        "session_url": None,
+        "attempt_count": max(1, int(intent.get("attempt_count") or 1)),
+        "queue_event_id": queue_event_id,
+        "command": deepcopy(marker.get("command") or []),
+        "log_path": None,
+        "payload_path": None,
+        "workspace_mode": metadata.get("workspace_mode"),
+        "workspace_path": metadata.get("workspace_path"),
+        "workspace_branch": metadata.get("workspace_branch"),
+        "work_progress_snapshot": {},
+        "last_commit_progress_at": None,
+        "last_work_progress_at": None,
+        "commit_progress_count": 0,
+        "status_root": metadata.get("status_root"),
+        "status_command_runtime": metadata.get("status_command_runtime"),
+        "pid": pid,
+        "pid_start_ticks": pid_start_ticks,
+        "process_generation": process_generation,
+        "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+        "runner_status_path": str(status_path),
+        "notes": "Recovered from a durable pre-launch reservation intent.",
+        "metadata": metadata,
+        "request_snapshot": deepcopy(snapshot),
+        "parent_run_id": intent.get("parent_run_id"),
+        "retry_count": max(0, int(intent.get("attempt_count") or 1) - 1),
+        "next_retry_at": None,
+        "last_error": (
+            None
+            if worker_status != "failed"
+            else "Reserved launch marker was terminal or its exact process generation was no longer live."
+        ),
+    }
+
+
+def _clear_stale_runtime_phase_launch_intent(
+    config: dict[str, Any],
+    *,
+    phase_name: str,
+    reservation_token: str,
+    intent: Mapping[str, Any],
+    marker_count: int,
+) -> bool:
+    """Clear an unchanged stale intent after a conclusive zero-process scan."""
+
+    cleared = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if (
+            reservation is None
+            or isinstance(reservation.get("launch_receipt"), Mapping)
+            or reservation.get("launch_intent") != dict(intent)
+        ):
+            return False
+        reservations = current.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservations.pop(phase_name, None)
+        if not reservations:
+            current["supervisor"].pop("runtime_phase_reservations", None)
+        save_runtime_state(config, current)
+        cleared = True
+
+    if cleared:
+        write_activity_log(
             config,
-            event,
-            run_id=run_id,
-            workspace_path=workspace_path,
-        ) or sync_changed
-    return changed or archive_changed or sync_changed
+            {
+                "type": "runtime_phase_launch_intent_expired",
+                "phase": phase_name,
+                "task_id": intent.get("task_id"),
+                "queue_event_id": intent.get("queue_event_id"),
+                "marker_count": max(0, int(marker_count)),
+                "message": (
+                    "Cleared a stale reserved-phase launch intent after an exact "
+                    "task/agent /proc scan proved that no worker-runner process "
+                    "remained live."
+                ),
+            },
+        )
+    return cleared
+
+
+def _recover_runtime_phase_reservation(
+    config: dict[str, Any],
+    phase_name: str,
+) -> bool | None:
+    """Adopt a launched worker before allowing a reserved phase to repeat.
+
+    ``None`` means there is no recoverable prior reservation and the caller may
+    start a new phase. ``False`` retains an unresolved launch intent fail
+    closed. ``True`` means the exact worker/queue lease was adopted.
+    """
+
+    cleared_legacy = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservations = current.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservation = reservations.get(phase_name)
+        if not isinstance(reservation, dict):
+            return None
+        reservation_snapshot = deepcopy(reservation)
+        intent = reservation_snapshot.get("launch_intent")
+        if not isinstance(intent, Mapping):
+            # Older/non-launch reservations have no external side effect to
+            # adopt. A singleton restart may safely discard that stale token.
+            reservations.pop(phase_name, None)
+            if not reservations:
+                current["supervisor"].pop("runtime_phase_reservations", None)
+            save_runtime_state(config, current)
+            cleared_legacy = True
+
+    if cleared_legacy:
+        return None
+
+    receipt = reservation_snapshot.get("launch_receipt")
+    receipt_worker = receipt.get("worker") if isinstance(receipt, Mapping) else None
+    worker = deepcopy(receipt_worker) if isinstance(receipt_worker, Mapping) else None
+    if worker is None:
+        marker_candidates = _runtime_launch_marker_candidates(config, intent)
+        process_candidates, process_scan_conclusive = (
+            _runtime_launch_process_candidates(config, intent)
+        )
+        if not process_scan_conclusive:
+            return False
+
+        candidate: tuple[dict[str, Any], Path] | None = None
+        if len(process_candidates) == 1:
+            process_marker, process_status_path = process_candidates[0]
+            process_run_id = str(process_marker.get("run_id") or "")
+            matching_markers = [
+                item
+                for item in marker_candidates
+                if str(item[0].get("run_id") or "") == process_run_id
+            ]
+            candidate = (
+                matching_markers[0]
+                if len(matching_markers) == 1
+                else (process_marker, process_status_path)
+            )
+        elif len(process_candidates) > 1:
+            # More than one exact task/agent worker wrapper is real ambiguity,
+            # not merely stale marker debris. Preserve the reservation until
+            # operators or process exit reduce it to one generation.
+            return False
+        elif len(marker_candidates) == 1 and _runtime_launch_marker_is_terminal_or_dead(
+            marker_candidates[0][0]
+        ):
+            # A unique post-intent terminal/dead marker is sufficient to
+            # recover the terminal outcome. A marker that still claims a live
+            # worker must match an exact post-intent /proc generation above;
+            # uniqueness alone never authorizes a new queue lease binding.
+            candidate = marker_candidates[0]
+        elif not _runtime_launch_intent_is_stale(config, intent):
+            # The runner may not have written its first marker yet. The bounded
+            # grace avoids a duplicate launch during ordinary spawn latency.
+            return False
+        else:
+            reservation_token = str(reservation_snapshot.get("token") or "")
+            if not _clear_stale_runtime_phase_launch_intent(
+                config,
+                phase_name=phase_name,
+                reservation_token=reservation_token,
+                intent=intent,
+                marker_count=len(marker_candidates),
+            ):
+                return False
+            return None
+
+        if candidate is None:
+            return False
+        marker, status_path = candidate
+        worker = _worker_record_from_runtime_launch_marker(
+            config,
+            intent,
+            marker,
+            status_path,
+        )
+        if worker is None:
+            return False
+    else:
+        update_worker_runtime_markers(worker)
+
+    run_id = str(worker.get("run_id") or "")
+    event_id = str(worker.get("queue_event_id") or intent.get("queue_event_id") or "")
+    if not run_id or not event_id:
+        return False
+
+    reservation_token = str(reservation_snapshot.get("token") or "")
+    adopted = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        current_reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if current_reservation is None:
+            return False
+        current.setdefault("workers", {}).setdefault(run_id, deepcopy(worker))
+        persisted_worker = current["workers"][run_id]
+        queue_record = queue_status(current, event_id)
+        worker_status = str(persisted_worker.get("status") or "running")
+        if worker_status in {"manual_pending", "waiting_approval"}:
+            queue_record["status"] = "manual_pending"
+        elif worker_status == "completed":
+            queue_record["status"] = "completed"
+        elif worker_status in {"failed", "terminated", "cancelled"}:
+            queue_record["status"] = "failed"
+        else:
+            queue_record["status"] = "started"
+        queue_record["run_id"] = run_id
+        queue_record["lease_owner"] = run_id
+        queue_record["lease_acquired_at"] = persisted_worker.get("lease_acquired_at") or utc_now()
+        queue_record["lease_expires_at"] = persisted_worker.get("lease_expires_at") or queue_lease_expiry(config)
+        queue_record["processed_at"] = queue_record.get("processed_at") or utc_now()
+        queue_record["attempt_count"] = max(
+            int(queue_record.get("attempt_count", 0) or 0),
+            int(intent.get("attempt_count", 1) or 1),
+        )
+        record_worker_runtime_measurement(
+            config,
+            current,
+            "worker_launch_recovered",
+            {"workers_started": 1, "queue_leases_started": 1},
+            details={
+                "worker_run_id": run_id,
+                "queue_event_id": event_id,
+                "task_id": persisted_worker.get("task_id"),
+                "agent_id": persisted_worker.get("agent_id"),
+                "provider": persisted_worker.get("provider"),
+            },
+            emit_activity=False,
+        )
+        reservations = current.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        reservations.pop(phase_name, None)
+        if not reservations:
+            current["supervisor"].pop("runtime_phase_reservations", None)
+        save_runtime_state(config, current)
+        adopted = True
+
+    if adopted:
+        write_activity_log(
+            config,
+            {
+                "type": "worker_launch_recovered",
+                "task_id": worker.get("task_id"),
+                "target_agent": display_name_for(config, str(worker.get("agent_id") or "")),
+                "provider": worker.get("provider"),
+                "message": (
+                    "Adopted the exact worker process/queue lease from a durable "
+                    "reserved-phase launch intent after supervisor interruption."
+                ),
+                "queue_event_id": event_id,
+                "worker_run_id": run_id,
+                "pid": worker.get("pid"),
+                "pid_start_ticks": worker.get("pid_start_ticks"),
+                "process_generation": worker.get("process_generation"),
+            },
+        )
+        event = intent.get("event")
+        if isinstance(event, dict):
+            sync_dispatched_task_status(
+                config,
+                event,
+                run_id=run_id,
+                workspace_path=worker.get("workspace_path")
+                or config_path(config, "status_file").parent,
+            )
+    return adopted
+
+
+def _terminate_processes_started_by_failed_phase(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> None:
+    """Fail closed if a slow phase launched a process but lost its state CAS."""
+
+    prior_workers = before.get("workers") if isinstance(before, Mapping) else {}
+    prior_workers = prior_workers if isinstance(prior_workers, Mapping) else {}
+    next_workers = after.get("workers") if isinstance(after, Mapping) else {}
+    next_workers = next_workers if isinstance(next_workers, Mapping) else {}
+    for run_id, worker in next_workers.items():
+        if not isinstance(worker, Mapping):
+            continue
+        prior = prior_workers.get(run_id)
+        prior_generation = (
+            str(prior.get("process_generation") or "")
+            if isinstance(prior, Mapping)
+            else ""
+        )
+        next_generation = str(worker.get("process_generation") or "")
+        if next_generation and next_generation != prior_generation:
+            terminate_worker_process_generation(worker)
+
+
+def _run_reserved_runtime_phase(
+    config: dict[str, Any],
+    phase_name: str,
+    operation: Any,
+) -> bool:
+    """Run slow runtime I/O between a token reservation and whole-state CAS.
+
+    The singleton supervisor first publishes a bounded reservation in a short
+    exclusive transaction. Slow process, worktree, git, marker, and prune I/O
+    then mutates a detached snapshot with activity/status side effects deferred.
+    A second short transaction commits that snapshot only when the reservation
+    and every runtime byte still match. A concurrent writer therefore wins; a
+    process launched by the losing phase is terminated by exact PID generation.
+    """
+
+    reservation_token = new_runtime_id(f"phase-{phase_name}")
+    existing_reservation = False
+    with _measured_runtime_state_lock(config):
+        baseline = load_runtime_state(config)
+        reservations = baseline.setdefault("supervisor", {}).setdefault(
+            "runtime_phase_reservations",
+            {},
+        )
+        existing_reservation = isinstance(reservations.get(phase_name), dict)
+        if not existing_reservation:
+            reserved = deepcopy(baseline)
+            reserved_reservations = reserved.setdefault("supervisor", {}).setdefault(
+                "runtime_phase_reservations",
+                {},
+            )
+            reserved_reservations[phase_name] = {
+                "token": reservation_token,
+                "reserved_at": utc_now(),
+            }
+            save_runtime_state(config, reserved)
+    if existing_reservation:
+        recovery_result = _recover_runtime_phase_reservation(config, phase_name)
+        if recovery_result is not None:
+            return recovery_result
+        # Recovery proved that the previous token had no external launch to
+        # adopt. Reserve and run a fresh phase now so quota/auth fallback or
+        # reassignment is not delayed for another supervisor cadence.
+        return _run_reserved_runtime_phase(config, phase_name, operation)
+
+    reserved_digest = _runtime_state_cas_digest(reserved)
+    scratch = deepcopy(reserved)
+    phase_context = {
+        "phase_name": phase_name,
+        "reservation_token": reservation_token,
+        "expected_digest": reserved_digest,
+    }
+
+    deferred_dispatches: list[tuple[dict[str, Any], str | None, str | None]] = []
+    deferred_terminations: list[tuple[int, int]] = []
+    deferred_archives: list[dict[str, Any]] = []
+    deferred_activity_events: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    dispatch_token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred_dispatches)
+    termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
+    archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
+    activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
+    phase_token = _RUNTIME_PHASE_RESERVATION.set(reservation_token)
+    phase_context_token = _RUNTIME_PHASE_CONTEXT.set(phase_context)
+    phase_error: BaseException | None = None
+    changed = False
+    try:
+        changed = bool(operation(scratch))
+    except BaseException as exc:  # the reservation must be cleared before isolation
+        phase_error = exc
+    finally:
+        _RUNTIME_PHASE_CONTEXT.reset(phase_context_token)
+        _RUNTIME_PHASE_RESERVATION.reset(phase_token)
+        _DEFERRED_DISPATCH_STATUS_SYNCS.reset(dispatch_token)
+        _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
+        _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
+        _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
+
+    committed = False
+    launch_recovery_pending = False
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        current_reservation = (
+            ((current.get("supervisor") or {}).get("runtime_phase_reservations") or {})
+            .get(phase_name, {})
+        )
+        cas_matches = (
+            isinstance(current_reservation, Mapping)
+            and current_reservation.get("token") == reservation_token
+            and _runtime_state_cas_digest(current)
+            == str(phase_context.get("expected_digest") or "")
+        )
+        if phase_error is None and cas_matches:
+            phase_reservations = (
+                scratch.setdefault("supervisor", {})
+                .setdefault("runtime_phase_reservations", {})
+            )
+            phase_reservations.pop(phase_name, None)
+            if not phase_reservations:
+                scratch["supervisor"].pop("runtime_phase_reservations", None)
+            save_runtime_state(config, scratch)
+            committed = True
+        elif (
+            isinstance(current_reservation, Mapping)
+            and current_reservation.get("token") == reservation_token
+        ):
+            launch_recovery_pending = bool(
+                phase_error is not None
+                and isinstance(current_reservation.get("launch_intent"), Mapping)
+            )
+            if not launch_recovery_pending:
+                reservations = (
+                    current.setdefault("supervisor", {})
+                    .setdefault("runtime_phase_reservations", {})
+                )
+                reservations.pop(phase_name, None)
+                if not reservations:
+                    current["supervisor"].pop("runtime_phase_reservations", None)
+                save_runtime_state(config, current)
+
+    if not committed:
+        if not launch_recovery_pending:
+            _terminate_processes_started_by_failed_phase(reserved, scratch)
+        if phase_error is not None:
+            raise phase_error
+        write_activity_log(
+            config,
+            {
+                "type": "runtime_phase_cas_conflict",
+                "phase": phase_name,
+                "message": (
+                    f"Discarded reserved runtime phase {phase_name}: runtime "
+                    "state changed before its exact CAS commit."
+                ),
+            },
+        )
+        return False
+
+    side_effect_changed = _flush_deferred_runtime_side_effects(
+        config,
+        dispatch_status_syncs=deferred_dispatches,
+        worker_terminations=deferred_terminations,
+        auto_commit_archives=deferred_archives,
+        activity_events=deferred_activity_events,
+    )
+    return changed or side_effect_changed
+
+
+def _run_with_deferred_dispatch_status_syncs(
+    config: dict[str, Any],
+    operation: Any,
+) -> bool:
+    """Run one short supervisor mutation and flush slow side effects post-lock."""
+
+    deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
+    deferred_terminations: list[tuple[int, int]] = []
+    deferred_archives: list[dict[str, Any]] = []
+    deferred_activity_events: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
+    termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
+    archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
+    activity_token = _DEFERRED_ACTIVITY_EVENTS.set(deferred_activity_events)
+    changed = False
+    operation_error: BaseException | None = None
+    try:
+        with _measured_runtime_state_lock(config):
+            changed = bool(operation())
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
+        _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
+        _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
+        _DEFERRED_ACTIVITY_EVENTS.reset(activity_token)
+
+    if operation_error is not None:
+        # The mutation did not return successfully, so this wrapper has no
+        # proof that its canonical/status, archive, or activity intents match a
+        # committed runtime transition.  Exact process-generation termination
+        # is the sole exception: it is compensating cleanup that must not be
+        # skipped just because the mutation raised after scheduling it.
+        _confirm_deferred_worker_terminations(deferred_terminations)
+        raise operation_error
+
+    side_effect_changed = _flush_deferred_runtime_side_effects(
+        config,
+        dispatch_status_syncs=deferred,
+        worker_terminations=deferred_terminations,
+        auto_commit_archives=deferred_archives,
+        activity_events=deferred_activity_events,
+    )
+    return changed or side_effect_changed
 
 
 def _prepare_preempted_task_status_locked(
@@ -9771,6 +11495,352 @@ MISSING_HANDOFF_EXIT_REASON = (
     "Owner worker exited cleanly after preparing a PR head but never advanced the "
     "task to review/handoff."
 )
+
+GOVERNANCE_ACTIVITY_TAIL_LINES = 1024
+GOVERNANCE_ASSIGNMENT_EVENT_TYPES = frozenset({"assign", "task_reassigned"})
+GOVERNANCE_LIFECYCLE_EVENT_TYPES = frozenset(
+    {
+        "assign",
+        "start",
+        "progress",
+        "note",
+        "reopen",
+        "handoff",
+        "review_approved",
+        "blocker",
+        "done",
+        "supersede",
+        "superseded",
+        "cancel",
+        "cancelled",
+        "canceled",
+        "task_reassigned",
+    }
+)
+GOVERNANCE_TERMINAL_EVENT_TYPES = frozenset(
+    {"done", "supersede", "superseded", "cancel", "cancelled", "canceled"}
+)
+GOVERNANCE_TERMINAL_TASK_STATUSES = frozenset(
+    {"done", "superseded", "cancelled", "canceled"}
+)
+
+
+def worker_governance_activity_snapshot(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read only the recent canonical audit tail before runtime admission."""
+
+    try:
+        activity_path = config_path(config, "activity_log")
+        payload = read_activity_log_tail_bytes(
+            activity_path,
+            max_lines=GOVERNANCE_ACTIVITY_TAIL_LINES,
+        )
+    except (KeyError, OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    if not payload:
+        return []
+    events: list[dict[str, Any]] = []
+    try:
+        for line in payload.splitlines():
+            if not line.strip():
+                continue
+            event = strict_activity_json_loads(line)
+            if not isinstance(event, dict):
+                return []
+            events.append(event)
+    except (RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    return events
+
+
+def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
+    event_id = str(event.get("event_id") or "").strip()
+    if not event_id.startswith("ai-status-event-"):
+        return False
+    payload = dict(event)
+    payload.pop("event_id", None)
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return event_id == "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+
+
+def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
+    if event.get("agent") != "Orchestrator" or event.get("type") != "task_reassigned":
+        return False
+    payload = (
+        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
+        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
+        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
+        f"{event.get('message') or ''}"
+    )
+    expected = "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return str(event.get("event_id") or "") == expected
+
+
+def _governance_event_after_worker_start(
+    worker: Mapping[str, Any],
+    event: Mapping[str, Any],
+) -> bool:
+    started_at = _parse_iso_utc(
+        str(
+            worker.get("lease_acquired_at")
+            or worker.get("runner_started_at")
+            or worker.get("started_at")
+            or ""
+        )
+    )
+    event_at = _parse_iso_utc(str(event.get("ts") or ""))
+    return started_at is not None and event_at is not None and event_at >= started_at
+
+
+def _latest_task_governance_event(
+    worker: Mapping[str, Any],
+    activity_events: list[dict[str, Any]] | None,
+    *,
+    event_types: frozenset[str],
+) -> dict[str, Any] | None:
+    task_id = str(worker.get("task_id") or "").strip()
+    if not task_id:
+        return None
+    for event in reversed(activity_events or []):
+        if (
+            str(event.get("task_id") or "").strip() == task_id
+            and str(event.get("type") or "") in event_types
+            and _governance_event_after_worker_start(worker, event)
+        ):
+            return event
+    return None
+
+
+def status_event_matches_worker_process(
+    event: Mapping[str, Any] | None,
+    worker: Mapping[str, Any],
+) -> bool:
+    """Return whether a canonical status event was emitted by this exact run."""
+
+    identity = worker_process_identity(worker)
+    if identity is None or not isinstance(event, Mapping):
+        return False
+    command = event.get("status_command")
+    lease = command.get("worker_lease") if isinstance(command, Mapping) else None
+    return isinstance(lease, Mapping) and dict(lease) == identity
+
+
+def active_worker_governance_lease_decision(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Classify whether canonical governance truth may end this active lease.
+
+    Absence, ambiguity, an ordinary ``assign``/``note``/review transition, or a
+    concurrent task mutation all preserve the process. Only terminal lifecycle
+    truth or the latest exact supervisor ``task_reassigned`` event can authorize
+    responsibility preemption here.
+    """
+
+    settings = ready_dispatch_settings(config)
+    done_statuses = normalized_status_set(
+        settings.get("dependency_done_statuses"),
+        ["done"],
+    ) | GOVERNANCE_TERMINAL_TASK_STATUSES
+    if isinstance(task, Mapping) and str(task.get("status") or "").lower() in done_statuses:
+        return {
+            "action": "terminate",
+            "reason_code": "terminal_task_truth",
+            "source_event_id": None,
+            "source_event_type": None,
+        }
+
+    latest_lifecycle = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+    )
+    if task is None:
+        if (
+            latest_lifecycle is not None
+            and str(latest_lifecycle.get("type") or "") in GOVERNANCE_TERMINAL_EVENT_TYPES
+            and _ai_status_activity_event_id_matches(latest_lifecycle)
+        ):
+            return {
+                "action": "terminate",
+                "reason_code": "terminal_activity_truth",
+                "source_event_id": latest_lifecycle.get("event_id"),
+                "source_event_type": latest_lifecycle.get("type"),
+            }
+        return {
+            "action": "preserve",
+            "reason_code": "missing_or_ambiguous_task_truth",
+            "source_event_id": latest_lifecycle.get("event_id") if latest_lifecycle else None,
+            "source_event_type": latest_lifecycle.get("type") if latest_lifecycle else None,
+            "producer_event_matches_process": status_event_matches_worker_process(
+                latest_lifecycle,
+                worker,
+            ),
+        }
+
+    latest_assignment = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=GOVERNANCE_ASSIGNMENT_EVENT_TYPES,
+    )
+    if latest_assignment is None or latest_assignment.get("type") != "task_reassigned":
+        return {
+            "action": "preserve",
+            "reason_code": "governance_only_transition",
+            "source_event_id": latest_lifecycle.get("event_id") if latest_lifecycle else None,
+            "source_event_type": latest_lifecycle.get("type") if latest_lifecycle else None,
+            "producer_event_matches_process": status_event_matches_worker_process(
+                latest_lifecycle,
+                worker,
+            ),
+        }
+    if not _supervisor_reassignment_event_id_matches(latest_assignment):
+        return {
+            "action": "preserve",
+            "reason_code": "invalid_reassignment_evidence",
+            "source_event_id": latest_assignment.get("event_id"),
+            "source_event_type": latest_assignment.get("type"),
+        }
+
+    current_owner = canonical_agent_name(config, str(task.get("owner") or ""))
+    current_reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    new_owner = canonical_agent_name(config, str(latest_assignment.get("new_owner") or ""))
+    new_reviewer = canonical_agent_name(config, str(latest_assignment.get("new_reviewer") or ""))
+    if (
+        current_owner.casefold() != new_owner.casefold()
+        or current_reviewer.casefold() != new_reviewer.casefold()
+    ):
+        return {
+            "action": "preserve",
+            "reason_code": "concurrent_assignment_mutation",
+            "source_event_id": latest_assignment.get("event_id"),
+            "source_event_type": latest_assignment.get("type"),
+        }
+
+    worker_actor = canonical_agent_name(
+        config,
+        display_name_for(
+            config,
+            str(
+                worker.get("logical_agent_id")
+                or worker.get("agent_id")
+                or worker.get("provider")
+                or ""
+            ),
+        ),
+    )
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "")
+    if dispatch_reason == REASON_REVIEW_READY:
+        old_actor = canonical_agent_name(
+            config,
+            str(latest_assignment.get("old_reviewer") or ""),
+        )
+        new_actor = new_reviewer
+        role = "reviewer"
+    else:
+        old_actor = canonical_agent_name(
+            config,
+            str(latest_assignment.get("old_owner") or ""),
+        )
+        new_actor = new_owner
+        role = "owner"
+    if (
+        not worker_actor
+        or worker_actor.casefold() != old_actor.casefold()
+        or worker_actor.casefold() == new_actor.casefold()
+    ):
+        return {
+            "action": "preserve",
+            "reason_code": "reassignment_does_not_move_worker_role",
+            "source_event_id": latest_assignment.get("event_id"),
+            "source_event_type": latest_assignment.get("type"),
+        }
+    return {
+        "action": "terminate",
+        "reason_code": f"exact_{role}_reassignment",
+        "source_event_id": latest_assignment.get("event_id"),
+        "source_event_type": latest_assignment.get("type"),
+    }
+
+
+def record_worker_governance_lease_guard(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: Mapping[str, Any] | None,
+    decision: Mapping[str, Any],
+) -> bool:
+    """Record one deduplicated runtime/audit observation without ending work."""
+
+    identity = worker_process_identity(worker)
+    observed = {
+        "action": str(decision.get("action") or "preserve"),
+        "reason_code": str(decision.get("reason_code") or "governance_only_transition"),
+        "task_status": str(task.get("status") or "missing") if isinstance(task, Mapping) else "missing",
+        "task_last_update": str(task.get("last_update") or "") if isinstance(task, Mapping) else None,
+        "source_event_id": decision.get("source_event_id"),
+        "source_event_type": decision.get("source_event_type"),
+        "producer_event_matches_process": bool(decision.get("producer_event_matches_process")),
+        "process_generation": identity.get("process_generation") if identity else None,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            observed,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    previous = worker.get("governance_lease_guard")
+    if isinstance(previous, Mapping) and previous.get("fingerprint") == fingerprint:
+        return False
+    recorded_at = utc_now()
+    worker["governance_lease_guard"] = {
+        **observed,
+        "fingerprint": fingerprint,
+        "recorded_at": recorded_at,
+    }
+    termination_pending = observed["reason_code"].endswith(
+        "termination_pending_confirmation"
+    )
+    write_activity_log(
+        config,
+        {
+            "type": (
+                "worker_governance_lease_termination_deferred"
+                if termination_pending
+                else "worker_governance_lease_preserved"
+            ),
+            "task_id": worker.get("task_id"),
+            "provider": worker.get("provider"),
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+            "pid": identity.get("pid") if identity else worker.get("pid"),
+            "pid_start_ticks": identity.get("pid_start_ticks") if identity else worker.get("pid_start_ticks"),
+            "process_generation": identity.get("process_generation") if identity else worker.get("process_generation"),
+            "task_status": observed["task_status"],
+            "source_event_id": observed["source_event_id"],
+            "source_event_type": observed["source_event_type"],
+            "producer_event_matches_process": observed["producer_event_matches_process"],
+            "reason_code": observed["reason_code"],
+            "message": (
+                (
+                    "Kept the worker nonterminal while its exact process-generation "
+                    "termination waits for post-admission confirmation"
+                    if termination_pending
+                    else "Preserved the healthy active worker lease across a governance-only task transition"
+                )
+                + f" ({observed['reason_code']})."
+            ),
+        },
+    )
+    return True
 
 
 def worker_prepared_review_head(worker: dict[str, Any]) -> bool:
@@ -10966,6 +13036,14 @@ def _persist_task_reassignment_locked(
     if expected_status is not None and old_status != expected_status:
         return False
     if (
+        reviewer_is_explicit_human_gate(old_reviewer)
+        and not reviewer_is_explicit_human_gate(new_reviewer)
+    ):
+        # Supervisor availability repair may move execution ownership, but it
+        # cannot silently weaken an explicit human review gate. An intentional
+        # operator reassignment remains available through governed ai-status.
+        return False
+    if (
         task_assignment_is_catalog_locked(task)
         and (new_owner != old_owner or new_reviewer != old_reviewer)
     ):
@@ -11130,6 +13208,15 @@ def maybe_reassign_task_after_worker_failure(
         # Exact-head review/delivery identity is immutable. A missing finalize
         # worker may retry and ultimately block fail-closed, but provider
         # failure must not rewrite the owner named by the reviewed commit.
+        return None
+
+    if (
+        task_status in review_statuses
+        and reviewer == failing_agent
+        and reviewer_is_explicit_human_gate(reviewer)
+    ):
+        # Human/Ops review is an external governance wait, not a failed worker
+        # lane that the supervisor may replace to regain dispatch eligibility.
         return None
 
     if task_status in review_statuses and reviewer == failing_agent:
@@ -11712,12 +13799,30 @@ def resume_claude_worker(
         heartbeat_path=runtime_paths["heartbeat_path"],
         status_path=runtime_paths["status_path"],
     )
+    resumed_pid = process.pid
+    resumed_pid_start_ticks = worker_pid_start_ticks(resumed_pid)
+    resumed_process_generation = (
+        worker_process_generation_id(
+            task_id=str(worker.get("task_id") or ""),
+            worker_run_id=str(worker.get("run_id") or ""),
+            queue_event_id=str(worker.get("queue_event_id") or ""),
+            pid=resumed_pid,
+            pid_start_ticks=resumed_pid_start_ticks,
+        )
+        if worker.get("task_id")
+        and worker.get("run_id")
+        and worker.get("queue_event_id")
+        and resumed_pid_start_ticks is not None
+        else None
+    )
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])
     now_dt = datetime.now(timezone.utc)
     worker["previous_log_paths"] = previous_logs
-    worker["pid"] = process.pid
+    worker["pid"] = resumed_pid
+    worker["pid_start_ticks"] = resumed_pid_start_ticks
+    worker["process_generation"] = resumed_process_generation
     worker["status"] = "running"
     worker["deferred_action"] = None
     worker["last_event_at"] = _isoformat_utc(now_dt)
@@ -11740,7 +13845,9 @@ def resume_claude_worker(
     return {
         "command": command,
         "log_path": str(log_path),
-        "pid": process.pid,
+        "pid": resumed_pid,
+        "pid_start_ticks": resumed_pid_start_ticks,
+        "process_generation": resumed_process_generation,
         "allowed_tools": allowed_tools,
     }
 
@@ -11951,6 +14058,9 @@ def poll_worker_approval_stage(
                         "approval_id": latest.get("approval_id"),
                         "command": resumed.get("command") if resumed else None,
                         "log_path": resumed.get("log_path") if resumed else None,
+                        "pid": resumed.get("pid") if resumed else None,
+                        "pid_start_ticks": resumed.get("pid_start_ticks") if resumed else None,
+                        "process_generation": resumed.get("process_generation") if resumed else None,
                         "allowed_tools": resumed.get("allowed_tools") if resumed else None,
                     },
                 )
@@ -12542,8 +14652,10 @@ def poll_worker_assignment_stage(
     active_worker_statuses: set[str],
     alive: bool,
     activity_events: list[dict[str, Any]] | None = None,
+    governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     """Apply control completion, redelivery, ownership, and preemption rules."""
+    changed = False
     if (
         alive
         and worker.get("status") in active_worker_statuses
@@ -12583,61 +14695,141 @@ def poll_worker_assignment_stage(
 
     task = task_map.get(str(worker.get("task_id") or ""))
     handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+    lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:
-        if alive and not terminate_worker_pid(worker.get("pid")):
-            return {"changed": False, "stop": True}
-        worker["status"] = "completed"
-        worker["last_event_at"] = utc_now()
-        worker.pop("last_error", None)
-        clear_task_failure_streak(state, worker=worker)
-        finalize_queue_event_record(config, state, worker, "completed")
-        write_activity_log(
-            config,
-            {
-                "type": "worker_completed",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": (
-                    "Owner worker reached canonical task outcome "
-                    f"{handoff_status}; review/finalize responsibility advanced."
-                ),
-                "worker_run_id": worker.get("run_id"),
-                "pr_url": worker.get("pr_url"),
-                "session_url": worker.get("session_url"),
-            },
-        )
-        return {"changed": True, "stop": True}
+        if alive:
+            terminal_statuses = normalized_status_set(
+                ready_dispatch_settings(config).get("dependency_done_statuses"),
+                ["done"],
+            )
+            if handoff_status in terminal_statuses:
+                if not terminate_worker_process_generation(worker):
+                    changed = record_worker_governance_lease_guard(
+                        config,
+                        worker,
+                        task,
+                        {
+                            "action": "preserve",
+                            "reason_code": (
+                                "terminal_termination_pending_confirmation"
+                                if worker_process_generation_is_current(worker)
+                                else "terminal_process_identity_unproven"
+                            ),
+                            "source_event_id": None,
+                            "source_event_type": None,
+                        },
+                    ) or changed
+                    return {"changed": changed, "stop": True}
+            else:
+                producer_event = _latest_task_governance_event(
+                    worker,
+                    governance_activity_events,
+                    event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+                )
+                lease_guard_decision = {
+                    "action": "preserve",
+                    "reason_code": "canonical_review_handoff",
+                    "source_event_id": producer_event.get("event_id") if producer_event else None,
+                    "source_event_type": producer_event.get("type") if producer_event else None,
+                    "producer_event_matches_process": status_event_matches_worker_process(
+                        producer_event,
+                        worker,
+                    ),
+                }
+                changed = record_worker_governance_lease_guard(
+                    config,
+                    worker,
+                    task,
+                    lease_guard_decision,
+                ) or changed
+        if not alive or handoff_status in normalized_status_set(
+            ready_dispatch_settings(config).get("dependency_done_statuses"),
+            ["done"],
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = utc_now()
+            worker.pop("last_error", None)
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": (
+                        "Owner worker reached canonical task outcome "
+                        f"{handoff_status}; review/finalize responsibility advanced."
+                    ),
+                    "worker_run_id": worker.get("run_id"),
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            return {"changed": True, "stop": True}
 
     if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
-        if alive and not terminate_worker_pid(worker.get("pid")):
-            return {"changed": False, "stop": True}
-        worker["status"] = "superseded"
-        worker["last_event_at"] = utc_now()
-        worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
-        finalize_queue_event_record(
+        decision = lease_guard_decision or active_worker_governance_lease_decision(
             config,
-            state,
             worker,
-            "completed",
-            worker["last_error"],
+            task,
+            activity_events=governance_activity_events,
         )
-        write_activity_log(
-            config,
-            {
-                "type": "worker_superseded",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": worker["last_error"],
-                "worker_run_id": worker.get("run_id"),
-            },
-        )
-        console_log(
-            f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-            quiet=SUPERVISOR_LOG_QUIET,
-        )
-        return {"changed": True, "stop": True}
+        if alive and decision["action"] != "terminate":
+            changed = record_worker_governance_lease_guard(
+                config,
+                worker,
+                task,
+                decision,
+            ) or changed
+        elif alive and not terminate_worker_process_generation(worker):
+            changed = record_worker_governance_lease_guard(
+                config,
+                worker,
+                task,
+                {
+                    **decision,
+                    "action": "preserve",
+                    "reason_code": (
+                        "authorized_transition_termination_pending_confirmation"
+                        if worker_process_generation_is_current(worker)
+                        else "authorized_transition_process_identity_unproven"
+                    ),
+                },
+            ) or changed
+            return {"changed": changed, "stop": True}
+        else:
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker superseded after exact task responsibility transition."
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "completed",
+                worker["last_error"],
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_superseded",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                    "queue_event_id": worker.get("queue_event_id"),
+                    "process_generation": worker.get("process_generation"),
+                    "governance_reason_code": decision.get("reason_code"),
+                    "source_event_id": decision.get("source_event_id"),
+                },
+            )
+            console_log(
+                f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return {"changed": True, "stop": True}
 
     if (
         worker.get("queue_event_id")
@@ -12650,8 +14842,23 @@ def poll_worker_assignment_stage(
             activity_events=activity_events,
         )
     ):
-        if alive and not terminate_worker_pid(worker.get("pid")):
-            return {"changed": False, "stop": True}
+        if alive and not terminate_worker_process_generation(worker):
+            changed = record_worker_governance_lease_guard(
+                config,
+                worker,
+                task,
+                {
+                    "action": "preserve",
+                    "reason_code": (
+                        "eligible_preemption_termination_pending_confirmation"
+                        if worker_process_generation_is_current(worker)
+                        else "eligible_preemption_process_identity_unproven"
+                    ),
+                    "source_event_id": None,
+                    "source_event_type": None,
+                },
+            ) or changed
+            return {"changed": changed, "stop": True}
         worker["status"] = "superseded"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
@@ -12713,7 +14920,7 @@ def poll_worker_assignment_stage(
         )
         return {"changed": True, "stop": True}
 
-    return {"changed": False, "stop": False}
+    return {"changed": changed, "stop": False}
 
 
 def poll_workers(
@@ -12721,6 +14928,7 @@ def poll_workers(
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
     activity_events: list[dict[str, Any]] | None = None,
+    governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -12787,6 +14995,7 @@ def poll_workers(
             active_worker_statuses=active_worker_statuses,
             alive=alive,
             activity_events=activity_events,
+            governance_activity_events=governance_activity_events,
         )
         changed = bool(assignment["changed"]) or changed
         if assignment["stop"]:
@@ -14432,9 +16641,28 @@ def normalize_mainline_task_assignment(
 
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
+    explicit_human_reviewer = reviewer_is_explicit_human_gate(reviewer)
+    finalize_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("finalize_statuses"),
+        ["review_approved"],
+    )
+    if (
+        explicit_human_reviewer
+        and task_status in finalize_statuses
+        and task_has_bound_finalize_delivery_identity(task)
+    ):
+        # An exact-head approval binds both delivery ownership and the explicit
+        # human decision. Availability scans must await closeout instead of
+        # rewriting either side of that approved identity.
+        return False
     assignment_state = None if task_status == "in_progress" else state
     owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
-    reviewer_allowed = agent_can_take_task(config, reviewer, task, state=assignment_state)
+    reviewer_allowed = explicit_human_reviewer or agent_can_take_task(
+        config,
+        reviewer,
+        task,
+        state=assignment_state,
+    )
     if (
         owner_allowed
         and reviewer_allowed
@@ -16478,6 +18706,7 @@ def record_runtime_lock_hold(
     """
 
     held_seconds = round(max(0.0, time.monotonic() - held_since), 3)
+    _record_cycle_runtime_lock_hold(held_seconds)
     supervisor_state = state.setdefault("supervisor", {})
     supervisor_state["runtime_lock_hold_seconds"] = held_seconds
     peak = supervisor_state.get("runtime_lock_hold_peak_seconds")
@@ -16498,6 +18727,41 @@ def record_runtime_lock_hold(
             quiet=quiet,
         )
     return held_seconds
+
+
+def publish_cycle_metrics_to_state(
+    state: dict[str, Any],
+    *,
+    finished_monotonic: float | None = None,
+) -> dict[str, Any] | None:
+    """Replace the prior bounded cycle sample and retain only scalar peaks."""
+
+    finished = time.monotonic() if finished_monotonic is None else finished_monotonic
+    snapshot = _bounded_cycle_metrics_snapshot(finished_monotonic=finished)
+    if snapshot is None:
+        return None
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["last_cycle_metrics"] = snapshot
+    supervisor_state["cycle_elapsed_seconds"] = snapshot["cycle_elapsed_seconds"]
+    supervisor_state["cycle_elapsed_peak_seconds"] = round(
+        max(
+            float(supervisor_state.get("cycle_elapsed_peak_seconds", 0.0)),
+            float(snapshot["cycle_elapsed_seconds"]),
+        ),
+        3,
+    )
+    cadence = snapshot.get("cadence")
+    if isinstance(cadence, dict):
+        overshoot = float(cadence.get("start_overshoot_seconds", 0.0))
+        supervisor_state["cadence_overshoot_seconds"] = overshoot
+        supervisor_state["cadence_overshoot_peak_seconds"] = round(
+            max(
+                float(supervisor_state.get("cadence_overshoot_peak_seconds", 0.0)),
+                overshoot,
+            ),
+            3,
+        )
+    return snapshot
 
 
 def _configured_recovery_probe_provider(
@@ -16523,6 +18787,210 @@ def _configured_recovery_probe_provider(
         if provider_dispatch_group_id(config, str(configured_provider)) == normalized_pause_id:
             return str(configured_provider)
     return None
+
+
+def _stale_auth_provider_key_for_agent(
+    config: dict[str, Any],
+    agent_id: str,
+    provider_report: dict[str, Any],
+) -> str | None:
+    """Resolve the exact stale provider row behind a logical agent or slot."""
+
+    candidates: list[str] = []
+    provider_key = agent_provider_key(config, agent_id)
+    if provider_key:
+        candidates.append(provider_key)
+    for slot_id in logical_worker_slot_ids(config, agent_id):
+        slot_provider = agent_provider_key(config, slot_id)
+        if slot_provider:
+            candidates.append(slot_provider)
+    for candidate in dict.fromkeys(candidates):
+        capability = _provider_report_entry(provider_report, candidate)
+        if capability.get("auth_ready") is False:
+            return candidate
+    return None
+
+
+def provider_stale_cache_readmission_probe_targets(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any],
+    *,
+    status: dict[str, Any] | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Select stale-auth providers that have real work waiting behind the gate.
+
+    This is a read-only preflight for ``run_once``'s pre-lock provider phase.
+    It deliberately reuses the dispatcher's lifecycle, dependency, queue,
+    capacity, failure-loop, chair-triage, and cooldown predicates while
+    ignoring only the cached provider-auth booleans under examination.  No
+    task, queue event, or runtime request is created here.
+    """
+
+    if not isinstance(provider_report, dict) or not provider_report.get("providers"):
+        return []
+    settings = ready_dispatch_settings(config)
+    if not settings.get("enabled", True):
+        return []
+    status = status if isinstance(status, dict) else load_status(config)
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+    task_map = {str(task.get(task_id_field)): task for task in tasks}
+    task_resolver = task_resolver_for_config(config, task_map)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    _pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
+    pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
+    agent_loads = agent_dispatch_loads(config, state, active_statuses)
+    active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+    pending_quota_counts = queued_quota_group_counts(config, state)
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(
+        config,
+        state,
+        task_map,
+        provider_report,
+        activity_events,
+    )
+    seen = state.get("seen_event_keys", {})
+    if not isinstance(seen, dict):
+        seen = {}
+    try:
+        unchanged_cooldown_seconds = max(
+            0.0,
+            float(settings.get("unchanged_task_cooldown_seconds", 900)),
+        )
+    except (TypeError, ValueError):
+        unchanged_cooldown_seconds = 900.0
+    checked_at = utc_now()
+
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None and max_concurrent > 0:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        pending_only_total = len(pending_task_ids - active_task_ids)
+        if live_total + pending_only_total >= max_concurrent:
+            return []
+
+    max_targets = max(
+        1,
+        int(
+            provider_guardrail_settings(config).get(
+                "stale_cache_readmission_probe_max_per_cycle",
+                1,
+            )
+            or 1
+        ),
+    )
+    targets: list[str] = []
+    seen_groups: set[str] = set()
+    for agent_id in weighted_dispatch_agent_ids(config, settings):
+        provider_key = _stale_auth_provider_key_for_agent(
+            config,
+            agent_id,
+            provider_report,
+        )
+        if not provider_key:
+            continue
+        group_id = provider_dispatch_group_id(config, provider_key) or normalize_agent_id(provider_key)
+        if group_id in seen_groups:
+            continue
+        if provider_dispatch_paused(config, state, provider_key):
+            # Existing auth/capacity pauses already feed
+            # provider_recovery_probe_targets with their own not-before gate.
+            continue
+        if agent_auto_dispatch_block_reason(
+            config,
+            state,
+            agent_id,
+            provider_report,
+            allow_stale_provider_auth=True,
+        ):
+            continue
+        target_agent = display_name_for(config, agent_id)
+        if not target_agent:
+            continue
+        quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
+        quota_group = agent_quota_group_id(config, agent_id)
+        quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
+        if quota_limit and quota_group and quota_used >= quota_limit:
+            continue
+        if len(agent_loads.get(target_agent, [])) >= agent_dispatch_capacity(config, agent_id, settings):
+            continue
+
+        eligible = False
+        for task in tasks:
+            task_id = str(task.get(task_id_field) or "")
+            if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
+                continue
+            candidate = task_execution_dispatch_candidate(
+                config,
+                task,
+                target_agent,
+                task_resolver,
+                settings=settings,
+            )
+            if candidate is None:
+                continue
+            reason, _priority = candidate
+            if not agent_can_take_task(
+                config,
+                target_agent,
+                task,
+                state=state,
+                allow_stale_provider_auth=True,
+            ):
+                continue
+            if (task_id, target_agent) in failure_loop_task_agents:
+                continue
+            if chair_reassignment_triage_needed_for_task(
+                config,
+                state,
+                task_id,
+                target_agent,
+                task=task,
+                provider_report=provider_report,
+                activity_events=activity_events,
+            ):
+                continue
+            event = build_dispatch_event(task, target_agent, reason, task_resolver)
+            if event["key"] in pending_event_keys:
+                continue
+            if dispatch_event_is_in_unchanged_cooldown(
+                seen,
+                event["key"],
+                cooldown_seconds=unchanged_cooldown_seconds,
+                now=checked_at,
+            ):
+                if reason != REASON_REVIEW_READY:
+                    continue
+                handoff = pending_review_handoff(
+                    config,
+                    status,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                )
+                if handoff is None or terminal_review_worker_for_redispatch(
+                    config,
+                    state,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                    event_key=event["key"],
+                    handoff=handoff,
+                ) is None:
+                    continue
+            eligible = True
+            break
+
+        if not eligible:
+            continue
+        seen_groups.add(group_id)
+        targets.append(provider_key)
+        if len(targets) >= max_targets:
+            break
+    return targets
 
 
 def provider_recovery_probe_targets(
@@ -16590,31 +19058,88 @@ def probe_provider_reports(
     report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
     if report is None:
         report = previous or {}
-    targeted = False
-    for provider_key in provider_recovery_probe_targets(
+    recovery_targets = provider_recovery_probe_targets(
         config,
         runtime_snapshot or {},
-    ):
+    )
+    stale_targets = _safe_phase(
+        "select_provider_stale_cache_readmission_targets",
+        provider_stale_cache_readmission_probe_targets,
+        config,
+        runtime_snapshot or {},
+        report,
+        quiet=quiet,
+    )
+    if not isinstance(stale_targets, list):
+        stale_targets = []
+    targeted = False
+    seen_groups: set[str] = set()
+    for provider_key, stale_readmission in [
+        *((target, False) for target in recovery_targets),
+        *((target, True) for target in stale_targets),
+    ]:
+        group_id = provider_dispatch_group_id(config, provider_key) or normalize_agent_id(provider_key)
+        if group_id in seen_groups:
+            continue
+        seen_groups.add(group_id)
         current = _provider_report_entry(report, provider_key)
-        not_before = provider_pause_probe_not_before(
-            config,
-            runtime_snapshot or {},
-            provider_key,
-        )
-        if provider_report_has_fresh_live_probe(current, not_before=not_before):
+        if stale_readmission:
+            previous_probe = current.get("auth_probe") if isinstance(current.get("auth_probe"), dict) else None
+            probe_status = str((previous_probe or {}).get("status") or "").strip().lower()
+            exact_cache_incompatibility = probe_status == "models_cache_incompatible"
+            if (
+                not exact_cache_incompatibility
+                and not provider_auth_probe_due(config, provider_key, previous_probe)
+            ):
+                continue
+            not_before = None
+        else:
+            not_before = provider_pause_probe_not_before(
+                config,
+                runtime_snapshot or {},
+                provider_key,
+            )
+        if not stale_readmission and provider_report_has_fresh_live_probe(current, not_before=not_before):
             # A normal capability refresh already produced an authoritative
             # result for this gate in the same recovery window. Reconcile it
             # under the runtime lock instead of spending a duplicate probe.
             continue
-        probe = _safe_phase(
-            f"probe_provider_recovery:{provider_key}",
-            probe_provider_auth,
-            config,
-            provider_key,
-            force=True,
-            quiet=quiet,
+        provider_cfg = (config.get("providers", {}) or {}).get(provider_key, {}) or {}
+        recover_codex_models_cache = (
+            str(provider_cfg.get("delivery_mode") or provider_key).strip().lower() == "codex"
         )
+        if recover_codex_models_cache:
+            probe = _safe_phase(
+                f"probe_provider_recovery:{provider_key}",
+                probe_provider_auth,
+                config,
+                provider_key,
+                force=True,
+                recover_incompatible_models_cache=True,
+                quiet=quiet,
+            )
+        else:
+            probe = _safe_phase(
+                f"probe_provider_recovery:{provider_key}",
+                probe_provider_auth,
+                config,
+                provider_key,
+                force=True,
+                quiet=quiet,
+            )
         if not isinstance(probe, dict):
+            checked_at = utc_now()
+            probe = {
+                "provider": provider_key,
+                "ready": False,
+                "status": "probe_error",
+                "method": "stale_cache_readmission" if stale_readmission else "provider_recovery",
+                "error": "Provider auth probe raised or returned no normalized result.",
+                "checked_at": checked_at,
+                "last_auth_probe_at": checked_at,
+                "source": "live",
+            }
+        if str(probe.get("source") or "").strip().lower() != "live":
             continue
         apply_provider_probe_to_report(report, provider_key, probe)
         targeted = True
@@ -16669,6 +19194,15 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
+    cycle_metrics: dict[str, Any] = {
+        "started_monotonic": time.monotonic(),
+        "phases": {},
+        "batch_counts": {},
+    }
+    scheduled_sample = _SCHEDULED_CYCLE_SAMPLE.get()
+    if isinstance(scheduled_sample, dict):
+        cycle_metrics["cadence"] = dict(scheduled_sample)
+    cycle_metrics_token = _CYCLE_METRICS.set(cycle_metrics)
     # GitHub bus sync can perform several gh/API round trips and status-command
     # subprocesses. It only consumes an atomic runtime snapshot; any queue or
     # status mutation it issues uses that subsystem's own canonical writer.
@@ -16704,10 +19238,27 @@ def run_once(
         if isinstance(bridge_state, dict)
         else None
     )
+    # Branch continuation probes local git state and may invoke hooks or wait
+    # on repository metadata.  It is independent of runtime admission, so do
+    # not charge that latency to worker lease/status commands.
+    _safe_phase(
+        "continue_or_skip_empty",
+        continue_or_skip_empty,
+        THIS_DIR.parent,
+        quiet=quiet,
+    )
     recovery_activity_events = failure_streak_recovery_activity_snapshot(
         config,
         github_runtime_snapshot,
     )
+    governance_activity_events = _safe_phase(
+        "worker_governance_activity_snapshot",
+        worker_governance_activity_snapshot,
+        config,
+        quiet=quiet,
+    )
+    if not isinstance(governance_activity_events, list):
+        governance_activity_events = []
     provider_reports = probe_provider_reports(
         config,
         quiet=quiet,
@@ -16765,7 +19316,27 @@ def run_once(
         frozenset(prefetched_worker_base_refs)
     )
     try:
-        return _run_with_deferred_dispatch_status_syncs(
+        # Worker marker/log, /proc, git progress, retry delivery, and lifecycle
+        # cleanup I/O run on a reserved snapshot before dispatch decisions. The
+        # exact CAS commit makes those observations visible to the following
+        # short core transaction without holding runtime admission during I/O.
+        pre_poll_changed = bool(
+            _safe_phase(
+                "poll_workers_pre_dispatch_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "poll_workers_pre_dispatch",
+                lambda state: poll_workers(
+                    config,
+                    state,
+                    provider_report=provider_reports[1],
+                    activity_events=recovery_activity_events,
+                    governance_activity_events=governance_activity_events,
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = _run_with_deferred_dispatch_status_syncs(
             config,
             lambda: _run_once_locked(
                 config,
@@ -16776,14 +19347,123 @@ def run_once(
                 once=once,
                 provider_reports=provider_reports,
                 recovery_activity_events=recovery_activity_events,
+                governance_activity_events=governance_activity_events,
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
                 assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
                 prelock_changed=github_bus_changed,
             )
         )
+        changed = changed or pre_poll_changed
+        process_changed = bool(
+            _safe_phase(
+                "process_queue_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "process_queue",
+                lambda state: (
+                    False
+                    if watchdog_safe_mode_active(state)
+                    else process_queue(
+                        config,
+                        state,
+                        provider_reports[1],
+                    )
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = process_changed or changed
+        post_poll_changed = bool(
+            _safe_phase(
+                "poll_workers_post_dispatch_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "poll_workers_post_dispatch",
+                lambda state: poll_workers(
+                    config,
+                    state,
+                    provider_report=provider_reports[1],
+                    activity_events=recovery_activity_events,
+                    governance_activity_events=governance_activity_events,
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = post_poll_changed or changed
+        prune_changed = bool(
+            _safe_phase(
+                "prune_worktrees_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "prune_worktrees",
+                lambda state: _run_reserved_worktree_prunes(config, state),
+                quiet=quiet,
+            )
+        )
+        changed = prune_changed or changed
+        finalized = bool(
+            _safe_phase(
+                "finalize_runtime_cycle",
+                _run_with_deferred_dispatch_status_syncs,
+                config,
+                lambda: _finalize_runtime_cycle_locked(
+                    config,
+                    planning_state=load_discussion_planning_state(),
+                    quiet=quiet,
+                ),
+                quiet=quiet,
+            )
+        )
+        changed = finalized or changed
+        postlock_state = _safe_phase(
+            "load_postlock_runtime_snapshot",
+            load_runtime_state_snapshot,
+            config,
+            quiet=quiet,
+        )
+        _safe_phase(
+            "refresh_dashboard_runtime_artifacts",
+            refresh_dashboard_runtime_artifacts,
+            config,
+            quiet=quiet,
+        )
+        if isinstance(postlock_state, dict):
+            _safe_phase(
+                "log_runtime_summary",
+                lambda: log_runtime_summary(
+                    postlock_state,
+                    safe_load_approval_state(config),
+                    changed=changed,
+                    quiet=quiet,
+                    verbose=verbose,
+                    previous_heartbeat=(
+                        (github_runtime_snapshot.get("supervisor") or {}).get(
+                            "last_heartbeat_at"
+                        )
+                        if isinstance(github_runtime_snapshot, dict)
+                        else None
+                    ),
+                    warn_after_seconds=float(
+                        config.get("supervisor", {}).get(
+                            "heartbeat_warn_after_seconds",
+                            10.0,
+                        )
+                    ),
+                    once=once,
+                ),
+                quiet=quiet,
+            )
+        _safe_phase(
+            "persist_complete_cycle_metrics",
+            persist_complete_cycle_metrics,
+            config,
+            quiet=quiet,
+        )
+        return changed
     finally:
         _PREFETCHED_WORKER_BASE_REFS.reset(base_ref_token)
+        _CYCLE_METRICS.reset(cycle_metrics_token)
 
 
 def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -16960,6 +19640,7 @@ def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
 
     Returns the phase result, or ``None`` if the phase raised.
     """
+    started = time.monotonic()
     try:
         return fn(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 - deliberate per-phase isolation
@@ -16969,6 +19650,8 @@ def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
             quiet=quiet,
         )
         return None
+    finally:
+        _record_cycle_phase_elapsed(name, time.monotonic() - started)
 
 
 def _run_once_locked(
@@ -16981,6 +19664,7 @@ def _run_once_locked(
     once: bool = False,
     provider_reports: tuple[dict[str, Any], dict[str, Any]],
     recovery_activity_events: list[dict[str, Any]],
+    governance_activity_events: list[dict[str, Any]] | None = None,
     ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
     task_state_shadow_snapshot: dict[str, Any] | None = None,
     assistant_dev_bridge_snapshot: dict[str, Any] | None = None,
@@ -17010,7 +19694,6 @@ def _run_once_locked(
         changed = _safe_phase("reconcile_runtime_on_boot", reconcile_runtime_on_boot, config, state, quiet=quiet) or changed
         if changed:
             save_runtime_state(config, state)
-        _safe_phase("continue_or_skip_empty", continue_or_skip_empty, THIS_DIR.parent, quiet=quiet)
         changed = _safe_phase("expire_provider_dispatch_pauses", expire_provider_dispatch_pauses, config, state, quiet=quiet) or changed
         pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:
@@ -17019,6 +19702,15 @@ def _run_once_locked(
         # runtime-admission hold; run_once supplies the reports it gathered
         # before the lock was taken.
         previous_provider_report, provider_report = provider_reports
+        changed = _safe_phase(
+            "reconcile_fresh_provider_probe_failures",
+            reconcile_fresh_provider_probe_failures,
+            config,
+            state,
+            previous_provider_report,
+            provider_report,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("reconcile_provider_pause_recovery", reconcile_provider_pause_recovery, config, state, provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         if isinstance(assistant_dev_bridge_snapshot, dict):
@@ -17038,15 +19730,6 @@ def _run_once_locked(
                 loop_started_at=loop_started_at,
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
-        changed = _safe_phase(
-            "poll_workers",
-            poll_workers,
-            config,
-            state,
-            provider_report=provider_report,
-            activity_events=recovery_activity_events,
-            quiet=quiet,
-        ) or changed
         changed = _safe_phase(
             "maybe_reassign_tasks_from_failure_streaks",
             maybe_reassign_tasks_from_failure_streaks,
@@ -17124,23 +19807,8 @@ def _run_once_locked(
                     activity_events=recovery_activity_events,
                     quiet=quiet,
                 ) or changed
-        if not dispatch_suppressed_by_watchdog:
-            changed = _safe_phase("process_queue", process_queue, config, state, provider_report, quiet=quiet) or changed
-        changed = _safe_phase(
-            "poll_workers",
-            poll_workers,
-            config,
-            state,
-            provider_report=provider_report,
-            activity_events=recovery_activity_events,
-            quiet=quiet,
-        ) or changed
-        changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
-        changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
-        _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
-        _safe_phase("trim_seen_events", trim_seen_events, state, int(config.get("watcher", {}).get("max_seen_events", 2000)), quiet=quiet)
-        changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
-        changed = _safe_phase("prune_chair_review_worktrees", prune_chair_review_worktrees, config, state, quiet=quiet) or changed
+        # process_queue, the post-dispatch poll, and git/worktree pruning are
+        # reservation/CAS phases owned by run_once after this short transaction.
         changed = _safe_phase("maybe_auto_commit_archive", maybe_auto_commit_archive, config, state, quiet=quiet) or changed
         if isinstance(task_state_shadow_snapshot, dict):
             report = task_state_shadow_snapshot.get("report")
@@ -17150,29 +19818,16 @@ def _run_once_locked(
                 )
                 changed = bool(task_state_shadow_snapshot.get("changed")) or changed
 
-        loop_finished_at = utc_now()
-        stamp_supervisor_runtime_state(
-            config,
-            state,
-            planning_state=planning_state,
-            heartbeat_at=loop_finished_at,
-            lifecycle="running",
-            loop_finished_at=loop_finished_at,
-            loop_error=None,
-        )
         record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
-        save_runtime_state(config, state)
-        refresh_dashboard_runtime_artifacts(config)
-        log_runtime_summary(
-            state,
-            safe_load_approval_state(config),
-            changed=changed,
-            quiet=quiet,
-            verbose=verbose,
-            previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
-            once=once,
+        _record_cycle_batch_count(
+            "dispatch_status_mutations",
+            len(_DEFERRED_DISPATCH_STATUS_SYNCS.get() or []),
         )
+        _record_cycle_batch_count(
+            "runtime_activity_events",
+            len(_DEFERRED_ACTIVITY_EVENTS.get() or []),
+        )
+        save_runtime_state(config, state)
         return changed
     except Exception as exc:
         loop_finished_at = utc_now()
@@ -17186,8 +19841,16 @@ def _run_once_locked(
             loop_error=f"{type(exc).__name__}: {exc}",
         )
         record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
+        _record_cycle_batch_count(
+            "dispatch_status_mutations",
+            len(_DEFERRED_DISPATCH_STATUS_SYNCS.get() or []),
+        )
+        _record_cycle_batch_count(
+            "runtime_activity_events",
+            len(_DEFERRED_ACTIVITY_EVENTS.get() or []),
+        )
+        publish_cycle_metrics_to_state(state)
         save_runtime_state(config, state)
-        refresh_dashboard_runtime_artifacts(config)
         raise
 
 
@@ -17209,44 +19872,209 @@ def run_supervisor_cycle(
         return False
 
 
+def _run_reserved_worktree_prunes(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Run both independent prune paths even when the first one changes state."""
+
+    orphan_changed = prune_orphan_worktrees(config, state)
+    chair_changed = prune_chair_review_worktrees(config, state)
+    return orphan_changed or chair_changed
+
+
+def _finalize_runtime_cycle_locked(
+    config: dict[str, Any],
+    *,
+    planning_state: dict[str, Any],
+    quiet: bool,
+) -> bool:
+    """Commit post-I/O queue reconciliation and the truthful cycle heartbeat."""
+
+    state = load_runtime_state(config)
+    changed = bool(
+        _safe_phase(
+            "reconcile_queue_records_post_io",
+            reconcile_queue_records,
+            config,
+            state,
+            quiet=quiet,
+        )
+    )
+    changed = bool(
+        _safe_phase(
+            "prune_event_queue_post_io",
+            prune_event_queue,
+            config,
+            state,
+            quiet=quiet,
+        )
+    ) or changed
+    _safe_phase(
+        "trim_worker_history",
+        trim_worker_history,
+        state,
+        int(config.get("supervisor", {}).get("max_worker_history", 200)),
+        quiet=quiet,
+    )
+    _safe_phase(
+        "trim_seen_events",
+        trim_seen_events,
+        state,
+        int(config.get("watcher", {}).get("max_seen_events", 2000)),
+        quiet=quiet,
+    )
+    loop_finished_at = utc_now()
+    stamp_supervisor_runtime_state(
+        config,
+        state,
+        planning_state=planning_state,
+        heartbeat_at=loop_finished_at,
+        lifecycle="running",
+        loop_finished_at=loop_finished_at,
+        loop_error=None,
+    )
+    save_runtime_state(config, state)
+    return changed
+
+
+def persist_complete_cycle_metrics(config: dict[str, Any]) -> bool:
+    """Persist the complete post-lock cycle sample in one short transaction."""
+
+    with _measured_runtime_state_lock(config):
+        state = load_runtime_state(config)
+        snapshot = publish_cycle_metrics_to_state(
+            state,
+            finished_monotonic=time.monotonic(),
+        )
+        if snapshot is None:
+            return False
+        supervisor_state = state.setdefault("supervisor", {})
+        longest_hold = round(
+            max(
+                0.0,
+                float(snapshot.get("runtime_lock_hold_seconds", 0.0)),
+            ),
+            3,
+        )
+        supervisor_state["runtime_lock_hold_seconds"] = longest_hold
+        supervisor_state["runtime_lock_hold_peak_seconds"] = round(
+            max(
+                longest_hold,
+                float(supervisor_state.get("runtime_lock_hold_peak_seconds", 0.0)),
+            ),
+            3,
+        )
+        save_runtime_state(config, state)
+    return True
+
+
+def run_deadline_scheduler(
+    cycle: Any,
+    poll_interval: float,
+    *,
+    sleep: Any = time.sleep,
+    monotonic: Any = time.monotonic,
+    on_cycle_complete: Any | None = None,
+    max_cycles: int | None = None,
+) -> None:
+    """Run cycles on an anchored monotonic deadline without catch-up spinning.
+
+    The first cycle is immediate.  Every later target is derived from that
+    monotonic schedule, so work consumes the interval instead of being followed
+    by another full sleep.  If work spans one or more deadlines, those missed
+    starts are skipped in one arithmetic step and the next cycle waits for the
+    first future deadline.  This makes overrun behavior deterministic and
+    prevents an overloaded supervisor from entering a zero-sleep busy loop.
+    """
+
+    interval = float(poll_interval)
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("poll_interval must be a finite positive number")
+    if max_cycles is not None and max_cycles < 0:
+        raise ValueError("max_cycles cannot be negative")
+
+    deadline = float(monotonic())
+    skipped_before_start = 0
+    completed = 0
+    while max_cycles is None or completed < max_cycles:
+        before_sleep = float(monotonic())
+        sleep_seconds = max(0.0, deadline - before_sleep)
+        if sleep_seconds > 0:
+            sleep(sleep_seconds)
+        started = float(monotonic())
+        cadence_sample = {
+            "scheduled_deadline": deadline,
+            "start_overshoot_seconds": max(0.0, started - deadline),
+            "skipped_deadlines_before_start": skipped_before_start,
+        }
+        token = _SCHEDULED_CYCLE_SAMPLE.set(cadence_sample)
+        try:
+            cycle()
+        finally:
+            _SCHEDULED_CYCLE_SAMPLE.reset(token)
+        finished = float(monotonic())
+        next_deadline = deadline + interval
+        skipped = 0
+        if next_deadline < finished:
+            skipped = int(math.floor((finished - next_deadline) / interval)) + 1
+            next_deadline += skipped * interval
+        completion = {
+            **cadence_sample,
+            "cycle_elapsed_seconds": max(0.0, finished - started),
+            "sleep_before_start_seconds": sleep_seconds,
+            "skipped_deadlines_after_cycle": skipped,
+            "next_deadline": next_deadline,
+        }
+        if on_cycle_complete is not None:
+            try:
+                on_cycle_complete(completion)
+            except Exception as exc:  # telemetry must never terminate scheduling
+                console_log(
+                    "scheduler completion telemetry failed: "
+                    f"{type(exc).__name__}: {exc}; future cycles continue",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
+        deadline = next_deadline
+        skipped_before_start = skipped
+        completed += 1
+
+
+def publish_scheduler_cadence_completion(
+    config: dict[str, Any],
+    sample: Mapping[str, Any],
+) -> None:
+    """Persist one scalar scheduler completion sample in a short transaction."""
+
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        supervisor_state = state.setdefault("supervisor", {})
+        elapsed = round(max(0.0, float(sample.get("cycle_elapsed_seconds", 0.0))), 3)
+        supervisor_state["scheduler_cycle_elapsed_seconds"] = elapsed
+        supervisor_state["scheduler_cycle_elapsed_peak_seconds"] = round(
+            max(
+                elapsed,
+                float(supervisor_state.get("scheduler_cycle_elapsed_peak_seconds", 0.0)),
+            ),
+            3,
+        )
+        supervisor_state["cadence_skipped_deadlines"] = max(
+            0,
+            int(sample.get("skipped_deadlines_after_cycle", 0)),
+        )
+        supervisor_state["cadence_next_deadline_monotonic"] = round(
+            float(sample.get("next_deadline", 0.0)),
+            6,
+        )
+        save_runtime_state(config, state)
+
+
 def claim_next_task_for_agent(
     config: dict[str, Any],
     *,
     agent_name: str,
     release_task_id: str | None = None,
     quiet: bool = False,
-) -> bool:
-    recovery_activity_events: list[dict[str, Any]] | None = None
-    agent_id = normalize_agent_id(agent_name)
-    if (
-        worker_self_claim_settings(config).get("enabled", False)
-        and agent_id
-        and agent_id in config.get("agents", {})
-    ):
-        recovery_runtime_snapshot = load_runtime_state_snapshot(config)
-        recovery_activity_events = failure_streak_recovery_activity_snapshot(
-            config,
-            recovery_runtime_snapshot,
-        )
-    return _run_with_deferred_dispatch_status_syncs(
-        config,
-        lambda: _claim_next_task_for_agent_locked(
-            config,
-            agent_name=agent_name,
-            release_task_id=release_task_id,
-            quiet=quiet,
-            recovery_activity_events=recovery_activity_events,
-        )
-    )
-
-
-def _claim_next_task_for_agent_locked(
-    config: dict[str, Any],
-    *,
-    agent_name: str,
-    release_task_id: str | None = None,
-    quiet: bool = False,
-    recovery_activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     settings = worker_self_claim_settings(config)
     if not settings.get("enabled", False):
@@ -17257,15 +20085,63 @@ def _claim_next_task_for_agent_locked(
         console_log(f"worker self-claim skipped: unknown agent {agent_name}", quiet=quiet)
         return False
 
-    state = load_runtime_state(config)
+    # Provider cache reads, canonical activity reads, and planning-state I/O are
+    # immutable inputs to this one-shot claim.  Gather them before reserving a
+    # runtime phase so none of their latency is charged to runtime admission.
+    recovery_runtime_snapshot = load_runtime_state_snapshot(config)
+    recovery_activity_events = failure_streak_recovery_activity_snapshot(
+        config,
+        recovery_runtime_snapshot,
+    )
+    provider_report = load_provider_report(config, refresh=False)
     planning_state = load_discussion_planning_state()
+    phase_name = f"claim_next_task_for_agent:{agent_id}"
+    changed = _run_reserved_runtime_phase(
+        config,
+        phase_name,
+        lambda state: _claim_next_task_for_agent_reserved(
+            config,
+            state,
+            agent_name=agent_name,
+            release_task_id=release_task_id,
+            quiet=quiet,
+            recovery_activity_events=recovery_activity_events,
+            provider_report=provider_report,
+            planning_state=planning_state,
+        ),
+    )
+    # Dashboard rendering imports status code and rewrites several derived
+    # artifacts.  It is intentionally post-CAS and outside runtime admission.
+    refresh_dashboard_runtime_artifacts(config)
+    return changed
+
+
+def _claim_next_task_for_agent_reserved(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    agent_name: str,
+    release_task_id: str | None = None,
+    quiet: bool = False,
+    recovery_activity_events: list[dict[str, Any]] | None = None,
+    provider_report: dict[str, Any],
+    planning_state: dict[str, Any],
+) -> bool:
+    """Mutate a detached self-claim snapshot between reservation and CAS.
+
+    Canonical/event queue reads, worktree preparation, adapter launch, and the
+    failure-recovery audit revalidation may be slow.  This function therefore
+    never owns the enclosing exclusive runtime-admission lock; only the
+    reservation, launch intent/receipt, and final whole-state CAS do.
+    """
+
+    agent_id = normalize_agent_id(agent_name)
     changed = release_completed_worker_for_claim(
         config,
         state,
         agent_name=display_name_for(config, agent_id),
         task_id=release_task_id,
     )
-    provider_report = load_provider_report(config, refresh=False)
     changed = expire_provider_dispatch_pauses(config, state) or changed
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed
@@ -17284,8 +20160,6 @@ def _claim_next_task_for_agent_locked(
     supervisor_state["mode_occupancy"] = occupancy
     focus_mode = str(supervisor_state.get("focus_mode") or "execution")
     supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get(focus_mode)) else "idle"
-    save_runtime_state(config, state)
-    refresh_dashboard_runtime_artifacts(config)
     return changed
 
 
@@ -17345,22 +20219,28 @@ def main() -> int:
             once=True,
         )
         return 0
-    run_supervisor_cycle(
-        config,
-        watch=not args.no_watch,
-        replay=args.replay,
-        quiet=args.quiet,
-        verbose=args.verbose,
-    )
-    while True:
-        time.sleep(poll_interval)
-        run_supervisor_cycle(
+    first_cycle = True
+
+    def scheduled_cycle() -> bool:
+        nonlocal first_cycle
+        replay = args.replay if first_cycle else False
+        first_cycle = False
+        return run_supervisor_cycle(
             config,
             watch=not args.no_watch,
-            replay=False,
+            replay=replay,
             quiet=args.quiet,
             verbose=args.verbose,
         )
+
+    run_deadline_scheduler(
+        scheduled_cycle,
+        poll_interval,
+        on_cycle_complete=lambda sample: publish_scheduler_cadence_completion(
+            config,
+            sample,
+        ),
+    )
 
 
 if __name__ == "__main__":

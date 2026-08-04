@@ -8,10 +8,13 @@ three-loop acceptance, and automatic rollback with durable evidence.
 from __future__ import annotations
 
 import argparse
+import copy
+import fcntl
 import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -19,7 +22,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -49,6 +52,7 @@ DEFAULT_PROMOTION_EVIDENCE_ROOT = (
 TRUSTED_GITHUB_OWNER = "ajoe734"
 TRUSTED_GITHUB_REPOSITORY = "pantheon"
 TRUSTED_ORIGIN_DEV_URL = "https://github.com/ajoe734/pantheon.git"
+TRUSTED_CANONICAL_ORIGIN_URL = "https://github.com/ajoe734/pantheon.git"
 PROCFS_ROOT = Path("/proc")
 SUPERVISOR_ENTRYPOINT_RELATIVE = PurePosixPath(
     ".orchestrator/supervisor.py"
@@ -277,6 +281,33 @@ class GovernedSupervisorLaunchContract:
     intentional_restart_path: Path
     stdout_log_path: Path
     stderr_log_path: Path
+
+
+@dataclass(frozen=True)
+class SupervisorConfigVariant:
+    """One pre-rendered live-config generation bound to one command root."""
+
+    command_root: Path
+    supervisor_argv: tuple[str, ...]
+    content: bytes
+    byte_length: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class MutableIncumbentSnapshot:
+    """Exact read-only binding for the legacy mutable incumbent generation."""
+
+    root: Path
+    root_device: int
+    root_inode: int
+    head_commit: str
+    tracked_tree_identity: str
+    accepted_dev_commit: str
+    remote_url: str
+    repository_slug: str
+    process: SupervisorProcessIdentity
+    source_identities: tuple[LaunchFileIdentity, ...]
 
 
 class LaunchFilesystem(Protocol):
@@ -1132,15 +1163,19 @@ def _assert_candidate_git_metadata(handle: CandidateRootHandle) -> None:
         raise ValueError("Candidate Git metadata unexpectedly identifies a bare repository")
 
 
-def _open_candidate_root_handle(candidate_path: Path) -> CandidateRootHandle:
+def _open_candidate_root_handle(
+    candidate_path: Path,
+    *,
+    require_immutable_location: bool = True,
+) -> CandidateRootHandle:
     path = candidate_path if isinstance(candidate_path, Path) else Path(candidate_path)
     trusted_parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
 
-    if path.parent != trusted_parent:
+    if require_immutable_location and path.parent != trusted_parent:
         raise ValueError(
             f"Candidate root {path} is not a direct child of {trusted_parent}"
         )
-    if not HEX_40_PATTERN.fullmatch(path.name):
+    if require_immutable_location and not HEX_40_PATTERN.fullmatch(path.name):
         raise ValueError(
             "Candidate root basename is not a lowercase 40-hex commit: "
             f"{path.name}"
@@ -1875,6 +1910,182 @@ def _capture_config_bytes(
         label="Live config",
     )
     return content, file_identity, path_components
+
+
+def _encode_live_config(payload: Mapping[str, Any]) -> bytes:
+    return (
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    ).encode("utf-8", errors="strict")
+
+
+def derive_supervisor_config_variant(
+    identity: CandidateRuntimeIdentity,
+    *,
+    command_root: Path,
+) -> SupervisorConfigVariant:
+    """Render one target command without mutating the captured live config."""
+    payload = copy.deepcopy(_strict_live_config(identity))
+    watchdog = payload.get("watchdog")
+    if not isinstance(watchdog, dict):
+        raise ValueError("Captured live config watchdog object is missing")
+    raw_command = watchdog.get("supervisor_command")
+    if (
+        not isinstance(raw_command, list)
+        or not raw_command
+        or any(not isinstance(item, str) or not item for item in raw_command)
+    ):
+        raise ValueError("Captured live config supervisor_command is invalid")
+    supervisor_indexes = tuple(
+        index
+        for index, argument in enumerate(raw_command)
+        if PurePosixPath(argument).name == "supervisor.py"
+    )
+    if len(supervisor_indexes) != 1:
+        raise ValueError(
+            "Captured live config must contain exactly one supervisor entrypoint"
+        )
+    command = list(raw_command)
+    command[supervisor_indexes[0]] = str(
+        command_root / SUPERVISOR_ENTRYPOINT_RELATIVE
+    )
+    watchdog["supervisor_command"] = command
+    content = _encode_live_config(payload)
+    return SupervisorConfigVariant(
+        command_root=command_root,
+        supervisor_argv=tuple(command),
+        content=content,
+        byte_length=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+
+def _identity_with_current_config(
+    identity: CandidateRuntimeIdentity,
+    *,
+    expected_content: bytes,
+) -> CandidateRuntimeIdentity:
+    content, file_identity, path_components = _capture_config_bytes(
+        identity.config_path,
+        expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+    )
+    if content != expected_content:
+        raise ValueError("Installed live config does not match the target generation")
+    return replace(
+        identity,
+        config_device=file_identity.device,
+        config_inode=file_identity.inode,
+        config_path_components=path_components,
+        config_bytes=content,
+        config_byte_length=len(content),
+        config_sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+
+def atomic_install_live_config(
+    identity: CandidateRuntimeIdentity,
+    variant: SupervisorConfigVariant,
+    *,
+    allowed_predecessors: Mapping[str, bytes],
+    fault_hook: Callable[[str], None] | None = None,
+) -> CandidateRuntimeIdentity:
+    """CAS-check, replace and fsync one live-config generation.
+
+    The caller must own both the promotion lock and the runtime-admission lock.
+    A post-replace error is deliberately surfaced; rollback may proceed only if
+    the resulting bytes are one of its explicitly captured predecessors.
+    """
+    path = identity.config_path
+    if variant.command_root != identity.candidate_root:
+        raise ValueError("Config variant command root differs from runtime identity")
+    if variant.byte_length != len(variant.content):
+        raise ValueError("Config variant byte length is invalid")
+    if hashlib.sha256(variant.content).hexdigest() != variant.sha256:
+        raise ValueError("Config variant SHA-256 is invalid")
+    if path != LIVE_SUPERVISOR_CONFIG_PATH:
+        raise ValueError("Config install is restricted to the exact live config path")
+    current, _file_identity, _components = _capture_config_bytes(
+        path,
+        expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+    )
+    current_sha = hashlib.sha256(current).hexdigest()
+    if allowed_predecessors.get(current_sha) != current:
+        raise ValueError(
+            "Live config generation is not an allowed transaction predecessor"
+        )
+
+    parent_components = _capture_directory_component_identities(
+        path.parent,
+        label="Live config install directory",
+    )
+    directory_fd = _open_path_descriptor(
+        path.parent,
+        label="Live config install directory",
+        require_directory=True,
+    )
+    temporary_path: Path | None = None
+    try:
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.promotion-",
+            dir=path.parent,
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                os.fchmod(handle.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+                handle.write(variant.content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if fault_hook is not None:
+                fault_hook("after_temp_fsync")
+
+            # Recheck the exact predecessor after the temporary generation is
+            # durable. Unknown replacement bytes prohibit our rename/launch.
+            current, _identity, _path_components = _capture_config_bytes(
+                path,
+                expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+            )
+            current_sha = hashlib.sha256(current).hexdigest()
+            if allowed_predecessors.get(current_sha) != current:
+                raise ValueError("Live config raced before atomic replacement")
+            _assert_path_component_identities(
+                parent_components,
+                label="Live config install directory",
+            )
+            if fault_hook is not None:
+                fault_hook("before_replace")
+            current, _identity, _path_components = _capture_config_bytes(
+                path,
+                expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+            )
+            current_sha = hashlib.sha256(current).hexdigest()
+            if allowed_predecessors.get(current_sha) != current:
+                raise ValueError("Live config raced at atomic replacement")
+            os.replace(
+                temporary_path.name,
+                path.name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            temporary_path = None
+            if fault_hook is not None:
+                fault_hook("after_replace")
+            installed = _identity_with_current_config(
+                identity,
+                expected_content=variant.content,
+            )
+            os.fsync(directory_fd)
+            if fault_hook is not None:
+                fault_hook("after_directory_fsync")
+            _assert_path_component_identities(
+                parent_components,
+                label="Live config install directory",
+            )
+            return installed
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+    finally:
+        os.close(directory_fd)
 
 
 class OSLaunchFilesystem:
@@ -2816,6 +3027,7 @@ def discover_incumbent_supervisor_process(
     identity: CandidateRuntimeIdentity,
     *,
     expected_argv: tuple[str, ...] | None = None,
+    expected_contract: ExpectedSupervisorProcessContract | None = None,
     reader: RuntimeProcessReader | None = None,
     cwd_git_identity_reader: Callable[
         [ProcessCwdIdentity], tuple[str, str]
@@ -2824,10 +3036,13 @@ def discover_incumbent_supervisor_process(
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
-    expected = _expected_supervisor_process_contract(
+    expected = expected_contract or _expected_supervisor_process_contract(
         identity,
         supervisor_argv=expected_argv,
     )
+    if expected_contract is not None and expected_argv is not None:
+        if expected_contract.argv != expected_argv:
+            raise ValueError("Explicit process contract and argv disagree")
     lock_before = runtime_reader.read_admission_lock(
         expected.admission_lock_path
     )
@@ -4043,11 +4258,15 @@ class RuntimeObservation:
 @dataclass(frozen=True)
 class PromotionPlan:
     candidate_identity: CandidateRuntimeIdentity
+    candidate_config: SupervisorConfigVariant
     candidate_launch: GovernedSupervisorLaunchContract
     incumbent_identity: CandidateRuntimeIdentity
+    rollback_config: SupervisorConfigVariant
     incumbent_process: SupervisorProcessIdentity
+    mutable_incumbent: MutableIncumbentSnapshot | None
     rollback_launch: GovernedSupervisorLaunchContract
     baseline: RuntimeObservation
+    promotion_lock_path: Path
     runtime_admission_lock_path: Path
 
 
@@ -4057,11 +4276,13 @@ class PromotionState(str, Enum):
     ADMISSION_LOCKED = "admission_locked"
     INTENT_RECORDED = "intent_recorded"
     INCUMBENT_TERMINATED = "incumbent_terminated"
+    CANDIDATE_CONFIG_INSTALLED = "candidate_config_installed"
     CANDIDATE_LAUNCHED = "candidate_launched"
     CANDIDATE_VERIFYING = "candidate_verifying"
     PROMOTED = "promoted"
     ROLLBACK_LOCKED = "rollback_locked"
     BAD_RUNTIME_TERMINATED = "bad_runtime_terminated"
+    ROLLBACK_CONFIG_INSTALLED = "rollback_config_installed"
     ROLLBACK_LAUNCHED = "rollback_launched"
     ROLLBACK_VERIFYING = "rollback_verifying"
     ROLLED_BACK = "rolled_back"
@@ -4194,6 +4415,7 @@ def capture_runtime_observation(
     identity: CandidateRuntimeIdentity,
     *,
     expected_argv: tuple[str, ...],
+    expected_process_contract: ExpectedSupervisorProcessContract | None = None,
     expected_generation: ProcessGeneration | None = None,
     reader: RuntimeProcessReader | None = None,
     now: datetime | None = None,
@@ -4211,6 +4433,7 @@ def capture_runtime_observation(
     process = discover_incumbent_supervisor_process(
         identity,
         expected_argv=expected_argv,
+        expected_contract=expected_process_contract,
         reader=runtime_reader,
         candidate_revalidator=revalidate_identity,
     )
@@ -4339,6 +4562,255 @@ def _discover_supervisor_seed(
     return generation, argv, cwd
 
 
+def _mutable_root_binding(
+    cwd: ProcessCwdIdentity,
+    *,
+    filesystem: LaunchFilesystem | None = None,
+) -> tuple[
+    str,
+    str,
+    TrustedDevIdentity,
+    str,
+    GitRemoteIdentity,
+    tuple[LaunchFileIdentity, ...],
+]:
+    """Capture Git and governed-source bytes from a mutable process cwd."""
+    handle = _open_candidate_root_handle(
+        cwd.path,
+        require_immutable_location=False,
+    )
+    try:
+        if (
+            handle.identity.device != cwd.device
+            or handle.identity.inode != cwd.inode
+        ):
+            raise ValueError("Mutable incumbent cwd identity changed")
+        remote_url = parse_origin_url(handle)
+        remote = validate_remote_url(remote_url)
+        head, tree = _read_head_tree(handle)
+        trusted_dev = _fetch_trusted_dev_identity(head)
+        if trusted_dev.candidate_commit_tree != tree:
+            raise ValueError(
+                "Mutable incumbent tree differs from the accepted dev commit"
+            )
+        verify_working_tree_cleanliness(
+            handle,
+            expected_head=head,
+            expected_tree=tree,
+        )
+        _assert_candidate_handle_path(handle)
+    finally:
+        _close_candidate_root_handle(handle)
+
+    fs = filesystem or OSLaunchFilesystem()
+    sources = tuple(
+        fs.capture_regular_file(
+            cwd.path / Path(relative),
+            role=role,
+            require_executable=require_executable,
+        )
+        for role, relative, require_executable in GOVERNED_LAUNCH_SOURCES
+    )
+    return head, tree, trusted_dev, remote_url, remote, sources
+
+
+def _mutable_process_contract(
+    config_identity: CandidateRuntimeIdentity,
+    *,
+    cwd: ProcessCwdIdentity,
+    argv: tuple[str, ...],
+    head_commit: str,
+    tracked_tree_identity: str,
+) -> ExpectedSupervisorProcessContract:
+    config = _strict_live_config(config_identity)
+    watchdog = config.get("watchdog")
+    if not isinstance(watchdog, dict):
+        raise ValueError("Captured live config watchdog object is missing")
+    raw_command = watchdog.get("supervisor_command")
+    if not isinstance(raw_command, list) or tuple(raw_command) != argv:
+        raise ValueError(
+            "Mutable incumbent argv is not the exact captured watchdog command"
+        )
+    expected_entrypoint = cwd.path / SUPERVISOR_ENTRYPOINT_RELATIVE
+    if argv.count(str(expected_entrypoint)) != 1:
+        raise ValueError(
+            "Mutable incumbent argv does not bind its exact cwd entrypoint"
+        )
+    if argv.count("--config") != 1:
+        raise ValueError("Mutable incumbent argv must contain one --config option")
+    config_index = argv.index("--config")
+    if (
+        config_index + 1 >= len(argv)
+        or argv[config_index + 1] != str(config_identity.config_path)
+    ):
+        raise ValueError("Mutable incumbent argv does not bind the live config")
+    executable_arg = Path(argv[0])
+    if not executable_arg.is_absolute():
+        raise ValueError("Mutable incumbent executable must be absolute")
+    executable = executable_arg.resolve(strict=True)
+    paths = config.get("paths")
+    if not isinstance(paths, dict):
+        raise ValueError("Captured live config paths object is missing")
+    status_path = _absolute_config_path(
+        paths.get("status_file"),
+        label="paths.status_file",
+    )
+    state_path = _absolute_config_path(
+        paths.get("state_file"),
+        label="paths.state_file",
+    )
+    status_root = status_path.parent
+    if state_path.parent.name != ".orchestrator":
+        raise ValueError("Captured live state path is outside .orchestrator")
+    if state_path.parent.parent != status_root:
+        raise ValueError("Captured live status and state roots differ")
+    return ExpectedSupervisorProcessContract(
+        executable=executable,
+        argv=argv,
+        entrypoint=expected_entrypoint,
+        config_path=config_identity.config_path,
+        cwd=cwd.path,
+        cwd_device=cwd.device,
+        cwd_inode=cwd.inode,
+        cwd_commit=head_commit,
+        cwd_tree=tracked_tree_identity,
+        command_root=str(cwd.path),
+        runtime_sha=head_commit,
+        status_root=str(status_root),
+        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
+    )
+
+
+def capture_mutable_incumbent_snapshot(
+    config_identity: CandidateRuntimeIdentity,
+    *,
+    reader: RuntimeProcessReader,
+    seed_generation: ProcessGeneration,
+    seed_argv: tuple[str, ...],
+    seed_cwd: ProcessCwdIdentity,
+) -> MutableIncumbentSnapshot:
+    binding = _mutable_root_binding(seed_cwd)
+    head, tree, accepted, remote_url, remote, sources = binding
+    expected = _mutable_process_contract(
+        config_identity,
+        cwd=seed_cwd,
+        argv=seed_argv,
+        head_commit=head,
+        tracked_tree_identity=tree,
+    )
+
+    def revalidate_root() -> None:
+        current = _mutable_root_binding(seed_cwd)
+        if current != binding:
+            raise ValueError("Mutable incumbent root/source binding drifted")
+
+    process = discover_incumbent_supervisor_process(
+        config_identity,
+        expected_argv=seed_argv,
+        expected_contract=expected,
+        reader=reader,
+        cwd_git_identity_reader=lambda _cwd: (head, tree),
+        candidate_revalidator=revalidate_root,
+    )
+    if process.generation != seed_generation:
+        raise ValueError("Mutable incumbent generation changed during capture")
+    return MutableIncumbentSnapshot(
+        root=seed_cwd.path,
+        root_device=seed_cwd.device,
+        root_inode=seed_cwd.inode,
+        head_commit=head,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=accepted.commit,
+        remote_url=remote_url,
+        repository_slug=remote.slug,
+        process=process,
+        source_identities=sources,
+    )
+
+
+def materialize_immutable_rollback_runtime(
+    snapshot: MutableIncumbentSnapshot,
+) -> CandidateRuntimeIdentity:
+    """Create a fresh persistent checkout for the captured mutable commit."""
+    parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
+    _validate_absolute_identity_path(parent, label="Command runtime parent")
+    parent_components = _capture_directory_component_identities(
+        parent,
+        label="Command runtime parent",
+    )
+    destination = parent / snapshot.head_commit
+    if destination.exists() or destination.is_symlink():
+        raise ValueError(
+            f"Fresh rollback runtime destination already exists: {destination}"
+        )
+    temporary_root = Path(
+        tempfile.mkdtemp(prefix=".rollback-runtime-", dir=parent)
+    )
+    installed = False
+    try:
+        _run_git(temporary_root, "init", "--quiet")
+        _run_git(
+            temporary_root,
+            "remote",
+            "add",
+            "origin",
+            TRUSTED_ORIGIN_DEV_URL,
+        )
+        _run_git(
+            temporary_root,
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "origin",
+            "+refs/heads/dev:refs/remotes/origin/dev",
+        )
+        _run_git(
+            temporary_root,
+            "remote",
+            "set-url",
+            "origin",
+            TRUSTED_CANONICAL_ORIGIN_URL,
+        )
+        _run_git(
+            temporary_root,
+            "checkout",
+            "--quiet",
+            "--detach",
+            snapshot.head_commit,
+        )
+        if _git_output(temporary_root, "rev-parse", "HEAD^{tree}") != (
+            snapshot.tracked_tree_identity
+        ):
+            raise ValueError("Materialized rollback tree differs from incumbent")
+        _assert_path_component_identities(
+            parent_components,
+            label="Command runtime parent",
+        )
+        os.rename(temporary_root, destination)
+        installed = True
+        directory_fd = _open_path_descriptor(
+            parent,
+            label="Command runtime parent",
+            require_directory=True,
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        identity = build_candidate_runtime_identity(destination)
+        if (
+            identity.head_commit != snapshot.head_commit
+            or identity.tracked_tree_identity != snapshot.tracked_tree_identity
+            or identity.accepted_dev_commit != snapshot.accepted_dev_commit
+            or identity.repository_slug != snapshot.repository_slug
+        ):
+            raise ValueError("Immutable rollback identity differs from incumbent")
+        return identity
+    finally:
+        if not installed:
+            shutil.rmtree(temporary_root, ignore_errors=True)
+
+
 class RuntimeAdmissionLock:
     """Exclusive runtime-admission lock shared with supervisor/watchdog I/O.
 
@@ -4416,8 +4888,93 @@ class RuntimeAdmissionLock:
             self.release()
 
 
+class PromotionLock:
+    """Process-wide promotion serializer, acquired before runtime admission."""
+
+    def __init__(self, path: Path, *, timeout: float = 30.0) -> None:
+        if timeout <= 0:
+            raise ValueError("Promotion lock timeout must be positive")
+        self.path = path
+        self.timeout = timeout
+        self._descriptor: int | None = None
+
+    def acquire(self) -> None:
+        if self._descriptor is not None:
+            raise RuntimeError("Promotion lock is already held")
+        if self.path.is_symlink():
+            raise ValueError(f"Promotion lock cannot be a symlink: {self.path}")
+        parent_components = _capture_directory_component_identities(
+            self.path.parent,
+            label="Promotion lock parent",
+        )
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(self.path, flags, 0o600)
+        deadline = time.monotonic() + self.timeout
+        try:
+            while True:
+                try:
+                    fcntl.flock(
+                        descriptor,
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,
+                    )
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"Timed out acquiring promotion lock: {self.path}"
+                        ) from exc
+                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+            descriptor_stat = os.fstat(descriptor)
+            path_stat = self.path.lstat()
+            if (
+                not stat.S_ISREG(descriptor_stat.st_mode)
+                or stat.S_ISLNK(path_stat.st_mode)
+                or (descriptor_stat.st_dev, descriptor_stat.st_ino)
+                != (path_stat.st_dev, path_stat.st_ino)
+            ):
+                raise ValueError("Promotion lock identity changed during acquire")
+            _assert_path_component_identities(
+                parent_components,
+                label="Promotion lock parent",
+            )
+            self._descriptor = descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def release(self) -> None:
+        descriptor = self._descriptor
+        if descriptor is None:
+            raise RuntimeError("Promotion lock is not held")
+        self._descriptor = None
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+    @contextmanager
+    def held(self) -> Iterator["PromotionLock"]:
+        self.acquire()
+        try:
+            yield self
+        finally:
+            self.release()
+
+
 class PromotionBackend(Protocol):
-    def prepare(self, candidate_root: Path) -> PromotionPlan: ...
+    def promotion_lock_path(self, candidate_root: Path) -> Path: ...
+
+    def prepare(
+        self,
+        candidate_root: Path,
+        *,
+        bootstrap_mutable_incumbent: bool,
+    ) -> PromotionPlan: ...
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation: ...
 
@@ -4437,6 +4994,14 @@ class PromotionBackend(Protocol):
         old_pid: int,
         target_sha: str,
     ) -> None: ...
+
+    def install_config(
+        self,
+        identity: CandidateRuntimeIdentity,
+        variant: SupervisorConfigVariant,
+        *,
+        allowed_predecessors: Mapping[str, bytes],
+    ) -> CandidateRuntimeIdentity: ...
 
     def launch(
         self,
@@ -4463,32 +5028,83 @@ class OSPromotionBackend:
     def __init__(self, *, reader: RuntimeProcessReader | None = None) -> None:
         self.reader = reader or ProcfsRuntimeProcessReader()
 
-    def prepare(self, candidate_root: Path) -> PromotionPlan:
+    def promotion_lock_path(self, candidate_root: Path) -> Path:
+        identity = build_candidate_runtime_identity(candidate_root)
+        _status, _state, _provider, status_root = _runtime_document_paths(identity)
+        return status_root / ".orchestrator" / "supervisor-runtime-promotion.lock"
+
+    def prepare(
+        self,
+        candidate_root: Path,
+        *,
+        bootstrap_mutable_incumbent: bool,
+    ) -> PromotionPlan:
         candidate_identity = build_candidate_runtime_identity(candidate_root)
-        candidate_launch = build_governed_supervisor_launch_contract(
-            candidate_identity
-        )
         seed_generation, seed_argv, seed_cwd = _discover_supervisor_seed(self.reader)
-        incumbent_identity = build_candidate_runtime_identity(seed_cwd.path)
+        mutable_incumbent: MutableIncumbentSnapshot | None = None
+        mutable_expected: ExpectedSupervisorProcessContract | None = None
+        if bootstrap_mutable_incumbent:
+            mutable_incumbent = capture_mutable_incumbent_snapshot(
+                candidate_identity,
+                reader=self.reader,
+                seed_generation=seed_generation,
+                seed_argv=seed_argv,
+                seed_cwd=seed_cwd,
+            )
+            if (
+                mutable_incumbent.accepted_dev_commit
+                != candidate_identity.accepted_dev_commit
+            ):
+                raise ValueError(
+                    "Candidate and mutable incumbent captured different accepted dev tips"
+                )
+            incumbent_identity = materialize_immutable_rollback_runtime(
+                mutable_incumbent
+            )
+            incumbent_process = mutable_incumbent.process
+            mutable_expected = _mutable_process_contract(
+                candidate_identity,
+                cwd=seed_cwd,
+                argv=seed_argv,
+                head_commit=mutable_incumbent.head_commit,
+                tracked_tree_identity=mutable_incumbent.tracked_tree_identity,
+            )
+            baseline_identity = candidate_identity
+        else:
+            incumbent_identity = build_candidate_runtime_identity(seed_cwd.path)
+            incumbent_process = discover_incumbent_supervisor_process(
+                incumbent_identity,
+                expected_argv=seed_argv,
+                reader=self.reader,
+                candidate_revalidator=incumbent_identity.verify_immutable_snapshot,
+            )
+            if incumbent_process.generation != seed_generation:
+                raise ValueError("Incumbent changed during promotion preparation")
+            baseline_identity = incumbent_identity
         if incumbent_identity.config_bytes != candidate_identity.config_bytes:
-            raise ValueError("Candidate and incumbent captured different config bytes")
-        incumbent_process = discover_incumbent_supervisor_process(
-            incumbent_identity,
-            expected_argv=seed_argv,
-            reader=self.reader,
-            candidate_revalidator=incumbent_identity.verify_immutable_snapshot,
-        )
-        if incumbent_process.generation != seed_generation:
-            raise ValueError("Incumbent process changed during promotion preparation")
+            raise ValueError("Candidate and rollback captured different config bytes")
         if incumbent_identity.candidate_root == candidate_identity.candidate_root:
-            raise ValueError("Candidate runtime is already the active incumbent root")
+            raise ValueError("Candidate runtime equals the rollback runtime")
+        candidate_config = derive_supervisor_config_variant(
+            candidate_identity,
+            command_root=candidate_identity.candidate_root,
+        )
+        rollback_config = derive_supervisor_config_variant(
+            candidate_identity,
+            command_root=incumbent_identity.candidate_root,
+        )
+        candidate_launch = build_governed_supervisor_launch_contract(
+            candidate_identity,
+            supervisor_argv=candidate_config.supervisor_argv,
+        )
         rollback_launch = build_governed_supervisor_launch_contract(
             incumbent_identity,
-            supervisor_argv=incumbent_process.argv,
+            supervisor_argv=rollback_config.supervisor_argv,
         )
         baseline = capture_runtime_observation(
-            incumbent_identity,
-            expected_argv=incumbent_process.argv,
+            baseline_identity,
+            expected_argv=seed_argv,
+            expected_process_contract=mutable_expected,
             expected_generation=incumbent_process.generation,
             reader=self.reader,
         )
@@ -4503,11 +5119,19 @@ class OSPromotionBackend:
             raise ValueError("Candidate and incumbent status roots differ")
         return PromotionPlan(
             candidate_identity=candidate_identity,
+            candidate_config=candidate_config,
             candidate_launch=candidate_launch,
             incumbent_identity=incumbent_identity,
+            rollback_config=rollback_config,
             incumbent_process=incumbent_process,
+            mutable_incumbent=mutable_incumbent,
             rollback_launch=rollback_launch,
             baseline=baseline,
+            promotion_lock_path=(
+                candidate_status_root
+                / ".orchestrator"
+                / "supervisor-runtime-promotion.lock"
+            ),
             runtime_admission_lock_path=(
                 candidate_status_root / ".orchestrator" / "runtime-admission.lock"
             ),
@@ -4517,21 +5141,56 @@ class OSPromotionBackend:
         plan.candidate_identity.verify_immutable_snapshot()
         plan.incumbent_identity.verify_immutable_snapshot()
         if (
-            build_governed_supervisor_launch_contract(plan.candidate_identity)
+            build_governed_supervisor_launch_contract(
+                plan.candidate_identity,
+                supervisor_argv=plan.candidate_config.supervisor_argv,
+            )
             != plan.candidate_launch
         ):
             raise ValueError("Candidate governed launch contract drift detected")
         if (
             build_governed_supervisor_launch_contract(
                 plan.incumbent_identity,
-                supervisor_argv=plan.incumbent_process.argv,
+                supervisor_argv=plan.rollback_config.supervisor_argv,
             )
             != plan.rollback_launch
         ):
             raise ValueError("Rollback governed launch contract drift detected")
+        if plan.mutable_incumbent is None:
+            return capture_runtime_observation(
+                plan.incumbent_identity,
+                expected_argv=plan.incumbent_process.argv,
+                expected_generation=plan.incumbent_process.generation,
+                reader=self.reader,
+            )
+        current_seed = _discover_supervisor_seed(self.reader)
+        expected_seed = (
+            plan.mutable_incumbent.process.generation,
+            plan.mutable_incumbent.process.argv,
+            plan.mutable_incumbent.process.cwd,
+        )
+        if current_seed != expected_seed:
+            raise ValueError("Mutable incumbent seed changed before transaction")
+        current_mutable = capture_mutable_incumbent_snapshot(
+            plan.candidate_identity,
+            reader=self.reader,
+            seed_generation=current_seed[0],
+            seed_argv=current_seed[1],
+            seed_cwd=current_seed[2],
+        )
+        if current_mutable != plan.mutable_incumbent:
+            raise ValueError("Mutable incumbent snapshot drift detected")
+        expected = _mutable_process_contract(
+            plan.candidate_identity,
+            cwd=plan.mutable_incumbent.process.cwd,
+            argv=plan.mutable_incumbent.process.argv,
+            head_commit=plan.mutable_incumbent.head_commit,
+            tracked_tree_identity=plan.mutable_incumbent.tracked_tree_identity,
+        )
         return capture_runtime_observation(
-            plan.incumbent_identity,
+            plan.candidate_identity,
             expected_argv=plan.incumbent_process.argv,
+            expected_process_contract=expected,
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
         )
@@ -4568,6 +5227,19 @@ class OSPromotionBackend:
             _strict_live_config(identity),
             old_pid=old_pid,
             target_sha=target_sha,
+        )
+
+    def install_config(
+        self,
+        identity: CandidateRuntimeIdentity,
+        variant: SupervisorConfigVariant,
+        *,
+        allowed_predecessors: Mapping[str, bytes],
+    ) -> CandidateRuntimeIdentity:
+        return atomic_install_live_config(
+            identity,
+            variant,
+            allowed_predecessors=allowed_predecessors,
         )
 
     def launch(
@@ -4748,6 +5420,9 @@ _ALLOWED_PROMOTION_TRANSITIONS: dict[PromotionState, frozenset[PromotionState]] 
         {PromotionState.INCUMBENT_TERMINATED, PromotionState.ROLLBACK_LOCKED}
     ),
     PromotionState.INCUMBENT_TERMINATED: frozenset(
+        {PromotionState.CANDIDATE_CONFIG_INSTALLED, PromotionState.ROLLBACK_LOCKED}
+    ),
+    PromotionState.CANDIDATE_CONFIG_INSTALLED: frozenset(
         {PromotionState.CANDIDATE_LAUNCHED, PromotionState.ROLLBACK_LOCKED}
     ),
     PromotionState.CANDIDATE_LAUNCHED: frozenset(
@@ -4760,6 +5435,9 @@ _ALLOWED_PROMOTION_TRANSITIONS: dict[PromotionState, frozenset[PromotionState]] 
         {PromotionState.BAD_RUNTIME_TERMINATED, PromotionState.ROLLBACK_FAILED}
     ),
     PromotionState.BAD_RUNTIME_TERMINATED: frozenset(
+        {PromotionState.ROLLBACK_CONFIG_INSTALLED, PromotionState.ROLLBACK_FAILED}
+    ),
+    PromotionState.ROLLBACK_CONFIG_INSTALLED: frozenset(
         {PromotionState.ROLLBACK_LAUNCHED, PromotionState.ROLLBACK_FAILED}
     ),
     PromotionState.ROLLBACK_LAUNCHED: frozenset(
@@ -4843,6 +5521,8 @@ class PromotionTransaction:
         evidence_path: Path | None = None,
         backend: PromotionBackend | None = None,
         lock_factory: Callable[[Path, float], RuntimeAdmissionLock] | None = None,
+        promotion_lock_factory: Callable[[Path, float], PromotionLock] | None = None,
+        bootstrap_mutable_incumbent: bool = False,
         required_fresh_loops: int = 3,
         postcheck_timeout: float = 180.0,
         poll_interval: float = 0.5,
@@ -4860,6 +5540,10 @@ class PromotionTransaction:
         self.lock_factory = lock_factory or (
             lambda path, timeout: RuntimeAdmissionLock(path, timeout=timeout)
         )
+        self.promotion_lock_factory = promotion_lock_factory or (
+            lambda path, timeout: PromotionLock(path, timeout=timeout)
+        )
+        self.bootstrap_mutable_incumbent = bootstrap_mutable_incumbent
         self.required_fresh_loops = required_fresh_loops
         self.postcheck_timeout = postcheck_timeout
         self.poll_interval = poll_interval
@@ -4868,6 +5552,8 @@ class PromotionTransaction:
         self.state = PromotionState.CREATED
         self.history: list[dict[str, Any]] = []
         self.plan: PromotionPlan | None = None
+        self.candidate_active_identity: CandidateRuntimeIdentity | None = None
+        self.rollback_active_identity: CandidateRuntimeIdentity | None = None
         self.candidate_generation: ProcessGeneration | None = None
         self.candidate_pid: int | None = None
         self.candidate_child_absence_proven: bool | None = None
@@ -4950,7 +5636,7 @@ class PromotionTransaction:
                     generation,
                     require_current_dev_identity=not rollback,
                 )
-                if observation.config_sha256 != baseline.config_sha256:
+                if observation.config_sha256 != identity.config_sha256:
                     raise ValueError("Live config bytes drifted during transaction")
                 if observation.invariant_failures:
                     raise ValueError(
@@ -5035,37 +5721,58 @@ class PromotionTransaction:
                         active_generation,
                         timeout=self.termination_timeout,
                     )
+                    if self.backend.generation_is_alive(active_generation):
+                        raise RuntimeError(
+                            "Bad runtime generation remained alive after termination"
+                        )
                 self._transition(
                     PromotionState.BAD_RUNTIME_TERMINATED,
                     pid=active_generation.pid if active_generation else None,
                 )
-            try:
-                self.rollback_generation = self.backend.launch(
+                self.rollback_active_identity = self.backend.install_config(
                     plan.incumbent_identity,
-                    plan.rollback_launch,
-                    require_current_dev_identity=False,
+                    plan.rollback_config,
+                    allowed_predecessors={
+                        plan.candidate_identity.config_sha256: (
+                            plan.candidate_identity.config_bytes
+                        ),
+                        plan.candidate_config.sha256: plan.candidate_config.content,
+                        plan.rollback_config.sha256: plan.rollback_config.content,
+                    },
                 )
-                self.rollback_pid = self.rollback_generation.pid
-            except ProcessLaunchError as exc:
-                self.rollback_pid = exc.pid
-                self.rollback_generation = exc.generation
-                self.rollback_child_absence_proven = exc.child_absence_proven
-                self.rollback_launch_cleanup_error = exc.cleanup_error
-                raise
-            if self.rollback_generation.pid == plan.incumbent_process.generation.pid:
-                raise ValueError("Rollback launch reused the incumbent PID")
+                self._transition(
+                    PromotionState.ROLLBACK_CONFIG_INSTALLED,
+                    config_sha256=self.rollback_active_identity.config_sha256,
+                )
+                try:
+                    self.rollback_generation = self.backend.launch(
+                        self.rollback_active_identity,
+                        plan.rollback_launch,
+                        require_current_dev_identity=False,
+                    )
+                    self.rollback_pid = self.rollback_generation.pid
+                except ProcessLaunchError as exc:
+                    self.rollback_pid = exc.pid
+                    self.rollback_generation = exc.generation
+                    self.rollback_child_absence_proven = exc.child_absence_proven
+                    self.rollback_launch_cleanup_error = exc.cleanup_error
+                    raise
+                if self.rollback_generation.pid == plan.incumbent_process.generation.pid:
+                    raise ValueError("Rollback launch reused the incumbent PID")
+                self._transition(
+                    PromotionState.ROLLBACK_LAUNCHED,
+                    pid=self.rollback_generation.pid,
+                    starttime_ticks=self.rollback_generation.starttime_ticks,
+                )
+            if self.rollback_active_identity is None:
+                raise RuntimeError("Rollback config identity was not installed")
             self.rollback_launch_boundary_at = self._capture_launch_boundary()
-            self._transition(
-                PromotionState.ROLLBACK_LAUNCHED,
-                pid=self.rollback_generation.pid,
-                starttime_ticks=self.rollback_generation.starttime_ticks,
-                launch_boundary_at=self.rollback_launch_boundary_at.isoformat().replace(
-                    "+00:00", "Z"
-                ),
+            self.history[-1]["details"]["launch_boundary_at"] = (
+                self.rollback_launch_boundary_at.isoformat().replace("+00:00", "Z")
             )
             self._transition(PromotionState.ROLLBACK_VERIFYING)
             self.rollback_observations = self._wait_for_fresh_loops(
-                plan.incumbent_identity,
+                self.rollback_active_identity,
                 plan.rollback_launch,
                 self.rollback_generation,
                 baseline=plan.baseline,
@@ -5088,6 +5795,7 @@ class PromotionTransaction:
         return {
             "schema_version": 1,
             "kind": "supervisor_runtime_promotion_transaction",
+            "bootstrap_mutable_incumbent": self.bootstrap_mutable_incumbent,
             "outcome": outcome,
             "exit_code": exit_code,
             "state": self.state.value,
@@ -5131,12 +5839,89 @@ class PromotionTransaction:
                 if plan is not None
                 else None
             ),
+            "mutable_incumbent": (
+                {
+                    "pid": plan.mutable_incumbent.process.generation.pid,
+                    "starttime_ticks": (
+                        plan.mutable_incumbent.process.generation.starttime_ticks
+                    ),
+                    "root": str(plan.mutable_incumbent.root),
+                    "root_device": plan.mutable_incumbent.root_device,
+                    "root_inode": plan.mutable_incumbent.root_inode,
+                    "commit": plan.mutable_incumbent.head_commit,
+                    "tree": plan.mutable_incumbent.tracked_tree_identity,
+                    "accepted_dev_commit": (
+                        plan.mutable_incumbent.accepted_dev_commit
+                    ),
+                    "remote_url": plan.mutable_incumbent.remote_url,
+                    "repository_slug": plan.mutable_incumbent.repository_slug,
+                    "config": {
+                        "path": str(plan.candidate_identity.config_path),
+                        "device": plan.candidate_identity.config_device,
+                        "inode": plan.candidate_identity.config_inode,
+                        "byte_length": plan.candidate_identity.config_byte_length,
+                        "sha256": plan.candidate_identity.config_sha256,
+                    },
+                    "process": _supervisor_process_identity_summary(
+                        plan.mutable_incumbent.process
+                    ),
+                    "argv": list(plan.mutable_incumbent.process.argv),
+                    "governed_sources": [
+                        {
+                            "role": item.role,
+                            "path": str(item.path),
+                            "device": item.device,
+                            "inode": item.inode,
+                            "byte_length": item.byte_length,
+                            "sha256": item.sha256,
+                        }
+                        for item in plan.mutable_incumbent.source_identities
+                    ],
+                }
+                if plan is not None and plan.mutable_incumbent is not None
+                else None
+            ),
             "candidate": (
                 {
                     "root": str(plan.candidate_identity.candidate_root),
                     "commit": plan.candidate_identity.head_commit,
                     "tree": plan.candidate_identity.tracked_tree_identity,
                     "config_sha256": plan.candidate_identity.config_sha256,
+                }
+                if plan is not None
+                else None
+            ),
+            "config_transaction": (
+                {
+                    "promotion_lock_path": str(plan.promotion_lock_path),
+                    "runtime_admission_lock_path": str(
+                        plan.runtime_admission_lock_path
+                    ),
+                    "original_sha256": plan.candidate_identity.config_sha256,
+                    "candidate_sha256": plan.candidate_config.sha256,
+                    "rollback_sha256": plan.rollback_config.sha256,
+                    "candidate_command_argv_sha256": _argv_sha256(
+                        plan.candidate_config.supervisor_argv
+                    ),
+                    "candidate_command": list(
+                        plan.candidate_config.supervisor_argv
+                    ),
+                    "rollback_command_argv_sha256": _argv_sha256(
+                        plan.rollback_config.supervisor_argv
+                    ),
+                    "rollback_command": list(
+                        plan.rollback_config.supervisor_argv
+                    ),
+                    "candidate_installed_sha256": (
+                        self.candidate_active_identity.config_sha256
+                        if self.candidate_active_identity is not None
+                        else None
+                    ),
+                    "rollback_installed_sha256": (
+                        self.rollback_active_identity.config_sha256
+                        if self.rollback_active_identity is not None
+                        else None
+                    ),
                 }
                 if plan is not None
                 else None
@@ -5155,9 +5940,25 @@ class PromotionTransaction:
 
     def run(self, candidate_root: Path) -> dict[str, Any]:
         incumbent_stop_attempted = False
+        promotion_lock: PromotionLock | None = None
+        promotion_lock_acquired = False
         try:
-            self.plan = self.backend.prepare(candidate_root)
+            preflight_promotion_lock_path = self.backend.promotion_lock_path(
+                candidate_root
+            )
+            promotion_lock = self.promotion_lock_factory(
+                preflight_promotion_lock_path,
+                self.lock_timeout,
+            )
+            promotion_lock.acquire()
+            promotion_lock_acquired = True
+            self.plan = self.backend.prepare(
+                candidate_root,
+                bootstrap_mutable_incumbent=self.bootstrap_mutable_incumbent,
+            )
             plan = self.plan
+            if plan.promotion_lock_path != preflight_promotion_lock_path:
+                raise ValueError("Promotion lock path changed during preparation")
             selected_evidence_path = (
                 self.requested_evidence_path
                 if self.requested_evidence_path is not None
@@ -5203,32 +6004,53 @@ class PromotionTransaction:
                     plan.incumbent_process.generation,
                     timeout=self.termination_timeout,
                 )
+                if self.backend.generation_is_alive(
+                    plan.incumbent_process.generation
+                ):
+                    raise RuntimeError(
+                        "Incumbent generation remained alive after termination"
+                    )
                 self._transition(PromotionState.INCUMBENT_TERMINATED)
-            try:
-                self.candidate_generation = self.backend.launch(
+                self.candidate_active_identity = self.backend.install_config(
                     plan.candidate_identity,
-                    plan.candidate_launch,
-                    require_current_dev_identity=True,
+                    plan.candidate_config,
+                    allowed_predecessors={
+                        plan.candidate_identity.config_sha256: (
+                            plan.candidate_identity.config_bytes
+                        )
+                    },
                 )
-                self.candidate_pid = self.candidate_generation.pid
-            except ProcessLaunchError as exc:
-                self.candidate_pid = exc.pid
-                self.candidate_generation = exc.generation
-                self.candidate_child_absence_proven = exc.child_absence_proven
-                self.candidate_launch_cleanup_error = exc.cleanup_error
-                raise
+                self._transition(
+                    PromotionState.CANDIDATE_CONFIG_INSTALLED,
+                    config_sha256=self.candidate_active_identity.config_sha256,
+                )
+                try:
+                    self.candidate_generation = self.backend.launch(
+                        self.candidate_active_identity,
+                        plan.candidate_launch,
+                        require_current_dev_identity=True,
+                    )
+                    self.candidate_pid = self.candidate_generation.pid
+                except ProcessLaunchError as exc:
+                    self.candidate_pid = exc.pid
+                    self.candidate_generation = exc.generation
+                    self.candidate_child_absence_proven = exc.child_absence_proven
+                    self.candidate_launch_cleanup_error = exc.cleanup_error
+                    raise
+                self._transition(
+                    PromotionState.CANDIDATE_LAUNCHED,
+                    pid=self.candidate_generation.pid,
+                    starttime_ticks=self.candidate_generation.starttime_ticks,
+                )
+            if self.candidate_active_identity is None:
+                raise RuntimeError("Candidate config identity was not installed")
             self.candidate_launch_boundary_at = self._capture_launch_boundary()
-            self._transition(
-                PromotionState.CANDIDATE_LAUNCHED,
-                pid=self.candidate_generation.pid,
-                starttime_ticks=self.candidate_generation.starttime_ticks,
-                launch_boundary_at=self.candidate_launch_boundary_at.isoformat().replace(
-                    "+00:00", "Z"
-                ),
+            self.history[-1]["details"]["launch_boundary_at"] = (
+                self.candidate_launch_boundary_at.isoformat().replace("+00:00", "Z")
             )
             self._transition(PromotionState.CANDIDATE_VERIFYING)
             self.candidate_observations = self._wait_for_fresh_loops(
-                plan.candidate_identity,
+                self.candidate_active_identity,
                 plan.candidate_launch,
                 self.candidate_generation,
                 baseline=plan.baseline,
@@ -5255,6 +6077,9 @@ class PromotionTransaction:
             result = self._evidence("aborted", exit_code=1)
             _durable_write_transaction_evidence(self.evidence_path, result)
             return result
+        finally:
+            if promotion_lock is not None and promotion_lock_acquired:
+                promotion_lock.release()
 
 
 def parse_args() -> argparse.Namespace:
@@ -5282,6 +6107,15 @@ def parse_args() -> argparse.Namespace:
             "Explicitly execute the transactional runtime swap. Uses an "
             "external durable evidence path by default and returns nonzero "
             "after any rollback."
+        ),
+    )
+    parser.add_argument(
+        "--bootstrap-mutable-incumbent",
+        action="store_true",
+        help=(
+            "With --promote only, capture the exact mutable incumbent and "
+            "materialize its accepted commit as the immutable rollback runtime "
+            "inside the same config-switch transaction."
         ),
     )
     parser.add_argument(
@@ -5335,6 +6169,7 @@ def main() -> int:
             poll_interval=args.poll_interval,
             lock_timeout=args.lock_timeout,
             termination_timeout=args.termination_timeout,
+            bootstrap_mutable_incumbent=args.bootstrap_mutable_incumbent,
         ).run(repo_root)
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
@@ -5345,6 +6180,9 @@ def main() -> int:
                 f"evidence={result['evidence_path']}"
             )
         return int(result["exit_code"])
+
+    if args.bootstrap_mutable_incumbent:
+        raise SystemExit("--bootstrap-mutable-incumbent requires --promote")
 
     snapshot = capture_promotion_snapshot(repo_root, config_path_arg=config_path)
 

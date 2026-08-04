@@ -1,0 +1,220 @@
+{
+  "schema_version": "supervisor_provider_stale_cache_readmission_probe.v1",
+  "task": {
+    "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+    "title": "Recover a freshly reauthenticated provider before stale capability admission rejection",
+    "phase": "Supervisor Provider Admission / Recovery Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "implementation_owner": "Codex",
+    "independent_source_reviewer": "Codex2",
+    "status": "review_approved",
+    "review_status": "approved_exact_head_and_merged",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802"
+  },
+  "dependency": {
+    "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+    "status": "done",
+    "completion_merge_commit": "16135f2316541591e54cba6d58f0a80273731bc1",
+    "implementation_merge_commit": "71fea47cbe65bb3e07792afa7e9f0134fd0066f5",
+    "verified_as_ancestor_of_task_base": true
+  },
+  "scope": {
+    "owned_layer": "Pre-lock stale provider capability readmission target selection, targeted live auth probing, capability persistence, and supervisor regression evidence.",
+    "not_changing": "Provider credentials, Codex/Codex2 account separation, canonical task truth, reviewer eligibility, worker or account limits, task priority, dependency semantics, failure-loop or chair-triage policy, queue launch probing, runtime deployment, and product code.",
+    "implementation_files": [
+      ".orchestrator/provider_permissions.py",
+      ".orchestrator/supervisor.py"
+    ],
+    "test_files": [
+      ".orchestrator/test_supervisor.py"
+    ],
+    "evidence_files": [
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/evidence.md"
+    ],
+    "anchor_commit": "1f0d4b37378d050961f74ef558579d81ca6f65aa"
+  },
+  "observed_failure": {
+    "date": "2026-08-02",
+    "configuration": "supervisor.auto_refresh_provider_capabilities=false",
+    "persisted_provider": "Codex2 auth_ready=false with refresh_token_revoked",
+    "external_change": "The operator freshly authenticated /home/lupin/.codex2, but no provider capability refresh or queued Codex2 delivery existed.",
+    "deadlock": "dispatch_ready_tasks evaluated the stale agent-level capability gate before process_queue could reach refresh_provider_auth_before_dispatch, so the fresh account could not prove recovery.",
+    "reproduction_test": ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_auto_refresh_false_recovers_stale_false_before_admission"
+  },
+  "contract": {
+    "candidate_gate": "A stale-auth probe target exists only when the normal dispatcher has an otherwise eligible task after lifecycle, dependency, active/pending queue, capacity, account quota, failure-loop, chair-triage, and unchanged-event cooldown checks. Only cached provider-auth booleans are ignored during this read-only preflight.",
+    "lock_boundary": "provider_stale_cache_readmission_probe_targets and its live probe run inside probe_provider_reports before _run_once_locked acquires runtime admission; no task or queue mutation occurs in preflight.",
+    "bounded_probing": "Stale readmission targets are ordered by the existing weighted agent sequence, de-duplicated by provider account/dispatch group, and capped at one account per cycle by default.",
+    "rate_limit": "provider_auth_probe_due applies the existing provider success/failure probe intervals before force=True is allowed; persisted failed, ambiguous, and unsupported live attempts therefore cannot be retried every tick.",
+    "recovery_authority": "Only a normalized probe with source=live may be projected into and persisted through write_provider_capabilities. A live ready=true result restores healthy dispatch fields; cached results never transition the lane.",
+    "fail_closed": "Revoked, quota, timeout, probe error, unsupported, ambiguous, and exception outcomes leave auth_ready=false and local delivery disabled while recording the explicit probe status/error.",
+    "launch_gate": "refresh_provider_auth_before_dispatch remains unchanged and still force-probes the exact selected logical owner or slot immediately before worker launch.",
+    "identity": "Provider keys retain configured punctuation for slot profiles, while target de-duplication uses the existing explicit account identity; Codex and Codex2 remain separate accounts and quota pools."
+  },
+  "acceptance": {
+    "stale_false_fresh_success": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_auto_refresh_false_recovers_stale_false_before_admission"
+      ]
+    },
+    "fail_closed_matrix": {
+      "status": "proven",
+      "outcomes": [
+        "refresh_token_revoked",
+        "quota_reached",
+        "probe_timeout",
+        "probe_error",
+        "unsupported_probe",
+        "raised exception normalized as probe_error"
+      ],
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_failed_ambiguous_and_exception_probes_stay_fail_closed"
+      ]
+    },
+    "rate_limit": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_recent_failed_probe_rate_limits_repeat_attempt"
+      ]
+    },
+    "no_eligible_task": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_no_eligible_task_does_not_probe"
+      ]
+    },
+    "concurrent_candidates": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_concurrent_candidates_are_bounded_to_one_account_probe"
+      ]
+    },
+    "aliases_and_slots": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_logical_agent_coalesces_hyphenated_slots_by_account",
+        ".orchestrator/test_supervisor.py::AgentDispatchLoadTests::test_pre_dispatch_probe_preserves_hyphenated_provider_profile_key"
+      ]
+    },
+    "auto_refresh_modes": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_auto_refresh_false_recovers_stale_false_before_admission",
+        ".orchestrator/test_supervisor.py::ProviderStaleCacheReadmissionProbeTests::test_auto_refresh_live_result_avoids_duplicate_readmission_probe"
+      ]
+    },
+    "normal_launch_probe_preserved": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::AgentDispatchLoadTests::test_pre_dispatch_probe_revokes_selected_owner_before_launch",
+        ".orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests::test_not_ready_probe_persists_false_transition_and_sticky_pause"
+      ]
+    },
+    "probe_outside_runtime_lock": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::SupervisorRuntimeAdmissionLockTests::test_run_once_probes_providers_before_taking_the_runtime_lock",
+        ".orchestrator/test_supervisor.py::SupervisorRuntimeAdmissionLockTests::test_supervisor_runtime_writer_surface_uses_canonical_helpers"
+      ]
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py -k 'ProviderStaleCacheReadmissionProbeTests or ProviderPauseRecoveryProbeTests'",
+      "result": "11 passed, 512 deselected, 5 subtests passed"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_provider_permissions.py",
+      "result": "83 passed, 7 subtests passed in 6.71s"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
+      "result": "523 passed, 152 subtests passed in 65.71s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/provider_permissions.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review": {
+    "decision": "approved",
+    "reviewer": "Codex2",
+    "reviewed_head": "ea358fa7c2bfc8e5b9042736d5776cf9421c2ab0",
+    "pull_request": 4510,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4510",
+    "recorded_at": "2026-08-02T13:36:38Z",
+    "canonical_review_status_context": "Pantheon canonical review gate",
+    "canonical_review_status_id": 51504616191,
+    "protected_merge_gate": {
+      "decision": "passed",
+      "reviewer": "Human/Ops",
+      "recorded_at": "2026-08-02T13:37:45Z",
+      "status_context": "Pantheon root merge freeze 2026-07-27",
+      "description": "Human/Ops exact-head review passed; canonical Codex2 review and CI green"
+    },
+    "required_checks": [
+      "independent code review",
+      "exact-head binding",
+      "focused and full supervisor validation",
+      "evidence JSON parse",
+      "declared-scope diff review"
+    ]
+  },
+  "delivery": {
+    "base_commit": "0404ca01ebb6803df6a4b927bacada5739f61de1",
+    "implementation_head": "ea358fa7c2bfc8e5b9042736d5776cf9421c2ab0",
+    "pull_request": 4510,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4510",
+    "merge_commit": "71654443b53ba32f66e046aa7dcb12e85127edb2",
+    "merged_at": "2026-08-02T13:37:53Z",
+    "verified_as_ancestor_of_origin_dev": true,
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "merge_order_successor": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802"
+  },
+  "finalization": {
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "assigned_at": "2026-08-02T13:44:25Z",
+    "status": "owner_closeout_prepared",
+    "scope": "Record the already-reviewed source merge and durable evidence only; no source, provider account, quota, reviewer-policy, credential, runtime, or rollout change.",
+    "task_brief_disposition": "The supervisor-generated worker context brief remains outside git, preserving the independently reviewed five-file source PR history.",
+    "terminal_transition": "Run the governed Codex2 done transition only after this closeout evidence commit is reviewed and merged to dev.",
+    "verification": [
+      {
+        "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py -k 'ProviderStaleCacheReadmissionProbeTests or ProviderPauseRecoveryProbeTests'",
+        "result": "11 passed, 512 deselected, 5 subtests passed in 1.48s"
+      },
+      {
+        "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_provider_permissions.py",
+        "result": "83 passed, 7 subtests passed in 6.55s"
+      },
+      {
+        "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_supervisor.py",
+        "result": "523 passed, 152 subtests passed in 62.42s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/provider_permissions.py && jq empty evidence.json && git diff --check",
+        "result": "passed"
+      }
+    ]
+  },
+  "rollout": {
+    "source_task": "No live supervisor mutation or service restart is authorized by this source task.",
+    "next_task": "Run the governed integrated live canary SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 only after this source PR is independently reviewed and merged.",
+    "rollback": "Revert the merge commit. The previous stale-cache fail-closed behavior returns; no credential or canonical task state rollback is required."
+  }
+}
