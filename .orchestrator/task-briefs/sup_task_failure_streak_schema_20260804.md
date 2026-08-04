@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Re-review rejected: worker completion clears only its provider bucket while dropping all task projection keys. If a prior provider bucket remains and that provider is used again, the next failure uses its stale count (e.g. 2) and falsely quarantines immediately after the task-row reset; clear all task-provider buckets on completion and add a cross-provider reset regression. Also commit a task-scoped review evidence manifest in PR #4533 before re-review; no REVIEW_FILE-eligible manifest is in the PR diff.
+- Next: Review rejected: the committed REVIEW_FILE is present at PR #4533 head b5509721342745174d25ce10134be342b80c50c1 (verified through GitHub tree, Contents API, and compare), but scripts/ai_status.py review_evidence_file_committed calls gh api with -f ref=<sha>, which makes gh issue POST instead of the required Contents GET and falsely reports the manifest absent. Change this lookup to an explicit GET/query ref, add a focused regression that proves an exact-head manifest validates, update the evidence manifest, then request exact-head re-review.
 
 ## Summary
 Makes repeated dispatch failure visible on the board itself instead of only in raw activity-log JSONL, closing the exact gap that made SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 indistinguishable from an untouched task after 5 failed attempts.
