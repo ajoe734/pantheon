@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Auto-reassigned SUP-L12-RUNNING-OWNER-RECONCILE-20260729 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.
+- Next: Supervisor resumed SUP-L12-RUNNING-OWNER-RECONCILE-20260729 for finalize after successful dispatch.
 
 ## Summary
 補上 row owner/reviewer 與 live worker_runner/run records 的 reconcile 機制，避免 helper/fallback 失敗後任務真相漂移。
