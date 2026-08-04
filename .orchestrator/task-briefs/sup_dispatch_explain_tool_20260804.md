@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Independent review on PR #4532 head 4aae794273c6317ab8ef2c0754ef272887836283: traced primary dispatch order against dispatch_ready_tasks; 14/14 focused tests and py_compile passed; PANTHEON_STATUS_ROOT probe left config, state, and provider-capabilities byte-identical; no supervisor, poll_workers, process_queue, reconcile_queue_records, or BFF changes.
+- Next: Closeout blocked: PR #4532 head 8bd88719e70f304224d6d63bbb60c0663d2408a9 is open and blocked because the required canonical-review gate reports task_state_unavailable. The reviewer binding remains at 4aae794273c6317ab8ef2c0754ef272887836283. Repair the CI task-state source, then Codex must bind approval to the exact current PR head; keep review_approved and do not run done until PR #4532 merges into dev.
 
 ## Summary
 Composes existing pure dispatch-gate functions into a single read-only CLI that answers 'why was task X not dispatched this tick' without hand-writing a throwaway script against internal functions, as had to be done live on 2026-08-04.
