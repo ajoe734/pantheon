@@ -1,0 +1,68 @@
+name: Canonical Review Gate
+
+# Guarantees the "Pantheon canonical review gate" required status check is
+# posted for every PR into dev/master -- success or failure, never silence.
+#
+# Before this workflow existed, that context was posted exclusively by
+# scripts/git/github_review_bridge.py, invoked only from inside
+# scripts/ai_status.py's approve/done command handlers. A PR whose task
+# never reached that internal transaction (unregistered branch, a task that
+# stalled before approval) could never receive the check, even though
+# branch protection lists it as required with no exemption. This workflow
+# closes that gap by evaluating every PR event through the same, already
+# tested scripts/git/task_review_merge_gate.py policy engine
+# (SUP-REVIEW-PIPELINE-INTEGRITY-20260804).
+#
+# scripts/ai_status.py's internal bridge call remains a fast-path
+# optimization (posts success slightly sooner on the governed approve/done
+# path); this workflow is the source of truth that guarantees the context
+# always exists.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - dev
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: canonical-review-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Pantheon canonical review gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Evaluate and post the canonical review gate status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 scripts/git/canonical_review_gate_ci.py \
+            --repo "$REPO" \
+            --pr-number "$PR_NUMBER" \
+            --head-ref "$HEAD_REF" \
+            --head-sha "$HEAD_SHA" \
+            --target-url "$TARGET_URL"
