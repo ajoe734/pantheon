@@ -10172,6 +10172,33 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 )
             )
 
+    def test_sup_l12_task_priority_preemption_protected(self) -> None:
+        self.assertTrue(
+            supervisor.task_priority_preemption_protected(
+                {
+                    "id": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+                    "dispatch_model": "real-supervisor-auto-workers",
+                }
+            )
+        )
+        self.assertFalse(
+            supervisor.task_priority_preemption_protected(
+                {"id": "SUP-L12-NON-RECOVERY-001", "phase": "Standard Phase"}
+            )
+        )
+        self.assertFalse(supervisor.task_priority_preemption_protected({"id": "BFF-CONSOL-001"}))
+        self.assertFalse(
+            supervisor.task_priority_preemption_protected(
+                {
+                    "id": "NON-L12-001",
+                    "phase": "Wave 0 Phase",
+                    "preferred_lane_order": ["Claude"],
+                }
+            )
+        )
+
+
+
     def test_unslotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
         config = {
             "schema": {
@@ -23658,6 +23685,317 @@ class WorkerDeliveryIdentityTests(unittest.TestCase):
         )
         self.assertIsNone(supervisor.worker_dispatch_started_at({"lease_acquired_at": "not-a-date"}))
         self.assertIsNone(supervisor.worker_dispatch_started_at({}))
+
+
+class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmpdir.name)
+        status_file = self.root / "ai-status.json"
+        event_queue = self.root / "event_queue.jsonl"
+        activity_log = self.root / "ai-activity-log.jsonl"
+        state_file = self.root / "state.json"
+        approval_queue = self.root / "approval-queue.json"
+        status_file.write_text("{}", encoding="utf-8")
+        event_queue.write_text("", encoding="utf-8")
+        activity_log.write_text("", encoding="utf-8")
+        state_file.write_text("{}", encoding="utf-8")
+        approval_queue.write_text("{}", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "status_file": str(status_file),
+                "event_queue": str(event_queue),
+                "activity_log": str(activity_log),
+                "state_file": str(state_file),
+                "approval_queue": str(approval_queue),
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity"},
+                "claude2": {"display_name": "Claude2"},
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+                "max_tasks_per_agent_by_agent": {"Antigravity": 1},
+                "max_concurrent_workers": 2,
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_reproduce_long_finalize_lease_competing_with_eligible_l12_work(self) -> None:
+        """Acceptance 1: Reproduce long finalize lease competing with eligible L12 work."""
+        status = {
+            "tasks": [
+                {
+                    "id": "LONG-FINALIZE-001",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                },
+                {
+                    "id": "SUP-L12-PRIORITY-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                },
+            ]
+        }
+        state_with_finalize_lease = {
+            "workers": {
+                "w-finalize": {
+                    "run_id": "w-finalize",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+            "queue": {"events": {}},
+        }
+        state_control_no_lease = {
+            "workers": {},
+            "queue": {"events": {}},
+        }
+
+        # Hermetically mock scan_live_worker_pids_by_agent to return 0 live workers
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}), \
+             mock.patch.object(supervisor, "queue_delivery_event") as mock_queue:
+            # With the finalize lease active on Antigravity (max 1 task per agent), L12 cannot dispatch
+            changed = supervisor.dispatch_ready_tasks(self.config, state_with_finalize_lease)
+            self.assertFalse(changed)
+            mock_queue.assert_not_called()
+
+            # Control assertion: remove the finalize lease -> dispatch succeeds for ready tasks
+            changed_control = supervisor.dispatch_ready_tasks(self.config, state_control_no_lease)
+            self.assertTrue(changed_control)
+            mock_queue.assert_called_once()
+            self.assertEqual(mock_queue.call_args[0][1]["task_id"], "LONG-FINALIZE-001")
+
+    def test_distinguish_healthy_long_run_from_stuck_lease(self) -> None:
+        """Acceptance 2: Distinguish healthy long run from stuck lease."""
+        now = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
+        healthy_worker = {
+            "run_id": "w-healthy",
+            "task_id": "LONG-FINALIZE-001",
+            "agent_id": "antigravity",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_finalize_dispatch"},
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "last_work_progress_at": "2026-07-29T11:59:00Z",
+            "last_heartbeat_at": "2026-07-29T11:59:30Z",
+            "last_event_at": "2026-07-29T11:59:30Z",
+        }
+        stuck_worker = {
+            "run_id": "w-stuck",
+            "task_id": "LONG-FINALIZE-001",
+            "agent_id": "antigravity",
+            "status": "stalled",
+            "request_snapshot": {"reason": "owned_finalize_dispatch"},
+            "last_event_at": "2026-01-01T00:00:00Z",
+            "last_heartbeat_at": "2026-01-01T00:00:00Z",
+        }
+
+        # 1) Lease status description explicitly distinguishes healthy_long_finalize vs stuck_lease
+        self.assertEqual(
+            supervisor.worker_lease_status_description(self.config, healthy_worker, now),
+            "healthy_long_finalize",
+        )
+        self.assertEqual(
+            supervisor.worker_lease_status_description(self.config, stuck_worker, now),
+            "stuck_lease",
+        )
+
+        # 2) Healthy worker can renew lease, stuck worker cannot
+        self.assertTrue(supervisor.worker_lease_can_renew(self.config, healthy_worker, now))
+        self.assertFalse(supervisor.worker_lease_can_renew(self.config, stuck_worker, now))
+
+    def test_prove_l12_priority_protection(self) -> None:
+        """Acceptance 3: Prove L12 priority protection after lease completion/interruption/cleanup."""
+        status = {
+            "tasks": [
+                {
+                    "id": "OTHER-REVIEW-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-PRIORITY-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+        state_finalize_active = {
+            "workers": {
+                "w-finalize": {
+                    "run_id": "w-finalize",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+            "queue": {"events": {}},
+        }
+        state_after_cleanup = {
+            "workers": {},
+            "queue": {"events": {}},
+        }
+
+        dispatched_events: list[dict[str, Any]] = []
+
+        def fake_queue(config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched_events.append(event)
+            return True
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}), \
+             mock.patch.object(supervisor, "queue_delivery_event", side_effect=fake_queue):
+            # Step 1: While finalize lease is active, dispatch is blocked
+            changed_active = supervisor.dispatch_ready_tasks(self.config, state_finalize_active)
+            self.assertFalse(changed_active)
+            self.assertEqual(len(dispatched_events), 0)
+
+            # Step 2: Once finalize lease is cleaned up / completed, dispatch triggers and selects SUP-L12-PRIORITY-001 over OTHER-REVIEW-001
+            changed_cleaned = supervisor.dispatch_ready_tasks(self.config, state_after_cleanup)
+            self.assertTrue(changed_cleaned)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+    def test_lease_lifecycle_recovery_and_healthy_worker_preservation(self) -> None:
+        """Test lease recovery on expiry/completion/interruption/cleanup and verify healthy workers are not terminated."""
+        status = {
+            "tasks": [
+                {
+                    "id": "OTHER-REVIEW-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-PRIORITY-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+
+        # 1) Expiry lifecycle recovery
+        state_expired = {
+            "workers": {
+                "w-expired": {
+                    "run_id": "w-expired",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "lease_expires_at": "2026-01-01T00:00:00Z",
+                    "last_heartbeat_at": "2026-01-01T00:00:00Z",
+                }
+            },
+            "queue": {"events": {}},
+        }
+
+        # 2) Interruption / failure recovery
+        state_interrupted = {
+            "workers": {
+                "w-interrupted": {
+                    "run_id": "w-interrupted",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "failed",
+                }
+            },
+            "queue": {"events": {}},
+        }
+
+        # 3) Cleanup / completion recovery
+        state_completed = {
+            "workers": {
+                "w-completed": {
+                    "run_id": "w-completed",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "completed",
+                }
+            },
+            "queue": {"events": {}},
+        }
+
+        now = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
+        healthy_worker = {
+            "run_id": "w-healthy",
+            "task_id": "LONG-FINALIZE-001",
+            "agent_id": "antigravity",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_finalize_dispatch"},
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "last_work_progress_at": "2026-07-29T11:59:00Z",
+            "last_heartbeat_at": "2026-07-29T11:59:30Z",
+            "last_event_at": "2026-07-29T11:59:30Z",
+            "pid": 99999,
+        }
+
+        dispatched_events: list[dict[str, Any]] = []
+
+        def fake_queue(config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched_events.append(event)
+            return True
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}), \
+             mock.patch.object(supervisor, "queue_delivery_event", side_effect=fake_queue):
+            # Verify expired worker state allows SUP-L12 priority review dispatch
+            dispatched_events.clear()
+            changed = supervisor.dispatch_ready_tasks(self.config, state_expired)
+            self.assertTrue(changed)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+            # Verify interrupted worker state allows SUP-L12 priority review dispatch
+            dispatched_events.clear()
+            changed = supervisor.dispatch_ready_tasks(self.config, state_interrupted)
+            self.assertTrue(changed)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+            # Verify completed worker state allows SUP-L12 priority review dispatch
+            dispatched_events.clear()
+            changed = supervisor.dispatch_ready_tasks(self.config, state_completed)
+            self.assertTrue(changed)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+        # Verify healthy worker outside fixture is preserved and not terminated during reconcile
+        state_healthy = {
+            "workers": {"w-healthy": healthy_worker},
+            "queue": {"events": {}},
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True), \
+             mock.patch.object(supervisor, "terminate_worker_pid") as mock_terminate:
+            res = supervisor.reconcile_runtime_on_boot(self.config, state_healthy)
+            mock_terminate.assert_not_called()
+            self.assertEqual(healthy_worker["status"], "running")
+
 
 
 if __name__ == "__main__":
