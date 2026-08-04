@@ -1,0 +1,345 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 closeout evidence",
+    "note": "This manifest binds the merged repair, prior exact-head independent implementation review, focused regression rerun, and post-promotion governed runtime readback. The current reviewer must still approve this evidence PR head through the canonical review gate.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Changing any implementation, merge, review, or runtime-readback fact requires a new task-scoped reviewed record; this packet does not alter canonical status files.",
+    "recording_mode": "task_scoped_closeout_candidate",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-04T13:33:40Z",
+    "evidence_cut_semantics": "The evidence cut follows the merged PR #4414 repair, preserved exact-head implementation review, focused owner-handoff and done-owner-identity regressions, and a governed post-promotion command-root readback. The subsequent evidence PR review and done transition are intentionally outside this immutable cut.",
+    "id": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731",
+    "overall_admission": "accepted_closeout_candidate",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime Repair / Review and Closeout Stability",
+    "product_level_required": false,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "Pantheon development supervisor runtime",
+    "target_maturity": "live",
+    "task_branch": "task/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731",
+    "title": "Preserve owner identity across review handoff and closeout"
+  },
+  "authorities": {
+    "actual_state": [
+      "Governed ai-status show readback at 2026-08-04T13:33:40Z: owner Codex2, reviewer Codex, source and review head ccfaca263a848797d57494ec612bcbd2ddb24b81, PR #4414",
+      "PANTHEON_COMMAND_ROOT git HEAD d04d2862b9a1f64d69f31ac10e47629b3f97cc01 and running supervisor readback",
+      "PR #4414 immutable merge and required-check records"
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/sup_review_handoff_owner_stability_20260731.md",
+      "canonical task acceptance criteria",
+      "schemas/product-evidence.schema.json"
+    ],
+    "task_packet": ".orchestrator/task-briefs/sup_review_handoff_owner_stability_20260731.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 owns this evidence packet and task closeout preparation; Codex owns the current independent review decision; the supervisor runtime owns canonical state transitions.",
+    "composes_with": [
+      "PR #4414 merge dc5136394eb1041ceea1dcc066e55ac2179ca0e5",
+      "PR #4390 merge 314e02f2b922f75c6aa25f200b6f326fb674a24c",
+      "PR #4407 merge d07dfd6202a1200cd864dfcb2e8903ff5e369359"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "not_changing": ".orchestrator/config.json, canonical status JSON, review authority, provider credentials, frontend, BFF, deployment settings, and trading or capital authority.",
+    "owned_layer": "Task-scoped evidence for supervisor owner-handoff completion, immutable finalize identity, and safe prior-owner trailer acceptance."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "3feee73f281d80e1d5a199d2e8c223d127eefdbc",
+        "subject": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731: anchor owner stability",
+        "delivery_state": "merged_via_pr_4414",
+        "hosted_cut_inclusion": true
+      },
+      {
+        "sha": "ccfaca263a848797d57494ec612bcbd2ddb24b81",
+        "subject": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731: anchor audit continuity",
+        "delivery_state": "exact_reviewed_pr_head",
+        "hosted_cut_inclusion": true
+      }
+    ],
+    "pull_request": {
+      "number": 4414,
+      "url": "https://github.com/ajoe734/pantheon/pull/4414",
+      "head_sha": "ccfaca263a848797d57494ec612bcbd2ddb24b81",
+      "base": "dev",
+      "merged_at": "2026-07-31T17:19:07Z",
+      "merge_sha": "dc5136394eb1041ceea1dcc066e55ac2179ca0e5"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "ccfaca263a848797d57494ec612bcbd2ddb24b81",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "pull_request",
+        "head_sha": "ccfaca263a848797d57494ec612bcbd2ddb24b81",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "(cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py -k 'owner_handoff or bound_finalize or owner_delivery_moves_to_governed_review_handoff or owner_worker_canonical_handoff_status or reconcile_runtime_owner_handoff_stays_complete_after_reviewer_approval or owner_worker_handoff')",
+        "result": "4 passed, 460 deselected",
+        "conclusion": "pass"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q scripts/test_ai_status.py -k 'done_owner_reassignment or prior_owner_reassignment or collect_done_accepts_prior_owner'",
+        "result": "5 passed, 152 deselected",
+        "conclusion": "pass"
+      },
+      {
+        "command": "$PANTHEON_PY -m py_compile .orchestrator/supervisor.py scripts/ai_status.py && git diff --check",
+        "result": "passed",
+        "conclusion": "pass"
+      },
+      {
+        "command": "git -C $PANTHEON_COMMAND_ROOT rev-parse HEAD HEAD^{tree}; git merge-base --is-ancestor ccfaca263a848797d57494ec612bcbd2ddb24b81 $PANTHEON_COMMAND_ROOT_HEAD; AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731",
+        "result": "Command root HEAD d04d2862b9a1f64d69f31ac10e47629b3f97cc01, tree 950b66145f3ca1b35d39ea030eec088dce747768; reviewed repair head is an ancestor and governed readback succeeded.",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-08-04T13:33:40Z",
+    "validated_base_sha": "314e02f2b922f75c6aa25f200b6f326fb674a24c",
+    "validated_head_sha": "ccfaca263a848797d57494ec612bcbd2ddb24b81"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "Pantheon development supervisor runtime",
+    "public_bff_base_url": "not_applicable; supervisor runtime has no public HTTP surface",
+    "publish_cut": {
+      "status": "pass",
+      "source": "PR #4414",
+      "merge_sha": "dc5136394eb1041ceea1dcc066e55ac2179ca0e5"
+    },
+    "canonical_root_deploy": {
+      "status": "pass",
+      "source_root": "$PANTHEON_COMMAND_ROOT",
+      "source_sha": "d04d2862b9a1f64d69f31ac10e47629b3f97cc01",
+      "source_tree": "950b66145f3ca1b35d39ea030eec088dce747768"
+    },
+    "identity_admission": {
+      "status": "pass",
+      "proof": "The active governed command root contains ccfaca263a848797d57494ec612bcbd2ddb24b81, and the running supervisor command was rooted at the same immutable dev command-root path during the owner readback."
+    },
+    "post_cut_runtime_observation": {
+      "status": "pass",
+      "proof": "The owner was dispatched through the live supervisor as an owned-ready worker, successfully issued governed start and show commands through the supplied command root, and observed an active supervisor process without changing deployment state."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "pass",
+      "proof": "No new deployment was necessary: PR #4414 was already merged and its reviewed head is an ancestor of the current command-root SHA."
+    },
+    "capture_time_hosted_readback": {
+      "status": "pass",
+      "observed_at": "2026-08-04T13:33:40Z",
+      "command_root_sha": "d04d2862b9a1f64d69f31ac10e47629b3f97cc01",
+      "supervisor": "running from /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py",
+      "governed_task_readback": "succeeded"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "owner_worker_canonical_handoff_status stops the old owner worker after a canonical review, review_approved, or done outcome instead of emitting a second failure or reassignment.",
+        "The focused supervisor regression selection passed at the evidence cut."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "A missing bound finalize worker remains retry-or-block behavior and does not rewrite the immutable owner identity.",
+        "The done-owner reassignment regressions reject forged, stale, ambiguous, misordered, and reviewer-discontinuous audit events."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "PR #4414 head ccfaca263a848797d57494ec612bcbd2ddb24b81 is bound in canonical source_ref, review_binding, and GitHub review bridge data.",
+        "The governed readback retained that same source and review identity while the current owner completed post-promotion preparation."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "reconcile_runtime_on_boot has focused coverage for a successful owner handoff to review and reviewer advance to review_approved after owner exit.",
+        "The live supervisor remained active while the current owner performed command-root identity and status readbacks; no restart, configuration write, or manual state repair was performed."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable",
+      "proof": [
+        "This closeout evidence package is documentation-only. It makes no supervisor configuration, deployment, broker, or capital-affecting change."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Pantheon development supervisor runtime only."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend surface is involved."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No interactive identity flow changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Supervisor orchestration and read-only verification only; no trading or capital action."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Codex2 owns evidence preparation and Codex is the current canonical reviewer; the supervisor remains the only writer of governed status state."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant data path is exercised."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "The original implementation had an Antigravity exact-head independent review and the current evidence head is withheld for Codex's independent review before merge."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "A successful owner worker that reached review, review_approved, or done is completed rather than retried, failed, or reassigned during boot reconciliation.",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.duplicate_safety", "validation.commands[0]"]
+    },
+    {
+      "id": "AC2",
+      "statement": "A missing or cleanly exited owned-finalize worker cannot change owner after review or delivery identity is bound.",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.failure_and_degraded_behavior", "validation.commands[0]"]
+    },
+    {
+      "id": "AC3",
+      "statement": "Normal done accepts an earlier LLM-Agent trailer only with exact, ordered, reviewer-continuous audited supervisor reassignment proof.",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.failure_and_degraded_behavior", "validation.commands[1]"]
+    },
+    {
+      "id": "AC4",
+      "statement": "The reviewed repair was delivered through a protected PR and the active governed command root includes the reviewed source head.",
+      "status": "pass",
+      "evidence_refs": ["implementation_delivery.pull_request", "deployment", "hosted_readback"]
+    },
+    {
+      "id": "AC5",
+      "statement": "No orchestrator configuration, canonical state mutation, generic task materialization, or identity impersonation was used for this repair or evidence cut.",
+      "status": "pass",
+      "evidence_refs": ["scope.not_changing", "behavioral_proof.rollback_or_compensation"]
+    }
+  ],
+  "residual_risks": {
+    "current_evidence_head_review": {
+      "blocking_for_this_task": false,
+      "containment": "The owner has handed this exact evidence PR head to Codex. The task remains in review until the canonical reviewer records an exact-head decision; the owner will not run done before that gate and merge complete.",
+      "description": "The implementation review was already preserved in the GitHub review bridge, while this new evidence-only commit requires its own current-reviewer exact-head decision.",
+      "expiry": "When Codex approves the current evidence PR head and the protected merge completes.",
+      "owner": "Codex",
+      "recheck_trigger": "Any evidence PR head change, reviewer reassignment, failed check, or merge-base change.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "task README",
+      "evidence manifest",
+      "merged implementation anchors",
+      "focused test and governed runtime-readback facts"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "command_root_git_tree": "950b66145f3ca1b35d39ea030eec088dce747768"
+    },
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731/evidence.json",
+    "normalized_hosted_readback": {
+      "observed_at": "2026-08-04T13:33:40Z",
+      "command_root_sha": "d04d2862b9a1f64d69f31ac10e47629b3f97cc01",
+      "implementation_head": "ccfaca263a848797d57494ec612bcbd2ddb24b81",
+      "supervisor_status": "running",
+      "governed_task_readback": "pass"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The evidence manifest is sealed by the companion checksum file so the record does not claim a hash of its own future bytes.",
+    "source_artifact_sha256_by_epoch": {
+      "ccfaca263a848797d57494ec612bcbd2ddb24b81": {
+        "implementation_delivery": "PR #4414 exact reviewed head; source identity is captured by git and the GitHub review bridge."
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-31T17:17:24Z",
+      "kind": "independent_implementation_review",
+      "status": "approved",
+      "actor": "Antigravity",
+      "reference": "Canonical GitHub review bridge records Antigravity approval of PR #4414 exact head ccfaca263a848797d57494ec612bcbd2ddb24b81.",
+      "sha": "ccfaca263a848797d57494ec612bcbd2ddb24b81"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-31T17:19:07Z",
+      "kind": "protected_merge",
+      "status": "pass",
+      "actor": "GitHub",
+      "reference": "PR #4414 merged to dev as dc5136394eb1041ceea1dcc066e55ac2179ca0e5 after required checks and canonical review gate success.",
+      "sha": "dc5136394eb1041ceea1dcc066e55ac2179ca0e5"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-08-04T13:33:40Z",
+      "kind": "post_promotion_closeout_canary",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "Focused regression rerun passed and governed command-root identity plus task readback succeeded while the live supervisor was active.",
+      "sha": "d04d2862b9a1f64d69f31ac10e47629b3f97cc01"
+    }
+  ]
+}
