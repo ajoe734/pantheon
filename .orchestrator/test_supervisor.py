@@ -20616,7 +20616,11 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 [event["event_id"] for event in outbox["events"][:1]],
                 [pending_event["event_id"]],
             )
-            terminal_event = outbox["events"][1]
+            failure_streak_event = outbox["events"][1]
+            self.assertEqual(failure_streak_event["type"], "task_failure_streak_updated")
+            terminal_event = next(
+                event for event in outbox["events"][2:] if "reason" in event
+            )
             self.assertEqual(
                 terminal_event["task_id"], "OPS-LEASE-PENDING-OUTBOX"
             )

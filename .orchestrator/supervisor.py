@@ -6469,7 +6469,6 @@ def _provider_guardrail_bucket(state: dict[str, Any]) -> dict[str, Any]:
     bucket.setdefault("dispatch_pauses", {})
     bucket.setdefault("failure_recovery_consumptions", {})
     bucket.setdefault("task_failure_streaks", {})
-    bucket.setdefault("task_failure_streak_projection_generations", {})
     return bucket
 
 
@@ -8597,8 +8596,12 @@ def clear_task_failure_streak_projection_generations_for_task(
     state: dict[str, Any], task_id: str | None
 ) -> None:
     task_id = str(task_id or "").strip()
-    if task_id:
-        _task_failure_streak_projection_bucket(state).pop(task_id, None)
+    guardrails = state.get("provider_guardrails")
+    if not task_id or not isinstance(guardrails, dict):
+        return
+    bucket = guardrails.get("task_failure_streak_projection_generations")
+    if isinstance(bucket, dict):
+        bucket.pop(task_id, None)
 
 
 def clear_task_failure_streaks_for_task(
@@ -8864,10 +8867,20 @@ def reconcile_task_failure_streak_resets(
     ]
     for key in stale_keys:
         bucket.pop(key, None)
-    projection_bucket = _task_failure_streak_projection_bucket(state)
-    projection_task_ids = [task_id for task_id in reset_task_ids if task_id in projection_bucket]
-    for task_id in projection_task_ids:
-        projection_bucket.pop(task_id, None)
+    guardrails = state.get("provider_guardrails")
+    projection_bucket = (
+        guardrails.get("task_failure_streak_projection_generations")
+        if isinstance(guardrails, dict)
+        else None
+    )
+    projection_task_ids = (
+        [task_id for task_id in reset_task_ids if task_id in projection_bucket]
+        if isinstance(projection_bucket, dict)
+        else []
+    )
+    if isinstance(projection_bucket, dict):
+        for task_id in projection_task_ids:
+            projection_bucket.pop(task_id, None)
     return bool(stale_keys or projection_task_ids)
 
 
