@@ -29,7 +29,7 @@ governed owner closeout exists for it.
 ## V2 delivery PR
 
 This evidence is on ReviewBus PR [#4468](https://github.com/ajoe734/pantheon/pull/4468)
-at `9636815e1102da9f3257f8a26f26e30d05d9b087`; auto-merge is disabled by the
+at `1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d`; auto-merge is disabled by the
 review-before-merge policy. The Python packaging and runtime-mirror checks pass.
 
 The canonical review gate is intentionally unsatisfied until Codex2 records a

@@ -1,5 +1,5 @@
 SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 validation
-Observed: 2026-08-04T15:07:46Z
+Observed: 2026-08-04T15:27:55Z
 
 1. Canonical state
    command: AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731
@@ -25,7 +25,7 @@ Observed: 2026-08-04T15:07:46Z
 
 5. Subject PR #4386 fail-closed boundary
    command: gh pr view 4386 --repo ajoe734/pantheon --json number,state,headRefOid,mergeStateStatus,mergeable,statusCheckRollup,url
-   result: OPEN; head=eedc541024bf6c9bcc57cb662e9fa55922a80b9b; mergeStateStatus=DIRTY; mergeable=CONFLICTING; listed Branch CI checks pass. It is not countable until protected merge and governed owner closeout.
+   result: OPEN; head=ae014fe404d7d12ebddce8d0c4dc2be050211f09; mergeStateStatus=DIRTY; mergeable=CONFLICTING; listed Branch CI checks pass. It is not countable until protected merge and governed owner closeout.
 
 6. Local artifact validation
    command: jq empty docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json
@@ -34,5 +34,5 @@ Observed: 2026-08-04T15:07:46Z
    result: pass.
 
 7. V2 delivery PR checks
-   command: gh pr checks 4468 --repo ajoe734/pantheon; gh run view 30922760521 --repo ajoe734/pantheon --log-failed; gh run view 30922765436 --repo ajoe734/pantheon --log-failed
-   result: Python packaging provision and runtime mirror guard pass. Smoke acceptance is skipped after prerequisite failure. Commit trailers fails because 9636815e1102da9f3257f8a26f26e30d05d9b087 has a 78-character subject and already-pushed 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e has a 112-character subject. Canonical review gate fails as expected because no pantheon-review/approve/9636815e1102da9f3257f8a26f26e30d05d9b087 review-proof tag exists.
+   command: gh pr view 4468 --repo ajoe734/pantheon --json state,headRefOid,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,latestReviews,statusCheckRollup; gh pr checks 4468 --repo ajoe734/pantheon --required; gh run view 30923005137 --repo ajoe734/pantheon --log-failed; gh run view 30923003535 --repo ajoe734/pantheon --log-failed
+   result: OPEN; head=1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d; mergeStateStatus=BEHIND; mergeable=MERGEABLE; no GitHub review, auto-merge, or review-proof tag. Python packaging provision and runtime mirror guard pass. Smoke acceptance is skipped after prerequisite failure. Commit trailers fails because 9636815e1102da9f3257f8a26f26e30d05d9b087 has a 78-character subject and already-pushed 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e has a 112-character subject. Canonical review gate fails as expected because no pantheon-review/approve/1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d review-proof tag exists.

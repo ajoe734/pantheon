@@ -1,6 +1,6 @@
 {
   "schema_version": "supervisor_exact_head_pr_closeout_v2.v2",
-  "observed_at": "2026-08-04T15:07:46Z",
+  "observed_at": "2026-08-04T15:27:55Z",
   "task": {
     "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
     "title": "Supersede Wave0X #4396 governed closeout with current-head spec",
@@ -69,7 +69,7 @@
   "subject_pr_4386": {
     "url": "https://github.com/ajoe734/pantheon/pull/4386",
     "state": "OPEN",
-    "current_head": "eedc541024bf6c9bcc57cb662e9fa55922a80b9b",
+    "current_head": "ae014fe404d7d12ebddce8d0c4dc2be050211f09",
     "merge_state_status": "DIRTY",
     "mergeable": "CONFLICTING",
     "branch_ci": "all listed checks success",
@@ -84,7 +84,7 @@
   "task_delivery_pr": {
     "number": 4468,
     "url": "https://github.com/ajoe734/pantheon/pull/4468",
-    "current_head": "9636815e1102da9f3257f8a26f26e30d05d9b087",
+    "current_head": "1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d",
     "merge_policy": "review_before_merge",
     "auto_merge_request": null,
     "branch_ci": {
