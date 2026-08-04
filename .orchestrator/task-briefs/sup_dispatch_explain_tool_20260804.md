@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add a dispatch-explain diagnostic tool for supervisor.py
-- Status: review_approved
+- Status: todo
 - Owner: Codex
-- Reviewer: Antigravity
-- Next: Review approved: 14/14 tests pass, read-only dispatch explain CLI verified against supervisor.py dispatch_ready_tasks logic.
+- Reviewer: Codex2
+- Next: Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.
 
 ## Summary
 Composes existing pure dispatch-gate functions into a single read-only CLI that answers 'why was task X not dispatched this tick' without hand-writing a throwaway script against internal functions, as had to be done live on 2026-08-04.
