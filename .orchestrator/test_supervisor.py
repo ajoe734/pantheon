@@ -16077,7 +16077,38 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
 
         self.assertIsNone(candidate)
 
-        self.task.update({"failure_streak": 0, "status": "in_progress"})
+        quarantined_status = {
+            "tasks": [self.task],
+            "handoffs": [],
+            "blockers": [],
+        }
+        quarantined_before = copy.deepcopy(self.task)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            for command, args in (
+                (ai_status.command_start, [self.task["id"], "Attempt bypass"]),
+                (
+                    ai_status.command_handoff,
+                    [self.task["id"], "Codex2", "Attempt bypass"],
+                ),
+                (
+                    ai_status.command_blocker,
+                    [self.task["id"], "Attempt bypass", "Codex2"],
+                ),
+            ):
+                with self.assertRaisesRegex(SystemExit, "quarantined; use reopen"):
+                    command(quarantined_status, args)
+                self.assertEqual(self.task, quarantined_before)
+
+            ai_status.command_reopen(
+                quarantined_status,
+                [self.task["id"], "Operator acknowledged the failure streak."],
+            )
+
+        self.assertEqual(self.task["failure_streak"], 0)
+        self.assertEqual(self.task["status"], "in_progress")
         self.status_path.write_text(
             json.dumps({"tasks": [self.task]}) + "\n",
             encoding="utf-8",

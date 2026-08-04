@@ -5870,6 +5870,17 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     )
 
 
+def require_reopen_before_leaving_quarantine(
+    task: Mapping[str, Any], *, command: str
+) -> None:
+    """Keep task quarantine durable until the governed reopen transition."""
+
+    if task.get("status") == "quarantined":
+        raise SystemExit(
+            f"Task {task.get('id')} is quarantined; use reopen before {command}."
+        )
+
+
 def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
@@ -5881,6 +5892,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
+    require_reopen_before_leaving_quarantine(task, command="start")
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["failure_streak"] = 0
@@ -6021,6 +6033,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
+    require_reopen_before_leaving_quarantine(task, command="handoff")
     timestamp = iso_now()
     task["status"] = "review"
     task["failure_streak"] = 0
@@ -6053,6 +6066,7 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
+    require_reopen_before_leaving_quarantine(task, command="block")
     timestamp = iso_now()
     task["status"] = "blocked"
     task["waiting_for"] = waiting_for
