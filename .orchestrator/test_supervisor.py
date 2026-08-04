@@ -3596,7 +3596,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
-    def test_dispatcher_helper_claim_prefers_higher_available_preferred_lane_when_busy(self) -> None:
+    def test_dispatcher_helper_claim_prefers_provider_family_fallback_when_busy(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -3613,7 +3613,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             },
             "worker_reassignment": {
                 "owner_fallbacks": {
-                    "Antigravity": ["Claude2", "Codex2", "Codex"],
+                    "Antigravity": ["Claude2", "Claude", "Codex2", "Codex"],
                 }
             },
             "agents": {
@@ -3629,17 +3629,23 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "provider": "claude2",
                     "worker_slots": ["s2"],
                 },
+                "claude": {
+                    "id": "claude",
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "worker_slots": ["s3"],
+                },
                 "codex2": {
                     "id": "codex2",
                     "display_name": "Codex2",
                     "provider": "codex2",
-                    "worker_slots": ["s3"],
+                    "worker_slots": ["s4"],
                 },
                 "codex": {
                     "id": "codex",
                     "display_name": "Codex",
                     "provider": "codex",
-                    "worker_slots": ["s4"],
+                    "worker_slots": ["s5"],
                 },
             },
             "providers": {},
@@ -3672,6 +3678,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "preferred_lane_order": [
                         "Antigravity",
                         "Claude2",
+                        "Claude",
                         "Codex2",
                         "Codex",
                     ],
@@ -3683,12 +3690,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 {
                     "id": "SUP-L12-TEST-TASK-20260729",
                     "status": "todo",
-                    "owner": "Codex2",
+                    "owner": "Claude",
                     "reviewer": "Antigravity",
                     "depends_on": [],
                     "preferred_lane_order": [
                         "Antigravity",
                         "Claude2",
+                        "Claude",
                         "Codex2",
                         "Codex",
                     ],
@@ -3707,18 +3715,18 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             changed = supervisor.dispatch_ready_tasks(
                 config,
                 state,
-                agent_ids_override=["codex2"],
+                agent_ids_override=["claude"],
             )
 
         self.assertTrue(changed)
         persist.assert_called_once()
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "SUP-L12-TEST-TASK-20260729")
-        self.assertEqual(kwargs["new_owner"], "Codex2")
+        self.assertEqual(kwargs["new_owner"], "Claude")
         self.assertEqual(kwargs["new_reviewer"], "Antigravity")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "SUP-L12-TEST-TASK-20260729")
-        self.assertEqual(queued_event["target_agent"], "Codex2")
+        self.assertEqual(queued_event["target_agent"], "Claude")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
     def test_dispatcher_helper_claim_ignores_generic_owner_fallbacks_when_preferred_lane_order_specified(self) -> None:
@@ -3812,7 +3820,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
-    def test_dispatcher_helper_claim_skips_full_capacity_preferred_lane(self) -> None:
+    def test_dispatcher_helper_claim_does_not_fall_back_to_codex_when_provider_lanes_busy(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -3904,7 +3912,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             changed = supervisor.dispatch_ready_tasks(
                 config,
                 state,
-                agent_ids_override=["claude2"],
+                agent_ids_override=["codex2"],
             )
 
         self.assertFalse(changed)

@@ -12850,9 +12850,12 @@ def choose_helper_claim_agent(
         state=state,
     ):
         return False
-    preferred_fallbacks = task_preferred_helper_fallbacks(config, task=task, owner_name=owner_name)
-    if preferred_fallbacks:
-        fallbacks = preferred_fallbacks
+    preferred_lanes = task_preferred_lane_order(config, task)
+    if preferred_lanes:
+        # A declared lane order is authoritative.  In particular, L12 work
+        # must wait when every provider-family lane is busy instead of
+        # reintroducing a Codex fallback through owner_fallbacks.
+        fallbacks = task_preferred_helper_fallbacks(config, task=task, owner_name=owner_name)
     else:
         fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
     if not fallbacks:
@@ -12922,7 +12925,11 @@ def task_next_preferred_helper_lane(
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     agent_loads = agent_dispatch_loads(config, state, active_statuses) if state else {}
 
-    for lane in preferred_lanes[start_index:]:
+    helper_lanes = l12_provider_first_candidates(
+        task,
+        preferred_lanes[start_index:],
+    )
+    for lane in helper_lanes:
         if lane == owner_name:
             continue
         if not agent_can_take_task(config, lane, task, state=state):
@@ -12945,7 +12952,10 @@ def task_preferred_helper_fallbacks(
     if not preferred_lanes:
         return []
     owner_name = canonical_agent_name(config, owner_name)
-    return [lane for lane in preferred_lanes if lane != owner_name]
+    return l12_provider_first_candidates(
+        task,
+        [lane for lane in preferred_lanes if lane != owner_name],
+    )
 
 
 def task_preferred_lane_order(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
