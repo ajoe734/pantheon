@@ -34,12 +34,20 @@
     "cross_provider_reset": "A later failure from a provider that had a pre-completion record starts at one and leaves the task in_progress."
   },
   "verification": {
-    "status": "pending_remediation_validation",
-    "planned_commands": [
-      "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py",
-      "python3 .orchestrator/test_supervisor.py TaskFailureStreakTaskSchemaTests",
-      "python3 scripts/test_ai_status.py ReviewApprovedWorkflowTests",
-      "git diff --check"
+    "status": "passed",
+    "commands": [
+      {
+        "command": "PYTHONPATH=$PWD .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests'",
+        "result": "6 passed, 579 deselected"
+      },
+      {
+        "command": "PYTHONPATH=$PWD .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests'",
+        "result": "38 passed, 132 deselected"
+      },
+      {
+        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py && git diff --check",
+        "result": "passed"
+      }
     ]
   },
   "review": {
