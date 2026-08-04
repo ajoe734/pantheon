@@ -6812,8 +6812,9 @@ def review_evidence_file_committed(
     if not repository or not head_sha or not review_file:
         return False
     encoded_path = urllib.parse.quote(review_file, safe="/")
+    query = urllib.parse.urlencode({"ref": head_sha})
     result = run_gh_json_command(
-        ["api", f"repos/{repository}/contents/{encoded_path}", "-f", f"ref={head_sha}"]
+        ["api", "--method", "GET", f"repos/{repository}/contents/{encoded_path}?{query}"]
     )
     return isinstance(result, Mapping) and str(result.get("type") or "") == "file"
 

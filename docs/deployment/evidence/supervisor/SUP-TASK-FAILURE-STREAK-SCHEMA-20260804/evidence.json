@@ -24,7 +24,7 @@
   "review_remediation": {
     "rejected_head": "62b1b83db8249f6ac6aea257168cf4dadbb608f5",
     "reviewer": "Codex2",
-    "required_change": "A worker completion must clear every task-provider bucket, not only the completing worker's bucket; the regression must prove a rotated provider retries at streak one after the task-row reset.",
+    "required_change": "A worker completion must clear every task-provider bucket, not only the completing worker's bucket; the regression must prove a rotated provider retries at streak one after the task-row reset. The exact-head Contents API lookup must use explicit GET with a query ref so gh does not infer POST from -f ref=<sha> and falsely reject this committed manifest.",
     "evidence_requirement": "This manifest is committed in PR #4533 before independent re-review and must be bound with REVIEW_FILE during exact-head approval."
   },
   "acceptance": {
@@ -42,7 +42,11 @@
       },
       {
         "command": "PYTHONPATH=$PWD .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests'",
-        "result": "38 passed, 132 deselected"
+        "result": "39 passed, 132 deselected"
+      },
+      {
+        "command": "cd scripts && ../.venv-pantheon/bin/python3 -c 'import ai_status; print(ai_status.review_evidence_file_committed(repository=\"ajoe734/pantheon\", head_sha=\"b5509721342745174d25ce10134be342b80c50c1\", review_file=\"docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json\"))'",
+        "result": "True; GitHub Contents API verified the committed manifest at rejected PR #4533 head b5509721342745174d25ce10134be342b80c50c1 using the explicit GET query."
       },
       {
         "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py && git diff --check",
@@ -54,7 +58,7 @@
     "decision": "pending_independent_review",
     "required_reviewer": "Codex2",
     "approval_protocol": "Review this committed manifest and the exact PR head, then approve with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
-    "prior_review": "The canonical review bridge rejected the prior head because completion left rotated provider buckets and no REVIEW_FILE-eligible manifest was in the PR diff."
+    "prior_review": "The canonical review bridge rejected the prior head because completion left rotated provider buckets and no REVIEW_FILE-eligible manifest was in the PR diff. The later b5509721342745174d25ce10134be342b80c50c1 manifest was present at the PR head, but the verifier sent -f ref=<sha>, making gh infer POST; this patch uses an explicit GET query and adds a focused exact-head regression."
   },
   "delivery": {
     "pull_request": 4533,

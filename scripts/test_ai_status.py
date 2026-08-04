@@ -1774,6 +1774,35 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
 
+    def test_review_evidence_file_committed_uses_exact_head_get_query(self) -> None:
+        review_file = "docs/deployment/evidence/task/evidence.json"
+        head_sha = "a" * 40
+        with mock.patch.object(
+            ai_status,
+            "run_gh_json_command",
+            return_value={"type": "file"},
+        ) as gh_json:
+            self.assertTrue(
+                ai_status.review_evidence_file_committed(
+                    repository="ajoe734/pantheon",
+                    head_sha=head_sha,
+                    review_file=review_file,
+                )
+            )
+
+        gh_json.assert_called_once_with(
+            [
+                "api",
+                "--method",
+                "GET",
+                (
+                    "repos/ajoe734/pantheon/contents/"
+                    "docs/deployment/evidence/task/evidence.json?ref="
+                    f"{head_sha}"
+                ),
+            ]
+        )
+
     def test_approve_creates_owner_finalize_handoff(self) -> None:
         self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
