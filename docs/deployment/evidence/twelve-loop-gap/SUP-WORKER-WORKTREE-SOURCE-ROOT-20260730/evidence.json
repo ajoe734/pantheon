@@ -2,7 +2,7 @@
   "task_id": "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
   "phase": "Supervisor / Fleet dispatch unblock",
   "owner": "Codex",
-  "reviewer": "Antigravity",
+  "reviewer": "Codex2",
   "finding": {
     "summary": "Auto-worker dispatch was blocked because worker worktree creation used the shared status root as the git source root in a split-root live supervisor.",
     "live_error": "Failed to create worker worktree /tmp/pantheon-worker-worktrees/pantheon/l12-verify-obs-001 for task/L12-VERIFY-OBS-001: fatal: could not create directory of '.git/worktrees/l12-verify-obs-001': Read-only file system",
@@ -30,8 +30,8 @@
       "result": "Ran 12 tests, OK"
     },
     {
-      "command": "PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py",
-      "result": "Ran 461 tests in 15.047s, OK"
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m unittest discover -s .orchestrator -p 'test_supervisor.py'",
+      "result": "Ran 583 tests in 7.936s, OK after rebasing task branch onto origin/dev"
     }
   ],
   "live_follow_up": [

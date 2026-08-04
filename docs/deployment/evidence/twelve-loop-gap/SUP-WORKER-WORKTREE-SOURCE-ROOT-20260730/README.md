@@ -1,6 +1,6 @@
 # SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730 — split worker status root from git source root
 
-Owner: `Codex` · Reviewer: `Antigravity` · Phase: Supervisor / Fleet dispatch unblock
+Owner: `Codex` · Reviewer: `Codex2` · Phase: Supervisor / Fleet dispatch unblock
 
 This is a supervisor control-plane repair for auto-worker dispatch. It does not
 claim Pantheon or Agora product closeout by itself; it removes the blocker that
@@ -70,12 +70,16 @@ PYTHONPATH=.orchestrator python3 -m unittest \
 # Ran 12 tests ... OK
 ```
 
-Full supervisor suite:
+Full supervisor suite after rebasing the task branch onto current `origin/dev`:
 
 ```bash
-PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py
-# Ran 461 tests ... OK
+PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
+"$PANTHEON_PY" -m unittest discover -s .orchestrator -p 'test_supervisor.py'
+# Ran 583 tests ... OK
 ```
+
+This manifest is ready for Codex2's independent review; it does not itself
+record a review decision or approval.
 
 ## Live follow-up after merge
 
