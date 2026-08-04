@@ -1112,11 +1112,12 @@ STATUS_LABELS = {
     "review": "review",
     "review_approved": "review_approved",
     "blocked": "blocked",
+    "quarantined": "quarantined",
     "done": "done",
 }
 
 DEPENDENCY_DONE_STATUSES = {"done"}
-ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
+ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked", "quarantined"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 EXTERNAL_TASK_ID_TOKENS = {
     "DATASOURCE",
@@ -3185,6 +3186,12 @@ def validate_state(state: dict[str, Any]) -> None:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
             raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
+        if "failure_streak" in task and (
+            isinstance(task["failure_streak"], bool)
+            or not isinstance(task["failure_streak"], int)
+            or task["failure_streak"] < 0
+        ):
+            raise SystemExit(f"Task {task['id']} has invalid failure_streak")
 
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])
@@ -5876,6 +5883,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
     timestamp = iso_now()
     task["status"] = "in_progress"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -5962,6 +5970,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             )
     timestamp = iso_now()
     task["status"] = "in_progress"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
@@ -6014,6 +6023,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         )
     timestamp = iso_now()
     task["status"] = "review"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6093,6 +6103,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     )
     timestamp = iso_now()
     task["status"] = "review_approved"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     if verdict_ref is not None:
@@ -6872,6 +6883,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     timestamp = iso_now()
     task["status"] = "review_approved"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)

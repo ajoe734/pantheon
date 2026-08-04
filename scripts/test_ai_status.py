@@ -1775,11 +1775,13 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         _teardown_test_isolation(self)
 
     def test_approve_creates_owner_finalize_handoff(self) -> None:
+        self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["failure_streak"], 0)
         self.assertEqual(task["review_notes_zh"], ["審查通過", "交回 owner 收尾"])
 
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
@@ -2717,18 +2719,22 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
 
+        self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
 
         self.assertEqual(self.state["tasks"][0]["status"], "review")
+        self.assertEqual(self.state["tasks"][0]["failure_streak"], 0)
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
+        self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             ai_status.command_reopen(self.state, ["REG-002", "Please address the requested changes"])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["failure_streak"], 0)
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
@@ -7407,6 +7413,11 @@ class ProgramProofOwnershipTests(unittest.TestCase):
                     self.state,
                     ["L12-TEACH-001", self.overlay, "Invalid delegation."],
                 )
+
+    def test_quarantined_status_in_schema_constants(self) -> None:
+        self.assertIn("quarantined", ai_status.STATUS_LABELS)
+        self.assertEqual(ai_status.STATUS_LABELS["quarantined"], "quarantined")
+        self.assertIn("quarantined", ai_status.ACTIVE_TASK_STATUSES)
 
 
 if __name__ == "__main__":

@@ -15864,6 +15864,169 @@ class FailureStreakV3Tests(unittest.TestCase):
                 )
 
 
+class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.status_path = self.root / "ai-status.json"
+        self.task = {
+            "id": "SUP-TASK-STREAK-001",
+            "title": "Task-row failure streak fixture",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+            "depends_on": [],
+        }
+        self.status_path.write_text(
+            json.dumps({"tasks": [self.task]}) + "\n",
+            encoding="utf-8",
+        )
+        self.config = {
+            "paths": {"status_file": str(self.status_path)},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "chair_review": {"failure_loop_reassignment_threshold": 2},
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "dependency_done_statuses": ["done"],
+                "active_worker_statuses": ["running"],
+                "max_dispatches_per_tick": 1,
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                }
+            },
+        }
+
+    def _worker(self, *, run_id: str) -> dict:
+        return {
+            "task_id": self.task["id"],
+            "provider": "codex",
+            "agent_id": "codex",
+            "run_id": run_id,
+            "request_snapshot": {
+                "task_id": self.task["id"],
+                "metadata": {
+                    "logical_agent_id": "codex",
+                    "task": dict(self.task),
+                },
+            },
+        }
+
+    def _task_row(self) -> dict:
+        return json.loads(self.status_path.read_text(encoding="utf-8"))["tasks"][0]
+
+    def _record_failure(self, state: dict, worker: dict) -> int:
+        count = supervisor.record_task_failure_streak(
+            state,
+            worker,
+            "worker exited before task outcome",
+            failure_kind="generic_exit",
+            reason_class="generic_exit",
+            raw_ref=f".orchestrator/failure-evidence/{worker['run_id']}.json",
+            rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+        )
+        supervisor.persist_task_failure_streak(self.config, worker, count)
+        return count
+
+    def test_repeated_worker_failures_increment_then_quarantine_task_row(self) -> None:
+        state: dict = {}
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, self._worker(run_id="run-1")), 1)
+            first = self._task_row()
+            self.assertEqual(first["failure_streak"], 1)
+            self.assertEqual(first["status"], "in_progress")
+
+            self.assertEqual(self._record_failure(state, self._worker(run_id="run-2")), 2)
+
+        quarantined = self._task_row()
+        self.assertEqual(quarantined["failure_streak"], 2)
+        self.assertEqual(quarantined["status"], "quarantined")
+        self.assertIn("Reopen", quarantined["next"])
+
+    def test_worker_completion_resets_task_row_failure_streak(self) -> None:
+        state: dict = {}
+        worker = self._worker(run_id="run-completed")
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, worker), 1)
+            supervisor.clear_task_failure_streak_after_worker_completion(
+                self.config,
+                state,
+                worker,
+            )
+
+        self.assertEqual(self._task_row()["failure_streak"], 0)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_quarantined_task_blocks_ready_dispatch_until_explicit_reset(self) -> None:
+        state: dict = {}
+        self.assertEqual(
+            supervisor.record_task_failure_streak(
+                state,
+                self._worker(run_id="run-before-reopen-1"),
+                "first failure",
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=".orchestrator/failure-evidence/run-before-reopen-1.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
+            1,
+        )
+        self.assertEqual(
+            supervisor.record_task_failure_streak(
+                state,
+                self._worker(run_id="run-before-reopen-2"),
+                "second failure",
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=".orchestrator/failure-evidence/run-before-reopen-2.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
+            2,
+        )
+        self.task.update({"failure_streak": 2, "status": "quarantined"})
+        self.status_path.write_text(
+            json.dumps({"tasks": [self.task]}) + "\n",
+            encoding="utf-8",
+        )
+
+        candidate = supervisor.task_execution_dispatch_candidate(
+            self.config,
+            self.task,
+            "Codex",
+            {self.task["id"]: self.task},
+        )
+
+        self.assertIsNone(candidate)
+
+        self.task.update({"failure_streak": 0, "status": "in_progress"})
+        self.status_path.write_text(
+            json.dumps({"tasks": [self.task]}) + "\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(supervisor.reconcile_task_failure_streak_resets(self.config, state))
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                self.task,
+                "Codex",
+                {self.task["id"]: self.task},
+            ),
+            (supervisor.REASON_OWNED_IN_PROGRESS, 2),
+        )
+
+
 class FailureStreakActivityNormalizerV3Tests(unittest.TestCase):
     def _record(
         self,

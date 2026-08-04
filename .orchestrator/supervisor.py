@@ -3481,6 +3481,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(failure_worker),
             )
+            persist_task_failure_streak(config, failure_worker, failure_count)
             failure_kind = str(failure.get("kind") or "")
             rotation_outcome = maybe_rotate_provider_model(
                 config, state, request.provider, failure_kind, failure_reason
@@ -5396,10 +5397,7 @@ def failure_streak_threshold_task_ids(
     config: dict[str, Any],
     state: dict[str, Any],
 ) -> set[str]:
-    threshold = max(
-        1,
-        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
-    )
+    threshold = task_failure_streak_quarantine_threshold(config)
     task_ids: set[str] = set()
     for key, record in _task_failure_streak_bucket(state).items():
         if not isinstance(record, Mapping):
@@ -8535,6 +8533,246 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
     bucket = _task_failure_streak_bucket(state)
     for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
         bucket.pop(key, None)
+
+
+TASK_FAILURE_STREAK_QUARANTINED_STATUS = "quarantined"
+
+
+def task_failure_streak_quarantine_threshold(config: dict[str, Any]) -> int:
+    """Return the established failure-loop threshold used for task quarantine."""
+
+    return max(
+        1,
+        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
+    )
+
+
+def _task_failure_streak_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
+
+
+def _task_failure_streak_status_event(
+    *,
+    event_type: str,
+    task_id: str,
+    timestamp: str,
+    failure_streak: int,
+    message: str,
+    worker: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    event = {
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": event_type,
+        "task_id": task_id,
+        "failure_streak": failure_streak,
+        "message": message,
+    }
+    if worker is not None:
+        event.update(
+            {
+                "provider": worker.get("provider") or worker.get("agent_id"),
+                "worker_run_id": worker.get("run_id"),
+            }
+        )
+    encoded = json.dumps(
+        event,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    event["event_id"] = "supervisor-task-failure-streak-" + hashlib.sha256(encoded).hexdigest()
+    return event
+
+
+def _persist_task_failure_streak_locked(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    failure_streak: int,
+) -> bool:
+    """Write one worker failure count onto its canonical task row.
+
+    The runtime guardrail bucket remains the detailed per-provider evidence
+    store.  This projection deliberately contains only the stable, board-level
+    counter and quarantine outcome needed after a worker process is gone.
+    """
+
+    identity = _failure_streak_task_identity(worker)
+    if identity is None or failure_streak <= 0:
+        return False
+    task_id, owner, reviewer = identity
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    if (
+        str(task.get("owner") or "").strip() != owner
+        or str(task.get("reviewer") or "").strip() != reviewer
+    ):
+        return False
+
+    current_streak = _task_failure_streak_value(task.get("failure_streak"))
+    current_status = str(task.get("status") or "").strip().lower()
+    threshold = task_failure_streak_quarantine_threshold(config)
+    should_quarantine = failure_streak >= threshold
+    if (
+        failure_streak <= current_streak
+        and (not should_quarantine or current_status == TASK_FAILURE_STREAK_QUARANTINED_STATUS)
+    ):
+        return False
+    if current_status in {"done", "superseded"}:
+        return False
+
+    timestamp = utc_now()
+    task["failure_streak"] = failure_streak
+    if should_quarantine:
+        task["status"] = TASK_FAILURE_STREAK_QUARANTINED_STATUS
+        task.pop("waiting_for", None)
+        message = (
+            f"Supervisor quarantined {task_id} after {failure_streak} consecutive "
+            f"worker failures (threshold {threshold}). Reopen the task through "
+            "scripts/ai-status.sh before another dispatch."
+        )
+        event_type = "task_quarantined"
+    else:
+        message = (
+            f"Supervisor recorded worker failure streak {failure_streak}/{threshold} "
+            f"for {task_id}."
+        )
+        event_type = "task_failure_streak_updated"
+    task["last_update"] = timestamp
+    task["next"] = message
+    event = _task_failure_streak_status_event(
+        event_type=event_type,
+        task_id=task_id,
+        timestamp=timestamp,
+        failure_streak=failure_streak,
+        message=message,
+        worker=worker,
+    )
+    outbox = _compose_status_activity_outbox(status.get("status_activity_outbox"), event)
+    if outbox is None:
+        return False
+    status["status_activity_outbox"] = outbox
+    write_status(config, status, source="supervisor-task-failure-streak")
+    return True
+
+
+def persist_task_failure_streak(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    failure_streak: int,
+) -> bool:
+    """Atomically project a recorded worker failure to canonical task state."""
+
+    if not config.get("paths", {}).get("status_file"):
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        applied = _persist_task_failure_streak_locked(config, worker, failure_streak)
+    if applied:
+        sync_status_pipeline(config)
+    return applied
+
+
+def _reset_task_failure_streak_locked(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+) -> bool:
+    identity = _failure_streak_task_identity(worker)
+    if identity is None:
+        return False
+    task_id, owner, reviewer = identity
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None or _task_failure_streak_value(task.get("failure_streak")) == 0:
+        return False
+    if (
+        str(task.get("owner") or "").strip() != owner
+        or str(task.get("reviewer") or "").strip() != reviewer
+    ):
+        return False
+
+    timestamp = utc_now()
+    task["failure_streak"] = 0
+    task["last_update"] = timestamp
+    message = f"Supervisor reset worker failure streak for {task_id} after worker completion."
+    event = _task_failure_streak_status_event(
+        event_type="task_failure_streak_reset",
+        task_id=task_id,
+        timestamp=timestamp,
+        failure_streak=0,
+        message=message,
+        worker=worker,
+    )
+    outbox = _compose_status_activity_outbox(status.get("status_activity_outbox"), event)
+    if outbox is None:
+        return False
+    status["status_activity_outbox"] = outbox
+    write_status(config, status, source="supervisor-task-failure-streak-reset")
+    return True
+
+
+def clear_task_failure_streak_after_worker_completion(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+) -> None:
+    """Clear both detailed runtime evidence and the task-row projection."""
+
+    clear_task_failure_streak(state, worker=worker)
+    if not config.get("paths", {}).get("status_file"):
+        return
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        applied = _reset_task_failure_streak_locked(config, worker)
+    if applied:
+        sync_status_pipeline(config)
+
+
+def reconcile_task_failure_streak_resets(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> bool:
+    """Honor an explicit task-row reset before considering failure-loop guards.
+
+    ``reopen`` and successful review transitions are governed by ai-status and
+    intentionally do not mutate supervisor runtime state directly.  A literal
+    task-row zero is therefore the durable acknowledgement that discards old
+    per-provider evidence before the task becomes dispatchable again.
+    """
+
+    current_status = status if isinstance(status, dict) else load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = str(schema.get("tasks_path", "tasks"))
+    task_id_field = str(schema.get("task_id_field", "id"))
+    reset_task_ids = {
+        str(task.get(task_id_field) or "").strip()
+        for task in current_status.get(tasks_path, []) or []
+        if isinstance(task, dict)
+        and "failure_streak" in task
+        and _task_failure_streak_value(task.get("failure_streak")) == 0
+    }
+    if not reset_task_ids:
+        return False
+    bucket = _task_failure_streak_bucket(state)
+    stale_keys = [
+        key
+        for key, record in bucket.items()
+        if isinstance(record, Mapping)
+        and str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        in reset_task_ids
+    ]
+    for key in stale_keys:
+        bucket.pop(key, None)
+    return bool(stale_keys)
 
 
 def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
@@ -13352,11 +13590,13 @@ def maybe_reassign_tasks_from_failure_streaks(
     max_reassignments = max(1, int(settings.get("max_failure_streak_reassignments_per_cycle", 4)))
     changed = False
     applied = 0
-    streaks = list((_task_failure_streak_bucket(state) or {}).items())
     try:
-        task_map = task_index_from_status(config, load_status(config))
+        status = load_status(config)
+        changed = reconcile_task_failure_streak_resets(config, state, status)
+        task_map = task_index_from_status(config, status)
     except (KeyError, OSError, RuntimeError):
         task_map = {}
+    streaks = list((_task_failure_streak_bucket(state) or {}).items())
     for _key, record in streaks:
         if applied >= max_reassignments:
             break
@@ -14283,6 +14523,7 @@ def poll_worker_failure_stage(
         raw_ref=raw_ref,
         rejected_head=worker_failure_rejected_head(worker),
     )
+    persist_task_failure_streak(config, worker, failure_count)
     console_log(
         f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
         quiet=SUPERVISOR_LOG_QUIET,
@@ -14453,7 +14694,7 @@ def poll_worker_completion_stage(
     if completion_message is not None:
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
+        clear_task_failure_streak_after_worker_completion(config, state, worker)
         write_activity_log(
             config,
             {
@@ -14480,7 +14721,7 @@ def poll_worker_completion_stage(
     if task_status in terminal_statuses:
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
+        clear_task_failure_streak_after_worker_completion(config, state, worker)
         write_activity_log(
             config,
             {
@@ -14543,6 +14784,7 @@ def poll_worker_completion_stage(
             raw_ref=raw_ref,
             rejected_head=worker_failure_rejected_head(worker),
         )
+        persist_task_failure_streak(config, worker, failure_count)
         generic_threshold = max(
             1,
             int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
@@ -14665,7 +14907,7 @@ def poll_worker_assignment_stage(
             return {"changed": False, "stop": True}
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
+        clear_task_failure_streak_after_worker_completion(config, state, worker)
         write_activity_log(
             config,
             {
@@ -14749,7 +14991,7 @@ def poll_worker_assignment_stage(
             worker["status"] = "completed"
             worker["last_event_at"] = utc_now()
             worker.pop("last_error", None)
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16052,7 +16294,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
             worker.pop("last_error", None)
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16078,7 +16320,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         ):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16118,7 +16360,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         ):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16165,6 +16407,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(worker),
             )
+            persist_task_failure_streak(config, worker, failure_count)
             failure_kind = str(failure.get("kind") or "")
             failure_response = decide_provider_failure_response(failure_kind)
             if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
@@ -16272,6 +16515,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(worker),
             )
+            persist_task_failure_streak(config, worker, failure_count)
 
         if missing_process:
             if failure_count is None:
@@ -16296,6 +16540,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     raw_ref=raw_ref,
                     rejected_head=worker_failure_rejected_head(worker),
                 )
+                persist_task_failure_streak(config, worker, failure_count)
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
                 state,
@@ -18064,6 +18309,11 @@ def dispatch_ready_tasks(
         return False
 
     status = load_status(config)
+    failure_streak_resets_reconciled = reconcile_task_failure_streak_resets(
+        config,
+        state,
+        status,
+    )
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
@@ -18107,7 +18357,7 @@ def dispatch_ready_tasks(
     failure_loop_task_ids = failure_streak_threshold_task_ids(config, state)
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = False
+    changed = failure_streak_resets_reconciled
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
