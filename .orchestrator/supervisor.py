@@ -762,6 +762,7 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
             "agent_id": worker.get("agent_id"),
             "provider": worker.get("provider"),
             "status": worker.get("status"),
+            "lease_status_description": worker_lease_status_description({}, worker),
         }
         for run_id, worker in workers.items()
         if worker.get("status") in active_statuses
@@ -6277,6 +6278,22 @@ def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now:
         worker,
         now_dt,
     )
+
+
+def worker_lease_status_description(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> str:
+    """Return explicit lease state description: healthy_long_finalize, healthy_running, stuck_lease, or expired."""
+    now_dt = now or datetime.now(timezone.utc)
+    reason = str(worker.get("request_snapshot", {}).get("reason") or "")
+    is_finalize_or_review = reason in {"owned_finalize_dispatch", "review_ready_dispatch"}
+    if worker_lease_is_expired(config, worker, now_dt):
+        return "expired"
+    if worker_heartbeat_is_stale(config, worker, now_dt) or (
+        worker_lease_requires_work_progress(config) and not worker_lease_progress_is_fresh(config, worker, now_dt)
+    ):
+        return "stuck_lease"
+    if is_finalize_or_review:
+        return "healthy_long_finalize" if reason == "owned_finalize_dispatch" else "healthy_long_review"
+    return "healthy_running"
 
 
 _QUOTA_RETRY_AT_PATTERN = re.compile(
@@ -17206,6 +17223,12 @@ def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> i
     return 1_000_000
 
 
+def task_l12_dispatch_priority_rank(task: dict[str, Any], base_priority: int) -> int:
+    return task_l12_review_priority_rank(task, base_priority)
+
+
+
+
 L12_PROVIDER_FIRST_AGENT_NAMES = frozenset(
     {"Antigravity", "Antigravity2", "Claude", "Claude2"}
 )
@@ -17894,6 +17917,8 @@ def task_priority_preemption_protected(task: dict[str, Any] | None) -> bool:
     return task_id.startswith("SUP-L12-") and isinstance(preferred_lanes, list) and "Wave 0" in phase
 
 
+
+
 def worker_matches_current_assignment(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -18369,7 +18394,7 @@ def dispatch_ready_tasks(
             candidates.append(
                 (
                     priority,
-                    task_l12_review_priority_rank(task, priority),
+                    task_l12_dispatch_priority_rank(task, priority),
                     task_declared_priority_rank(task),
                     index,
                     task,
