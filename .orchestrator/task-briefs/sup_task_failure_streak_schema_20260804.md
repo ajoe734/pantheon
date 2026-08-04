@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Review rejected: the committed REVIEW_FILE is present at PR #4533 head b5509721342745174d25ce10134be342b80c50c1 (verified through GitHub tree, Contents API, and compare), but scripts/ai_status.py review_evidence_file_committed calls gh api with -f ref=<sha>, which makes gh issue POST instead of the required Contents GET and falsely reports the manifest absent. Change this lookup to an explicit GET/query ref, add a focused regression that proves an exact-head manifest validates, update the evidence manifest, then request exact-head re-review.
+- Next: Reject exact head 0d9b4ce633233bc2c426b58986deadd9c24af60d: quarantine is bypassed by already-scheduled retries. In .orchestrator/supervisor.py, poll_worker_failure_stage persists/quarantines at line 14657 but ROTATE then calls schedule_worker_retry at 14674-14680; retry_due_workers at 13996-14029 launches every due retry_backoff worker without loading/checking task status. Apply the same guard to queue-event and worker retry paths: a quarantined task must cancel/hold its pending retry and must not call start_worker_for_request until governed reopen resets failure_streak. Add regression coverage for threshold-crossing retry_backoff (including rotation) proving no worker launch before reopen and one becomes eligible after reopen. Preserve the passing exact-head Contents GET regression.
 
 ## Summary
 Makes repeated dispatch failure visible on the board itself instead of only in raw activity-log JSONL, closing the exact gap that made SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 indistinguishable from an untouched task after 5 failed attempts.

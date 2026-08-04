@@ -16088,6 +16088,184 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
             (supervisor.REASON_OWNED_IN_PROGRESS, 2),
         )
 
+    def test_rotation_at_quarantine_threshold_holds_retry_without_scheduling(self) -> None:
+        """A rotation cannot schedule a retry after it quarantines the task."""
+
+        prior_failure = self._task_row()
+        prior_failure["failure_streak"] = 1
+        self.status_path.write_text(
+            json.dumps({"tasks": [prior_failure]}) + "\n",
+            encoding="utf-8",
+        )
+        state: dict = {}
+        worker = self._worker(run_id="run-rotation-threshold")
+        worker.update({"status": "running", "retry_count": 0})
+
+        with (
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value="rate limit"),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "capacity", "label": "capacity", "transient": True},
+            ),
+            mock.patch.object(
+                supervisor,
+                "summarize_failure_reason",
+                return_value={"summary": "capacity exhausted", "kind": "capacity"},
+            ),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="raw-ref"),
+            mock.patch.object(supervisor, "worker_retry_settings", return_value={"max_attempts": 5}),
+            mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="rotated"),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.ROTATE,
+            ),
+            mock.patch.object(supervisor, "schedule_worker_retry") as schedule_retry,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            outcome = supervisor.poll_worker_failure_stage(
+                self.config,
+                state,
+                worker,
+                provider_report={},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertEqual(worker["retry_hold_kind"], supervisor.RETRY_HELD_BY_TASK_QUARANTINE)
+        schedule_retry.assert_not_called()
+        self.assertEqual(self._task_row()["status"], "quarantined")
+        self.assertEqual(self._task_row()["failure_streak"], 2)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_retry_held")
+
+    def test_queue_retry_backoff_is_held_while_task_is_quarantined(self) -> None:
+        """Queue retries honor the same task quarantine before building a worker."""
+
+        quarantined = self._task_row()
+        quarantined.update({"status": "quarantined", "failure_streak": 2})
+        self.status_path.write_text(
+            json.dumps({"tasks": [quarantined]}) + "\n",
+            encoding="utf-8",
+        )
+        event = {
+            "event_id": "evt-quarantined-retry",
+            "task_id": self.task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+            "message": "retry after backoff",
+        }
+        state = {
+            "queue": {
+                "events": {
+                    event["event_id"]: {
+                        "status": "retry_backoff",
+                        "next_retry_at": "2026-08-04T00:00:00Z",
+                        "retry_count": 1,
+                    }
+                }
+            },
+            "workers": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("quarantined queue retry must not launch a worker"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, provider_report={})
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertEqual(record["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertEqual(record["retry_hold_kind"], supervisor.RETRY_HELD_BY_TASK_QUARANTINE)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_retry_held")
+
+    def test_held_worker_retry_launches_once_after_governed_reopen(self) -> None:
+        """Only governed reopen can release a task-quarantined retry backoff."""
+
+        quarantined = self._task_row()
+        quarantined.update({"status": "quarantined", "failure_streak": 2})
+        self.status_path.write_text(
+            json.dumps({"tasks": [quarantined]}) + "\n",
+            encoding="utf-8",
+        )
+        worker = {
+            "run_id": "run-held-retry",
+            "task_id": self.task["id"],
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "retry_backoff",
+            "retry_count": 1,
+            "attempt_count": 1,
+            "next_retry_at": "2026-08-04T00:00:00Z",
+        }
+        state = {"workers": {worker["run_id"]: worker}}
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="retry",
+            task_id=self.task["id"],
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+        )
+        retry_now = datetime(2026, 8, 4, 1, 0, tzinfo=timezone.utc)
+
+        with (
+            mock.patch.object(supervisor, "request_for_worker", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("held retry must not launch before reopen"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, state, provider_report={}, now=retry_now)
+            )
+
+        self.assertEqual(worker["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertEqual(worker["retry_hold_kind"], supervisor.RETRY_HELD_BY_TASK_QUARANTINE)
+
+        reopened_status = {"tasks": [self._task_row()], "handoffs": [], "blockers": []}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_reopen(
+                reopened_status,
+                [self.task["id"], "Operator acknowledged the retry quarantine."],
+            )
+        self.status_path.write_text(
+            json.dumps(reopened_status) + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor, "request_for_worker", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-reopened", None),
+            ) as start_worker,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, state, provider_report={}, now=retry_now)
+            )
+
+        start_worker.assert_called_once()
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-reopened")
+
     def test_worker_completion_resets_task_row_failure_streak(self) -> None:
         state: dict = {}
         worker = self._worker(run_id="run-completed")

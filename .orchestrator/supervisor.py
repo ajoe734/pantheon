@@ -3198,6 +3198,48 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
             continue
+        retry_was_held = (
+            record.get("status") == RETRY_QUARANTINED_STATUS
+            and record.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        )
+        if record.get("status") == "retry_backoff" or retry_was_held:
+            retry_hold_reason = task_retry_quarantine_hold_reason(
+                task_map.get(str(event.get("task_id") or "").strip()),
+                retry_was_held=retry_was_held,
+            )
+            if retry_hold_reason:
+                held = hold_queue_retry_for_task_quarantine(record, retry_hold_reason)
+                if held:
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "dispatch_retry_held",
+                            "provider": event.get("provider"),
+                            "task_id": event.get("task_id"),
+                            "message": retry_hold_reason,
+                            "queue_event_id": event_id,
+                        },
+                    )
+                changed = held or changed
+                continue
+            if retry_was_held:
+                record["status"] = "retry_backoff"
+                record["next_retry_at"] = utc_now()
+                record.pop("retry_hold_kind", None)
+                record.pop("retry_hold_reason", None)
+                record.pop("retry_held_at", None)
+                record["processed_at"] = utc_now()
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_retry_released",
+                        "provider": event.get("provider"),
+                        "task_id": event.get("task_id"),
+                        "message": "Released held queue retry after governed task reopen.",
+                        "queue_event_id": event_id,
+                    },
+                )
+                changed = True
         if record.get("status") == "retry_backoff":
             next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
             if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
@@ -3491,6 +3533,36 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_kind,
                 rotation_outcome=rotation_outcome,
             )
+            retry_schedule_candidate = (
+                failure_response is rewrite_provider_health.FailureResponse.ROTATE
+                or failure_response is rewrite_provider_health.FailureResponse.RETRY
+                or is_retryable_capacity_failure_kind(failure_kind)
+            )
+            if retry_schedule_candidate:
+                retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+                    config,
+                    request.task_id,
+                    retry_was_held=(
+                        record.get("retry_hold_kind")
+                        == RETRY_HELD_BY_TASK_QUARANTINE
+                    ),
+                )
+                if retry_hold_reason:
+                    held = hold_queue_retry_for_task_quarantine(record, retry_hold_reason)
+                    if held:
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "dispatch_retry_held",
+                                "provider": request.provider,
+                                "task_id": request.task_id,
+                                "queue_event_id": event_id,
+                                "message": retry_hold_reason,
+                                "raw_ref": raw_ref,
+                            },
+                        )
+                    changed = held or changed
+                    continue
             if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
                 clear_task_failure_streaks_for_task(
                     state,
@@ -8659,6 +8731,101 @@ def _task_failure_streak_value(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, parsed)
+
+
+RETRY_QUARANTINED_STATUS = "retry_quarantined"
+RETRY_HELD_BY_TASK_QUARANTINE = "task_quarantine"
+
+
+def task_retry_quarantine_hold_reason(
+    task: Mapping[str, Any] | None,
+    *,
+    retry_was_held: bool,
+) -> str | None:
+    """Return why a queued retry must stay held for its canonical task row.
+
+    A task becomes retry-eligible again only through the governed reopen path,
+    which simultaneously restores a dispatchable status and resets the task-row
+    failure counter.  The latter check matters after the retry has been held:
+    it prevents a direct status edit from silently releasing the retry.
+    """
+
+    if not isinstance(task, Mapping):
+        return None
+    task_id = str(task.get("id") or "unknown task").strip() or "unknown task"
+    status = str(task.get("status") or "").strip().lower()
+    failure_streak = _task_failure_streak_value(task.get("failure_streak"))
+    if status == TASK_FAILURE_STREAK_QUARANTINED_STATUS:
+        return (
+            f"Retry for {task_id} is held because the task is quarantined; "
+            "use scripts/ai-status.sh reopen before another dispatch."
+        )
+    if retry_was_held and failure_streak != 0:
+        return (
+            f"Retry for {task_id} remains held until governed reopen resets "
+            "failure_streak to 0."
+        )
+    return None
+
+
+def task_retry_quarantine_hold_reason_for_task_id(
+    config: dict[str, Any],
+    task_id: str | None,
+    *,
+    retry_was_held: bool,
+) -> str | None:
+    """Read the canonical task row before scheduling a retry/fallback launch."""
+
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return None
+    try:
+        task = task_index_from_status(config, load_status(config)).get(normalized_task_id)
+    except (KeyError, OSError, RuntimeError):
+        # Preserve existing retry behavior when an optional status source is not
+        # configured (for example, narrow legacy unit fixtures).
+        return None
+    return task_retry_quarantine_hold_reason(task, retry_was_held=retry_was_held)
+
+
+def hold_worker_retry_for_task_quarantine(
+    worker: dict[str, Any],
+    reason: str,
+) -> bool:
+    """Durably hold one worker retry without spending its retry budget."""
+
+    if (
+        worker.get("status") == RETRY_QUARANTINED_STATUS
+        and worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        and worker.get("retry_hold_reason") == reason
+    ):
+        return False
+    worker["status"] = RETRY_QUARANTINED_STATUS
+    worker["retry_hold_kind"] = RETRY_HELD_BY_TASK_QUARANTINE
+    worker["retry_hold_reason"] = reason
+    worker["retry_held_at"] = utc_now()
+    worker["last_event_at"] = utc_now()
+    return True
+
+
+def hold_queue_retry_for_task_quarantine(
+    record: dict[str, Any],
+    reason: str,
+) -> bool:
+    """Durably hold one queue-event retry until its task is reopened."""
+
+    if (
+        record.get("status") == RETRY_QUARANTINED_STATUS
+        and record.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        and record.get("retry_hold_reason") == reason
+    ):
+        return False
+    record["status"] = RETRY_QUARANTINED_STATUS
+    record["retry_hold_kind"] = RETRY_HELD_BY_TASK_QUARANTINE
+    record["retry_hold_reason"] = reason
+    record["retry_held_at"] = utc_now()
+    record["processed_at"] = utc_now()
+    return True
 
 
 def _task_failure_streak_status_event(
@@ -13926,6 +14093,27 @@ def maybe_trigger_retry_or_fallback(
     request = request_for_worker(config, worker)
     if request is None:
         return False, False
+    retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+        config,
+        worker.get("task_id"),
+        retry_was_held=(
+            worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        ),
+    )
+    if retry_hold_reason:
+        changed = hold_worker_retry_for_task_quarantine(worker, retry_hold_reason)
+        if changed:
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_retry_held",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": retry_hold_reason,
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+        return True, changed
     reassigned_to = maybe_reassign_task_after_worker_failure(config, state, worker, reason)
     if reassigned_to:
         worker["status"] = "reassigned"
@@ -13994,8 +14182,49 @@ def retry_due_workers(
 ) -> bool:
     changed = False
     for worker in list(state.get("workers", {}).values()):
-        if worker.get("status") != "retry_backoff":
+        retry_was_held = (
+            worker.get("status") == RETRY_QUARANTINED_STATUS
+            and worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        )
+        if worker.get("status") != "retry_backoff" and not retry_was_held:
             continue
+        retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+            config,
+            worker.get("task_id"),
+            retry_was_held=retry_was_held,
+        )
+        if retry_hold_reason:
+            held = hold_worker_retry_for_task_quarantine(worker, retry_hold_reason)
+            if held:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_retry_held",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": retry_hold_reason,
+                        "worker_run_id": worker.get("run_id"),
+                    },
+                )
+            changed = held or changed
+            continue
+        if retry_was_held:
+            worker["status"] = "retry_backoff"
+            worker["next_retry_at"] = _isoformat_utc(now)
+            worker.pop("retry_hold_kind", None)
+            worker.pop("retry_hold_reason", None)
+            worker.pop("retry_held_at", None)
+            worker["last_event_at"] = utc_now()
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_retry_released",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Released held worker retry after governed task reopen.",
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:
             continue
@@ -14677,6 +14906,28 @@ def poll_worker_failure_stage(
             str(worker.get("task_id") or ""),
             retain_task_projection=True,
         )
+        retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+            config,
+            worker.get("task_id"),
+            retry_was_held=(
+                worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+            ),
+        )
+        if retry_hold_reason:
+            held = hold_worker_retry_for_task_quarantine(worker, retry_hold_reason)
+            if held:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_retry_held",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": retry_hold_reason,
+                        "worker_run_id": worker.get("run_id"),
+                        "raw_ref": raw_ref,
+                    },
+                )
+            return {"changed": held, "stop": True}
         schedule_worker_retry(config, worker, summarized_reason)
         write_activity_log(
             config,
