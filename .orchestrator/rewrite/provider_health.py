@@ -43,6 +43,16 @@ _PAUSE_KINDS = frozenset({"quota_terminal", "capacity", "capacity_retryable", "a
 _ROTATION_ELIGIBLE_KINDS = frozenset({"quota_terminal", "capacity_retryable"})
 _AUTH_KINDS = frozenset({"auth", "tool_auth"})
 _TRANSIENT_KINDS = frozenset({"transient"})
+_QUOTA_PROBE_STATUS_MARKERS = ("quota",)
+_CAPACITY_PROBE_STATUS_MARKERS = (
+    "capacity",
+    "rate",
+    "rotation_models_cooling",
+    "timeout",
+    "probe_error",
+    "cli_missing",
+    "exit_",
+)
 
 
 def _norm(kind: object) -> str:
@@ -100,14 +110,30 @@ def classify_probe(ready: object, *, status: object = None) -> AccountHealth | N
     credential failure is revoked immediately, before a worker is launched and
     forced to discover the dead credential from its log.
     """
+    failure_kind = classify_probe_failure_kind(ready, status=status)
     if ready is True:
         return AccountHealth.HEALTHY
-    if ready is False:
-        status_n = _norm(status)
-        if any(
-            marker in status_n
-            for marker in ("quota", "capacity", "rate", "timeout", "probe_error", "cli_missing", "exit_")
-        ):
-            return AccountHealth.DEGRADED
-        return AccountHealth.REVOKED
-    return None
+    if failure_kind is None:
+        return None
+    return classify_health(failure_kind)
+
+
+def classify_probe_failure_kind(ready: object, *, status: object = None) -> str | None:
+    """Translate one authoritative probe result into the failure vocabulary.
+
+    Probe adapters exercise both credentials and provider capacity.  A false
+    result therefore is not automatically an authentication failure:
+    ``quota_reached`` is terminal quota, transient capacity/tooling statuses are
+    retryable capacity, and only the remaining explicit not-ready results are
+    credential failures.  Keeping this classification beside ``classify_probe``
+    prevents callers from turning a degraded account into a sticky auth lane.
+    """
+
+    if ready is True or ready is None:
+        return None
+    status_n = _norm(status)
+    if any(marker in status_n for marker in _QUOTA_PROBE_STATUS_MARKERS):
+        return "quota_terminal"
+    if any(marker in status_n for marker in _CAPACITY_PROBE_STATUS_MARKERS):
+        return "capacity_retryable"
+    return "auth"
