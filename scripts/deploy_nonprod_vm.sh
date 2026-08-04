@@ -97,7 +97,10 @@ DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REMOTE_URL
 DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
 DEV_STATUS_ROOT_HOST="${DEV_STATUS_ROOT_HOST:-}"
 DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
+# This legacy variable remains the mutable staging/tool checkout used by deploy
+# transport and dashboard recovery.  It is not supervisor command authority.
 DEV_SUPERVISOR_COMMAND_ROOT="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
+DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
 DEV_MANAGEMENT_AI_STORE_BACKEND="${DEV_MANAGEMENT_AI_STORE_BACKEND:-postgres}"
 DEV_MANAGEMENT_AI_STORE_SCHEMA="${DEV_MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
 DEV_MANAGEMENT_AI_DB_USER="${DEV_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
@@ -463,7 +466,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
   info "dev_status_root_host=${PANTHEON_STATUS_ROOT_HOST:-}"
   info "dev_status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER:-}"
-  info "dev_supervisor_command_root=${DEV_SUPERVISOR_COMMAND_ROOT}"
+  info "dev_supervisor_staging_root=${DEV_SUPERVISOR_COMMAND_ROOT}"
+  info "dev_supervisor_command_runtime_parent=${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
   info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
   info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
@@ -1947,9 +1951,152 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+materialize_dev_supervisor_command_runtime() {
+  local source_root="$1"
+  local sha="${PANTHEON_DEPLOY_SHA}"
+  local parent="${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}"
+  local destination="${parent}/${sha}"
+  local temporary_parent runtime origin_url accepted_dev
+
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] \
+    || error "supervisor command runtime requires a lowercase full deploy SHA"
+  python3 - "$parent" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+parent = Path(sys.argv[1])
+if not parent.is_absolute() or any(part in {".", ".."} for part in parent.parts):
+    raise SystemExit(f"command runtime parent must be canonical absolute path: {parent}")
+for component in (parent, *parent.parents):
+    if component.is_symlink():
+        raise SystemExit(f"command runtime parent contains symlink component: {component}")
+parent.mkdir(parents=True, exist_ok=True)
+if not parent.is_dir() or stat.S_ISLNK(parent.lstat().st_mode):
+    raise SystemExit(f"command runtime parent is not a direct directory: {parent}")
+PY
+
+  [[ ! -L "$destination" ]] \
+    || error "immutable supervisor command runtime destination is a symlink: ${destination}"
+  if [[ ! -e "$destination" ]]; then
+    temporary_parent="$(mktemp -d "${parent}/.runtime-materialize-${sha}.XXXXXX")"
+    runtime="${temporary_parent}/runtime"
+    if ! git clone --quiet --no-local --no-checkout "$source_root" "$runtime"; then
+      rm -rf -- "$temporary_parent"
+      error "failed to clone immutable supervisor command runtime"
+    fi
+    origin_url="$(git -C "$source_root" config --get remote.origin.url)"
+    accepted_dev="$(git -C "$source_root" rev-parse origin/dev)"
+    git -C "$runtime" remote set-url origin "$origin_url" \
+      && git -C "$runtime" fetch --quiet --no-tags "$source_root" "$sha" \
+      && git -C "$runtime" update-ref refs/remotes/origin/dev "$accepted_dev" \
+      && git -C "$runtime" checkout --quiet --detach "$sha" \
+      || { rm -rf -- "$temporary_parent"; error "failed to bind immutable supervisor command runtime"; }
+    if ! python3 - "$runtime" "$destination" "$parent" <<'PY'
+import ctypes
+import errno
+import os
+import sys
+from pathlib import Path
+
+source, destination, parent = map(Path, sys.argv[1:])
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = libc.renameat2
+renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+renameat2.restype = ctypes.c_int
+if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+    error = ctypes.get_errno()
+    if error != errno.EEXIST:
+        raise OSError(error, os.strerror(error), destination)
+fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+    then
+      rm -rf -- "$temporary_parent"
+      error "failed to atomically install immutable supervisor command runtime"
+    fi
+    rm -rf -- "$temporary_parent"
+  fi
+
+  python3 "$destination/scripts/provision_live_supervisor_config.py" \
+    --command-root "$destination" \
+    --validate-command-root-only >/dev/null \
+    || error "immutable supervisor command runtime validation failed: ${destination}"
+  printf '%s\n' "$destination"
+}
+
+configured_supervisor_command_root() {
+  local live_config="$1"
+  python3 - "$live_config" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+watchdog = payload.get("watchdog")
+command = watchdog.get("supervisor_command") if isinstance(watchdog, dict) else None
+if not isinstance(command, list):
+    raise SystemExit("live config watchdog.supervisor_command is missing")
+entrypoints = [Path(arg) for arg in command if isinstance(arg, str) and Path(arg).name == "supervisor.py"]
+if len(entrypoints) != 1 or entrypoints[0].parent.name != ".orchestrator":
+    raise SystemExit("live config must bind exactly one canonical supervisor entrypoint")
+print(entrypoints[0].parent.parent)
+PY
+}
+
+assert_no_live_supervisor_incumbent() {
+  local status_root="$1"
+  local pid_file="${PANTHEON_SUPERVISOR_PID:-${status_root}/.orchestrator/supervisor.pid}"
+  python3 - "$pid_file" <<'PY'
+import os
+import sys
+from pathlib import Path, PurePosixPath
+
+pid_file = Path(sys.argv[1])
+if pid_file.exists() or pid_file.is_symlink():
+    if pid_file.is_symlink() or not pid_file.is_file():
+        raise SystemExit(f"supervisor PID marker must be regular and non-symlink: {pid_file}")
+    raw_pid = pid_file.read_text(encoding="utf-8").strip()
+    if raw_pid:
+        try:
+            os.kill(int(raw_pid), 0)
+        except (ProcessLookupError, ValueError):
+            pass
+        except PermissionError:
+            raise SystemExit(f"cannot disprove live incumbent PID {raw_pid}")
+        else:
+            raise SystemExit(f"live supervisor incumbent PID {raw_pid} exists")
+
+for cmdline_path in Path("/proc").glob("[0-9]*/cmdline"):
+    try:
+        arguments = tuple(
+            item.decode("utf-8", errors="surrogateescape")
+            for item in cmdline_path.read_bytes().split(b"\0")
+            if item
+        )
+    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        continue
+    if any(
+        PurePosixPath(argument).name == "supervisor.py"
+        and PurePosixPath(argument).parent.name == ".orchestrator"
+        for argument in arguments
+    ):
+        raise SystemExit(
+            f"live supervisor incumbent discovered at PID {cmdline_path.parent.name}"
+        )
+PY
+}
+
 provision_dev_supervisor_watchdog() {
   local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
-  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
+  local staging_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
+  local source_root command_root configured_root
+  local promotion_args=()
   local attempt
   local linger_state=""
 
@@ -1958,16 +2105,44 @@ provision_dev_supervisor_watchdog() {
   [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
     || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
 
-  info "provisioning split-root dev supervisor config and persistent watchdog from ${command_root}"
-  python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
-    --repo-config "${command_root}/.orchestrator/config.json" \
-    --live-config "$live_config" \
-    --command-root "$command_root" \
-    --status-root "${PANTHEON_STATUS_ROOT_HOST}"
+  source_root="$(pwd -P)"
+  command_root="$(materialize_dev_supervisor_command_runtime "$source_root")"
+  info "admitted immutable dev supervisor command runtime ${command_root}; staging root remains ${staging_root}"
+
+  if [[ ! -e "$live_config" ]]; then
+    info "performing first-install supervisor config provisioning with no incumbent"
+    assert_no_live_supervisor_incumbent "${PANTHEON_STATUS_ROOT_HOST}"
+    python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
+      --repo-config "${command_root}/.orchestrator/config.json" \
+      --live-config "$live_config" \
+      --command-root "$command_root" \
+      --status-root "${PANTHEON_STATUS_ROOT_HOST}"
+  else
+    [[ -f "$live_config" && ! -L "$live_config" ]] \
+      || error "existing supervisor config must be a regular non-symlink file"
+    configured_root="$(configured_supervisor_command_root "$live_config")"
+    if [[ "$configured_root" == "$command_root" ]]; then
+      info "supervisor command runtime already current; provisioning is a config no-op"
+      python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
+        --repo-config "${command_root}/.orchestrator/config.json" \
+        --live-config "$live_config" \
+        --command-root "$command_root" \
+        --status-root "${PANTHEON_STATUS_ROOT_HOST}"
+    else
+      promotion_args=(--promote --repo "$command_root")
+      if [[ ! "$configured_root" =~ ^${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}/[0-9a-f]{40}$ ]]; then
+        promotion_args+=(--bootstrap-mutable-incumbent)
+      fi
+      info "requesting governed supervisor promotion configured=${configured_root} candidate=${command_root}"
+      "${command_root}/scripts/promote-supervisor-runtime.sh" "${promotion_args[@]}" \
+        || error "governed supervisor promotion handoff failed"
+    fi
+  fi
+
   python3 "${command_root}/scripts/check_config_drift.py" \
     --repo-config "${command_root}/.orchestrator/config.json" \
     --live-config "$live_config" \
-    --fix
+    || error "live supervisor config drift remains; refusing direct config mutation"
 
   if systemctl --user show-environment >/dev/null 2>&1; then
     linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
@@ -1999,6 +2174,49 @@ provision_dev_supervisor_watchdog() {
   systemctl --user status pantheon-supervisor-watchdog.timer --no-pager || true
   systemctl --user status pantheon-supervisor-watchdog.service --no-pager || true
   error "persistent dev supervisor watchdog did not become healthy"
+}
+
+provision_dev_dashboard_autostart() {
+  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
+  local probe_file
+  local attempt
+
+  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] \
+    || error "dashboard autostart provisioning is dev-only"
+  [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
+    || error "dashboard autostart provisioning requires PANTHEON_STATUS_ROOT_HOST"
+
+  info "provisioning persistent dashboard recovery for ${PANTHEON_STATUS_ROOT_HOST}"
+  python3 "${command_root}/scripts/dashboard_autostart_install.py" \
+    --repo "${PANTHEON_STATUS_ROOT_HOST}" \
+    --method auto \
+    --start-now
+
+  if systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user is-enabled --quiet pantheon-dashboard-autostart.timer \
+      || error "dashboard autostart systemd timer is not enabled"
+    systemctl --user is-active --quiet pantheon-dashboard-autostart.timer \
+      || error "dashboard autostart systemd timer is not active"
+  else
+    crontab -l 2>/dev/null | grep -Fq '# pantheon-dashboard-autostart' \
+      || error "dashboard autostart cron fallback is not installed"
+  fi
+
+  probe_file="$(mktemp)"
+  for attempt in $(seq 1 10); do
+    if curl -fsS --max-time 5 http://127.0.0.1:4180/index.html >"$probe_file" \
+      && grep -Fq '協作看板' "$probe_file"; then
+      rm -f "$probe_file"
+      info "persistent dashboard recovery is healthy"
+      return 0
+    fi
+    sleep 2
+  done
+
+  rm -f "$probe_file"
+  systemctl --user status pantheon-dashboard-autostart.timer --no-pager || true
+  systemctl --user status pantheon-dashboard-autostart.service --no-pager || true
+  error "persistent dashboard recovery did not become healthy"
 }
 
 docker_storage_diagnostics() {
@@ -2200,6 +2418,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     provision_dev_supervisor_watchdog
+    provision_dev_dashboard_autostart
     ;;
 
   bff)
