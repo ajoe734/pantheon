@@ -1,70 +1,50 @@
 # L12 fleet status sync closeout refresh
 
-Evidence cut: `2026-08-01T15:24:09Z`.
+Evidence cut: `2026-08-04T14:43:16Z`.
 
 ## Outcome
 
-The implementation remains delivered and was not restarted. Pantheon PR
-[#4282](https://github.com/ajoe734/pantheon/pull/4282) merged exact head
-`e806affaa279f8b9d4b41bae6117a9431c99b90e` to `dev` as
-`a0020c5ac50e510467a5e80c412c7703245cf4dd`.
+The implementation was not restarted. Pantheon PR
+[#4282](https://github.com/ajoe734/pantheon/pull/4282) delivered exact head
+`e806affaa279f8b9d4b41bae6117a9431c99b90e` to `dev` as merge
+`a0020c5ac50e510467a5e80c412c7703245cf4dd`; both remain ancestors of the
+current `origin/dev`.
 
-The evidence-only PR
-[#4297](https://github.com/ajoe734/pantheon/pull/4297) had an Antigravity
-canonical approval at exact head
-`38057216e8e2a02f2acb3f375a119286af6e01b2` (status id `51284662304`), but
-that head became behind `dev`. On 2026-08-01, Codex2 used GitHub's
-expected-head guarded update-branch API to compose `dev`
-`76bbb04b569331a81916330d1cf713d068527c89`, producing
-`99907d249bb5ffd4faf04bea4f37f59d2063f3f0`. When `dev` advanced again, the
-same guard accepted expected head `99907d249bb5ffd4faf04bea4f37f59d2063f3f0`
-and composed `dev` `d2a9a6079789b6da1f15978ff7310c22a129f379`.
-The current exact head is `91b2937119bb2597d59ef995a8882e3f26407a41`.
+The source closeout PR [#4297](https://github.com/ajoe734/pantheon/pull/4297)
+is currently open, mergeable, and `BEHIND` at exact head
+`23a7d3244ad89d093a006ff6ace86f13053d794c`. Its changed scope remains only
+the source task brief and two source evidence files. The eight visible Branch
+CI runs for that head passed, but it has no current GitHub review decision.
 
-The refreshed PR still changes only:
+The governed source-task row reports `review_approved`, owner `Codex2`, and
+reviewer `Codex`, but its retained review binding is to old head
+`38057216e8e2a02f2acb3f375a119286af6e01b2` for PR #4297. Its `source_pr` /
+`source_head` fields also differ from the live PR identity. That mismatch is a
+fail-closed blocker: this wrapper neither reuses the stale approval nor claims
+review, root freeze, merge, or canonical archive.
 
-- `.orchestrator/task-briefs/l12_fleet_status_sync_001.md`;
-- `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json`;
-- `docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md`.
+## Required composition
 
-All eight Branch CI jobs on `91b2937119bb2597d59ef995a8882e3f26407a41`
-passed. The PR is open, draft, mergeable, and blocked on the required exact-head
-gates.
-
-## Review and authority boundary
-
-The last successful governed observation recorded the canonical source-task
-row as `review_approved`, but its `review_binding.head_sha` and GitHub review
-bridge bind the old head `38057216e8e2a02f2acb3f375a119286af6e01b2`.
-That approval is retained as history and is not valid for the refreshed head.
-Current governed reads fail closed with `status_task_lock_busy`; this receipt
-does not bypass the lock or infer a newer canonical transition.
-
-The source owner, Codex, must reopen or otherwise return
-`L12-FLEET-STATUS-SYNC-001` to the exact-head review path and hand
-`91b2937119bb2597d59ef995a8882e3f26407a41` to Antigravity. Only after that
-review may Human/Ops provide the head-specific root-freeze status and integrate
-the PR. Only the source owner may then run canonical `done`/archive.
-
-This wrapper does not impersonate Codex, Antigravity, or Human/Ops and does not
-claim root freeze, merge, or archive.
+1. Codex2, the current source-task owner, must reconcile its canonical source
+   metadata, refresh #4297 from current `dev`, and return the exact refreshed
+   head to a valid independent reviewer.
+2. The independent reviewer must bind a new decision to that exact head; the
+   required root-freeze gate must then be recorded by its authorized actor.
+3. After #4297 merges, only the source-task owner may run its governed
+   `done`/archive transition. This wrapper can then be independently reviewed,
+   merged, and finalized by its owner.
 
 ## Verification
 
-- GitHub expected-head guarded update-branch accepted old reviewed head
-  `38057216e8e2a02f2acb3f375a119286af6e01b2`, then accepted refreshed head
-  `99907d249bb5ffd4faf04bea4f37f59d2063f3f0` when `dev` advanced again.
-- The current commit has parents
-  `99907d249bb5ffd4faf04bea4f37f59d2063f3f0` and
-  `d2a9a6079789b6da1f15978ff7310c22a129f379`.
-- `git diff --name-status d2a9a607...91b293711...` lists only the three
-  source closeout files above.
-- `git diff --check d2a9a607...91b293711...` passed.
-- All eight visible Branch CI check runs on the refreshed head passed.
-- PR #4282 implementation and merge identities remain ancestors of
-  `origin/dev`.
-- The companion `evidence.json` parses as JSON and the SHA-256 manifest binds
-  both evidence files.
-
-Machine-readable identities, acceptance state, and required next actions are in
-`evidence.json`.
+- `AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show
+  L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728` reported wrapper owner `Codex`,
+  reviewer `Antigravity`, and `in_progress`.
+- `AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show
+  L12-FLEET-STATUS-SYNC-001` reported source owner `Codex2`, reviewer `Codex`,
+  `review_approved`, and the stale review binding above.
+- `gh pr view 4297 --repo ajoe734/pantheon` showed the current source PR state,
+  exact head, retained green checks, and no review decision.
+- `git merge-base --is-ancestor` confirmed the PR #4282 implementation head
+  and merge commit remain ancestors of `origin/dev`.
+- `git diff --check` and `sha256sum -c evidence.sha256` are run after this
+  receipt is committed.

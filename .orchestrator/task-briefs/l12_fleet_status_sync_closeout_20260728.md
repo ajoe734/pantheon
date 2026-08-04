@@ -7,33 +7,29 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence
 - Status: in_progress
-- Owner: Codex2
+- Owner: Codex
 - Reviewer: Antigravity
 - Phase: Twelve Loop Remediation / Wave 0 Fleet Status Sync Closeout
-- Last update: 2026-08-01T15:24:09Z
-- Next: PR #4297 was guarded-refreshed again from expected head 99907d249bb5ffd4faf04bea4f37f59d2063f3f0 onto dev d2a9a6079789b6da1f15978ff7310c22a129f379 as exact head 91b2937119bb2597d59ef995a8882e3f26407a41 with eight green Branch CI jobs. The prior Antigravity approval binds old head 38057216e8e2a02f2acb3f375a119286af6e01b2 and must not be reused; Codex must reopen/handoff the new exact head, then Antigravity must rereview before Human/Ops root freeze, merge, and canonical source-task closeout. Governed status reads currently fail closed on the busy canonical task-state lock.
+- Last update: 2026-08-04T14:43:16Z
+- Next: Wrapper evidence has been refreshed against current GitHub and governed-status observations. Source task L12-FLEET-STATUS-SYNC-001 remains owned by Codex2 and cannot close while its canonical review binding is stale and PR #4297 is behind dev. Antigravity must independently review this updated wrapper receipt after its PR is refreshed.
 
 ## Summary
 刷新並完成 L12-FLEET-STATUS-SYNC-001 closeout；不得重做已 merged implementation。
 
 ## Owner Result
-- PR #4282 implementation head
-  `e806affaa279f8b9d4b41bae6117a9431c99b90e` remains merged to `dev` as
-  `a0020c5ac50e510467a5e80c412c7703245cf4dd`; this task did not restart it.
-- PR #4297 was refreshed twice through GitHub's expected-head guarded
-  update-branch API: first from old reviewed head
-  `38057216e8e2a02f2acb3f375a119286af6e01b2` onto `dev`
-  `76bbb04b569331a81916330d1cf713d068527c89`, then from expected head
-  `99907d249bb5ffd4faf04bea4f37f59d2063f3f0` onto `dev`
-  `d2a9a6079789b6da1f15978ff7310c22a129f379`.
-- The current exact head is `91b2937119bb2597d59ef995a8882e3f26407a41`.
-  Its diff remains limited to the source task brief and two task-scoped evidence
-  files, and all eight Branch CI jobs passed.
-- The last successful canonical source-task observation recorded
-  `review_approved` and review status id `51284662304` against old head
-  `38057216e8e2a02f2acb3f375a119286af6e01b2`. That approval is historical only
-  after the refresh. Current governed reads fail closed on the busy task-state
-  lock; root freeze, merge, and source-task `done`/archive are not claimed.
+
+- PR #4282 implementation head `e806affaa279f8b9d4b41bae6117a9431c99b90e`
+  and merge `a0020c5ac50e510467a5e80c412c7703245cf4dd` remain ancestors of
+  `origin/dev`; no implementation was restarted.
+- Live GitHub observation shows source PR #4297 open at
+  `23a7d3244ad89d093a006ff6ace86f13053d794c`, mergeable but behind `dev`,
+  with no GitHub review decision. Its retained Branch CI checks are green but
+  do not make the stale review binding current.
+- Governed status records L12-FLEET-STATUS-SYNC-001 as `review_approved`,
+  owned by Codex2, but binds review to old SHA
+  `38057216e8e2a02f2acb3f375a119286af6e01b2`. The same row's source metadata
+  also differs from the live PR identity. This task records the discrepancy;
+  only the source owner may repair the source review path and close it.
 
 ## Dependencies
 - none
