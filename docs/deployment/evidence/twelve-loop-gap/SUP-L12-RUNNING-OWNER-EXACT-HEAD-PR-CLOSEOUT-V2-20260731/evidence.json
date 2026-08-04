@@ -1,28 +1,89 @@
 {
-  "schema_version": "supervisor_exact_head_pr_closeout_v2.v1",
+  "schema_version": "supervisor_exact_head_pr_closeout_v2.v2",
+  "observed_at": "2026-08-04T15:07:46Z",
   "task": {
     "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
     "title": "Supersede Wave0X #4396 governed closeout with current-head spec",
-    "owner": "Antigravity",
+    "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "done",
+    "status_at_observation": "in_progress",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json"
   },
-  "pr_target": {
-    "number": 4396,
-    "title": "[ReviewBus] SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 Reconcile running-owner PR exact head before support closeout is counted",
-    "head_ref_name": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
-    "head_ref_oid": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
-    "auto_merge_enabled": true,
-    "status_checks": "all_success"
+  "immutable_requeue_receipt": {
+    "source": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json",
+    "authoritative_status_root": "/home/lupin/pantheon",
+    "status": "failed",
+    "packet_id": "pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z",
+    "subject_task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+    "immutable_binding": {
+      "packet": "pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z",
+      "packet_digest": "24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc",
+      "task_spec_hash": "c8668db8bc7a7af97044001566e77df54d40dde70f8453bfc2c99acd6e535be4"
+    },
+    "conclusion": "The prior task ID rejected the requeue before admission because it is immutable-bound to the earlier packet and task spec. This V2 task records a new task identity; it does not mutate or count the preempted task."
   },
-  "validation": {
-    "status": "pass",
-    "receipt": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json verified immutable-bound",
-    "pr_4396_head": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
-    "auto_merge_set": true
+  "pr_4396": {
+    "url": "https://github.com/ajoe734/pantheon/pull/4396",
+    "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "state": "OPEN",
+    "draft": false,
+    "base_ref": "dev",
+    "head_ref": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "historical_expected_head": "19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f",
+    "canonical_review_binding_head": "9d7dfadbcd929e95a0ec1ddf1787ad236c94470d",
+    "current_head": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
+    "head_lineage": {
+      "historical_expected_head_is_ancestor_of_current": true,
+      "canonical_review_binding_head_is_ancestor_of_current": true,
+      "current_head_change": "The current head is a later merge of dev and therefore requires a current exact-head gate; the earlier review binding cannot be treated as current-head approval."
+    },
+    "merge_state_status": "BEHIND",
+    "mergeable": "MERGEABLE",
+    "auto_merge_request": null,
+    "github_review_decision": "",
+    "branch_ci": {
+      "commit_trailers": "success",
+      "python_packaging_provision": "success",
+      "runtime_mirror_guard": "success",
+      "smoke_acceptance": "success"
+    }
+  },
+  "canonical_reconciliation_row": {
+    "status": "review_approved",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
+    "review_binding_head": "9d7dfadbcd929e95a0ec1ddf1787ad236c94470d",
+    "recorded_approval_actor": "Antigravity"
+  },
+  "auto_integrator_dry_run": {
+    "command": "AUTO_INTEGRATOR_DRY_RUN=1 AUTO_INTEGRATOR_MAX_TASKS=1 ./scripts/run-auto-integrator.sh --task-id SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --json",
+    "candidate_count": 1,
+    "action": "blocked",
+    "unblock_task_id": "INTEGRATION-UNBLOCK-SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731-REVIEW-GATE-APPROVAL-REV",
+    "reason": "PR #4396 is gated by review-before-merge and not mergeable: approval_reviewer_mismatch - approval was recorded by 'Antigravity' but the canonical reviewer for SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 is 'Codex'."
+  },
+  "subject_pr_4386": {
+    "url": "https://github.com/ajoe734/pantheon/pull/4386",
+    "state": "OPEN",
+    "current_head": "eedc541024bf6c9bcc57cb662e9fa55922a80b9b",
+    "merge_state_status": "DIRTY",
+    "mergeable": "CONFLICTING",
+    "branch_ci": "all listed checks success",
+    "countable_as_completed_support": false,
+    "reason": "The subject PR has neither protected merge nor governed owner closeout."
+  },
+  "closeout_decision": {
+    "status": "blocked_pending_independent_review_and_protected_merge",
+    "done_transition_performed": false,
+    "reason": "Neither a non-draft PR, successful CI, nor a review_approved row satisfies the required exact-head review, protected merge, and governed closeout gates."
+  },
+  "scope_boundary": {
+    "runtime_implementation_changed": false,
+    "config_changed": false,
+    "canonical_status_files_edited_directly": false
   }
 }

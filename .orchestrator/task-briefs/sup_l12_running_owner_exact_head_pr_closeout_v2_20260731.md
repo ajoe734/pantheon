@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Supersede Wave0X #4396 governed closeout with current-head spec
-- Status: todo
-- Owner: Antigravity
+- Status: in_progress
+- Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.
+- Next: Helper-claimed by Codex while Codex2 is dispatch-paused previous owner Codex2 becomes reviewer.
 
 ## Summary
 Supersedes preempted immutable task SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 after bridge rejected spec update. #4396 is no longer draft but still blocked by merge/root-freeze closeout.

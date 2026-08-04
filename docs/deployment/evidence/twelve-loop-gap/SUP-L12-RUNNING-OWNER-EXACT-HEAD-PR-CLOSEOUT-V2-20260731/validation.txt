@@ -1,0 +1,34 @@
+SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 validation
+Observed: 2026-08-04T15:07:46Z
+
+1. Canonical state
+   command: AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731
+   result: owner=Codex; reviewer=Codex2; status=in_progress.
+
+2. Immutable prior-task proof
+   source: $PANTHEON_STATUS_ROOT/.orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json
+   result: status=failed; the old task SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 was rejected before admission because it remains bound to pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z, digest 24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc, and spec c8668db8bc7a7af97044001566e77df54d40dde70f8453bfc2c99acd6e535be4.
+
+3. PR #4396 exact-head and checks
+   command: gh pr view 4396 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision,statusCheckRollup,url
+   result: OPEN; non-draft; head=ba282edd81c00e75d3c96c820922ee3bb9d7f6ac; mergeStateStatus=BEHIND; mergeable=MERGEABLE; autoMergeRequest=null; reviewDecision empty; all listed Branch CI checks successful.
+   command: git merge-base --is-ancestor 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f ba282edd81c00e75d3c96c820922ee3bb9d7f6ac; git merge-base --is-ancestor 9d7dfadbcd929e95a0ec1ddf1787ad236c94470d ba282edd81c00e75d3c96c820922ee3bb9d7f6ac
+   result: both exit 0; the historical expected and canonical review-binding heads are ancestors, not the current PR head.
+   command: gh pr checks 4396 --repo ajoe734/pantheon
+   result: commit trailers, Python packaging provision, runtime mirror guard, and smoke acceptance all pass.
+
+4. Canonical review binding and auto-integrator eligibility
+   command: AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731
+   result: review_approved row has owner=Codex2, reviewer=Codex, review binding head=9d7dfadbcd929e95a0ec1ddf1787ad236c94470d, and recorded approval actor=Antigravity.
+   command: AUTO_INTEGRATOR_DRY_RUN=1 AUTO_INTEGRATOR_MAX_TASKS=1 ./scripts/run-auto-integrator.sh --task-id SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --json
+   result: blocked; approval_reviewer_mismatch because the recorded approval actor is Antigravity while the canonical reviewer is Codex. Proposed unblock task: INTEGRATION-UNBLOCK-SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731-REVIEW-GATE-APPROVAL-REV.
+
+5. Subject PR #4386 fail-closed boundary
+   command: gh pr view 4386 --repo ajoe734/pantheon --json number,state,headRefOid,mergeStateStatus,mergeable,statusCheckRollup,url
+   result: OPEN; head=eedc541024bf6c9bcc57cb662e9fa55922a80b9b; mergeStateStatus=DIRTY; mergeable=CONFLICTING; listed Branch CI checks pass. It is not countable until protected merge and governed owner closeout.
+
+6. Local artifact validation
+   command: jq empty docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json
+   result: pass.
+   command: git diff --check
+   result: pass.
