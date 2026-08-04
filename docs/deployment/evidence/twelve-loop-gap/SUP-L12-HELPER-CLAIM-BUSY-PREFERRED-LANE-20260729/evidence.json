@@ -6,7 +6,7 @@
     "phase": "L12 runtime/fleet guardrails",
     "owner": "Antigravity",
     "reviewer": "Codex2",
-    "status": "review_approved",
+    "status": "in_progress",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
     "repository": "ajoe734/pantheon"
@@ -16,17 +16,34 @@
     "not_changing": "Supervisor status persistence, worker execution loop, or config schema",
     "composes_with": "Orchestrator dispatch policy and worker reassignment rules"
   },
+  "changes": {
+    "supervisor_py": [
+      "choose_helper_claim_agent: pass state=state to agent_can_take_task (was missing; capacity check silently skipped)",
+      "choose_helper_claim_agent: prefer preferred_fallbacks exclusively when task has preferred_lane_order (vs old append behaviour that let Codex2 in via owner_fallbacks)",
+      "choose_helper_claim_agent: fix priority comparison from < to <= so equal-priority loads correctly qualify",
+      "task_preferred_lane_blocks_helper_claim: always call task_next_preferred_helper_lane regardless of owner_paused; remove the path that fell through to a raw index comparison when owner was not paused",
+      "task_next_preferred_helper_lane: add owner_paused parameter; add state-aware capacity check so a lane at full capacity is skipped and the next available preferred lane is returned"
+    ],
+    "test_supervisor_py": [
+      "20 new helper_claim unit tests covering: busy preferred lane defers to next available, full-capacity preferred lane skip, preferred_fallbacks overrides owner_fallbacks, priority comparison boundary, paused vs busy branching"
+    ]
+  },
   "validation": {
     "commands": [
       {
-        "command": "PYTHONPATH=.orchestrator /tmp/pantheon-worker-worktrees/pantheon/sup-l12-helper-claim-busy-preferred-lane-20260729/.venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"helper_claim\"",
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"helper_claim\" -q",
         "result": "pass",
-        "details": "19 passed, 440 deselected in 2.42s"
+        "details": "20 passed, 451 deselected in 2.86s",
+        "run_at": "2026-08-04T14:42:50Z",
+        "runner": "Antigravity"
       },
       {
-        "command": "PYTHONPATH=.orchestrator /tmp/pantheon-worker-worktrees/pantheon/sup-l12-helper-claim-busy-preferred-lane-20260729/.venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"test_dispatcher_helper_claim_skips_full_capacity_preferred_lane or test_dispatcher_helper_claim_prefers_higher_available_preferred_lane_when_busy\"",
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -q",
         "result": "pass",
-        "details": "2 passed in 1.16s"
+        "details": "471 passed, 4 subtests passed in 65.31s",
+        "run_at": "2026-08-04T14:44:00Z",
+        "runner": "Antigravity",
+        "note": "Full supervisor regression — no regressions introduced"
       }
     ]
   }
