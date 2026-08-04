@@ -35,3 +35,13 @@ This manifest is pending the independent `Codex2` review. The reviewer must
 validate the exact PR heads above, record an approval or concrete change
 request through the governed status command, and bind this manifest before the
 owner can finalize the task.
+
+## Branch provenance disclosure
+
+Before this dispatch, the branch already contained commit
+`ac6ee7f2f1b4290fa067024fd84efa5a79832647`, whose message incorrectly names
+`P0-TW-PAPER-ACTIVATE-001`. Its actual patch changes only this task brief, and
+the complete PR diff against `origin/dev` is limited to the four task-scoped
+files listed above. This task did not rewrite the pushed branch history or
+force-push; the independent reviewer should assess this disclosure together
+with the exact net PR diff.

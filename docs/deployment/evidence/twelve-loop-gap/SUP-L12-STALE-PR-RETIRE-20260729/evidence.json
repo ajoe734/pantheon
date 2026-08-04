@@ -15,6 +15,19 @@
     "required_reviewer": "Codex2",
     "decision": null
   },
+  "branch_provenance": {
+    "note": "The pre-dispatch local branch history contained ac6ee7f2f1b4290fa067024fd84efa5a79832647 with a P0-TW-PAPER-ACTIVATE-001 subject and trailers. Its actual patch changes only this task's brief, and the full PR diff relative to origin/dev is limited to the four task-scoped files listed below. This task did not rewrite the already-pushed branch history or force-push.",
+    "preexisting_commit": "ac6ee7f2f1b4290fa067024fd84efa5a79832647",
+    "preexisting_commit_changed_files": [
+      ".orchestrator/task-briefs/sup_l12_stale_pr_retire_20260729.md"
+    ],
+    "net_pr_changed_files": [
+      ".orchestrator/task-briefs/sup_l12_stale_pr_retire_20260729.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/evidence.sha256"
+    ]
+  },
   "supporting_merged_prs": [
     {
       "pr_number": 4365,
