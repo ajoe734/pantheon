@@ -3481,7 +3481,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(failure_worker),
             )
-            persist_task_failure_streak(config, failure_worker, failure_count)
+            persist_task_failure_streak(config, state, failure_worker, failure_count)
             failure_kind = str(failure.get("kind") or "")
             rotation_outcome = maybe_rotate_provider_model(
                 config, state, request.provider, failure_kind, failure_reason
@@ -3491,7 +3491,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 rotation_outcome=rotation_outcome,
             )
             if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
-                clear_task_failure_streaks_for_task(state, str(request.task_id or ""))
+                clear_task_failure_streaks_for_task(
+                    state,
+                    str(request.task_id or ""),
+                    retain_task_projection=True,
+                )
                 schedule_queue_event_retry(
                     config,
                     record,
@@ -6465,6 +6469,7 @@ def _provider_guardrail_bucket(state: dict[str, Any]) -> dict[str, Any]:
     bucket.setdefault("dispatch_pauses", {})
     bucket.setdefault("failure_recovery_consumptions", {})
     bucket.setdefault("task_failure_streaks", {})
+    bucket.setdefault("task_failure_streak_projection_generations", {})
     return bucket
 
 
@@ -6474,6 +6479,23 @@ def _dispatch_pause_bucket(state: dict[str, Any]) -> dict[str, Any]:
 
 def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
+
+
+def _task_failure_streak_projection_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    """Return task-scoped failure generations already projected to the board.
+
+    Provider buckets are deliberately cleared during model rotation. This
+    separate, bounded-until-progress ledger prevents that cleanup from making
+    the same failure look new while still letting the canonical task row count
+    every distinct worker failure across providers.
+    """
+
+    guardrails = _provider_guardrail_bucket(state)
+    bucket = guardrails.setdefault("task_failure_streak_projection_generations", {})
+    if not isinstance(bucket, dict):
+        bucket = {}
+        guardrails["task_failure_streak_projection_generations"] = bucket
+    return bucket
 
 
 def _failure_recovery_consumption_bucket(state: dict[str, Any]) -> dict[str, Any]:
@@ -8526,13 +8548,73 @@ def clear_task_failure_streak(
     _task_failure_streak_bucket(state).pop(_failure_streak_key(task_id, provider_id), None)
 
 
-def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | None) -> None:
+def _task_failure_streak_projection_generation_for_worker(
+    state: dict[str, Any],
+    worker: Mapping[str, Any],
+) -> str | None:
+    """Return the immutable provider-record generation for this worker run."""
+
+    identity = _failure_streak_task_identity(worker)
+    provider_id = worker_failure_streak_provider_id(dict(worker))
+    worker_run_id = _failure_streak_text(worker.get("run_id"))
+    if identity is None or not provider_id or worker_run_id is None:
+        return None
+    record = _task_failure_streak_bucket(state).get(
+        _failure_streak_key(identity[0], provider_id)
+    )
+    decoded = decode_task_failure_streak(record)
+    if decoded is None:
+        return None
+    for generation in reversed(decoded["generations"]):
+        if generation.get("worker_run_id") == worker_run_id:
+            return _failure_streak_text(generation.get("generation_id"))
+    return None
+
+
+def _task_failure_streak_projection_seen(
+    state: dict[str, Any],
+    task_id: str,
+    generation_id: str,
+) -> bool:
+    task_generations = _task_failure_streak_projection_bucket(state).get(task_id)
+    return isinstance(task_generations, dict) and task_generations.get(generation_id) is True
+
+
+def _record_task_failure_streak_projection(
+    state: dict[str, Any],
+    task_id: str,
+    generation_id: str,
+) -> None:
+    bucket = _task_failure_streak_projection_bucket(state)
+    task_generations = bucket.setdefault(task_id, {})
+    if not isinstance(task_generations, dict):
+        task_generations = {}
+        bucket[task_id] = task_generations
+    task_generations[generation_id] = True
+
+
+def clear_task_failure_streak_projection_generations_for_task(
+    state: dict[str, Any], task_id: str | None
+) -> None:
+    task_id = str(task_id or "").strip()
+    if task_id:
+        _task_failure_streak_projection_bucket(state).pop(task_id, None)
+
+
+def clear_task_failure_streaks_for_task(
+    state: dict[str, Any],
+    task_id: str | None,
+    *,
+    retain_task_projection: bool = False,
+) -> None:
     task_id = str(task_id or "").strip()
     if not task_id:
         return
     bucket = _task_failure_streak_bucket(state)
     for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
         bucket.pop(key, None)
+    if not retain_task_projection:
+        clear_task_failure_streak_projection_generations_for_task(state, task_id)
 
 
 TASK_FAILURE_STREAK_QUARANTINED_STATUS = "quarantined"
@@ -8593,20 +8675,27 @@ def _task_failure_streak_status_event(
 
 def _persist_task_failure_streak_locked(
     config: dict[str, Any],
+    state: dict[str, Any],
     worker: dict[str, Any],
-    failure_streak: int,
+    provider_failure_streak: int,
 ) -> bool:
-    """Write one worker failure count onto its canonical task row.
+    """Project one distinct worker failure onto its canonical task row.
 
     The runtime guardrail bucket remains the detailed per-provider evidence
-    store.  This projection deliberately contains only the stable, board-level
-    counter and quarantine outcome needed after a worker process is gone.
+    store. Its count can restart after model rotation, so the board-level
+    counter uses the immutable failure generation as its idempotency key and
+    treats the provider count only as a monotonic lower bound.
     """
 
     identity = _failure_streak_task_identity(worker)
-    if identity is None or failure_streak <= 0:
+    failure_generation_id = _task_failure_streak_projection_generation_for_worker(
+        state, worker
+    )
+    if identity is None or provider_failure_streak <= 0 or failure_generation_id is None:
         return False
     task_id, owner, reviewer = identity
+    if _task_failure_streak_projection_seen(state, task_id, failure_generation_id):
+        return False
     status = load_status(config)
     task = task_index_from_status(config, status).get(task_id)
     if task is None:
@@ -8620,13 +8709,11 @@ def _persist_task_failure_streak_locked(
     current_streak = _task_failure_streak_value(task.get("failure_streak"))
     current_status = str(task.get("status") or "").strip().lower()
     threshold = task_failure_streak_quarantine_threshold(config)
-    should_quarantine = failure_streak >= threshold
-    if (
-        failure_streak <= current_streak
-        and (not should_quarantine or current_status == TASK_FAILURE_STREAK_QUARANTINED_STATUS)
-    ):
-        return False
     if current_status in {"done", "superseded"}:
+        return False
+    failure_streak = max(current_streak + 1, provider_failure_streak)
+    should_quarantine = failure_streak >= threshold
+    if should_quarantine and current_status == TASK_FAILURE_STREAK_QUARANTINED_STATUS:
         return False
 
     timestamp = utc_now()
@@ -8661,13 +8748,15 @@ def _persist_task_failure_streak_locked(
         return False
     status["status_activity_outbox"] = outbox
     write_status(config, status, source="supervisor-task-failure-streak")
+    _record_task_failure_streak_projection(state, task_id, failure_generation_id)
     return True
 
 
 def persist_task_failure_streak(
     config: dict[str, Any],
+    state: dict[str, Any],
     worker: dict[str, Any],
-    failure_streak: int,
+    provider_failure_streak: int,
 ) -> bool:
     """Atomically project a recorded worker failure to canonical task state."""
 
@@ -8675,7 +8764,9 @@ def persist_task_failure_streak(
         return False
     status_path = config_path(config, "status_file")
     with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-        applied = _persist_task_failure_streak_locked(config, worker, failure_streak)
+        applied = _persist_task_failure_streak_locked(
+            config, state, worker, provider_failure_streak
+        )
     if applied:
         sync_status_pipeline(config)
     return applied
@@ -8727,6 +8818,7 @@ def clear_task_failure_streak_after_worker_completion(
     """Clear both detailed runtime evidence and the task-row projection."""
 
     clear_task_failure_streak(state, worker=worker)
+    clear_task_failure_streak_projection_generations_for_task(state, worker.get("task_id"))
     if not config.get("paths", {}).get("status_file"):
         return
     status_path = config_path(config, "status_file")
@@ -8772,7 +8864,11 @@ def reconcile_task_failure_streak_resets(
     ]
     for key in stale_keys:
         bucket.pop(key, None)
-    return bool(stale_keys)
+    projection_bucket = _task_failure_streak_projection_bucket(state)
+    projection_task_ids = [task_id for task_id in reset_task_ids if task_id in projection_bucket]
+    for task_id in projection_task_ids:
+        projection_bucket.pop(task_id, None)
+    return bool(stale_keys or projection_task_ids)
 
 
 def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
@@ -14523,7 +14619,7 @@ def poll_worker_failure_stage(
         raw_ref=raw_ref,
         rejected_head=worker_failure_rejected_head(worker),
     )
-    persist_task_failure_streak(config, worker, failure_count)
+    persist_task_failure_streak(config, state, worker, failure_count)
     console_log(
         f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
         quiet=SUPERVISOR_LOG_QUIET,
@@ -14541,7 +14637,11 @@ def poll_worker_failure_stage(
         rotation_outcome=rotation_outcome,
     )
     if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
-        clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
+        clear_task_failure_streaks_for_task(
+            state,
+            str(worker.get("task_id") or ""),
+            retain_task_projection=True,
+        )
         schedule_worker_retry(config, worker, summarized_reason)
         write_activity_log(
             config,
@@ -14784,7 +14884,7 @@ def poll_worker_completion_stage(
             raw_ref=raw_ref,
             rejected_head=worker_failure_rejected_head(worker),
         )
-        persist_task_failure_streak(config, worker, failure_count)
+        persist_task_failure_streak(config, state, worker, failure_count)
         generic_threshold = max(
             1,
             int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
@@ -16407,7 +16507,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(worker),
             )
-            persist_task_failure_streak(config, worker, failure_count)
+            persist_task_failure_streak(config, state, worker, failure_count)
             failure_kind = str(failure.get("kind") or "")
             failure_response = decide_provider_failure_response(failure_kind)
             if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
@@ -16515,7 +16615,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(worker),
             )
-            persist_task_failure_streak(config, worker, failure_count)
+            persist_task_failure_streak(config, state, worker, failure_count)
 
         if missing_process:
             if failure_count is None:
@@ -16540,7 +16640,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     raw_ref=raw_ref,
                     rejected_head=worker_failure_rejected_head(worker),
                 )
-                persist_task_failure_streak(config, worker, failure_count)
+                persist_task_failure_streak(config, state, worker, failure_count)
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
                 state,

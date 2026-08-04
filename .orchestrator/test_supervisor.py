@@ -21,6 +21,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import ai_status
 import supervisor
 import provider_permissions
 import runtime_state
@@ -12049,7 +12052,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             )
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
-        clear_streak.assert_called_once_with({}, "TASK-FAILURE")
+        clear_streak.assert_called_once_with(
+            {}, "TASK-FAILURE", retain_task_projection=True
+        )
         schedule_retry.assert_called_once_with({}, worker, "capacity exhausted")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_retry_scheduled")
 
@@ -15908,16 +15913,16 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
             },
         }
 
-    def _worker(self, *, run_id: str) -> dict:
+    def _worker(self, *, run_id: str, provider: str = "codex") -> dict:
         return {
             "task_id": self.task["id"],
-            "provider": "codex",
-            "agent_id": "codex",
+            "provider": provider,
+            "agent_id": provider,
             "run_id": run_id,
             "request_snapshot": {
                 "task_id": self.task["id"],
                 "metadata": {
-                    "logical_agent_id": "codex",
+                    "logical_agent_id": provider,
                     "task": dict(self.task),
                 },
             },
@@ -15936,7 +15941,7 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
             raw_ref=f".orchestrator/failure-evidence/{worker['run_id']}.json",
             rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
         )
-        supervisor.persist_task_failure_streak(self.config, worker, count)
+        supervisor.persist_task_failure_streak(self.config, state, worker, count)
         return count
 
     def test_repeated_worker_failures_increment_then_quarantine_task_row(self) -> None:
@@ -15953,6 +15958,69 @@ class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
         self.assertEqual(quarantined["failure_streak"], 2)
         self.assertEqual(quarantined["status"], "quarantined")
         self.assertIn("Reopen", quarantined["next"])
+
+    def test_rotation_cleanup_keeps_task_counter_and_governed_reopen_unblocks_dispatch(self) -> None:
+        """A rotated retry counts as a new task failure even after bucket cleanup."""
+
+        state: dict = {}
+        first_worker = self._worker(run_id="run-rotate-1")
+        retry_worker = self._worker(run_id="run-rotate-2", provider="claude")
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, first_worker), 1)
+            supervisor.clear_task_failure_streaks_for_task(
+                state,
+                self.task["id"],
+                retain_task_projection=True,
+            )
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+            self.assertEqual(self._record_failure(state, retry_worker), 1)
+            self.assertEqual(self._task_row()["failure_streak"], 2)
+
+            # Replaying the same rotated worker does not double-count it.
+            self.assertEqual(self._record_failure(state, retry_worker), 1)
+
+        quarantined = self._task_row()
+        self.assertEqual(quarantined["status"], "quarantined")
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                quarantined,
+                "Codex",
+                {self.task["id"]: quarantined},
+            )
+        )
+
+        reopened_status = {"tasks": [quarantined]}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_reopen(
+                reopened_status,
+                [self.task["id"], "Operator acknowledged the rotated failures."],
+            )
+        self.assertEqual(quarantined["failure_streak"], 0)
+        self.status_path.write_text(
+            json.dumps(reopened_status) + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertTrue(supervisor.reconcile_task_failure_streak_resets(self.config, state))
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        self.assertEqual(
+            state["provider_guardrails"]["task_failure_streak_projection_generations"],
+            {},
+        )
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                quarantined,
+                "Codex",
+                {self.task["id"]: quarantined},
+            ),
+            (supervisor.REASON_OWNED_IN_PROGRESS, 2),
+        )
 
     def test_worker_completion_resets_task_row_failure_streak(self) -> None:
         state: dict = {}
