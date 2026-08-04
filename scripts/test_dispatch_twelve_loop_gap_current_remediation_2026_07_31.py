@@ -19,6 +19,14 @@ CATALOG = (
     / "docs"
     / "bff"
     / "execution-tasks"
+    / "2026-08-03-l12-guarded-remediation-correction"
+    / "corrected-remediation-tasks.json"
+)
+PREVIOUS_CURRENT_CATALOG = (
+    ROOT
+    / "docs"
+    / "bff"
+    / "execution-tasks"
     / "2026-07-31-l12-current-gap-supervisor-dispatch"
     / "guarded-remediation-tasks.json"
 )
@@ -31,6 +39,10 @@ from rewrite.task_state_store import append_state_commit, load_snapshot
 
 def catalog() -> dict:
     return json.loads(CATALOG.read_text(encoding="utf-8"))
+
+
+def previous_current_catalog() -> dict:
+    return json.loads(PREVIOUS_CURRENT_CATALOG.read_text(encoding="utf-8"))
 
 
 def readiness(
@@ -283,6 +295,9 @@ def readiness_files(root: Path) -> tuple[Path, Path, Path]:
 
 
 def test_current_catalog_validate_only_binds_exact_pr_head() -> None:
+    assert module.CURRENT_SOURCE_PR == 4528
+    assert module.CURRENT_SOURCE_HEAD == "7acca51cf12ad9645b5a85d6f6ce1f389ecabcac"
+    assert module.CURRENT_SOURCE_BRANCH_CI_RUN == 30879922150
     result = subprocess.run(
         ["python3", str(SCRIPT), "--validate-only", "--current"],
         cwd=ROOT,
@@ -297,12 +312,71 @@ def test_current_catalog_validate_only_binds_exact_pr_head() -> None:
         "maximum_parallel_frontier_G1": 25,
         "program_id": module.CURRENT_PROGRAM_ID,
         "source_branch_ci_conclusion": "success",
-        "source_branch_ci_run": 30635898120,
+        "source_branch_ci_run": module.CURRENT_SOURCE_BRANCH_CI_RUN,
         "source_head": module.CURRENT_SOURCE_HEAD,
-        "source_pr": 4394,
+        "source_pr": module.CURRENT_SOURCE_PR,
         "status": "valid",
         "task_count": 28,
     }
+
+
+def test_previous_current_profile_remains_available_and_exact() -> None:
+    result = subprocess.run(
+        ["python3", str(SCRIPT), "--validate-only", "--previous-current"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body == {
+        "catalog_file_sha256": module.PREVIOUS_CURRENT_CATALOG_FILE_SHA256,
+        "catalog_sha256": module.PREVIOUS_CURRENT_CATALOG_CANONICAL_SHA256,
+        "maximum_parallel_frontier_G1": 25,
+        "program_id": module.PREVIOUS_CURRENT_PROGRAM_ID,
+        "source_branch_ci_conclusion": "success",
+        "source_branch_ci_run": module.PREVIOUS_CURRENT_SOURCE_BRANCH_CI_RUN,
+        "source_head": module.PREVIOUS_CURRENT_SOURCE_HEAD,
+        "source_pr": module.PREVIOUS_CURRENT_SOURCE_PR,
+        "status": "valid",
+        "task_count": 28,
+    }
+    assert module.validate_catalog(previous_current_catalog())
+
+
+def test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap() -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    bff_task = next(
+        task for task in tasks if task["id"] == "L12-CONTROLLER-BFF-20260731"
+    )
+    assert bff_task["artifacts"] == [
+        "services/control-plane/bff/downstream_health_monitor.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-BFF-20260731",
+    ]
+    module._current_live_overlap_guard(
+        catalog=payload,
+        tasks=tasks,
+        active_by_id={
+            "LIFECYCLE-PROJ-BFF-001": {
+                "id": "LIFECYCLE-PROJ-BFF-001",
+                "status": "todo",
+                "artifacts": [
+                    "services/control-plane/bff/trade_journeys.py",
+                    "services/control-plane/bff/read_store.py",
+                ],
+            },
+            "LIFECYCLE-PROJ-RETIRE-001": {
+                "id": "LIFECYCLE-PROJ-RETIRE-001",
+                "status": "todo",
+                "artifacts": [
+                    "services/control-plane/bff/trade_journeys.py",
+                    "services/control-plane/bff/read_store.py",
+                    "docker-compose.yml",
+                ],
+            },
+        },
+    )
 
 
 def test_current_catalog_rejects_duplicate_dangling_and_g1_overlap() -> None:
