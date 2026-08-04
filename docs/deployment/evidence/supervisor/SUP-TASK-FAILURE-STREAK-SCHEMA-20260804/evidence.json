@@ -12,7 +12,7 @@
     "task_branch": "task/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
   },
   "scope": {
-    "owned_layer": "Task-row failure-streak projection, threshold quarantine, governed lifecycle resets, and the completion cleanup of per-provider runtime evidence.",
+    "owned_layer": "Task-row failure-streak projection, threshold quarantine, governed lifecycle resets, completion cleanup of per-provider runtime evidence, and queue/worker retry holds while a task is quarantined.",
     "not_changing": "Provider classification, retry budgets, dispatch priority, review authority, or live runtime configuration.",
     "implementation_files": [
       ".orchestrator/supervisor.py",
@@ -22,26 +22,28 @@
     ]
   },
   "review_remediation": {
-    "rejected_head": "62b1b83db8249f6ac6aea257168cf4dadbb608f5",
+    "rejected_head": "0d9b4ce633233bc2c426b58986deadd9c24af60d",
     "reviewer": "Codex2",
-    "required_change": "A worker completion must clear every task-provider bucket, not only the completing worker's bucket; the regression must prove a rotated provider retries at streak one after the task-row reset. The exact-head Contents API lookup must use explicit GET with a query ref so gh does not infer POST from -f ref=<sha> and falsely reject this committed manifest.",
+    "required_change": "Quarantine must also fence already-scheduled retries: rotation must not schedule a new worker retry after threshold crossing, queue and worker retry_backoff records must transition to a durable hold without calling start_worker_for_request, and a held worker retry may launch only after governed reopen resets failure_streak to zero. Preserve the exact-head Contents API GET regression.",
     "evidence_requirement": "This manifest is committed in PR #4533 before independent re-review and must be bound with REVIEW_FILE during exact-head approval."
   },
   "acceptance": {
     "failure_projection": "Repeated distinct worker failures increment the task-row failure_streak.",
     "quarantine": "The configured failure-loop threshold changes the task status to quarantined and normal dispatch ignores it until governed reopen.",
     "success_reset": "Worker completion resets the task-row failure_streak and clears detailed records for every provider on that task.",
-    "cross_provider_reset": "A later failure from a provider that had a pre-completion record starts at one and leaves the task in_progress."
+    "cross_provider_reset": "A later failure from a provider that had a pre-completion record starts at one and leaves the task in_progress.",
+    "retry_quarantine": "A threshold-crossing rotation transitions the worker retry to retry_quarantined without scheduling it; due queue and worker retries are held while the task row is quarantined and do not launch a worker.",
+    "reopen_release": "The governed reopen command resets failure_streak to zero, after which one held worker retry becomes eligible and launches exactly once."
   },
   "verification": {
     "status": "passed",
     "commands": [
       {
-        "command": "PYTHONPATH=$PWD .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests'",
-        "result": "6 passed, 579 deselected"
+        "command": "PYTHONPATH=$PWD /tmp/pantheon-worker-worktrees/pantheon/ops-failure-loop-chair-triage-recovery-20260802-v2/.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests'",
+        "result": "9 passed, 585 deselected"
       },
       {
-        "command": "PYTHONPATH=$PWD .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests'",
+        "command": "PYTHONPATH=$PWD /tmp/pantheon-worker-worktrees/pantheon/ops-failure-loop-chair-triage-recovery-20260802-v2/.venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests'",
         "result": "39 passed, 132 deselected"
       },
       {
@@ -58,7 +60,7 @@
     "decision": "pending_independent_review",
     "required_reviewer": "Codex2",
     "approval_protocol": "Review this committed manifest and the exact PR head, then approve with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
-    "prior_review": "The canonical review bridge rejected the prior head because completion left rotated provider buckets and no REVIEW_FILE-eligible manifest was in the PR diff. The later b5509721342745174d25ce10134be342b80c50c1 manifest was present at the PR head, but the verifier sent -f ref=<sha>, making gh infer POST; this patch uses an explicit GET query and adds a focused exact-head regression."
+    "prior_review": "The canonical review bridge first rejected completion reset coverage and then the manifest lookup; the existing exact-head manifest regression now passes. Codex2 rejected 0d9b4ce633233bc2c426b58986deadd9c24af60d because quarantine still allowed rotation and due retry_backoff paths to dispatch. This manifest is the reviewed artifact for the retry-hold remediation."
   },
   "delivery": {
     "pull_request": 4533,
