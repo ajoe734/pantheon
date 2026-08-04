@@ -89,18 +89,40 @@
       "C13",
       "C14"
     ],
-    "command": "python3 scripts/verify_twelve_loop_knowledge.py --run-dir <dir> --evidence-out docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json",
-    "correlation_id": "f96f7d72db044112bc3c9eae4e54eb65",
-    "finished_at": "2026-08-04T21:02:32Z",
-    "git_sha": "fbc0b569ef5e32a53cc247129d14dbc6c77f0946",
+    "command": "<venv>/bin/python scripts/verify_twelve_loop_knowledge.py --run-dir <dir> --evidence-out docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json",
+    "correlation_id": "d7cef595fcce49ca91aee70cf76d64f0",
+    "finished_at": "2026-08-04T21:22:57Z",
+    "git_sha": "dbe4e78b8b6c3a7e68f2a1bb48b56ba6d4931371",
+    "git_worktree_clean": true,
+    "manifest_verifier": {
+      "command": "python3 scripts/verify_twelve_loop_knowledge.py --verify-manifest",
+      "note": "Cross-checks this manifest against the archived run record: identity, per-check statuses, the gap set and its observed values, both checksums, and whether the archived run was produced by the drill source now in the tree. Fails closed."
+    },
     "python": "3.12.3",
+    "python_environment": {
+      "note": "The drill imports the real service apps in child processes, so the interpreter needs the service dependencies. A bare system python3 without them cannot start the services.",
+      "required_packages": [
+        "fastapi",
+        "uvicorn",
+        "pydantic",
+        "jsonschema",
+        "asyncpg"
+      ]
+    },
     "reproducibility": {
       "consecutive_identical_runs": 3,
-      "note": "Three runs at this cut produced identical per-check statuses and the identical gap set."
+      "correlation_ids": [
+        "8f32997352af4c9bb82108ebd1666bf8",
+        "f993485ebfc34dd2ad23cac1486ba82a",
+        "d7cef595fcce49ca91aee70cf76d64f0"
+      ],
+      "note": "Three runs at this cut, each on a clean worktree at the recorded git_sha and the recorded script_sha256, produced identical per-check statuses and the identical gap set. The third run is the archived run record.",
+      "run_record_is_run": 3
     },
     "run_record": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json",
-    "run_record_sha256": "fc7009b7e86489117ba5073fc05bf93e9206054a97672fd8d761879b92dede7c",
+    "run_record_sha256": "4abedacc4df24164ce32cbc93140c145ec7240851eb1e899f0aa8b4c753557c0",
     "script": "scripts/verify_twelve_loop_knowledge.py",
+    "script_sha256": "8a12e02565a8251515e0a4debb68571072a79fb0f4a3880e009e731f63692abb",
     "service_start_counts": {
       "registry": 3,
       "research": 2,
@@ -117,7 +139,7 @@
         "app_module": "services.source_ingestion.main"
       }
     },
-    "started_at": "2026-08-04T21:02:21Z",
+    "started_at": "2026-08-04T21:22:48Z",
     "summary": {
       "blocked": 1,
       "failed": 4,
@@ -127,8 +149,13 @@
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/evidence.sha256",
+    "checksum_scope": [
+      "evidence.json",
+      "drill-run.json",
+      "README.md"
+    ],
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Changes require a task-scoped commit and PR; re-running the drill must replace drill-run.json and both checksums in the same commit.",
+    "mutation_rule": "Changes require a task-scoped commit and PR; re-cutting the drill must replace drill-run.json, every run-specific value in this manifest, and all checksums in the same commit, and `--verify-manifest` must pass before that commit.",
     "recording_mode": "logical_append_only",
     "redacted": false,
     "self_hashing": false
@@ -139,7 +166,7 @@
       "found_by_check": "C05",
       "gap_id": "G1",
       "loop_id": "alpha_replication",
-      "observed": "approved_spec_count=0 while the Registry holds approved reg-strategy-spec-src-l12-know-11e5a4ae-001-2ee97552a68f under strategy_id strat-src-l12-know-11e5a4ae-001-6d015cec1b77",
+      "observed": "approved_spec_count=0 while the Registry holds approved reg-strategy-spec-src-l12-know-d7cef595-001-f076620b3053 under strategy_id strat-src-l12-know-d7cef595-001-fdad5818c7fb",
       "owning_surface": "services/research/alpha_replication/replication_controller.py",
       "recommended_owner_lane": "L12-ALPHA-001 lane (alpha replication controller)",
       "severity": "blocking",
@@ -161,7 +188,7 @@
       "found_by_check": "C16",
       "gap_id": "G5",
       "loop_id": "strategy_distillation",
-      "observed": "reg-strategy-spec-src-l12-know-11e5a4ae-001-2ee97552a68f was approved at 2026-08-04T21:00:27Z and returns 404 after 1 restart(s)",
+      "observed": "reg-strategy-spec-src-l12-know-d7cef595-001-f076620b3053 was approved at 2026-08-04T21:22:50Z and returns 404 after 1 restart(s)",
       "owning_surface": "services/registry/storage.py",
       "recommended_owner_lane": "Registry service owner (artifact authority persistence)",
       "severity": "blocking",
@@ -214,7 +241,7 @@
   "schema_version": "loop_product_evidence.v1",
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-04T21:02:32Z",
+    "evidence_cut_at": "2026-08-04T21:22:57Z",
     "evidence_cut_semantics": "One executed drill run against locally started real services at the recorded git sha. No hosted-runtime, shared-deployment, or live-capital claim is made.",
     "id": "L12-VERIFY-KNOW-001",
     "overall_admission": "gaps_found_not_admitted",

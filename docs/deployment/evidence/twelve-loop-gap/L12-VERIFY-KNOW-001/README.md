@@ -17,10 +17,23 @@ ports, then drives the three real loop controllers
 truth from each authority's own readback API.
 
 ```bash
-python3 scripts/verify_twelve_loop_knowledge.py \
+# The drill imports the real service apps in child processes, so the
+# interpreter needs their dependencies (fastapi, uvicorn, pydantic,
+# jsonschema, asyncpg). A bare system python3 cannot start the services.
+<venv>/bin/python scripts/verify_twelve_loop_knowledge.py \
   --run-dir /tmp/l12-verify-know \
   --evidence-out docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-KNOW-001/drill-run.json
+
+# Check this manifest against its archived run record (no services needed).
+python3 scripts/verify_twelve_loop_knowledge.py --verify-manifest
 ```
+
+`--verify-manifest` is the reviewer's integrity gate. The manifest is
+hand-authored around a machine-written run record, so the two can drift. It
+fails closed on any mismatch in run identity, per-check statuses, the gap set
+and its `observed` values, either checksum, or the drill source itself: the run
+record carries `script_sha256`, so a manifest whose evidence predates the
+script in the tree is rejected rather than silently accepted.
 
 Nothing in the evidence is a seeded fixture standing in for a loop result.
 Every `SourceRecord`, `StrategySpec`, seed, and queue entry was produced by a
@@ -31,8 +44,11 @@ connector, which is what keeps the drill from performing an external crawl.
 ## Result
 
 **11 of 16 checks pass. 4 fail and 1 is blocked. The loops-1-to-3 chain is not
-product-level.** Two consecutive runs before the recorded cut produced
-identical per-check statuses and the identical gap set.
+product-level.** Three consecutive runs at the recorded cut — each on a clean
+worktree at the recorded `git_sha` and `script_sha256` — produced identical
+per-check statuses and the identical gap set. The third is the archived
+`drill-run.json`; the other two correlation ids are listed in `evidence.json`
+under `drill.reproducibility`.
 
 | Acceptance criterion | Verdict |
 | --- | --- |
@@ -113,3 +129,7 @@ script is the acceptance gate for the follow-up repairs. `C11`
 (research-authority outage) is recorded as **blocked** rather than failed
 because it cannot be exercised at all until G1 and G3 are fixed; it will begin
 running as soon as an approved spec can reach the replication queue.
+
+A re-cut must replace `drill-run.json`, both checksums, and every run-specific
+value in `evidence.json` in the same commit. Run `--verify-manifest` before
+committing: it is what catches a manifest left describing an older run.
