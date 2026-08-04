@@ -4,10 +4,10 @@ Captured: 2026-08-04
 Post-mainline composition:
 
 The task branch composes `origin/dev`
-`e1c014e20b4edc96dba09d19e876d4d04ac8ffd0`. The generic
-`Pantheon canonical review gate` lifecycle-status workflow remains at
-`.github/workflows/canonical-review-gate.yml`. The trusted-base, read-only
-attestation audit is isolated at
+`4361a26ad9ff375ae61667ceb689b6fa28ff8058`; merge anchor
+`4583c789ae35d0f16cc8718c73bfad7adfc09505` retains its git-native
+exact-head review-proof workflow at `.github/workflows/canonical-review-gate.yml`.
+The trusted-base, read-only attestation audit is isolated at
 `.github/workflows/canonical-review-attestation-audit.yml`; it cannot invoke
 the generic status writer or publish the external-App-pinned reviewer
 attestation.
@@ -19,7 +19,7 @@ Focused commands:
     python3 scripts/git/test_task_review_merge_gate.py
     python3 .orchestrator/test_github_bus.py
 
-PASS — 171 tests: 38 canonical-review-check, 13 generic-gate workflow,
+PASS — 175 tests: 38 canonical-review-check, 17 generic-gate workflow,
 92 task-review-merge-gate, and 28 GitHub-bus tests.
 
 Static checks:
@@ -48,6 +48,10 @@ Focused assertions covered:
    present under its own context.
 5. Plan-bound readback rejects changed App identity, strict drift, missing
    pre-existing checks, admin bypass, or enabled auto-merge.
+6. The generic required status is resolved entirely from the exact-head
+   `pantheon-review/approve/<head-sha>` tag. It fails closed on a fresh head
+   before independent approval instead of reading unavailable runner-local
+   task state.
 
 Not run:
 
@@ -55,3 +59,7 @@ Not run:
   requires Human/Ops and a credential boundary outside shared owner runtime.
 - No live branch protection, repository auto-merge setting, key, merge, or
   auto-merge mutation was authorized or performed.
+- The fresh PR head has not yet been independently approved. Its generic
+  canonical-review status is correctly expected to fail closed until Codex2
+  approves that exact pushed head through the governed command, which creates
+  the exact-head review-proof tag.

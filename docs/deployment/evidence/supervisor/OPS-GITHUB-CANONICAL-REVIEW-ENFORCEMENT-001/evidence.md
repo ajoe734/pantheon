@@ -10,10 +10,10 @@ It rejects any PR base other than `dev` or `master` before checkout, captures
 `.base.sha`, and checks out that immutable SHA. It has no `checks: write` or
 `statuses: write` permission and makes no check-runs or status API call.
 
-`canonical-review-gate.yml` remains the mainline generic lifecycle-status
-workflow for the distinct `Pantheon canonical review gate` context. It runs as
-the generic `github-actions` App and cannot satisfy the dedicated
-external-App-pinned reviewer-attestation check.
+`canonical-review-gate.yml` remains the mainline generic exact-head
+review-proof/status workflow for the distinct `Pantheon canonical review gate`
+context. It runs as the generic `github-actions` App and cannot satisfy the
+dedicated external-App-pinned reviewer-attestation check.
 
 The required `Pantheon canonical reviewer attestation` check must instead be
 issued by a dedicated external GitHub App owned outside the shared repository
@@ -28,16 +28,23 @@ activation remain Human/Ops operations.
 
 ## Current-dev composition
 
-The task branch composes `origin/dev`
-`e1c014e20b4edc96dba09d19e876d4d04ac8ffd0`, which retains the generic
-`Pantheon canonical review gate` status workflow. The trusted-base attestation
-audit is now isolated in `canonical-review-attestation-audit.yml`, so it can
-remain read-only without removing the separately governed mainline gate.
+The task branch now composes `origin/dev`
+`4361a26ad9ff375ae61667ceb689b6fa28ff8058`. The merge anchor
+`4583c789ae35d0f16cc8718c73bfad7adfc09505` resolves the generic
+`Pantheon canonical review gate` in favor of the current git-native
+exact-head review-proof implementation. It asks GitHub only whether the
+governed approval bridge pushed
+`refs/tags/pantheon-review/approve/<head-sha>`; it does not attempt to read
+the live task board from a GitHub-hosted runner.
+
+The trusted-base attestation audit remains isolated in
+`canonical-review-attestation-audit.yml`, so it can remain read-only without
+removing the separately governed mainline gate.
 
 The generic helper `canonical_review_gate_ci.py` remains solely on that
-distinct lifecycle-status path. The attestation audit workflow cannot invoke
-it and has neither `statuses: write` nor any status/check API call. The
-regression contract verifies both sides of this boundary.
+distinct exact-head proof/status path. The attestation audit workflow cannot
+invoke it and has neither `statuses: write` nor any status/check API call.
+The regression contract verifies both sides of this boundary.
 
 ## Why GitHub Actions is not an issuer
 
@@ -177,4 +184,7 @@ Reviewer should independently verify:
   auto-merge.
 - the trusted-base attestation audit cannot invoke
   `canonical_review_gate_ci.py` or post any generic commit status, while the
-  distinct mainline lifecycle gate remains present.
+  distinct mainline git-native exact-head proof gate remains present;
+- the fresh PR head must receive a fresh Codex2 approval: its generic gate
+  fails closed until the governed approval transaction has pushed the
+  corresponding exact-head review-proof tag.

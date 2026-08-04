@@ -19,11 +19,11 @@
     "checker": "scripts/git/canonical_review_check.py",
     "tests": "scripts/git/test_canonical_review_check.py",
     "trust_boundary": "Protected base-branch public-key registry plus reviewer Ed25519 private key outside candidate/status roots -> signed exact PR/head/base/owner/reviewer envelope -> dedicated external verifier pinned to captured dev/master base SHA -> exact-head check through an externally owned GitHub App whose installation token is unavailable to repository Actions/shared owner runtime -> dedicated App-pinned required branch check.",
-    "repository_workflow_boundary": "canonical-review-attestation-audit.yml is read-only diagnostics: it rejects non-dev/master bases before checkout, pins the captured base SHA, has no checks:write or statuses:write permission, makes no check-runs or statuses API call, and never invokes the generic canonical_review_gate_ci.py status writer. The retained canonical-review-gate.yml publishes only the separate Pantheon canonical review gate lifecycle status through github-actions; its generic App identity cannot satisfy the external-App-pinned reviewer attestation.",
+    "repository_workflow_boundary": "canonical-review-attestation-audit.yml is read-only diagnostics: it rejects non-dev/master bases before checkout, pins the captured base SHA, has no checks:write or statuses:write permission, makes no check-runs or statuses API call, and never invokes the generic canonical_review_gate_ci.py status writer. canonical-review-gate.yml is the distinct generic required-status path: it verifies only the git-native exact-head review-proof tag emitted by the governed approval bridge. Its github-actions identity cannot satisfy the separately configured external-App-pinned reviewer attestation.",
     "mainline_composition": {
-      "origin_dev_base": "e1c014e20b4edc96dba09d19e876d4d04ac8ffd0",
-      "workflow_boundary_anchor": "d9a7203aea7106bfafacee90f5b453a274887691",
-      "result": "The mainline generic github-actions lifecycle-status workflow remains at canonical-review-gate.yml. The attestation audit is isolated at canonical-review-attestation-audit.yml, so the generic status writer cannot be mistaken for or replace the App-pinned dedicated external attestation issuer."
+      "origin_dev_base": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+      "workflow_boundary_anchor": "4583c789ae35d0f16cc8718c73bfad7adfc09505",
+      "result": "The merge resolves canonical-review-gate.yml in favor of the current git-native exact-head proof implementation from origin/dev. The generic Pantheon canonical review gate now asks only whether the governed approval bridge pushed refs/tags/pantheon-review/approve/<head-sha>; it never reads runner-local task state. The attestation audit remains isolated at canonical-review-attestation-audit.yml, so the generic status writer cannot be mistaken for or replace the App-pinned dedicated external attestation issuer."
     },
     "legacy_status_is_not_authority": "The existing Pantheon canonical review gate user status and every github-actions App id 15368 check are additive compatibility evidence only; neither can satisfy the dedicated external App-pinned canonical check."
   },
@@ -51,8 +51,8 @@
     {
       "id": "AC3",
       "claim": "Fail-closed required check rejects missing, rejected, stale-head, or self-owned attestations.",
-      "status": "pass_checker_contract_external_runtime_pending",
-      "evidence": "The deterministic checker rejects missing/rejected/stale/self-owned/expired/forged envelopes. The isolated attestation audit workflow only audits and cannot publish the required check; the retained generic lifecycle status is a separate context and cannot satisfy the external App pin. Activation requires the separately provisioned external App verifier to apply identical dev/master base allowlisting, exact base-SHA pinning, event refresh, and expiry/key-revocation scheduling before its dedicated App id may enter the machine plan."
+      "status": "pass_git_native_generic_gate_external_runtime_pending",
+      "evidence": "The deterministic checker rejects missing/rejected/stale/self-owned/expired/forged envelopes. The current generic required-status workflow now fails closed unless the governed independent-review transaction pushed the exact-head review-proof tag; it no longer reads unavailable runner-local task state. The isolated attestation audit workflow only audits and cannot publish the separate external-App-pinned required check. Activation requires the separately provisioned external App verifier to apply identical dev/master base allowlisting, exact base-SHA pinning, event refresh, and expiry/key-revocation scheduling before its dedicated App id may enter the machine plan."
     },
     {
       "id": "AC4",
@@ -75,8 +75,8 @@
     {
       "id": "AC7",
       "claim": "Branch, commit, push, PR checks, exact-head independent review, merge, and archive evidence.",
-      "status": "review_resubmission_ready",
-      "evidence": "PR #4303 heads 6e427581ebd328e1c39e10342c999fec769d318d and 293cb1d4780653c9753ee19d9567f917511b7b70 were rejected by Codex2. Corrective provenance anchor 86b9e6cb0d0f9fba6c3990e59207346a012f7e90 removes repository issuance of the attestation, requires dedicated external App canary provenance, rejects same-name Actions checks/shared-owner Apps, and pins only allowed base SHAs. Composition through origin/dev e1c014e20b4edc96dba09d19e876d4d04ac8ffd0 retains the separate generic lifecycle gate while moving the trusted-base read-only audit to canonical-review-attestation-audit.yml. The pushed post-composition head is the re-review candidate; Codex2 exact-head approval, merge, external App provisioning, authorized activation, and governed archived closeout remain."
+      "status": "review_resubmission_pending_push",
+      "evidence": "PR #4303 heads 6e427581ebd328e1c39e10342c999fec769d318d and 293cb1d4780653c9753ee19d9567f917511b7b70 were rejected by Codex2. Corrective provenance anchor 86b9e6cb0d0f9fba6c3990e59207346a012f7e90 removes repository issuance of the attestation, requires dedicated external App canary provenance, rejects same-name Actions checks/shared-owner Apps, and pins only allowed base SHAs. The latest composition anchor 4583c789ae35d0f16cc8718c73bfad7adfc09505 merges current origin/dev 4361a26ad9ff375ae61667ceb689b6fa28ff8058 and replaces the runner-local task-state gate with the git-native exact-head review-proof gate. Push this evidence-refresh head to PR #4303, wait for the new-head checks, and obtain a new Codex2 exact-head approval before merge. External App provisioning, authorized activation, and governed archived closeout remain separately pending."
     }
   ],
   "non_interference": {
@@ -91,11 +91,11 @@
   "validation": {
     "status": "pass",
     "record": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt",
-    "aggregate_python_tests": 171,
+    "aggregate_python_tests": 175,
     "suites": {
       "canonical_review_check": 38,
       "task_review_merge_gate": 92,
-      "canonical_review_gate_workflow": 13,
+      "canonical_review_gate_workflow": 17,
       "github_bus": 28
     },
     "static_checks": [
@@ -113,6 +113,16 @@
     "not_run": [
       "dedicated external GitHub App provisioning and successful live canary require Human/Ops",
       "live protection activation/probes require Human/Ops authorization"
+    ]
+  },
+  "re_review": {
+    "previous_rejected_head": "8b45c98347565c94189de985d65ad68bdbe22ba2",
+    "latest_code_composition_anchor": "4583c789ae35d0f16cc8718c73bfad7adfc09505",
+    "composed_origin_dev": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+    "required_before_reviewer_approval": [
+      "Push the evidence-refresh commit to PR #4303 and confirm the PR is mergeable against current dev.",
+      "Record the new exact head and its non-review CI results in PR metadata; the generic canonical review gate is expected to fail closed until an independent approval creates its exact-head proof tag.",
+      "Have Codex2 independently review this committed evidence manifest and approve only the exact current PR head through the governed command."
     ]
   },
   "residual_risks": [
