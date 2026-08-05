@@ -520,15 +520,41 @@ def run_rebase_smoke(
             cwd=root,
             check=False,
         )
-        if ancestry.returncode != 0:
-            return False, "rebase_required"
+        if ancestry.returncode == 0:
+            with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
+                worktree = Path(tmp)
+                runner.run(["git", "worktree", "add", "--detach", str(worktree), exact_head], cwd=root)
+                try:
+                    for command in commands:
+                        runner.run_shell(command, cwd=worktree)
+                    return False, "clean_exact_head"
+                finally:
+                    runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
+
+        # The approved head is behind dev. Under review-before-merge the head
+        # itself must never move (rebasing would produce a commit no reviewer
+        # saw), but that does not mean the PR has to sit and wait for the
+        # branch to happen to catch up on its own -- a home-grown merge queue
+        # (SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805): merge the current
+        # dev tip into a disposable worktree seeded from the exact reviewed
+        # head, never push it, and only merge for real (via `gh pr merge
+        # --match-head-commit`, which leaves the reviewed commit untouched)
+        # once that ephemeral combination is proven conflict-free and green.
         with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
             worktree = Path(tmp)
             runner.run(["git", "worktree", "add", "--detach", str(worktree), exact_head], cwd=root)
             try:
+                merge = runner.run(
+                    ["git", "merge", "--no-edit", f"origin/{settings.dev_branch}"],
+                    cwd=worktree,
+                    check=False,
+                )
+                if merge.returncode != 0:
+                    runner.run(["git", "merge", "--abort"], cwd=worktree, check=False)
+                    return False, "exact_head_merge_conflict"
                 for command in commands:
                     runner.run_shell(command, cwd=worktree)
-                return False, "clean_exact_head"
+                return False, "exact_head_verified_clean"
             finally:
                 runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
 
@@ -973,6 +999,29 @@ def integrate_candidate(
         )
         return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
 
+    if gated and rebase_status == "exact_head_merge_conflict":
+        # A real conflict, not mere staleness: merging the current dev tip
+        # into the approved head does not apply cleanly. Rebasing to fix it
+        # would move the head past what the reviewer saw, so this genuinely
+        # needs the owner, not another wait cycle.
+        detail = (
+            f"PR #{number}'s approved head {decision.head_oid} no longer merges cleanly "
+            f"with {settings.dev_branch}; a real conflict, not just staleness. "
+            "Owner resolves it (new commit, new review) rather than waiting it out."
+        )
+        unblock = (
+            open_unblock_task(candidate, "exact-head-merge-conflict", detail, settings, runner, root=root, execute=execute)
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+
+    # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: the approved head was
+    # behind dev, but a disposable local merge of the current dev tip into it
+    # was conflict-free and passed smoke -- safe to merge via the unchanged
+    # reviewed commit despite mergeStateStatus reporting BEHIND below.
+    verified_behind = gated and rebase_status == "exact_head_verified_clean"
+
     if not execute:
         if gated:
             detail = (
@@ -990,7 +1039,7 @@ def integrate_candidate(
         return IntegrationResult(candidate.task_id, "auto_merge_enabled", detail, number, url, dry_run=False, commands=runner.commands[:])
 
     merge_state = normalize_state(pr.get("mergeStateStatus"))
-    if merge_state and merge_state not in ALLOWED_DIRECT_MERGE_STATES:
+    if merge_state and merge_state not in ALLOWED_DIRECT_MERGE_STATES and not verified_behind:
         detail = f"PR #{number} is green but mergeStateStatus={merge_state}; waiting instead of merging."
         return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=False, commands=runner.commands[:])
     runner.run(
