@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add a failure_streak counter and quarantined status to the task schema
-- Status: in_progress (re-submitted for independent review at PR #4564 exact head)
+- Status: in_progress (delivery merged; closeout blocked on the GitHub review bridge, see "Review Bridge Blocker")
 - Owner: Claude
 - Reviewer: Antigravity
-- Next: Antigravity reviews PR #4564 at its exact head and approves with `REVIEW_PR=4564` and `REVIEW_HEAD_SHA=<exact head>`, and **must omit `REVIEW_FILE`** (see "Command-Root Defect" below; the canonical row already binds `review_file`). Owner then runs closeout once the PR merges.
+- Next: Blocked on Human/Ops. `Pantheon canonical review gate` is not a required status context on `dev`, and the shared GitHub account makes an approving self-review a 422, so `github_review_bridge.bridge_review_decision()` can record no verdict at all. Once Ops restores that required context, Antigravity approves PR #4564 at its exact head with `REVIEW_PR` / `REVIEW_HEAD_SHA` and **without** `REVIEW_FILE`; the owner then closes out after the PR merges.
 
 ## Summary
 Makes repeated dispatch failure visible on the board itself instead of only in raw activity-log JSONL, closing the exact gap that made SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 indistinguishable from an untouched task after 5 failed attempts.
@@ -76,13 +76,100 @@ This is a routing decision, not a relaxation of the Review Evidence Manifest Rul
 manifest is committed, is present in the PR #4564 diff at the reviewed head, and is
 verified there through the Contents API by hand above.
 
+## Review Bridge Blocker (dispatch 14 root cause)
+Routing around the command-root defect got the approve past `review_evidence_file_committed()`
+and into the GitHub review bridge, where it failed on a different and *fleet-wide* gap.
+Antigravity's report:
+
+> GitHub review bridge error on approve: Unprocessable Entity (HTTP 422); base branch
+> 'dev' does not require 'Pantheon canonical review gate'.
+
+Both halves are real, and together they leave `bridge_review_decision()` with no way to
+record any verdict:
+
+1. **The review path 422s.** All Pantheon agents share the `ajoe734` GitHub account, which
+   is also the author of every task PR, so GitHub rejects `event: APPROVE` on
+   `POST /repos/ajoe734/pantheon/pulls/4564/reviews` as a self-review. This is a known and
+   documented condition -- it is the reason the bridge exists at all
+   (`scripts/git/github_review_bridge.py` module docstring).
+2. **The required-status path is switched off.** `_required_status_contexts()` reads live
+   branch protection; `dev` currently requires only
+   `["Commit trailers", "Runtime mirror guard", "Smoke acceptance"]` (verified
+   2026-08-05 against `repos/ajoe734/pantheon/branches/dev/protection/required_status_checks`;
+   `master` is identical, and the repository has no rulesets). Because
+   `Pantheon canonical review gate` is absent, `context_required` is false and the bridge
+   never posts the status.
+
+With `review is None and status is None`, the bridge raises, and `bridge_github_review_decision()`
+converts that into a `SystemExit` *before* any canonical state change -- so the task
+correctly stays out of `review_approved` rather than manufacturing an internal-only
+approval. Nothing here is a defect in this task's delivery.
+
+Why the context is missing: canonical review gate **v1**
+(SUP-REVIEW-PIPELINE-INTEGRITY-20260804) re-derived review policy from a runner-local
+`ai-status.json`, reported failure for every task, and "had to be pulled from branch
+protection the same day it shipped" (`.github/workflows/canonical-review-gate.yml` header).
+**v2** (SUP-REVIEW-GATE-GIT-NATIVE-PROOF-20260804) replaced it with the git-native
+review-proof tag check that is now live and correct, but the required context was never
+restored on `dev`. `github_review_bridge.py` anticipates exactly this state in its own
+comment: the failure "stops applying once the tag-based check is back in dev's required
+contexts". `.orchestrator/config.json branch_workflow.task_pr.required_status_checks`
+(mirrored in `docs/conventions/GIT_WORKFLOW.md` section 11) still lists only the original
+three contexts, so the config-as-documented and the live protection agree with each other
+and both predate v2.
+
+Consequences confirmed on this PR's head `f9a881238056d84aa9372bd9912c559a8a8abce4`:
+
+- `Pantheon canonical review gate` is posted as a **failure** by the workflow
+  (`no review-proof tag (pantheon-review/approve/f9a8812...) for head f9a`), which is the
+  correct v2 answer for a head that has not been approved yet. It is advisory only, since
+  the context is not required, so `mergeStateStatus` is `UNSTABLE` rather than `BLOCKED`.
+- No `refs/tags/pantheon-review/approve/f9a88123...` exists, and no review of any state has
+  been recorded on PR #4564.
+- The only recent proof tag on a `dev`-based PR head
+  (`pantheon-review/approve/4328ef513...`, tagger `Pantheon Review Bridge`,
+  2026-08-05T03:53:30Z) carries the tag message `"message": "Approval tag test"`. It is a
+  bridge test artifact from the gate v2 task, not evidence that the approve path is
+  currently working end to end.
+
+This is not specific to SUP-TASK-FAILURE-STREAK-SCHEMA-20260804: while both conditions
+hold, **every** PR-backed `approve` in the fleet fails closed the same way.
+
+### Required Human/Ops action
+Restoring the required context is a repository-admin change with fleet-wide blast radius,
+so an auto worker does not make it unilaterally: ~50 PRs are currently open against `dev`,
+and each would need a review-proof tag at its exact head before it could merge. That is
+the intended `review_before_merge` policy, but the cutover is an operator decision and
+overlaps the still-open `OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001` (PR #4303).
+
+```bash
+gh api --method PATCH \
+  repos/ajoe734/pantheon/branches/dev/protection/required_status_checks \
+  -f strict=true \
+  -f 'contexts[]=Commit trailers' \
+  -f 'contexts[]=Runtime mirror guard' \
+  -f 'contexts[]=Smoke acceptance' \
+  -f 'contexts[]=Pantheon canonical review gate'
+```
+
+`.orchestrator/config.json branch_workflow.task_pr.required_status_checks` and
+`docs/conventions/GIT_WORKFLOW.md` section 11 should gain the same fourth context in the
+same change, so config-as-documented and live protection do not drift again.
+
+Once the context is required, the bridge takes its `required_commit_status` path (accepted
+by `GITHUB_REVIEW_MODES` in `scripts/ai_status.py`), posts `success` on the exact head --
+which supersedes the workflow's advisory failure for that context -- and pushes the
+review-proof tag, so no re-run of the gate workflow is needed to clear the check.
+
 ## Independent Review
 - Review evidence manifest: `docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json`
 - Reviewer of record: Antigravity (independent; not the owner)
 - Decision at this head: `pending_independent_review`
 - The canonical row already binds this path in `review_file`; the manifest is committed and
   present in the PR diff *before* approval is requested, per the review evidence manifest rule.
-- Approval command for this head:
+  Re-verified at head `f9a881238056d84aa9372bd9912c559a8a8abce4` via
+  `gh api --method GET repos/ajoe734/pantheon/contents/<manifest>?ref=f9a8812...` -> `type: file`.
+- Approval command for this head (will fail closed until the Human/Ops action above lands):
 
 ```bash
 AI_NAME=Antigravity \
@@ -99,7 +186,8 @@ Do not add `REVIEW_FILE` to that command while the command root is pinned at `43
 - Audited reassignment: exactly one `Orchestrator` `task_reassigned` event, ts 2026-08-05T01:39:22Z, event_id `supervisor-reassign-a78027c58bcd5cd1cc956c21ff58bf413a0247271f33ce37eae5b63ff1081c05`, changing owner Codex to Claude and reviewer Codex2 to Antigravity ("Codex quota exhausted 2026-08-05").
 
 ## Verification
-Focused suites re-run in the task worktree on 2026-08-05, after merging `origin/dev`:
+Focused suites re-run in the task worktree on 2026-08-05, after merging `origin/dev`, and
+again at this revision:
 
 ```
 PYTHONPATH=.orchestrator .venv/bin/python -m pytest .orchestrator/test_supervisor.py \
