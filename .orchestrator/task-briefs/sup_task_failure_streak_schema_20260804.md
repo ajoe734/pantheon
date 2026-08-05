@@ -137,7 +137,7 @@ hold, **every** PR-backed `approve` in the fleet fails closed the same way.
 
 ### Required Human/Ops action
 Restoring the required context is a repository-admin change with fleet-wide blast radius,
-so an auto worker does not make it unilaterally: ~50 PRs are currently open against `dev`,
+so an auto worker does not make it unilaterally: 66 PRs are currently open against `dev`,
 and each would need a review-proof tag at its exact head before it could merge. That is
 the intended `review_before_merge` policy, but the cutover is an operator decision and
 overlaps the still-open `OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001` (PR #4303).
@@ -155,6 +155,24 @@ gh api --method PATCH \
 `.orchestrator/config.json branch_workflow.task_pr.required_status_checks` and
 `docs/conventions/GIT_WORKFLOW.md` section 11 should gain the same fourth context in the
 same change, so config-as-documented and live protection do not drift again.
+
+The cutover is not free, and the two side effects below are why it needs an operator rather
+than an auto worker. Audited against the 66 open `dev` PRs on 2026-08-05:
+
+- **43 have no `Pantheon canonical review gate` status at their head at all.** The workflow
+  only triggers on `pull_request` `opened`/`synchronize`/`reopened`/`ready_for_review`, so a
+  PR opened before gate v2 shipped never ran it. Making the context required leaves those PRs
+  permanently *pending* until something pushes their head. This self-heals for anything that
+  then gets approved, because the bridge posts its own `success` for the same context and the
+  newest status per context wins.
+- **5 have a non-`task/` head branch** (for example `review-evidence/...`). `resolve_task_id()`
+  in `scripts/git/canonical_review_gate_ci.py` returns `None` for those and the gate posts
+  `failure` by design, and they also cannot be approved through the bridge, so requiring the
+  context blocks them outright until they are recut onto `task/` branches or explicitly
+  exempted.
+
+(The remaining 20 already carry the expected `failure` for an unapproved head; those clear
+normally at approve time.)
 
 Once the context is required, the bridge takes its `required_commit_status` path (accepted
 by `GITHUB_REVIEW_MODES` in `scripts/ai_status.py`), posts `success` on the exact head --
