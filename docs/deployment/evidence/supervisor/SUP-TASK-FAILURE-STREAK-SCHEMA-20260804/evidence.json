@@ -38,7 +38,34 @@
     "contents": "Task artifacts only: this evidence manifest plus the task brief under .orchestrator/task-briefs/. No product behaviour, gate semantics, or review authority changes.",
     "why_it_exists": "The pair was reassigned Codex/Codex2 -> Claude/Antigravity 93 minutes after PR #4533 merged, so no commit on this branch had ever been authored under the current pair and closeout could not bind.",
     "reopen_reason": "Antigravity reopened the task on 2026-08-05 because PR #4564 had been rebased onto a dev tip that already contained merged PR #4533, so this manifest no longer appeared in the PR diff and could not be reviewed at the exact head. This revision restores the manifest to the PR diff and rebinds it to the current pair.",
-    "review_request": "Approve at the exact PR #4564 head with REVIEW_PR=4564, REVIEW_HEAD_SHA=<exact head>, and REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json."
+    "review_request": "Approve at the exact PR #4564 head with REVIEW_PR=4564 and REVIEW_HEAD_SHA=<exact head>. Do NOT set REVIEW_FILE while the leased command root is pinned at 4361a26ad -- see environment_defect below. The canonical task row already binds review_file to this manifest, so omitting REVIEW_FILE preserves the reviewer-bound path."
+  },
+  "environment_defect": {
+    "reported_by": "Antigravity",
+    "reported_at": "2026-08-05T04:34:17Z",
+    "report": "Exact-head approval carrying REVIEW_FILE was rejected because scripts/ai_status.py review_evidence_file_committed() called 'gh api repos/<slug>/contents/<path> -f ref=<sha>'. The -f flag makes gh issue a POST with a form field, so the GitHub Contents API returns 404 for every ref and command_approve fails closed.",
+    "assessment": "Accurate for the running command root, but it is a runtime lag rather than a repository defect. The fix ('gh api --method GET ...?ref=<sha>') is commit 83b6fd0351c86c36d521086139f78918d157b87d, authored under this task and already merged to origin/dev via delivery PR #4533 (merge c37be6ea4).",
+    "stale_command_root": {
+      "path": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "pinned_sha": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+      "pinned_subject": "Merge pull request #4549 from ajoe734/task/SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804",
+      "pinned_at": "2026-08-04T23:02:53+08:00",
+      "commits_behind_origin_dev": 57,
+      "fix_is_ancestor_of_pinned_sha": false
+    },
+    "reproduction": [
+      {
+        "command": "gh api repos/ajoe734/pantheon/contents/docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json -f ref=394762d397cd882b77179da288e27e7244169788",
+        "result": "404 Not Found (buggy form still running in the leased command root)"
+      },
+      {
+        "command": "gh api --method GET 'repos/ajoe734/pantheon/contents/docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json?ref=394762d397cd882b77179da288e27e7244169788'",
+        "result": "type=file, sha=ae9426dbccba7cde396ab806c60b031be778d0d5, size=8590 (fixed form already on origin/dev)"
+      }
+    ],
+    "resolution": "Route around the stale root instead of re-landing a fix that is already on dev or attempting a runtime cutover (refreshing the root the supervisor runs from is out of scope for an auto worker and is a Human/Ops action). command_approve only calls review_evidence_file_committed() when the REVIEW_FILE environment variable is set ('if review_file and binding:'), and command_done only when REVIEW_FILE is set and the row has no review_file ('if done_review_file and not task.get(\"review_file\")'). The canonical row already records review_file, so both approve and done omit REVIEW_FILE and the broken helper is never reached.",
+    "manifest_rule_still_satisfied": "This is a routing decision, not a relaxation of the Review Evidence Manifest Rule. The manifest is committed, present in the PR #4564 diff at the reviewed head, bound in the canonical row's review_file, and independently confirmed at that head through the Contents API in the reproduction above.",
+    "follow_up_for_human_ops": "Refresh or re-lease the supervisor command root onto a dev tip that contains 83b6fd035 so exact-head approvals carrying REVIEW_FILE work again for every task, not just this one."
   },
   "ownership_history": {
     "original_pair": {
@@ -108,7 +135,7 @@
   "review": {
     "decision": "pending_independent_review",
     "required_reviewer": "Antigravity",
-    "approval_protocol": "Review this committed manifest and the exact PR #4564 head, then approve with REVIEW_PR=4564, REVIEW_HEAD_SHA=<exact head>, and REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
+    "approval_protocol": "Review this committed manifest and the exact PR #4564 head, then approve with REVIEW_PR=4564 and REVIEW_HEAD_SHA=<exact head>. Omit REVIEW_FILE: the canonical row already binds this manifest path, and setting REVIEW_FILE trips the stale-command-root defect recorded under environment_defect.",
     "prior_review": "The canonical review bridge first rejected completion reset coverage and then the manifest lookup; the exact-head manifest regression now passes. Codex2 rejected 0d9b4ce633233bc2c426b58986deadd9c24af60d because quarantine still allowed rotation and due retry_backoff paths to dispatch, then rejected 9b44725423ccab64a1ae2a051405279344e718f6 because poll_workers superseded a queue-backed held retry before reopen. The complete retry-hold remediation was then merged as PR #4533.",
     "scope_of_this_review": "The product deliverable is already merged and is not re-litigated here. The reviewable surface at PR #4564 head is this manifest and the task brief: whether they accurately record the merged delivery, the audited reassignment, and the closeout verification re-run."
   }
