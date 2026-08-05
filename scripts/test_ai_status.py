@@ -2837,6 +2837,56 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 current_reviewer="Codex2",
             )
 
+    def test_reviewer_reassignment_found_after_rotation_into_archive(self) -> None:
+        """Regression: the audited reassignment event can be rotated out of the
+        live tail into an immutable archive before the exact-readback check
+        runs. _verified_reviewer_reassignment must still find it there --
+        rotation only moved the row, it did not invalidate it."""
+        message = (
+            "Auto-reassigned REG-002 away from unavailable lane Claude; "
+            "reviewer Claude -> Codex2."
+        )
+        event = {
+            "event_id": "supervisor-reassign-test-rotated",
+            "ts": "2026-07-19T23:52:06Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Codex",
+            "new_owner": "Codex",
+            "old_reviewer": "Claude",
+            "new_reviewer": "Codex2",
+            "message": message,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
+                mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
+            ):
+                archive = ai_status.maybe_rotate_activity_log()
+                self.assertIsNotNone(
+                    archive, "expected the event to be rotated into an archive"
+                )
+                self.assertNotIn(event["event_id"].encode(), log_file.read_bytes())
+
+                result = ai_status._verified_reviewer_reassignment(
+                    {
+                        "id": "REG-002",
+                        "owner": "Codex",
+                        "reviewer": "Codex2",
+                        "last_update": event["ts"],
+                        "next": message,
+                    },
+                    evidence_reviewer="Claude",
+                    current_reviewer="Codex2",
+                )
+        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["old_reviewer"], "Claude")
+        self.assertEqual(result["new_reviewer"], "Codex2")
+
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
@@ -3088,6 +3138,46 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         )
         self.assertEqual(delivery["commit_owner_reassignment"]["old_owner"], "Codex2")
         self.assertEqual(delivery["commit_owner_reassignment"]["new_owner"], "Codex")
+
+    def test_prior_owner_reassignment_found_after_rotation_into_archive(self) -> None:
+        """Regression: this reproduces the real production incident where
+        SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 got permanently stuck at
+        `done` -- rotation moved its audited task_reassigned event out of
+        LOG_FILE into archive/logs/*.gz before `done` ran, and the old
+        LOG_FILE-only read could never find it again.
+        _verified_done_owner_reassignment must search archives too."""
+        event = self._owner_reassignment_event()
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Antigravity",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
+                mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
+            ):
+                archive = ai_status.maybe_rotate_activity_log()
+                self.assertIsNotNone(
+                    archive, "expected the event to be rotated into an archive"
+                )
+                # The live tail is down to the lineage-head control record only.
+                active_lines = log_file.read_bytes().splitlines()
+                self.assertEqual(len(active_lines), 1)
+                self.assertNotIn(event["event_id"].encode(), log_file.read_bytes())
+
+                result = ai_status._verified_done_owner_reassignment(
+                    task,
+                    commit_owner="Codex2",
+                    current_owner="Codex",
+                    commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["old_owner"], "Codex2")
+        self.assertEqual(result["new_owner"], "Codex")
 
     def test_prior_owner_reassignment_rejects_forged_audit_identity(self) -> None:
         event = self._owner_reassignment_event()
