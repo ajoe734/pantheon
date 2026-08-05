@@ -18,7 +18,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from threading import local
-from typing import Any, Mapping
+from typing import Any, Generator, Mapping
 from zoneinfo import ZoneInfo
 
 try:
@@ -6180,6 +6180,42 @@ def _merged_commit(
     return commit, target_sha
 
 
+def _activity_events_across_sources(log_path: Path) -> Generator[dict[str, Any], None, None]:
+    """Yield activity-log event dicts across live + archived sources, newest first.
+
+    Rotation moves the oldest lines out of the live tail into an immutable
+    gzip archive once the log exceeds LOG_ROTATE_MAX_BYTES -- under normal
+    fleet write volume that can happen within hours, not as some rare edge
+    case. A governed check that needs to find one specific historical event
+    (e.g. an audited task_reassigned row proving an owner/reviewer handoff)
+    must not assume that event is still in the live tail: it has to walk the
+    same disjoint, ordered live+archive source list
+    activity_audit_source_paths_unlocked already validates, not just LOG_FILE.
+    """
+
+    sources = list(reversed(activity_audit_source_paths_unlocked(log_path)))
+    for source in sources:
+        if source.suffix == ".gz":
+            with gzip.open(source, "rb") as handle:
+                payload = handle.read()
+        else:
+            payload = read_regular_file_bytes(source, source="activity audit source")
+        entries: list[dict[str, Any]] = []
+        for raw_line in payload.splitlines():
+            if not raw_line.strip():
+                continue
+            try:
+                entry = strict_activity_json_loads(raw_line)
+            except (UnicodeError, json.JSONDecodeError, DuplicateActivityJSONKeyError):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("record_type") or "") == "pantheon.activity.lineage_head.v1":
+                continue
+            entries.append(entry)
+        yield from reversed(entries)
+
+
 def _verified_reviewer_reassignment(
     task: dict[str, Any],
     *,
@@ -6188,44 +6224,34 @@ def _verified_reviewer_reassignment(
 ) -> dict[str, Any]:
     """Return the exact canonical reassignment that explains reviewer drift."""
 
-    try:
-        payload = read_regular_file_bytes(
-            LOG_FILE,
-            source="canonical reviewer reassignment evidence",
-        )
-    except FileNotFoundError as exc:
-        raise SystemExit(
-            "Cannot reconcile task: canonical reviewer differs from merged evidence and "
-            "the activity audit is unavailable."
-        ) from exc
-
     task_id = str(task.get("id") or "").strip()
     owner = canonical_agent_name(task.get("owner"))
     task_last_update = str(task.get("last_update") or "").strip()
     task_next = str(task.get("next") or "").strip()
-    for raw_line in payload.splitlines():
-        if not raw_line.strip():
-            continue
-        event = strict_activity_json_loads(raw_line)
-        if not isinstance(event, dict):
-            continue
-        if (
-            event.get("type") == "task_reassigned"
-            and str(event.get("task_id") or "").strip() == task_id
-            and canonical_agent_name(event.get("old_owner")) == owner
-            and canonical_agent_name(event.get("new_owner")) == owner
-            and canonical_agent_name(event.get("old_reviewer")) == evidence_reviewer
-            and canonical_agent_name(event.get("new_reviewer")) == current_reviewer
-            and str(event.get("ts") or "").strip() == task_last_update
-            and str(event.get("message") or "").strip() == task_next
-        ):
-            return {
-                "event_id": str(event.get("event_id") or "").strip() or None,
-                "ts": task_last_update,
-                "old_reviewer": evidence_reviewer,
-                "new_reviewer": current_reviewer,
-                "message": task_next,
-            }
+    try:
+        for event in _activity_events_across_sources(LOG_FILE):
+            if (
+                event.get("type") == "task_reassigned"
+                and str(event.get("task_id") or "").strip() == task_id
+                and canonical_agent_name(event.get("old_owner")) == owner
+                and canonical_agent_name(event.get("new_owner")) == owner
+                and canonical_agent_name(event.get("old_reviewer")) == evidence_reviewer
+                and canonical_agent_name(event.get("new_reviewer")) == current_reviewer
+                and str(event.get("ts") or "").strip() == task_last_update
+                and str(event.get("message") or "").strip() == task_next
+            ):
+                return {
+                    "event_id": str(event.get("event_id") or "").strip() or None,
+                    "ts": task_last_update,
+                    "old_reviewer": evidence_reviewer,
+                    "new_reviewer": current_reviewer,
+                    "message": task_next,
+                }
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise SystemExit(
+            "Cannot reconcile task: canonical reviewer differs from merged evidence and "
+            "the activity audit is unavailable."
+        ) from exc
     raise SystemExit(
         "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
         "and no exact task_reassigned audit event explains the drift."
@@ -6251,40 +6277,30 @@ def _verified_done_owner_reassignment(
 ) -> dict[str, Any]:
     """Prove that the latest audited supervisor reassignment explains owner drift."""
 
+    task_id = str(task.get("id") or "").strip()
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    audited: list[tuple[datetime, dict[str, Any]]] = []
     try:
-        payload = read_regular_file_bytes(
-            LOG_FILE,
-            source="canonical done owner reassignment evidence",
-        )
-    except FileNotFoundError as exc:
+        for event in _activity_events_across_sources(LOG_FILE):
+            if (
+                event.get("type") != "task_reassigned"
+                or str(event.get("task_id") or "").strip() != task_id
+                or event.get("agent") != "Orchestrator"
+                or not event.get("old_owner")
+                or not event.get("new_owner")
+                or str(event.get("event_id") or "")
+                != _supervisor_reassignment_event_id(event)
+            ):
+                continue
+            event_timestamp = _parse_utc_timestamp(event.get("ts"))
+            if event_timestamp is None:
+                continue
+            audited.append((event_timestamp, event))
+    except (FileNotFoundError, RuntimeError) as exc:
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
             "audited supervisor task_reassigned event, but the activity audit is unavailable."
         ) from exc
-
-    task_id = str(task.get("id") or "").strip()
-    reviewer = canonical_agent_name(task.get("reviewer"))
-    audited: list[tuple[datetime, dict[str, Any]]] = []
-    for raw_line in payload.splitlines():
-        if not raw_line.strip():
-            continue
-        event = strict_activity_json_loads(raw_line)
-        if not isinstance(event, dict):
-            continue
-        if (
-            event.get("type") != "task_reassigned"
-            or str(event.get("task_id") or "").strip() != task_id
-            or event.get("agent") != "Orchestrator"
-            or not event.get("old_owner")
-            or not event.get("new_owner")
-            or str(event.get("event_id") or "")
-            != _supervisor_reassignment_event_id(event)
-        ):
-            continue
-        event_timestamp = _parse_utc_timestamp(event.get("ts"))
-        if event_timestamp is None:
-            continue
-        audited.append((event_timestamp, event))
 
     owner_changes = [
         item
