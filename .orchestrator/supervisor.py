@@ -13721,6 +13721,25 @@ def maybe_reassign_task_after_worker_failure(
         return None
 
     task_status = str(task.get("status") or "").lower()
+    failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
+    owner = str(task.get("owner") or "")
+
+    if (
+        owner == failing_agent
+        and task_has_bound_finalize_delivery_identity(task)
+    ):
+        # Exact-head review/delivery identity is immutable once bound, in any
+        # status the task later drifts into (including blocked, which is not
+        # normally eligible for reassignment at all). Checking this ahead of
+        # the eligible_statuses gate closes the gap where a task that was
+        # review_approved and then knocked back to blocked by an unrelated,
+        # transient provider outage (quota exhaustion, a stale capability
+        # probe, a crashed worker process) lost this protection simply for
+        # being blocked instead of review_approved. A missing finalize worker
+        # may still retry and ultimately block fail-closed, but no provider
+        # failure may rewrite the owner named by the reviewed commit.
+        return None
+
     if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
         return None
 
@@ -13729,22 +13748,10 @@ def maybe_reassign_task_after_worker_failure(
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
 
-    failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
     failure = classify_worker_failure(config, worker, reason)
     failure_label = failure.get("label", "provider failure")
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
-    owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
-
-    if (
-        task_status in finalize_statuses
-        and owner == failing_agent
-        and task_has_bound_finalize_delivery_identity(task)
-    ):
-        # Exact-head review/delivery identity is immutable. A missing finalize
-        # worker may retry and ultimately block fail-closed, but provider
-        # failure must not rewrite the owner named by the reviewed commit.
-        return None
 
     if (
         task_status in review_statuses
@@ -17275,27 +17282,28 @@ def normalize_mainline_task_assignment(
     if not task_id:
         return False
     task_status = str(task.get("status") or "").lower()
+    owner = str(task.get("owner") or "").strip()
+
+    if task_has_bound_finalize_delivery_identity(task):
+        # An exact-head approval (a real, verified PR/commit reference) binds
+        # delivery identity. This must hold in every status the task can
+        # drift into -- including blocked, which this scan otherwise always
+        # treats as reassignable -- and regardless of whether the reviewer
+        # happens to be an explicit human gate. Availability scans must await
+        # closeout instead of rewriting the owner named by the reviewed
+        # commit; that owner is exactly what a downstream governed closeout
+        # (reconcile_merged_done) needs to stay stable in order to verify the
+        # reassignment chain automatically instead of requiring a human
+        # signoff for every transient provider outage.
+        return False
+
     eligible_statuses = {str(value).lower() for value in settings.get("eligible_statuses", [])}
     eligible_statuses.add("blocked")
     if task_status not in eligible_statuses:
         return False
 
-    owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
     explicit_human_reviewer = reviewer_is_explicit_human_gate(reviewer)
-    finalize_statuses = normalized_status_set(
-        ready_dispatch_settings(config).get("finalize_statuses"),
-        ["review_approved"],
-    )
-    if (
-        explicit_human_reviewer
-        and task_status in finalize_statuses
-        and task_has_bound_finalize_delivery_identity(task)
-    ):
-        # An exact-head approval binds both delivery ownership and the explicit
-        # human decision. Availability scans must await closeout instead of
-        # rewriting either side of that approved identity.
-        return False
     assignment_state = None if task_status == "in_progress" else state
     owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
     reviewer_allowed = explicit_human_reviewer or agent_can_take_task(

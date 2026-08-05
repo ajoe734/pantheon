@@ -547,6 +547,56 @@ def _push_review_proof_tag(
     return dict(created_ref)
 
 
+CANONICAL_REVIEW_GATE_WORKFLOW_FILE = "canonical-review-gate.yml"
+
+
+def _dispatch_canonical_review_gate_workflow(
+    runner: JsonRunner,
+    *,
+    repository: str,
+    binding: ReviewBinding,
+) -> None:
+    """Best-effort: wake the Canonical Review Gate workflow so it re-reads
+    the tag just pushed and posts its own, correctly-attributed status.
+
+    Pushing the review-proof tag is necessary but not sufficient. GitHub
+    pins the "Pantheon canonical review gate" required context to whichever
+    identity has historically posted it -- in practice, this workflow's own
+    GITHUB_TOKEN-authenticated run. A status this process posts from a
+    personal-token host (e.g. _submit_required_status, above) does not
+    satisfy the required check even though it looks identical in a plain
+    status listing -- verified empirically against a live PR: the status
+    shows success, but GitHub's own mergeable_state stays blocked until the
+    workflow itself runs again. None of that workflow's pull_request event
+    types fire from a bare tag push, so dispatch it explicitly here.
+    Failure to dispatch is not fatal: the tag is the durable proof, and the
+    next natural push to the PR (or a manual re-run) picks it up either way.
+    """
+
+    try:
+        runner.run_json(
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                f"repos/{repository}/actions/workflows/"
+                f"{CANONICAL_REVIEW_GATE_WORKFLOW_FILE}/dispatches",
+                "--input",
+                "-",
+            ],
+            payload={
+                "ref": binding.head_branch,
+                "inputs": {
+                    "head_ref": binding.head_branch,
+                    "head_sha": binding.head_sha,
+                },
+            },
+        )
+    except GitHubReviewBridgeError:
+        pass
+
+
 def bridge_review_decision(
     *,
     repository: str,
@@ -669,6 +719,13 @@ def bridge_review_decision(
         message=message,
     )
     review_proof_ref = str(proof_ref.get("ref") or "") or None
+
+    if decision == APPROVE:
+        _dispatch_canonical_review_gate_workflow(
+            runner,
+            repository=repository,
+            binding=normalized_binding,
+        )
 
     if review is not None and status is not None:
         mode = "pull_request_review_and_required_status"
