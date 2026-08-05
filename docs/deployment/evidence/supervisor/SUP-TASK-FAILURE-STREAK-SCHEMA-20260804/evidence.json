@@ -4,8 +4,8 @@
     "id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
     "title": "Add a failure_streak counter and quarantined status to the task schema",
     "phase": "Supervisor Dispatch Reliability",
-    "owner": "Codex",
-    "reviewer": "Codex2",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
     "status": "in_progress",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -21,11 +21,46 @@
       "scripts/test_ai_status.py"
     ]
   },
+  "delivery": {
+    "pull_request": 4533,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4533",
+    "merge_policy": "review_before_merge",
+    "delivery_commit": "ae885297d9ed285153e7cb9dfd31c65623888a70",
+    "merge_commit": "c37be6ea4a131d49aa1a1ea240258b4ab1a2efd4",
+    "merged_at": "2026-08-05T00:06:10Z",
+    "merge_target": "origin/dev",
+    "ancestry_check": "ae885297d9ed285153e7cb9dfd31c65623888a70 and c37be6ea4a131d49aa1a1ea240258b4ab1a2efd4 re-verified as ancestors of origin/dev on 2026-08-05 with git merge-base --is-ancestor.",
+    "state": "merged; the reviewed product deliverable is unchanged by the closeout cycle below"
+  },
+  "closeout_cycle": {
+    "pull_request": 4564,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4564",
+    "contents": "Task artifacts only: this evidence manifest plus the task brief under .orchestrator/task-briefs/. No product behaviour, gate semantics, or review authority changes.",
+    "why_it_exists": "The pair was reassigned Codex/Codex2 -> Claude/Antigravity 93 minutes after PR #4533 merged, so no commit on this branch had ever been authored under the current pair and closeout could not bind.",
+    "reopen_reason": "Antigravity reopened the task on 2026-08-05 because PR #4564 had been rebased onto a dev tip that already contained merged PR #4533, so this manifest no longer appeared in the PR diff and could not be reviewed at the exact head. This revision restores the manifest to the PR diff and rebinds it to the current pair.",
+    "review_request": "Approve at the exact PR #4564 head with REVIEW_PR=4564, REVIEW_HEAD_SHA=<exact head>, and REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json."
+  },
+  "ownership_history": {
+    "original_pair": {
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "note": "Delivery commit ae885297d therefore carries LLM-Agent: Codex / Reviewer: Codex2."
+    },
+    "reassignment": {
+      "actor": "Orchestrator",
+      "event": "task_reassigned",
+      "ts": "2026-08-05T01:39:22Z",
+      "event_id": "supervisor-reassign-a78027c58bcd5cd1cc956c21ff58bf413a0247271f33ce37eae5b63ff1081c05",
+      "owner_change": "Codex -> Claude",
+      "reviewer_change": "Codex2 -> Antigravity",
+      "reason": "Codex quota exhausted 2026-08-05"
+    }
+  },
   "review_remediation": {
     "rejected_head": "9b44725423ccab64a1ae2a051405279344e718f6",
     "reviewer": "Codex2",
     "required_change": "A queue-backed retry held by task quarantine must survive the normal poll/assignment loop: it must not be superseded or complete its queue record merely because quarantined tasks are not normally assigned. The held parent must not be stale-failure reclassified, and governed reopen must release it for exactly one launch. Preserve the existing rotation/retry fence and exact-head Contents API GET regression.",
-    "evidence_requirement": "This manifest is committed in PR #4533 before independent re-review and must be bound with REVIEW_FILE during exact-head approval."
+    "evidence_requirement": "This manifest was committed in PR #4533 before independent re-review and is bound with REVIEW_FILE during exact-head approval."
   },
   "acceptance": {
     "failure_projection": "Repeated distinct worker failures increment the task-row failure_streak.",
@@ -40,32 +75,41 @@
     "commands": [
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests'",
-        "result": "10 passed, 585 deselected"
+        "result": "10 passed, 585 deselected",
+        "run": "original delivery review, PR #4533"
       },
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests'",
-        "result": "39 passed, 132 deselected"
+        "result": "39 passed, 132 deselected",
+        "run": "original delivery review, PR #4533"
       },
       {
         "command": "cd scripts && ../.venv-pantheon/bin/python3 -c 'import ai_status; print(ai_status.review_evidence_file_committed(repository=\"ajoe734/pantheon\", head_sha=\"b5509721342745174d25ce10134be342b80c50c1\", review_file=\"docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json\"))'",
-        "result": "True; GitHub Contents API verified the committed manifest at rejected PR #4533 head b5509721342745174d25ce10134be342b80c50c1 using the explicit GET query."
+        "result": "True; GitHub Contents API verified the committed manifest at rejected PR #4533 head b5509721342745174d25ce10134be342b80c50c1 using the explicit GET query.",
+        "run": "original delivery review, PR #4533"
       },
       {
         "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py && git diff --check",
-        "result": "passed"
+        "result": "passed",
+        "run": "original delivery review, PR #4533"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv/bin/python -m pytest .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests or ReviewApprovedWorkflowTests or PollWorkersRecoveryTests' -q",
+        "result": "81 passed, 514 deselected, 4 subtests passed",
+        "run": "closeout re-verification in the task worktree, 2026-08-05, after merging origin/dev"
+      },
+      {
+        "command": ".venv/bin/python -m pytest scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests' -q",
+        "result": "39 passed, 132 deselected",
+        "run": "closeout re-verification in the task worktree, 2026-08-05, after merging origin/dev"
       }
     ]
   },
   "review": {
     "decision": "pending_independent_review",
-    "required_reviewer": "Codex2",
-    "approval_protocol": "Review this committed manifest and the exact PR head, then approve with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
-    "prior_review": "The canonical review bridge first rejected completion reset coverage and then the manifest lookup; the existing exact-head manifest regression now passes. Codex2 rejected 0d9b4ce633233bc2c426b58986deadd9c24af60d because quarantine still allowed rotation and due retry_backoff paths to dispatch, then rejected 9b44725423ccab64a1ae2a051405279344e718f6 because poll_workers superseded a queue-backed held retry before reopen. This manifest is the reviewed artifact for the complete retry-hold remediation."
-  },
-  "delivery": {
-    "pull_request": 4533,
-    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4533",
-    "merge_policy": "review_before_merge",
-    "candidate_head": "to be supplied by the exact-head independent review"
+    "required_reviewer": "Antigravity",
+    "approval_protocol": "Review this committed manifest and the exact PR #4564 head, then approve with REVIEW_PR=4564, REVIEW_HEAD_SHA=<exact head>, and REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
+    "prior_review": "The canonical review bridge first rejected completion reset coverage and then the manifest lookup; the exact-head manifest regression now passes. Codex2 rejected 0d9b4ce633233bc2c426b58986deadd9c24af60d because quarantine still allowed rotation and due retry_backoff paths to dispatch, then rejected 9b44725423ccab64a1ae2a051405279344e718f6 because poll_workers superseded a queue-backed held retry before reopen. The complete retry-hold remediation was then merged as PR #4533.",
+    "scope_of_this_review": "The product deliverable is already merged and is not re-litigated here. The reviewable surface at PR #4564 head is this manifest and the task brief: whether they accurately record the merged delivery, the audited reassignment, and the closeout verification re-run."
   }
 }
