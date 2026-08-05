@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
+  "title": "Build immutable runtime root, config, and Git identity guards",
+  "owner": "Codex",
+  "reviewer": "Human/Ops",
+  "review_decision": "review_pending",
+  "recorded_at": "2026-08-02T07:41:54Z",
+  "repository": "ajoe734/pantheon",
+  "branch": "task/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
+  "base_branch": "dev",
+  "base_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
+  "pre_evidence_head": "928b35259aa1ec713753b49eb4aec8179267898d",
+  "pull_request": 4443,
+  "implementation_commits": [
+    "76baec723ab6ad11a6369c9c04a668b6badf2a6a",
+    "5fea646d4378da6325a73067d807dd414f4700d3",
+    "538ac62d1a670ca5fcf67c8ffff34f16dd222847",
+    "4a788b6c5a9532fea03a5bc946b791355c5110cd",
+    "59a5845446f7367a98b868508b769c9c168b875c",
+    "2c751b122bbc28642d3ab09a3efb7edf760840d8",
+    "018b2193c907327a888aa6810fec4f5df28741ff",
+    "345a306b5c181d8fdb1f3fb38b7fd687a31a16c1",
+    "928b35259aa1ec713753b49eb4aec8179267898d"
+  ],
+  "dev_composition": {
+    "origin_dev_commit": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
+    "merge_commit": "03e167cda5932fd5b1637e90d674e74d42b27c3c",
+    "history_rewritten": false,
+    "delivery_paths": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801/evidence.md"
+    ]
+  },
+  "review_refresh": {
+    "previous_reviewed_head": "167900b4b44e33daaec8708e87b456101880bbcc",
+    "previous_reviewer": "Human/Ops",
+    "previous_decision": "reopen",
+    "current_reviewer": "Human/Ops",
+    "reason": "Human/Ops rejected exact head 167900b4b44e33daaec8708e87b456101880bbcc because mode-160000 gitlink worktree content was invisible to Git status and diff checks. Implementation head 928b35259aa1ec713753b49eb4aec8179267898d now binds gitlinks from the accepted tracked tree to the index and descriptor-validates absent or empty worktree paths while rejecting all content, aliases, metadata, device escape, and replacement races.",
+    "required_binding": "REVIEW_PR=4443 and REVIEW_HEAD_SHA=<final PR head>"
+  },
+  "dependency": {
+    "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
+    "commit": "cd770e5dc",
+    "is_ancestor": true
+  },
+  "rejected_ancestry": [
+    {
+      "commit": "07316c73b8f9b574d659aa95616680301198392f",
+      "is_ancestor": false
+    },
+    {
+      "commit": "77af55015c5630c18f10670f5cb877ef7c40b115",
+      "is_ancestor": false
+    },
+    {
+      "commit": "853a1778e68a598c7a85fe2c9433ee585d0fc985",
+      "is_ancestor": false
+    },
+    {
+      "commit": "4cd85c7a8087bebc38713131c45a52e703f06918",
+      "is_ancestor": false
+    }
+  ],
+  "scope": {
+    "owned": [
+      "production-required candidate identity invariant with no omission bypass",
+      "descriptor-relative no-follow candidate-root and live-config traversal",
+      "candidate-root descriptor binding for all local Git operations",
+      "self-contained .git, objects, config, HEAD, and index descriptor identities",
+      "gitfile, commondir, alternates, config-include, metadata symlink, hardlink, and cross-filesystem denial",
+      "structural GitHub origin parsing for ajoe734/pantheon",
+      "fresh accepted dev resolution in an isolated bare repository with sanitized Git environment",
+      "candidate commit ancestry and trusted tree equality",
+      "tracked/index/worktree cleanliness including special index flags and ignored paths",
+      "mode-160000 trusted-tree/index identity and descriptor-bound gitlink worktree validation",
+      "descriptor-bound regular-file validation for every generated untracked allowance",
+      "directory-marker denial before generated-path normalization",
+      "complete Git objects-tree symlink and cross-filesystem denial",
+      "exact live-config path, inode, bytes, byte length, and SHA-256 snapshot",
+      "complete live-config path-component identity capture and comparison",
+      "immutable root/Git/config revalidation primitive"
+    ],
+    "not_changed": [
+      "supervisor process or PID discovery",
+      "admission-lock generation",
+      "launch or watchdog behavior",
+      "signal delivery, rollback, or live promotion",
+      "live or repository config files",
+      "canonical task-state JSON or provider policy"
+    ]
+  },
+  "allowed_generated_untracked_paths": {
+    "exact": [
+      ".orchestrator/activity-audit.lock",
+      ".orchestrator/approval-queue.lock",
+      ".orchestrator/assistant-dev-packets/.drain.lock",
+      ".orchestrator/assistant-dev-packets/.queue.lock",
+      ".orchestrator/auto-integrator.lock",
+      ".orchestrator/auto_commit_archive.lock",
+      ".orchestrator/dashboard-autostart.lock",
+      ".orchestrator/planning-state.lock",
+      ".orchestrator/reap-in-progress.lock",
+      ".orchestrator/runtime-admission.lock",
+      ".orchestrator/status-derived-views.lock",
+      ".orchestrator/supervisor.lock",
+      ".orchestrator/task-state.lock"
+    ],
+    "constrained_family": ".orchestrator/task-briefs/[a-z0-9][a-z0-9_-]*.md as a direct regular file only",
+    "type_requirement": "every exact or constrained entry is opened descriptor-relatively with no-follow components and a regular-file leaf on the candidate filesystem"
+  },
+  "acceptance": {
+    "production_identity_required": "passed",
+    "direct_root_and_immutable_snapshot": "passed",
+    "nested_tmp_worker_symlink_deleted_and_swap_denial": "passed",
+    "basename_to_head_binding": "passed",
+    "canonical_and_spoofed_remote_matrix": "passed",
+    "git_environment_rewrite_denial": "passed",
+    "fresh_dev_commit_and_tree_binding": "passed",
+    "tracked_staged_index_flag_and_worktree_drift_denial": "passed",
+    "gitlink_absent_or_empty_direct_directory_allowance": "passed",
+    "gitlink_file_symlink_nested_and_submodule_metadata_denial": "passed",
+    "gitlink_tree_index_device_parent_and_replacement_race_denial": "passed",
+    "ordinary_ignored_allowed_and_forbidden_path_matrix": "passed",
+    "allowlisted_symlink_and_directory_substitution_denial": "passed",
+    "config_exact_leaf_parent_and_swap_denial": "passed",
+    "config_same_leaf_inode_parent_replacement_denial": "passed",
+    "self_contained_git_metadata_denial_matrix": "passed",
+    "complete_loose_and_packed_git_objects_tree_denial": "passed",
+    "config_path_length_bytes_sha_and_inode_drift": "passed",
+    "production_identity_bypass_absent": "passed",
+    "scope_boundary_no_live_mutation": "passed"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "120 tests collected and passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+      "result": "passed through implementation head 928b35259aa1ec713753b49eb4aec8179267898d before this evidence refresh"
+    },
+    {
+      "command": "git diff --check origin/dev...HEAD",
+      "result": "passed"
+    },
+    {
+      "command": "git merge-base --is-ancestor <rejected-head> HEAD",
+      "result": "exit 1 for all four rejected heads"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "scripts/promote_supervisor_runtime.py",
+      "sha256": "8e4e4d2315a3a3fe3ae50ae29a16ee314501dcf51544bf749d06a67ad010a99c"
+    },
+    {
+      "path": "scripts/test_promote_supervisor_runtime.py",
+      "sha256": "f227d269fca04ecca11cf10c18ca38eb52a9694f05e243e9c83b566aced33006"
+    }
+  ],
+  "rollout": "source merge only",
+  "rollback": "revert the eventual task merge commit",
+  "live_claims": [],
+  "next_gate": "Independent exact-head Human/Ops review is required before merge."
+}
