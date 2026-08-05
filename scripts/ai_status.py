@@ -18,7 +18,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from threading import local
-from typing import Any, Mapping
+from typing import Any, Generator, Mapping
 from zoneinfo import ZoneInfo
 
 try:
@@ -6197,6 +6197,46 @@ def _merged_commit(
     return commit, target_sha
 
 
+def _activity_events_across_sources(
+    log_path: Path,
+    *,
+    source: str,
+) -> Generator[dict[str, Any], None, None]:
+    """Yield activity-log event dicts across live + archived sources, oldest first.
+
+    Rotation moves the oldest lines out of the live tail into an immutable
+    gzip archive once the log exceeds LOG_ROTATE_MAX_BYTES -- under normal
+    fleet write volume that can happen within hours, not as some rare edge
+    case. A governed check that needs to find one specific historical event
+    (e.g. an audited task_reassigned row proving an owner/reviewer handoff)
+    must not assume that event is still in the live tail: it has to walk the
+    same disjoint, ordered live+archive source list
+    activity_audit_source_paths_unlocked already validates, not just LOG_FILE.
+
+    Malformed lines are not tolerated here, matching how every other reader of
+    these canonical sources behaves: a source that will not parse strictly is
+    an audit-integrity problem, and silently skipping it would let a tampered
+    line drop a reassignment hop out of the chain.
+    """
+
+    for audit_source in activity_audit_source_paths_unlocked(log_path):
+        if audit_source.suffix == ".gz":
+            with gzip.open(audit_source, "rb") as handle:
+                payload = handle.read()
+        else:
+            payload = read_regular_file_bytes(audit_source, source=source)
+        for raw_line in payload.splitlines():
+            if not raw_line.strip():
+                continue
+            event = strict_activity_json_loads(raw_line)
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("record_type") or "") == "pantheon.activity.lineage_head.v1":
+                # Rotation lineage control row, not an activity event.
+                continue
+            yield event
+
+
 def _audited_reassignment_events(
     task_id: str,
     *,
@@ -6212,20 +6252,20 @@ def _audited_reassignment_events(
     `task_reassigned` lines `write_activity_log` emits alongside them use
     `from_owner`/`to_owner` keys and carry no identity digest; they are skipped
     on purpose.
+
+    The search spans the live tail *and* the rotated archives. Reading only
+    LOG_FILE made a legitimate, audited reassignment vanish the moment routine
+    rotation moved it out of the tail, which permanently stranded the task at
+    `done`.
     """
 
     try:
-        payload = read_regular_file_bytes(LOG_FILE, source=source)
-    except FileNotFoundError as exc:
+        events = list(_activity_events_across_sources(LOG_FILE, source=source))
+    except (FileNotFoundError, RuntimeError) as exc:
         raise SystemExit(unavailable_message) from exc
 
     audited: list[tuple[datetime, dict[str, Any]]] = []
-    for raw_line in payload.splitlines():
-        if not raw_line.strip():
-            continue
-        event = strict_activity_json_loads(raw_line)
-        if not isinstance(event, dict):
-            continue
+    for event in events:
         if (
             event.get("type") != "task_reassigned"
             or str(event.get("task_id") or "").strip() != task_id
