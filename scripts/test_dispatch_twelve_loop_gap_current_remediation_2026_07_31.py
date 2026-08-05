@@ -6,6 +6,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import stat
 import subprocess
 
 import pytest
@@ -14,6 +15,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "dispatch_twelve_loop_gap_2026_07_26.py"
 CATALOG = (
+    ROOT
+    / "docs"
+    / "bff"
+    / "execution-tasks"
+    / "2026-08-03-l12-guarded-remediation-correction"
+    / "corrected-remediation-tasks.json"
+)
+PREVIOUS_CURRENT_CATALOG = (
     ROOT
     / "docs"
     / "bff"
@@ -30,6 +39,10 @@ from rewrite.task_state_store import append_state_commit, load_snapshot
 
 def catalog() -> dict:
     return json.loads(CATALOG.read_text(encoding="utf-8"))
+
+
+def previous_current_catalog() -> dict:
+    return json.loads(PREVIOUS_CURRENT_CATALOG.read_text(encoding="utf-8"))
 
 
 def readiness(
@@ -282,6 +295,9 @@ def readiness_files(root: Path) -> tuple[Path, Path, Path]:
 
 
 def test_current_catalog_validate_only_binds_exact_pr_head() -> None:
+    assert module.CURRENT_SOURCE_PR == 4539
+    assert module.CURRENT_SOURCE_HEAD == "f2b48094226f56a392f33a3f65d7a5118dca37a1"
+    assert module.CURRENT_SOURCE_BRANCH_CI_RUN == 30882135477
     result = subprocess.run(
         ["python3", str(SCRIPT), "--validate-only", "--current"],
         cwd=ROOT,
@@ -296,12 +312,71 @@ def test_current_catalog_validate_only_binds_exact_pr_head() -> None:
         "maximum_parallel_frontier_G1": 25,
         "program_id": module.CURRENT_PROGRAM_ID,
         "source_branch_ci_conclusion": "success",
-        "source_branch_ci_run": 30635898120,
+        "source_branch_ci_run": module.CURRENT_SOURCE_BRANCH_CI_RUN,
         "source_head": module.CURRENT_SOURCE_HEAD,
-        "source_pr": 4394,
+        "source_pr": module.CURRENT_SOURCE_PR,
         "status": "valid",
         "task_count": 28,
     }
+
+
+def test_previous_current_profile_remains_available_and_exact() -> None:
+    result = subprocess.run(
+        ["python3", str(SCRIPT), "--validate-only", "--previous-current"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body == {
+        "catalog_file_sha256": module.PREVIOUS_CURRENT_CATALOG_FILE_SHA256,
+        "catalog_sha256": module.PREVIOUS_CURRENT_CATALOG_CANONICAL_SHA256,
+        "maximum_parallel_frontier_G1": 25,
+        "program_id": module.PREVIOUS_CURRENT_PROGRAM_ID,
+        "source_branch_ci_conclusion": "success",
+        "source_branch_ci_run": module.PREVIOUS_CURRENT_SOURCE_BRANCH_CI_RUN,
+        "source_head": module.PREVIOUS_CURRENT_SOURCE_HEAD,
+        "source_pr": module.PREVIOUS_CURRENT_SOURCE_PR,
+        "status": "valid",
+        "task_count": 28,
+    }
+    assert module.validate_catalog(previous_current_catalog())
+
+
+def test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap() -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    bff_task = next(
+        task for task in tasks if task["id"] == "L12-CONTROLLER-BFF-20260731"
+    )
+    assert bff_task["artifacts"] == [
+        "services/control-plane/bff/downstream_health_monitor.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CONTROLLER-BFF-20260731",
+    ]
+    module._current_live_overlap_guard(
+        catalog=payload,
+        tasks=tasks,
+        active_by_id={
+            "LIFECYCLE-PROJ-BFF-001": {
+                "id": "LIFECYCLE-PROJ-BFF-001",
+                "status": "todo",
+                "artifacts": [
+                    "services/control-plane/bff/trade_journeys.py",
+                    "services/control-plane/bff/read_store.py",
+                ],
+            },
+            "LIFECYCLE-PROJ-RETIRE-001": {
+                "id": "LIFECYCLE-PROJ-RETIRE-001",
+                "status": "todo",
+                "artifacts": [
+                    "services/control-plane/bff/trade_journeys.py",
+                    "services/control-plane/bff/read_store.py",
+                    "docker-compose.yml",
+                ],
+            },
+        },
+    )
 
 
 def test_current_catalog_rejects_duplicate_dangling_and_g1_overlap() -> None:
@@ -352,9 +427,70 @@ def test_current_dry_run_materializes_only_safe_g1_and_records_fallbacks(
     ]
 
 
-def test_current_dry_run_cli_is_read_only(tmp_path: Path) -> None:
+def file_identity(path: Path) -> tuple[bool, bytes | None]:
+    return path.exists(), path.read_bytes() if path.exists() else None
+
+
+def stat_identity(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        stat.S_IFMT(info.st_mode) | stat.S_IMODE(info.st_mode),
+        info.st_ino,
+        info.st_size,
+        info.st_atime_ns,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def directory_identity(parent: Path) -> tuple[str, ...]:
+    return tuple(sorted(path.name for path in parent.iterdir()))
+
+
+def checkpoint_temp_files(checkpoint: Path) -> tuple[str, ...]:
+    return tuple(
+        sorted(path.name for path in checkpoint.parent.glob(f"{checkpoint.name}.*.tmp"))
+    )
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_case", "checkpoint_used", "revalidated_tail_events"),
+    [
+        ("warm", True, 0),
+        ("stale_tail", True, 1),
+        ("missing", False, 1),
+        ("corrupt", False, 1),
+    ],
+)
+def test_current_dry_run_cli_is_read_only(
+    checkpoint_case: str,
+    checkpoint_used: bool,
+    revalidated_tail_events: int,
+    tmp_path: Path,
+) -> None:
     state = active_state()
     authority = write_authority(tmp_path, state)
+    checkpoint = authority["event_log"].with_name(
+        f"{authority['event_log'].name}.checkpoint.json"
+    )
+    if checkpoint_case == "stale_tail":
+        stale_checkpoint = checkpoint.read_bytes()
+        tail_state = deepcopy(state)
+        tail_state["updated_at"] = "2026-08-02T09:40:00Z"
+        append_state_commit(
+            authority["event_log"],
+            tail_state,
+            source="test-stale-tail",
+        )
+        checkpoint.write_bytes(stale_checkpoint)
+    elif checkpoint_case == "missing":
+        checkpoint.unlink()
+    elif checkpoint_case == "corrupt":
+        checkpoint.write_bytes(b"not-json")
+
     live_config = tmp_path / "live-config.json"
     live_config.write_text(
         json.dumps(
@@ -369,8 +505,30 @@ def test_current_dry_run_cli_is_read_only(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
-    before_status = (tmp_path / "ai-status.json").read_bytes()
-    before_journal = authority["event_log"].read_bytes()
+    lock = authority["event_log"].with_name(f"{authority['event_log'].name}.lock")
+    lock.write_bytes(b"provisioned observational lock\n")
+    lock.chmod(0o640)
+    expected_snapshot = load_snapshot(
+        authority["event_log"],
+        refresh_checkpoint=False,
+    )
+    before_files = {
+        "projection": file_identity(tmp_path / "ai-status.json"),
+        "journal": file_identity(authority["event_log"]),
+        "checkpoint": file_identity(checkpoint),
+        "lock": file_identity(lock),
+    }
+    before_stats = {
+        name: stat_identity(path)
+        for name, path in {
+            "projection": tmp_path / "ai-status.json",
+            "journal": authority["event_log"],
+            "checkpoint": checkpoint,
+            "lock": lock,
+        }.items()
+    }
+    before_directory = directory_identity(tmp_path)
+    before_temp_files = checkpoint_temp_files(checkpoint)
     env = {**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)}
     result = subprocess.run(
         [
@@ -398,8 +556,199 @@ def test_current_dry_run_cli_is_read_only(tmp_path: Path) -> None:
     assert body["status"] == "dry_run"
     assert len(body["create"]) == 25
     assert len(body["deferred"]) == 3
-    assert (tmp_path / "ai-status.json").read_bytes() == before_status
-    assert authority["event_log"].read_bytes() == before_journal
+    assert body["task_state_store"]["snapshot"] == {
+        "byte_size": authority["event_log"].stat().st_size,
+        "checkpoint_used": checkpoint_used,
+        "event_count": expected_snapshot["event_count"],
+        "last_event_id": expected_snapshot["last_event_id"],
+        "last_event_sha256": expected_snapshot["last_event_sha256"],
+        "revalidated_tail_events": revalidated_tail_events,
+        "state_sha256": expected_snapshot["state_sha256"],
+    }
+    assert {
+        "projection": file_identity(tmp_path / "ai-status.json"),
+        "journal": file_identity(authority["event_log"]),
+        "checkpoint": file_identity(checkpoint),
+        "lock": file_identity(lock),
+    } == before_files
+    assert {
+        name: stat_identity(path)
+        for name, path in {
+            "projection": tmp_path / "ai-status.json",
+            "journal": authority["event_log"],
+            "checkpoint": checkpoint,
+            "lock": lock,
+        }.items()
+    } == before_stats
+    assert directory_identity(tmp_path) == before_directory
+    assert checkpoint_temp_files(checkpoint) == before_temp_files
+
+
+def test_current_dry_run_fails_closed_without_provisioned_lock(
+    tmp_path: Path,
+) -> None:
+    state = active_state()
+    authority = write_authority(tmp_path, state)
+    lock = authority["event_log"].with_name(f"{authority['event_log'].name}.lock")
+    lock.unlink()
+    live_config = tmp_path / "live-config.json"
+    live_config.write_text(
+        json.dumps(
+            {
+                "paths": {"status_file": str(tmp_path / "ai-status.json")},
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(authority["event_log"]),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
+    before = directory_identity(tmp_path)
+    before_journal = file_identity(authority["event_log"])
+    before_journal_stat = stat_identity(authority["event_log"])
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(SCRIPT),
+            "--dry-run",
+            "--catalog",
+            str(CATALOG),
+            "--live-config",
+            str(live_config),
+            "--readiness-config",
+            str(config_path),
+            "--runtime-state",
+            str(runtime_path),
+            "--provider-capabilities",
+            str(capabilities_path),
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "lock must be an existing regular file" in result.stderr
+    assert not lock.exists()
+    assert directory_identity(tmp_path) == before
+    assert file_identity(authority["event_log"]) == before_journal
+    assert stat_identity(authority["event_log"]) == before_journal_stat
+
+
+@pytest.mark.parametrize("missing", ["parent", "event"])
+def test_current_dry_run_fails_closed_without_journal_authority(
+    missing: str,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "ai-status.json").write_text(
+        json.dumps(active_state()),
+        encoding="utf-8",
+    )
+    event_log = (
+        tmp_path / "absent-parent" / "task-state-events.jsonl"
+        if missing == "parent"
+        else tmp_path / "task-state-events.jsonl"
+    )
+    live_config = tmp_path / "live-config.json"
+    live_config.write_text(
+        json.dumps(
+            {
+                "paths": {"status_file": str(tmp_path / "ai-status.json")},
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path, runtime_path, capabilities_path = readiness_files(tmp_path)
+    before = directory_identity(tmp_path)
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(SCRIPT),
+            "--dry-run",
+            "--catalog",
+            str(CATALOG),
+            "--live-config",
+            str(live_config),
+            "--readiness-config",
+            str(config_path),
+            "--runtime-state",
+            str(runtime_path),
+            "--provider-capabilities",
+            str(capabilities_path),
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PANTHEON_STATUS_ROOT": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "journal is missing or empty" in result.stderr
+    assert not event_log.exists()
+    if missing == "parent":
+        assert not event_log.parent.exists()
+    assert directory_identity(tmp_path) == before
+
+
+def test_authority_uses_one_validated_snapshot_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = active_state()
+    snapshot = {
+        "event_count": 8632,
+        "byte_size": 2_174_900_966,
+        "last_event_id": "task-state-head",
+        "last_event_sha256": "a" * 64,
+        "state": state,
+        "state_sha256": "b" * 64,
+        "resumed_from_checkpoint": True,
+        "revalidated_events": 0,
+    }
+    calls: list[tuple[Path, bool]] = []
+
+    def one_snapshot(path: Path, *, refresh_checkpoint: bool = True) -> dict:
+        calls.append((path, refresh_checkpoint))
+        return snapshot
+
+    monkeypatch.setattr(module, "load_snapshot", one_snapshot)
+    authority = {"event_log": tmp_path / "task-state-events.jsonl"}
+
+    loaded = module.load_authoritative_task_snapshot(authority)
+
+    assert loaded is snapshot
+    assert calls == [(authority["event_log"], True)]
+    assert module.load_authoritative_task_state(authority) == state
+    assert calls == [
+        (authority["event_log"], True),
+        (authority["event_log"], True),
+    ]
+    assert (
+        module.load_authoritative_task_snapshot(
+            authority,
+            refresh_checkpoint=False,
+        )
+        is snapshot
+    )
+    assert calls[-1] == (authority["event_log"], False)
+    assert module.authoritative_snapshot_evidence(loaded) == {
+        "event_count": 8632,
+        "byte_size": 2_174_900_966,
+        "last_event_id": "task-state-head",
+        "last_event_sha256": "a" * 64,
+        "state_sha256": "b" * 64,
+        "checkpoint_used": True,
+        "revalidated_tail_events": 0,
+    }
 
 
 def test_current_plan_accepts_archived_dependency(tmp_path: Path) -> None:
@@ -824,6 +1173,17 @@ def test_current_exact_canonical_readback_and_mismatch(tmp_path: Path) -> None:
     )
     assert readback["state_sha256"] == readback["projection_sha256"]
     assert readback["exact"] == task_ids
+    assert readback["task_state_snapshot"] == {
+        "byte_size": authority["event_log"].stat().st_size,
+        "checkpoint_used": True,
+        "event_count": 1,
+        "last_event_id": load_snapshot(authority["event_log"])["last_event_id"],
+        "last_event_sha256": load_snapshot(authority["event_log"])[
+            "last_event_sha256"
+        ],
+        "revalidated_tail_events": 0,
+        "state_sha256": load_snapshot(authority["event_log"])["state_sha256"],
+    }
 
     projection = json.loads((tmp_path / "ai-status.json").read_text(encoding="utf-8"))
     projection["tasks"][0]["status"] = "blocked"

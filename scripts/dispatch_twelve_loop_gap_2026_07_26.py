@@ -32,7 +32,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import durable_write_bytes, validate_status_command_runtime
-from rewrite.task_state_store import load_events, project_latest_state
+from rewrite.task_state_store import load_snapshot
 
 
 DEFAULT_CATALOG_PATH = (
@@ -53,16 +53,27 @@ DEFAULT_PROOF_OWNERSHIP_PATH = (
 )
 CURRENT_CATALOG_RELATIVE_PATH = (
     "docs/bff/execution-tasks/"
+    "2026-08-03-l12-guarded-remediation-correction/"
+    "corrected-remediation-tasks.json"
+)
+DEFAULT_CURRENT_CATALOG_PATH = REPO_ROOT / CURRENT_CATALOG_RELATIVE_PATH
+PREVIOUS_CURRENT_CATALOG_RELATIVE_PATH = (
+    "docs/bff/execution-tasks/"
     "2026-07-31-l12-current-gap-supervisor-dispatch/"
     "guarded-remediation-tasks.json"
 )
-DEFAULT_CURRENT_CATALOG_PATH = REPO_ROOT / CURRENT_CATALOG_RELATIVE_PATH
+DEFAULT_PREVIOUS_CURRENT_CATALOG_PATH = (
+    REPO_ROOT / PREVIOUS_CURRENT_CATALOG_RELATIVE_PATH
+)
 DEFAULT_LIVE_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
 DEFAULT_COMMAND_ROOT = Path("/home/lupin/pantheon-ci-deploy/dev-root")
 PROGRAM_ID = "pantheon-twelve-loop-gap-2026-07-26"
 CURRENT_PROGRAM_ID = (
+    "pantheon-twelve-loop-gap-corrected-remediation-2026-08-03"
+)
+PREVIOUS_CURRENT_PROGRAM_ID = (
     "pantheon-twelve-loop-gap-current-proof-remediation-2026-07-31"
 )
 AUTO_CREATED_BY = "dispatch_twelve_loop_gap_2026_07_26"
@@ -81,6 +92,7 @@ ALLOWED_TARGET_MATURITY = {
     "reconciled",
     "proven-live",
     "product-level",
+    "implemented",
 }
 REQUIRED_NON_GOALS = {
     "No panel-only closure",
@@ -145,14 +157,23 @@ CURRENT_REQUIRED_TASK_FIELDS = REQUIRED_TASK_FIELDS | {
 }
 CURRENT_DYNAMIC_TASK_FIELDS = {"status", "next", "owner", "reviewer"}
 CURRENT_CATALOG_FILE_SHA256 = (
-    "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca"
+    "5ab2efe3cb55673366994b759f3d52190573ca9f0fc002393da3f5449b59e45b"
 )
 CURRENT_CATALOG_CANONICAL_SHA256 = (
+    "247c87fab74c5d7dc2eaaefa03b76ed18919b1d8ca2465536718439c01e565e9"
+)
+CURRENT_SOURCE_PR = 4539
+CURRENT_SOURCE_HEAD = "f2b48094226f56a392f33a3f65d7a5118dca37a1"
+CURRENT_SOURCE_BRANCH_CI_RUN = 30882135477
+PREVIOUS_CURRENT_CATALOG_FILE_SHA256 = (
+    "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca"
+)
+PREVIOUS_CURRENT_CATALOG_CANONICAL_SHA256 = (
     "6adf2d2e987d8ebed96689e35db346e9f4eacb3d63a0b635bf8a51426f9ce02f"
 )
-CURRENT_SOURCE_PR = 4394
-CURRENT_SOURCE_HEAD = "fb9adfb84944e276b254ccfdfff784fb6728a7f4"
-CURRENT_SOURCE_BRANCH_CI_RUN = 30635898120
+PREVIOUS_CURRENT_SOURCE_PR = 4394
+PREVIOUS_CURRENT_SOURCE_HEAD = "fb9adfb84944e276b254ccfdfff784fb6728a7f4"
+PREVIOUS_CURRENT_SOURCE_BRANCH_CI_RUN = 30635898120
 CURRENT_OWNER_PREFERENCE = [
     "Antigravity",
     "Claude2",
@@ -217,7 +238,7 @@ CURRENT_TASK_IDS = [
     "L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
     "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
 ]
-CURRENT_EXTERNAL_DEPENDENCY_IDS = {
+BASE_CURRENT_EXTERNAL_DEPENDENCY_IDS = {
     "L12-AGORA-001",
     "L12-ALPHA-001",
     "L12-BFF-001",
@@ -236,6 +257,11 @@ CURRENT_EXTERNAL_DEPENDENCY_IDS = {
     "L12-TRUTH-001",
     "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
 }
+CURRENT_EXTERNAL_DEPENDENCY_IDS = BASE_CURRENT_EXTERNAL_DEPENDENCY_IDS | {
+    "LIFECYCLE-PROJ-BFF-001",
+    "LIFECYCLE-PROJ-RETIRE-001",
+}
+PREVIOUS_CURRENT_EXTERNAL_DEPENDENCY_IDS = BASE_CURRENT_EXTERNAL_DEPENDENCY_IDS
 CURRENT_RUNTIME_GATE_IDS = {
     "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
     "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
@@ -256,7 +282,7 @@ CURRENT_LOOP_IDS = {
     "program-evidence",
 }
 CURRENT_EXPECTED_DISPATCH_CONTRACT = {
-    "bootstrap_task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "bootstrap_task_id": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
     "dispatcher": "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
     "mode": "program-specific-guarded-dispatch",
     "generic_dev_task_packet_for_product_tasks": False,
@@ -265,6 +291,10 @@ CURRENT_EXPECTED_DISPATCH_CONTRACT = {
         "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
     ],
     "materialize_only_after_dispatcher_merge_and_live_promotion": True,
+}
+PREVIOUS_CURRENT_EXPECTED_DISPATCH_CONTRACT = {
+    **CURRENT_EXPECTED_DISPATCH_CONTRACT,
+    "bootstrap_task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
 }
 CURRENT_EXPECTED_COMPLETION_AUTHORITY = {
     "final_task_id": "L12-CLOSE-001",
@@ -286,10 +316,75 @@ CURRENT_EXPECTED_BASELINE = {
     "implemented_controller_contract_count": 3,
     "missing_controller_contract_count": 9,
     "original_archived_done_evidence_count": 18,
+    "current_validator_and_checksum_pass_count": 3,
+    "current_revalidation_required_count": 16,
+    "both_pass_task_ids": ["L12-DIST-001", "L12-BFF-001", "L12-MANIFEST-001"],
+    "loop_defect_categorization": {
+      "missing_runtime_binding_only": [
+        "persona_teaching",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "bff_health_monitoring"
+      ],
+      "truly_missing_end_to_end": [
+        "agora_interaction_evidence",
+        "promotion_deployment"
+      ],
+      "adjacent_component_exists_missing_specific_piece": [
+        "capital_pool_execution",
+        "evolution",
+        "telemetry_reconciliation"
+      ]
+    }
+}
+PREVIOUS_CURRENT_EXPECTED_BASELINE = {
+    "canonical_loop_count": 12,
+    "implemented_controller_contract_count": 3,
+    "missing_controller_contract_count": 9,
+    "original_archived_done_evidence_count": 18,
     "current_validator_and_checksum_pass_count": 2,
     "current_revalidation_required_count": 16,
     "both_pass_task_ids": ["L12-DIST-001", "L12-MANIFEST-001"],
 }
+CURRENT_PROFILE_BY_PROGRAM_ID = {
+    CURRENT_PROGRAM_ID: {
+        "catalog_relative_path": CURRENT_CATALOG_RELATIVE_PATH,
+        "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
+        "catalog_canonical_sha256": CURRENT_CATALOG_CANONICAL_SHA256,
+        "source_pr": CURRENT_SOURCE_PR,
+        "source_head": CURRENT_SOURCE_HEAD,
+        "source_branch_ci_run": CURRENT_SOURCE_BRANCH_CI_RUN,
+        "source_audits": {
+            "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md"
+        },
+        "expected_baseline": CURRENT_EXPECTED_BASELINE,
+        "expected_dispatch_contract": CURRENT_EXPECTED_DISPATCH_CONTRACT,
+        "external_dependency_ids": CURRENT_EXTERNAL_DEPENDENCY_IDS,
+    },
+    PREVIOUS_CURRENT_PROGRAM_ID: {
+        "catalog_relative_path": PREVIOUS_CURRENT_CATALOG_RELATIVE_PATH,
+        "catalog_file_sha256": PREVIOUS_CURRENT_CATALOG_FILE_SHA256,
+        "catalog_canonical_sha256": PREVIOUS_CURRENT_CATALOG_CANONICAL_SHA256,
+        "source_pr": PREVIOUS_CURRENT_SOURCE_PR,
+        "source_head": PREVIOUS_CURRENT_SOURCE_HEAD,
+        "source_branch_ci_run": PREVIOUS_CURRENT_SOURCE_BRANCH_CI_RUN,
+        "source_audits": {
+            "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/"
+            "CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md"
+        },
+        "expected_baseline": PREVIOUS_CURRENT_EXPECTED_BASELINE,
+        "expected_dispatch_contract": PREVIOUS_CURRENT_EXPECTED_DISPATCH_CONTRACT,
+        "external_dependency_ids": PREVIOUS_CURRENT_EXTERNAL_DEPENDENCY_IDS,
+    },
+}
+
+
+def _current_profile(catalog: dict[str, Any]) -> dict[str, Any] | None:
+    return CURRENT_PROFILE_BY_PROGRAM_ID.get(str(catalog.get("program_id") or ""))
+
+
+def _is_current_catalog(catalog: dict[str, Any]) -> bool:
+    return _current_profile(catalog) is not None
 CANONICAL_LOOP_IDS = {
     "source_ingestion",
     "strategy_distillation",
@@ -477,17 +572,52 @@ def resolve_task_state_authority(
     }
 
 
-def load_authoritative_task_state(authority: dict[str, Any]) -> dict[str, Any]:
+def load_authoritative_task_snapshot(
+    authority: dict[str, Any],
+    *,
+    refresh_checkpoint: bool = True,
+) -> dict[str, Any]:
+    """Return one validated authoritative journal generation.
+
+    ``load_snapshot`` verifies the complete journal prefix digest while reusing
+    the checkpoint's already-validated head and parsing only an appended tail.
+    Keeping the snapshot intact also binds the projected state, event identity,
+    and scale telemetry to the same shared-lock window.
+    """
+
     try:
-        events = load_events(Path(authority["event_log"]))
-        state = project_latest_state(events)
+        snapshot = load_snapshot(
+            Path(authority["event_log"]),
+            refresh_checkpoint=refresh_checkpoint,
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         raise DispatchError(
             f"cannot project authoritative task-state journal: {type(exc).__name__}: {exc}"
         ) from exc
+    state = snapshot.get("state")
     if not isinstance(state, dict) or not isinstance(state.get("tasks"), list):
         raise DispatchError("authoritative task-state projection must contain a task list")
-    return state
+    return snapshot
+
+
+def load_authoritative_task_state(authority: dict[str, Any]) -> dict[str, Any]:
+    """Compatibility projection backed by one authoritative snapshot read."""
+
+    return load_authoritative_task_snapshot(authority)["state"]
+
+
+def authoritative_snapshot_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Expose non-payload snapshot facts for dry-run and admission evidence."""
+
+    return {
+        "event_count": int(snapshot["event_count"]),
+        "byte_size": int(snapshot["byte_size"]),
+        "last_event_id": snapshot["last_event_id"],
+        "last_event_sha256": snapshot["last_event_sha256"],
+        "state_sha256": snapshot["state_sha256"],
+        "checkpoint_used": snapshot["resumed_from_checkpoint"] is True,
+        "revalidated_tail_events": int(snapshot["revalidated_events"]),
+    }
 
 
 def _dirty_command_runtime_files(root: Path) -> list[str]:
@@ -647,13 +777,9 @@ def _validate_legacy_catalog(
         raise DispatchError("catalog external_dependencies is not the exact live overlap contract")
     if catalog.get("completion_authority") != EXPECTED_COMPLETION_AUTHORITY:
         raise DispatchError("catalog completion_authority is not the exact protected contract")
-    external_ids = (
-        set(CURRENT_EXTERNAL_DEPENDENCY_IDS)
-        if catalog.get("program_id") == CURRENT_PROGRAM_ID
-        else {
-            dependency["id"] for dependency in EXPECTED_EXTERNAL_DEPENDENCIES
-        }
-    )
+    external_ids = {
+        dependency["id"] for dependency in EXPECTED_EXTERNAL_DEPENDENCIES
+    }
 
     tasks = catalog.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -827,7 +953,11 @@ def _validate_legacy_catalog(
 
 
 def _validate_current_catalog(catalog: dict[str, Any]) -> list[dict[str, Any]]:
-    """Validate the exact 2026-07-31 remediation graph without normalizing it."""
+    """Validate a reviewed current-proof graph without normalizing it."""
+
+    profile = _current_profile(catalog)
+    if profile is None:
+        raise DispatchError("current catalog program_id is not exact")
 
     if set(catalog) != CURRENT_REQUIRED_CATALOG_FIELDS:
         missing = sorted(CURRENT_REQUIRED_CATALOG_FIELDS - set(catalog))
@@ -837,17 +967,12 @@ def _validate_current_catalog(catalog: dict[str, Any]) -> list[dict[str, Any]]:
         )
     if catalog.get("schema_version") != 1:
         raise DispatchError("current catalog schema_version must be 1")
-    if catalog.get("program_id") != CURRENT_PROGRAM_ID:
-        raise DispatchError("current catalog program_id is not exact")
     _nonempty_string(catalog.get("generated_at"), label="generated_at")
-    if catalog.get("source_audit") != (
-        "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/"
-        "CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md"
-    ):
+    if catalog.get("source_audit") not in profile["source_audits"]:
         raise DispatchError("current catalog source_audit is not exact")
-    if catalog.get("verified_baseline") != CURRENT_EXPECTED_BASELINE:
+    if catalog.get("verified_baseline") != profile["expected_baseline"]:
         raise DispatchError("current catalog verified_baseline is not exact")
-    if catalog.get("dispatch_contract") != CURRENT_EXPECTED_DISPATCH_CONTRACT:
+    if catalog.get("dispatch_contract") != profile["expected_dispatch_contract"]:
         raise DispatchError("current catalog dispatch_contract is not exact")
     if catalog.get("completion_authority") != CURRENT_EXPECTED_COMPLETION_AUTHORITY:
         raise DispatchError("current catalog completion_authority is not exact")
@@ -964,9 +1089,9 @@ def _validate_current_catalog(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                     )
                 continue
             observed_external_ids.add(dependency)
-            if dependency not in CURRENT_EXTERNAL_DEPENDENCY_IDS:
+            if dependency not in profile["external_dependency_ids"]:
                 raise DispatchError(f"{task_id} depends on unknown task {dependency}")
-    if observed_external_ids != CURRENT_EXTERNAL_DEPENDENCY_IDS:
+    if observed_external_ids != profile["external_dependency_ids"]:
         raise DispatchError("current catalog external dependency IDs are not exact")
 
     memo: dict[str, set[str]] = {}
@@ -1028,7 +1153,7 @@ def validate_catalog(
     program_id = str(catalog.get("program_id") or "").strip()
     if program_id == PROGRAM_ID:
         return _validate_legacy_catalog(catalog, repo_root=repo_root)
-    if program_id == CURRENT_PROGRAM_ID:
+    if program_id in CURRENT_PROFILE_BY_PROGRAM_ID:
         return _validate_current_catalog(catalog)
     raise DispatchError(f"unsupported twelve-loop catalog program_id: {program_id!r}")
 
@@ -1039,7 +1164,7 @@ def task_contract(
     catalog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     is_current = (
-        (catalog or {}).get("program_id") == CURRENT_PROGRAM_ID
+        _is_current_catalog(catalog or {})
         or "owner_preference" in task
     )
     fields = CURRENT_REQUIRED_TASK_FIELDS if is_current else REQUIRED_TASK_FIELDS
@@ -1450,12 +1575,15 @@ def _current_materialized_row_is_exact(
     catalog: dict[str, Any],
     task: dict[str, Any],
 ) -> None:
+    profile = _current_profile(catalog)
+    if profile is None:
+        raise DispatchError("current task catalog profile is missing")
     task_id = str(task["id"])
     expected_contract = task_contract(task, catalog=catalog)
     actual_contract = {key: row.get(key) for key in expected_contract}
     if actual_contract != expected_contract:
         raise DispatchError(f"current task contract conflicts with catalog: {task_id}")
-    if row.get("program_id") != CURRENT_PROGRAM_ID:
+    if row.get("program_id") != catalog["program_id"]:
         raise DispatchError(f"current task program identity conflicts: {task_id}")
     if row.get("auto_created_by") != AUTO_CREATED_BY:
         raise DispatchError(f"current task creator identity conflicts: {task_id}")
@@ -1465,10 +1593,10 @@ def _current_materialized_row_is_exact(
         raise DispatchError(f"current task contract digest conflicts: {task_id}")
     source = row.get("catalog_source")
     if not isinstance(source, dict) or source != {
-        "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
-        "source_pr": CURRENT_SOURCE_PR,
-        "source_head": CURRENT_SOURCE_HEAD,
-        "source_branch_ci_run": CURRENT_SOURCE_BRANCH_CI_RUN,
+        "catalog_file_sha256": profile["catalog_file_sha256"],
+        "source_pr": profile["source_pr"],
+        "source_head": profile["source_head"],
+        "source_branch_ci_run": profile["source_branch_ci_run"],
     }:
         raise DispatchError(f"current task source binding conflicts: {task_id}")
     catalog_defaults = row.get("catalog_assignment_defaults")
@@ -1574,11 +1702,15 @@ def _current_task_materialization_truth(
 
 def _current_live_overlap_guard(
     *,
+    catalog: dict[str, Any],
     tasks: list[dict[str, Any]],
     active_by_id: dict[str, dict[str, Any]],
 ) -> None:
+    profile = _current_profile(catalog)
+    if profile is None:
+        raise DispatchError("current live-overlap catalog profile is missing")
     catalog_ids = {str(task["id"]) for task in tasks}
-    external_ids = CURRENT_EXTERNAL_DEPENDENCY_IDS | CURRENT_RUNTIME_GATE_IDS
+    external_ids = profile["external_dependency_ids"] | CURRENT_RUNTIME_GATE_IDS
     for task in tasks:
         catalog_scope = task_artifact_scope(task)
         for active_id, active in active_by_id.items():
@@ -1835,6 +1967,9 @@ def _plan_current_materialization(
     state: dict[str, Any],
     readiness: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    profile = _current_profile(catalog)
+    if profile is None:
+        raise DispatchError("current materialization catalog profile is missing")
     active_tasks = state.get("tasks")
     if not isinstance(active_tasks, list):
         raise DispatchError("authoritative task-state tasks must be a list")
@@ -1849,7 +1984,7 @@ def _plan_current_materialization(
             raise DispatchError(f"duplicate active task ID: {task_id}")
         active_by_id[task_id] = item
 
-    dependency_ids = CURRENT_EXTERNAL_DEPENDENCY_IDS | CURRENT_RUNTIME_GATE_IDS
+    dependency_ids = profile["external_dependency_ids"] | CURRENT_RUNTIME_GATE_IDS
     dependency_truth = {
         task_id: _terminal_dependency_truth(
             task_id,
@@ -1858,7 +1993,11 @@ def _plan_current_materialization(
         )
         for task_id in sorted(dependency_ids)
     }
-    _current_live_overlap_guard(tasks=tasks, active_by_id=active_by_id)
+    _current_live_overlap_guard(
+        catalog=catalog,
+        tasks=tasks,
+        active_by_id=active_by_id,
+    )
     materialized = _current_task_materialization_truth(
         catalog=catalog,
         tasks=tasks,
@@ -1919,11 +2058,11 @@ def _plan_current_materialization(
     return {
         "program_id": catalog["program_id"],
         "catalog_sha256": canonical_json_sha256(catalog),
-        "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
+        "catalog_file_sha256": profile["catalog_file_sha256"],
         "source_specification": {
-            "pull_request": CURRENT_SOURCE_PR,
-            "head_sha": CURRENT_SOURCE_HEAD,
-            "branch_ci_run": CURRENT_SOURCE_BRANCH_CI_RUN,
+            "pull_request": profile["source_pr"],
+            "head_sha": profile["source_head"],
+            "branch_ci_run": profile["source_branch_ci_run"],
             "branch_ci_conclusion": "success",
         },
         "status_root": str(status_root),
@@ -1945,7 +2084,7 @@ def plan_materialization(
     state: dict[str, Any],
     readiness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if catalog.get("program_id") == CURRENT_PROGRAM_ID:
+    if _is_current_catalog(catalog):
         return _plan_current_materialization(
             catalog,
             tasks,
@@ -1988,11 +2127,9 @@ def artifact_conflict_guard(
         ):
             allowed.add(other["id"])
     external_ids = (
-        set(CURRENT_EXTERNAL_DEPENDENCY_IDS)
-        if catalog.get("program_id") == CURRENT_PROGRAM_ID
-        else {
-            dependency["id"] for dependency in EXPECTED_EXTERNAL_DEPENDENCIES
-        }
+        set(_current_profile(catalog)["external_dependency_ids"])
+        if _is_current_catalog(catalog)
+        else {dependency["id"] for dependency in EXPECTED_EXTERNAL_DEPENDENCIES}
     )
     allowed.update(external_ids & set(task["depends_on"]))
     return {
@@ -2034,14 +2171,15 @@ def assignment_environment(
             "mutates_canonical": True,
         }
     )
-    if catalog.get("program_id") == CURRENT_PROGRAM_ID:
+    profile = _current_profile(catalog)
+    if profile is not None:
         metadata.update(
             {
                 "catalog_source": {
-                    "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
-                    "source_pr": CURRENT_SOURCE_PR,
-                    "source_head": CURRENT_SOURCE_HEAD,
-                    "source_branch_ci_run": CURRENT_SOURCE_BRANCH_CI_RUN,
+                    "catalog_file_sha256": profile["catalog_file_sha256"],
+                    "source_pr": profile["source_pr"],
+                    "source_head": profile["source_head"],
+                    "source_branch_ci_run": profile["source_branch_ci_run"],
                 },
                 "catalog_assignment_defaults": {
                     "owner": next(
@@ -2121,7 +2259,8 @@ def verify_current_canonical_readback(
     admitted_task_ids: list[str],
     readiness: dict[str, Any],
 ) -> dict[str, Any]:
-    authoritative = load_authoritative_task_state(authority)
+    authoritative_snapshot = load_authoritative_task_snapshot(authority)
+    authoritative = authoritative_snapshot["state"]
     projection = load_json_object(status_root / "ai-status.json")
     if canonical_json_sha256(authoritative) != canonical_json_sha256(projection):
         raise DispatchError("canonical ai-status/task-state readback mismatch")
@@ -2169,18 +2308,22 @@ def verify_current_canonical_readback(
         "state_sha256": canonical_json_sha256(authoritative),
         "projection_sha256": canonical_json_sha256(projection),
         "exact": admitted_task_ids,
+        "task_state_snapshot": authoritative_snapshot_evidence(
+            authoritative_snapshot
+        ),
     }
 
 
 def _admission_archive_path(
     status_root: Path,
     *,
+    program_id: str,
     catalog_sha256: str,
     admitted_task_ids: list[str],
 ) -> Path:
     admission_id = canonical_json_sha256(
         {
-            "program_id": CURRENT_PROGRAM_ID,
+            "program_id": program_id,
             "catalog_sha256": catalog_sha256,
             "admitted_task_ids": admitted_task_ids,
         }
@@ -2189,7 +2332,7 @@ def _admission_archive_path(
         status_root
         / ".orchestrator"
         / "program-dispatch-admissions"
-        / CURRENT_PROGRAM_ID
+        / program_id
         / f"{admission_id}.json"
     )
 
@@ -2258,9 +2401,9 @@ def _validate_current_admission_archive(
     expected = {
         "schema_version": 1,
         "admission_id": path.stem,
-        "program_id": CURRENT_PROGRAM_ID,
+        "program_id": plan["program_id"],
         "catalog_sha256": plan["catalog_sha256"],
-        "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
+        "catalog_file_sha256": plan["catalog_file_sha256"],
         "source_specification": plan["source_specification"],
         "command_runtime": {
             "source_sha": command_runtime["source_sha"],
@@ -2313,6 +2456,7 @@ def prepare_current_admission_archive(
 
     path = _admission_archive_path(
         status_root,
+        program_id=str(plan["program_id"]),
         catalog_sha256=plan["catalog_sha256"],
         admitted_task_ids=admitted_task_ids,
     )
@@ -2325,9 +2469,9 @@ def prepare_current_admission_archive(
     payload: dict[str, Any] = {
         "schema_version": 1,
         "admission_id": path.stem,
-        "program_id": CURRENT_PROGRAM_ID,
+        "program_id": plan["program_id"],
         "catalog_sha256": plan["catalog_sha256"],
-        "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
+        "catalog_file_sha256": plan["catalog_file_sha256"],
         "source_specification": plan["source_specification"],
         "prepared_by": actor,
         "finalized_by": None,
@@ -2428,6 +2572,9 @@ def apply_current_materialization_atomic(
             "--apply requires the real governed caller identity; "
             f"AI_NAME={actor!r} is not allowed"
         )
+    profile = _current_profile(catalog)
+    if profile is None:
+        raise DispatchError("--apply catalog profile is not current-proof")
     command_root = Path(command_runtime["root"])
     base_env = {
         "PANTHEON_STATUS_ROOT": str(status_root),
@@ -2537,14 +2684,14 @@ def apply_current_materialization_atomic(
                                     "ts": ai_status.iso_now(),
                                     "agent": actor,
                                     "type": "program_catalog_materialized",
-                                    "task_id": CURRENT_EXPECTED_DISPATCH_CONTRACT[
+                                    "task_id": profile["expected_dispatch_contract"][
                                         "bootstrap_task_id"
                                     ],
                                     "message": (
                                         "Atomically admitted current-proof remediation "
                                         f"frontier ({len(final_plan['create'])} tasks)."
                                     ),
-                                    "program_id": CURRENT_PROGRAM_ID,
+                                    "program_id": catalog["program_id"],
                                     "catalog_sha256": final_plan["catalog_sha256"],
                                     "admitted_task_ids": final_plan["create"],
                                     "admission_id": prepared_archive_path.stem,
@@ -2679,7 +2826,8 @@ def validate_catalog_file_binding(
     catalog_path: Path,
     catalog: dict[str, Any],
 ) -> None:
-    if catalog.get("program_id") != CURRENT_PROGRAM_ID:
+    profile = _current_profile(catalog)
+    if profile is None:
         return
     try:
         file_sha256 = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
@@ -2687,9 +2835,12 @@ def validate_catalog_file_binding(
         raise DispatchError(
             f"cannot hash current catalog source: {type(exc).__name__}"
         ) from exc
-    if file_sha256 != CURRENT_CATALOG_FILE_SHA256:
-        raise DispatchError("current catalog file bytes do not match PR #4394 exact head")
-    if canonical_json_sha256(catalog) != CURRENT_CATALOG_CANONICAL_SHA256:
+    if file_sha256 != profile["catalog_file_sha256"]:
+        raise DispatchError(
+            "current catalog file bytes do not match "
+            f"PR #{profile['source_pr']} exact head"
+        )
+    if canonical_json_sha256(catalog) != profile["catalog_canonical_sha256"]:
         raise DispatchError("current catalog canonical digest is not exact")
 
 
@@ -2702,7 +2853,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--current",
         action="store_true",
-        help="Use the reviewed 2026-07-31 current-proof remediation profile.",
+        help="Use the reviewed 2026-08-03 corrected remediation profile.",
+    )
+    parser.add_argument(
+        "--previous-current",
+        action="store_true",
+        help="Retain the reviewed 2026-07-31 current-proof remediation profile.",
     )
     parser.add_argument("--catalog", default=None)
     parser.add_argument(
@@ -2723,16 +2879,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider-capabilities", default=None)
     args = parser.parse_args(argv)
 
-    if args.current and args.catalog:
-        parser.error("--current and --catalog are mutually exclusive")
+    if sum(bool(value) for value in (args.current, args.previous_current, args.catalog)) > 1:
+        parser.error("--current, --previous-current, and --catalog are mutually exclusive")
     catalog_path = Path(
         args.catalog
-        or (DEFAULT_CURRENT_CATALOG_PATH if args.current else DEFAULT_CATALOG_PATH)
+        or (
+            DEFAULT_CURRENT_CATALOG_PATH
+            if args.current
+            else (
+                DEFAULT_PREVIOUS_CURRENT_CATALOG_PATH
+                if args.previous_current
+                else DEFAULT_CATALOG_PATH
+            )
+        )
     ).resolve()
     catalog = load_json_object(catalog_path)
     tasks = validate_catalog(catalog)
     validate_catalog_file_binding(catalog_path, catalog)
-    is_current = catalog.get("program_id") == CURRENT_PROGRAM_ID
+    profile = _current_profile(catalog)
+    is_current = profile is not None
     proof_ownership_path: Path | None = None
     delegations: list[dict[str, Any]] = []
     proof_ownership_sha256: str | None = None
@@ -2757,10 +2922,10 @@ def main(argv: list[str] | None = None) -> int:
         if is_current:
             output.update(
                 {
-                    "catalog_file_sha256": CURRENT_CATALOG_FILE_SHA256,
-                    "source_pr": CURRENT_SOURCE_PR,
-                    "source_head": CURRENT_SOURCE_HEAD,
-                    "source_branch_ci_run": CURRENT_SOURCE_BRANCH_CI_RUN,
+                    "catalog_file_sha256": profile["catalog_file_sha256"],
+                    "source_pr": profile["source_pr"],
+                    "source_head": profile["source_head"],
+                    "source_branch_ci_run": profile["source_branch_ci_run"],
                     "source_branch_ci_conclusion": "success",
                     "maximum_parallel_frontier_G1": 25,
                 }
@@ -2782,7 +2947,11 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.live_config),
         status_root=status_root,
     )
-    state = load_authoritative_task_state(authority)
+    task_state_snapshot = load_authoritative_task_snapshot(
+        authority,
+        refresh_checkpoint=not args.dry_run,
+    )
+    state = task_state_snapshot["state"]
     command_root = Path(args.command_root).resolve()
     readiness_config_path = Path(
         args.readiness_config or command_root / ".orchestrator" / "config.json"
@@ -2820,6 +2989,7 @@ def main(argv: list[str] | None = None) -> int:
         output["task_state_store"] = {
             "mode": authority["mode"],
             "event_log": str(authority["event_log"]),
+            "snapshot": authoritative_snapshot_evidence(task_state_snapshot),
         }
         output["status"] = "dry_run"
         print(json.dumps(output, indent=2, sort_keys=True))
@@ -2837,8 +3007,8 @@ def main(argv: list[str] | None = None) -> int:
     installed_catalog = (
         Path(command_runtime["root"])
         / (
-            CURRENT_CATALOG_RELATIVE_PATH
-            if is_current
+            profile["catalog_relative_path"]
+            if profile is not None
             else "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json"
         )
     ).resolve()

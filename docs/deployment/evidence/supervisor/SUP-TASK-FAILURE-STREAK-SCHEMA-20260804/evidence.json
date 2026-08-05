@@ -1,0 +1,71 @@
+{
+  "schema_version": "supervisor_task_failure_streak_schema_review.v1",
+  "task": {
+    "id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+    "title": "Add a failure_streak counter and quarantined status to the task schema",
+    "phase": "Supervisor Dispatch Reliability",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+  },
+  "scope": {
+    "owned_layer": "Task-row failure-streak projection, threshold quarantine, governed lifecycle resets, completion cleanup of per-provider runtime evidence, and queue/worker retry holds that survive the normal poll loop while a task is quarantined.",
+    "not_changing": "Provider classification, retry budgets, dispatch priority, review authority, or live runtime configuration.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ]
+  },
+  "review_remediation": {
+    "rejected_head": "9b44725423ccab64a1ae2a051405279344e718f6",
+    "reviewer": "Codex2",
+    "required_change": "A queue-backed retry held by task quarantine must survive the normal poll/assignment loop: it must not be superseded or complete its queue record merely because quarantined tasks are not normally assigned. The held parent must not be stale-failure reclassified, and governed reopen must release it for exactly one launch. Preserve the existing rotation/retry fence and exact-head Contents API GET regression.",
+    "evidence_requirement": "This manifest is committed in PR #4533 before independent re-review and must be bound with REVIEW_FILE during exact-head approval."
+  },
+  "acceptance": {
+    "failure_projection": "Repeated distinct worker failures increment the task-row failure_streak.",
+    "quarantine": "The configured failure-loop threshold changes the task status to quarantined and normal dispatch ignores it until governed reopen.",
+    "success_reset": "Worker completion resets the task-row failure_streak and clears detailed records for every provider on that task.",
+    "cross_provider_reset": "A later failure from a provider that had a pre-completion record starts at one and leaves the task in_progress.",
+    "retry_quarantine": "A threshold-crossing rotation transitions the worker retry to retry_quarantined without scheduling it; due queue and worker retries are held while the task row is quarantined and do not launch a worker. A queue-backed held worker remains durable through the normal poll/assignment loop instead of being superseded.",
+    "reopen_release": "The governed reopen command resets failure_streak to zero, after which one held queue-backed worker retry becomes eligible and launches exactly once."
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests'",
+        "result": "10 passed, 585 deselected"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests'",
+        "result": "39 passed, 132 deselected"
+      },
+      {
+        "command": "cd scripts && ../.venv-pantheon/bin/python3 -c 'import ai_status; print(ai_status.review_evidence_file_committed(repository=\"ajoe734/pantheon\", head_sha=\"b5509721342745174d25ce10134be342b80c50c1\", review_file=\"docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json\"))'",
+        "result": "True; GitHub Contents API verified the committed manifest at rejected PR #4533 head b5509721342745174d25ce10134be342b80c50c1 using the explicit GET query."
+      },
+      {
+        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py && git diff --check",
+        "result": "passed"
+      }
+    ]
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "required_reviewer": "Codex2",
+    "approval_protocol": "Review this committed manifest and the exact PR head, then approve with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json.",
+    "prior_review": "The canonical review bridge first rejected completion reset coverage and then the manifest lookup; the existing exact-head manifest regression now passes. Codex2 rejected 0d9b4ce633233bc2c426b58986deadd9c24af60d because quarantine still allowed rotation and due retry_backoff paths to dispatch, then rejected 9b44725423ccab64a1ae2a051405279344e718f6 because poll_workers superseded a queue-backed held retry before reopen. This manifest is the reviewed artifact for the complete retry-hold remediation."
+  },
+  "delivery": {
+    "pull_request": 4533,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4533",
+    "merge_policy": "review_before_merge",
+    "candidate_head": "to be supplied by the exact-head independent review"
+  }
+}

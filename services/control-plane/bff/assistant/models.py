@@ -170,6 +170,7 @@ class OrchestratorTaskStatus(AssistantBaseModel):
     acceptance: List[str] = Field(default_factory=list)
     summary_zh: Optional[str] = Field(default=None, alias="summaryZh")
     waiting_for: Optional[str] = Field(default=None, alias="waitingFor")
+    failure_streak: int = Field(default=0, alias="failureStreak")
     brief_path: Optional[str] = Field(default=None, alias="briefPath")
     blockers: List[Dict[str, Any]] = Field(default_factory=list)
     github: Optional[Dict[str, Any]] = None
