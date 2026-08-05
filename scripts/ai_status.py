@@ -3002,6 +3002,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
+        commit_timestamp = ""
         if trailer_skip_reason is None:
             for field_name in required_fields:
                 actual_value = metadata_fields.get(field_name)
@@ -3010,20 +3011,36 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                     continue
                 expected_value = expected_fields.get(field_name)
                 if expected_value and actual_value != expected_value:
-                    if field_name == "LLM-Agent":
+                    # The supervisor reassigns owner and reviewer as a pair when
+                    # a lane goes unavailable, so a merged delivery can carry
+                    # stale `LLM-Agent` and `Reviewer` trailers at once. Both are
+                    # verified against the audited reassignment chain instead of
+                    # failing closed and requiring a Human/Ops sign-off.
+                    if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
                         commit_timestamp = run_git_command(
                             ["show", "-s", "--format=%cI", "HEAD"],
                             cwd=repository_root,
                             failure_message=(
                                 "Cannot finalize task: delivered commit timestamp is "
-                                "unavailable for owner reassignment verification."
+                                "unavailable for reassignment verification."
                             ),
                         )
+                    if field_name == "LLM-Agent":
                         delivery["commit_owner_reassignment"] = (
                             _verified_done_owner_reassignment(
                                 task,
                                 commit_owner=actual_value,
                                 current_owner=actor,
+                                commit_timestamp=commit_timestamp,
+                            )
+                        )
+                        continue
+                    if field_name == "Reviewer":
+                        delivery["commit_reviewer_reassignment"] = (
+                            _verified_done_reviewer_reassignment(
+                                task,
+                                commit_reviewer=actual_value,
+                                current_reviewer=expected_value,
                                 commit_timestamp=commit_timestamp,
                             )
                         )
@@ -6180,8 +6197,12 @@ def _merged_commit(
     return commit, target_sha
 
 
-def _activity_events_across_sources(log_path: Path) -> Generator[dict[str, Any], None, None]:
-    """Yield activity-log event dicts across live + archived sources, newest first.
+def _activity_events_across_sources(
+    log_path: Path,
+    *,
+    source: str,
+) -> Generator[dict[str, Any], None, None]:
+    """Yield activity-log event dicts across live + archived sources, oldest first.
 
     Rotation moves the oldest lines out of the live tail into an immutable
     gzip archive once the log exceeds LOG_ROTATE_MAX_BYTES -- under normal
@@ -6191,29 +6212,173 @@ def _activity_events_across_sources(log_path: Path) -> Generator[dict[str, Any],
     must not assume that event is still in the live tail: it has to walk the
     same disjoint, ordered live+archive source list
     activity_audit_source_paths_unlocked already validates, not just LOG_FILE.
+
+    Malformed lines are not tolerated here, matching how every other reader of
+    these canonical sources behaves: a source that will not parse strictly is
+    an audit-integrity problem, and silently skipping it would let a tampered
+    line drop a reassignment hop out of the chain.
     """
 
-    sources = list(reversed(activity_audit_source_paths_unlocked(log_path)))
-    for source in sources:
-        if source.suffix == ".gz":
-            with gzip.open(source, "rb") as handle:
+    for audit_source in activity_audit_source_paths_unlocked(log_path):
+        if audit_source.suffix == ".gz":
+            with gzip.open(audit_source, "rb") as handle:
                 payload = handle.read()
         else:
-            payload = read_regular_file_bytes(source, source="activity audit source")
-        entries: list[dict[str, Any]] = []
+            payload = read_regular_file_bytes(audit_source, source=source)
         for raw_line in payload.splitlines():
             if not raw_line.strip():
                 continue
-            try:
-                entry = strict_activity_json_loads(raw_line)
-            except (UnicodeError, json.JSONDecodeError, DuplicateActivityJSONKeyError):
+            event = strict_activity_json_loads(raw_line)
+            if not isinstance(event, dict):
                 continue
-            if not isinstance(entry, dict):
+            if str(event.get("record_type") or "") == "pantheon.activity.lineage_head.v1":
+                # Rotation lineage control row, not an activity event.
                 continue
-            if str(entry.get("record_type") or "") == "pantheon.activity.lineage_head.v1":
+            yield event
+
+
+def _audited_reassignment_events(
+    task_id: str,
+    *,
+    source: str,
+    unavailable_message: str,
+) -> list[tuple[datetime, dict[str, Any]]]:
+    """Return supervisor-audited `task_reassigned` events for a task, oldest first.
+
+    Only the events the supervisor itself wrote through
+    `persist_task_reassignment` qualify: they carry the `Orchestrator` actor and
+    an `event_id` that is a digest over their own payload, so a hand-appended
+    activity line cannot manufacture a reassignment hop. The narrative
+    `task_reassigned` lines `write_activity_log` emits alongside them use
+    `from_owner`/`to_owner` keys and carry no identity digest; they are skipped
+    on purpose.
+
+    The search spans the live tail *and* the rotated archives. Reading only
+    LOG_FILE made a legitimate, audited reassignment vanish the moment routine
+    rotation moved it out of the tail, which permanently stranded the task at
+    `done`.
+    """
+
+    try:
+        events = list(_activity_events_across_sources(LOG_FILE, source=source))
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise SystemExit(unavailable_message) from exc
+
+    audited: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        if (
+            event.get("type") != "task_reassigned"
+            or str(event.get("task_id") or "").strip() != task_id
+            or event.get("agent") != "Orchestrator"
+            or not event.get("old_owner")
+            or not event.get("new_owner")
+            or str(event.get("event_id") or "")
+            != _supervisor_reassignment_event_id(event)
+        ):
+            continue
+        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        if event_timestamp is None:
+            continue
+        audited.append((event_timestamp, event))
+    audited.sort(key=lambda item: item[0])
+    return audited
+
+
+def _walk_audited_role_chain(
+    audited: list[tuple[datetime, dict[str, Any]]],
+    *,
+    role: str,
+    start: str,
+    end: str,
+    failure_message: str,
+) -> list[tuple[datetime, dict[str, Any]]]:
+    """Return the audited hops that carry `role` from `start` to `end`.
+
+    Reassignment is routine and repeatable -- a provider runs out of quota and
+    the supervisor hands the lane to a fallback -- so a role can legitimately
+    move several times before closeout. The walk therefore accepts a chain of
+    any length. What it will not accept is a gap: once the chain is anchored at
+    `start`, every later audited hop for this role must continue it. An audited
+    hop that starts somewhere else means the audit no longer explains the
+    canonical row, and the caller must fail closed rather than guess.
+    """
+
+    old_key = f"old_{role}"
+    new_key = f"new_{role}"
+    changes = [
+        item
+        for item in audited
+        if canonical_agent_name(item[1].get(old_key))
+        != canonical_agent_name(item[1].get(new_key))
+    ]
+
+    chain: list[tuple[datetime, dict[str, Any]]] = []
+    cursor = ""
+    for index, (event_timestamp, event) in enumerate(changes):
+        old_value = canonical_agent_name(event.get(old_key))
+        new_value = canonical_agent_name(event.get(new_key))
+        if not chain:
+            if old_value != start:
+                # Audited history that predates the identity we start from.
                 continue
-            entries.append(entry)
-        yield from reversed(entries)
+        elif old_value != cursor:
+            raise SystemExit(failure_message)
+        if any(
+            other_index != index and other_timestamp == event_timestamp
+            for other_index, (other_timestamp, _) in enumerate(changes)
+        ):
+            raise SystemExit(
+                f"Cannot verify {role} reassignment: audited {role} reassignment "
+                "ordering is ambiguous."
+            )
+        chain.append((event_timestamp, event))
+        cursor = new_value
+
+    if not chain or cursor != end:
+        raise SystemExit(failure_message)
+    return chain
+
+
+def _verified_reassignment_chain(
+    task: dict[str, Any],
+    *,
+    role: str,  # "owner" or "reviewer"
+    evidence_agent: str,
+    current_agent: str,
+) -> dict[str, Any]:
+    """Prove an audited chain of reassignments carries `role` from the merged
+    evidence identity to the canonical one."""
+
+    task_id = str(task.get("id") or "").strip()
+    failure_message = (
+        f"Cannot reconcile task: merged evidence does not bind the canonical {role} metadata "
+        "and no exact task_reassigned audit event chain explains the drift."
+    )
+    audited = _audited_reassignment_events(
+        task_id,
+        source=f"canonical {role} reassignment evidence",
+        unavailable_message=(
+            f"Cannot reconcile task: canonical {role} differs from merged evidence and "
+            "the activity audit is unavailable."
+        ),
+    )
+    chain = _walk_audited_role_chain(
+        audited,
+        role=role,
+        start=canonical_agent_name(evidence_agent),
+        end=canonical_agent_name(current_agent),
+        failure_message=failure_message,
+    )
+
+    last_event = chain[-1][1]
+    return {
+        "event_id": str(last_event.get("event_id") or "").strip() or None,
+        "ts": str(last_event.get("ts") or "").strip(),
+        f"old_{role}": canonical_agent_name(evidence_agent),
+        f"new_{role}": canonical_agent_name(current_agent),
+        "hops": len(chain),
+        "message": str(last_event.get("message") or "").strip(),
+    }
 
 
 def _verified_reviewer_reassignment(
@@ -6222,39 +6387,27 @@ def _verified_reviewer_reassignment(
     evidence_reviewer: str,
     current_reviewer: str,
 ) -> dict[str, Any]:
-    """Return the exact canonical reassignment that explains reviewer drift."""
+    """Return the exact canonical reassignment chain that explains reviewer drift."""
+    return _verified_reassignment_chain(
+        task,
+        role="reviewer",
+        evidence_agent=evidence_reviewer,
+        current_agent=current_reviewer,
+    )
 
-    task_id = str(task.get("id") or "").strip()
-    owner = canonical_agent_name(task.get("owner"))
-    task_last_update = str(task.get("last_update") or "").strip()
-    task_next = str(task.get("next") or "").strip()
-    try:
-        for event in _activity_events_across_sources(LOG_FILE):
-            if (
-                event.get("type") == "task_reassigned"
-                and str(event.get("task_id") or "").strip() == task_id
-                and canonical_agent_name(event.get("old_owner")) == owner
-                and canonical_agent_name(event.get("new_owner")) == owner
-                and canonical_agent_name(event.get("old_reviewer")) == evidence_reviewer
-                and canonical_agent_name(event.get("new_reviewer")) == current_reviewer
-                and str(event.get("ts") or "").strip() == task_last_update
-                and str(event.get("message") or "").strip() == task_next
-            ):
-                return {
-                    "event_id": str(event.get("event_id") or "").strip() or None,
-                    "ts": task_last_update,
-                    "old_reviewer": evidence_reviewer,
-                    "new_reviewer": current_reviewer,
-                    "message": task_next,
-                }
-    except (FileNotFoundError, RuntimeError) as exc:
-        raise SystemExit(
-            "Cannot reconcile task: canonical reviewer differs from merged evidence and "
-            "the activity audit is unavailable."
-        ) from exc
-    raise SystemExit(
-        "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
-        "and no exact task_reassigned audit event explains the drift."
+
+def _verified_owner_reassignment(
+    task: dict[str, Any],
+    *,
+    evidence_owner: str,
+    current_owner: str,
+) -> dict[str, Any]:
+    """Return the exact canonical reassignment chain that explains owner drift."""
+    return _verified_reassignment_chain(
+        task,
+        role="owner",
+        evidence_agent=evidence_owner,
+        current_agent=current_owner,
     )
 
 
@@ -6275,79 +6428,48 @@ def _verified_done_owner_reassignment(
     current_owner: str,
     commit_timestamp: str,
 ) -> dict[str, Any]:
-    """Prove that the latest audited supervisor reassignment explains owner drift."""
+    """Prove that audited supervisor reassignments explain owner drift at done.
+
+    Owner reassignment is a normal, recurring event rather than an anomaly: a
+    provider hits its quota or goes unreachable and the supervisor hands the
+    lane to a fallback, often swapping the reviewer in the same event and more
+    than once before the task closes out. Demanding a single hop with a frozen
+    reviewer is what forced Human/Ops to hand-run `reconcile_merged_done` for
+    every reassigned task, so walk the whole audited chain instead. The audit
+    still has to account for the drift end to end -- this is a verification
+    path, not a waiver.
+    """
 
     task_id = str(task.get("id") or "").strip()
     reviewer = canonical_agent_name(task.get("reviewer"))
-    audited: list[tuple[datetime, dict[str, Any]]] = []
-    try:
-        for event in _activity_events_across_sources(LOG_FILE):
-            if (
-                event.get("type") != "task_reassigned"
-                or str(event.get("task_id") or "").strip() != task_id
-                or event.get("agent") != "Orchestrator"
-                or not event.get("old_owner")
-                or not event.get("new_owner")
-                or str(event.get("event_id") or "")
-                != _supervisor_reassignment_event_id(event)
-            ):
-                continue
-            event_timestamp = _parse_utc_timestamp(event.get("ts"))
-            if event_timestamp is None:
-                continue
-            audited.append((event_timestamp, event))
-    except (FileNotFoundError, RuntimeError) as exc:
-        raise SystemExit(
+    audited = _audited_reassignment_events(
+        task_id,
+        source="canonical done owner reassignment evidence",
+        unavailable_message=(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
             "audited supervisor task_reassigned event, but the activity audit is unavailable."
-        ) from exc
-
-    owner_changes = [
-        item
-        for item in audited
-        if canonical_agent_name(item[1].get("old_owner"))
-        != canonical_agent_name(item[1].get("new_owner"))
-    ]
-    if not owner_changes:
+        ),
+    )
+    if not any(
+        canonical_agent_name(event.get("old_owner"))
+        != canonical_agent_name(event.get("new_owner"))
+        for _, event in audited
+    ):
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
             "audited supervisor task_reassigned event."
         )
 
-    latest_timestamp = max(item[0] for item in owner_changes)
-    latest_owner_changes = [
-        item for item in owner_changes if item[0] == latest_timestamp
-    ]
-    if len(latest_owner_changes) != 1:
-        raise SystemExit(
-            "Cannot finalize task: latest audited owner reassignment ordering is ambiguous."
-        )
-    event_timestamp, event = latest_owner_changes[0]
-    if not (
-        canonical_agent_name(event.get("old_owner")) == canonical_agent_name(commit_owner)
-        and canonical_agent_name(event.get("new_owner")) == canonical_agent_name(current_owner)
-        and canonical_agent_name(event.get("old_reviewer")) == reviewer
-        and canonical_agent_name(event.get("new_reviewer")) == reviewer
-    ):
-        raise SystemExit(
-            "Cannot finalize task: the latest audited owner reassignment does not "
-            "bind the commit owner to the current owner with reviewer continuity."
-        )
-    later_reviewer_change = next(
-        (
-            later_event
-            for later_timestamp, later_event in audited
-            if later_timestamp > event_timestamp
-            and canonical_agent_name(later_event.get("old_reviewer"))
-            != canonical_agent_name(later_event.get("new_reviewer"))
+    chain = _walk_audited_role_chain(
+        audited,
+        role="owner",
+        start=canonical_agent_name(commit_owner),
+        end=canonical_agent_name(current_owner),
+        failure_message=(
+            "Cannot finalize task: the latest audited owner reassignment chain does "
+            "not bind the commit owner to the current owner."
         ),
-        None,
     )
-    if later_reviewer_change is not None:
-        raise SystemExit(
-            "Cannot finalize task: reviewer continuity changed after the audited "
-            "owner reassignment."
-        )
 
     delivered_at = _parse_utc_timestamp(commit_timestamp)
     if delivered_at is None:
@@ -6355,18 +6477,108 @@ def _verified_done_owner_reassignment(
             "Cannot finalize task: delivered commit timestamp is unavailable for "
             "owner reassignment ordering."
         )
-    if event_timestamp < delivered_at:
+    if chain[0][0] < delivered_at:
         raise SystemExit(
             "Cannot finalize task: audited owner reassignment must follow the delivered commit."
         )
 
+    # The supervisor picks a new owner/reviewer pair in one event, so the
+    # reviewer in force when the owner chain opened must still reach the
+    # canonical reviewer through the same audit. A reviewer that drifts with no
+    # audited hop to explain it is exactly the forgery this gate exists to stop.
+    reviewer_continuity_failure = (
+        "Cannot finalize task: reviewer continuity is not explained by the audited "
+        "reassignment chain."
+    )
+    chain_opened_at, first_event = chain[0]
+    reviewer_at_chain_start = canonical_agent_name(first_event.get("old_reviewer"))
+    reviewer_chain: list[tuple[datetime, dict[str, Any]]] = []
+    if reviewer_at_chain_start != reviewer:
+        reviewer_chain = _walk_audited_role_chain(
+            audited,
+            role="reviewer",
+            start=reviewer_at_chain_start,
+            end=reviewer,
+            failure_message=reviewer_continuity_failure,
+        )
+    elif any(
+        canonical_agent_name(event.get("old_reviewer"))
+        != canonical_agent_name(event.get("new_reviewer"))
+        for event_timestamp, event in audited
+        if event_timestamp >= chain_opened_at
+    ):
+        raise SystemExit(reviewer_continuity_failure)
+
+    last_event = chain[-1][1]
     return {
-        "event_id": str(event.get("event_id")),
-        "ts": str(event.get("ts")),
-        "old_owner": canonical_agent_name(event.get("old_owner")),
-        "new_owner": canonical_agent_name(event.get("new_owner")),
+        "event_id": str(last_event.get("event_id")),
+        "ts": str(last_event.get("ts")),
+        "old_owner": canonical_agent_name(commit_owner),
+        "new_owner": canonical_agent_name(current_owner),
+        "hops": len(chain),
         "reviewer": reviewer,
-        "message": str(event.get("message") or ""),
+        "message": str(last_event.get("message") or ""),
+        "commit_timestamp": commit_timestamp,
+        **({"reviewer_hops": len(reviewer_chain)} if reviewer_chain else {}),
+    }
+
+
+def _verified_done_reviewer_reassignment(
+    task: dict[str, Any],
+    *,
+    commit_reviewer: str,
+    current_reviewer: str,
+    commit_timestamp: str,
+) -> dict[str, Any]:
+    """Prove that audited supervisor reassignments explain reviewer drift at done.
+
+    A delivered commit whose `LLM-Agent` trailer went stale almost always has a
+    stale `Reviewer` trailer too, because the supervisor reassigns the pair
+    together. Failing that trailer outright left the owner with a merged
+    delivery it could never finalize, so verify it against the same audit the
+    owner trailer uses.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    audited = _audited_reassignment_events(
+        task_id,
+        source="canonical done reviewer reassignment evidence",
+        unavailable_message=(
+            "Cannot finalize task: prior-reviewer Reviewer trailer requires an exact "
+            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+        ),
+    )
+    chain = _walk_audited_role_chain(
+        audited,
+        role="reviewer",
+        start=canonical_agent_name(commit_reviewer),
+        end=canonical_agent_name(current_reviewer),
+        failure_message=(
+            "Cannot finalize task: the audited reviewer reassignment chain does not "
+            "bind the commit reviewer to the current reviewer."
+        ),
+    )
+
+    delivered_at = _parse_utc_timestamp(commit_timestamp)
+    if delivered_at is None:
+        raise SystemExit(
+            "Cannot finalize task: delivered commit timestamp is unavailable for "
+            "reviewer reassignment ordering."
+        )
+    if chain[0][0] < delivered_at:
+        raise SystemExit(
+            "Cannot finalize task: audited reviewer reassignment must follow the delivered commit."
+        )
+
+    last_event = chain[-1][1]
+    return {
+        "event_id": str(last_event.get("event_id")),
+        "ts": str(last_event.get("ts")),
+        "old_reviewer": canonical_agent_name(commit_reviewer),
+        "new_reviewer": canonical_agent_name(current_reviewer),
+        "hops": len(chain),
+        "owner": canonical_agent_name(task.get("owner")),
+        "message": str(last_event.get("message") or ""),
         "commit_timestamp": commit_timestamp,
     }
 
@@ -6435,7 +6647,6 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     required_lines = {
         "task": rf"^# Task Brief:\s*{re.escape(task_id)}\s*$",
         "status": r"^- Status:\s*review_approved\s*$",
-        "owner": rf"^- Owner:\s*{re.escape(owner)}\s*$",
     }
     missing = [
         label
@@ -6447,6 +6658,27 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
             "Cannot reconcile task: merged evidence does not bind the canonical "
             f"{', '.join(missing)} metadata."
         )
+
+    evidence_owner_match = re.search(
+        r"^- Owner:\s*(?P<owner>.+?)\s*$",
+        evidence_text,
+        flags=re.MULTILINE,
+    )
+    evidence_owner = canonical_agent_name(
+        evidence_owner_match.group("owner") if evidence_owner_match else ""
+    )
+    if not evidence_owner:
+        raise SystemExit(
+            "Cannot reconcile task: merged evidence has invalid owner metadata."
+        )
+    owner_reassignment = None
+    if evidence_owner != owner:
+        owner_reassignment = _verified_owner_reassignment(
+            task,
+            evidence_owner=evidence_owner,
+            current_owner=owner,
+        )
+
     evidence_reviewer_match = re.search(
         r"^- Reviewer:\s*(?P<reviewer>.+?)\s*$",
         evidence_text,
@@ -6455,7 +6687,7 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     evidence_reviewer = canonical_agent_name(
         evidence_reviewer_match.group("reviewer") if evidence_reviewer_match else ""
     )
-    if not evidence_reviewer or evidence_reviewer == owner:
+    if not evidence_reviewer or evidence_reviewer == evidence_owner:
         raise SystemExit(
             "Cannot reconcile task: merged evidence has invalid independent reviewer metadata."
         )
@@ -6527,10 +6759,16 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
             "commit": evidence_commit,
             "merge_target_ref": evidence_target_ref,
             "merge_target_sha": evidence_target_sha,
-            "owner": owner,
+            "owner": evidence_owner,
+            "canonical_owner": owner,
             "reviewer": evidence_reviewer,
             "canonical_reviewer": reviewer,
             "status": "review_approved",
+            **(
+                {"owner_reassignment": owner_reassignment}
+                if owner_reassignment is not None
+                else {}
+            ),
             **(
                 {"reviewer_reassignment": reviewer_reassignment}
                 if reviewer_reassignment is not None
