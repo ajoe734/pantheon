@@ -1,0 +1,82 @@
+{
+  "task_id": "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+  "phase": "Supervisor / Fleet dispatch unblock",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "ownership": {
+    "original_owner": "Codex",
+    "original_reviewer": "Codex2",
+    "reassigned_on": "2026-08-05",
+    "reason": "Codex-quota mass reassignment; the canonical row now binds owner Claude and reviewer Antigravity. The delivered code is unchanged by the reassignment.",
+    "manifest_revision": "Refreshed 2026-08-06 by the current owner so the manifest binds the canonical owner/reviewer pair before independent review is requested."
+  },
+  "finding": {
+    "summary": "Auto-worker dispatch was blocked because worker worktree creation used the shared status root as the git source root in a split-root live supervisor.",
+    "live_error": "Failed to create worker worktree /tmp/pantheon-worker-worktrees/pantheon/l12-verify-obs-001 for task/L12-VERIFY-OBS-001: fatal: could not create directory of '.git/worktrees/l12-verify-obs-001': Read-only file system",
+    "status_root": "/home/lupin/pantheon",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "live_config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
+  },
+  "change": {
+    "new_setting": "worker_worktrees.source_root",
+    "default_behavior": "Empty source_root falls back to the existing single-root behavior.",
+    "split_root_behavior": "Git worktree operations use source_root while status/activity/context materialization remains anchored to paths.status_file.",
+    "covered_git_lifecycle": [
+      "pre-lock worker base-ref fetch",
+      "existing worker worktree lookup",
+      "branch-in-root guard",
+      "reused worker worktree refresh",
+      "new worker worktree creation",
+      "merged/orphan worker worktree cleanup",
+      "chair-review worker worktree pruning"
+    ]
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_allocates_task_worktree_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_uses_configured_source_root_for_git_worktree test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_allocates_isolated_worktree_outside_allowlist test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_refuses_shared_checkout_when_worktrees_disabled test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_rejects_shared_checkout_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_github_retry_rejects_source_root_checkout_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_allocates_chair_review_worktree_metadata test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree test_supervisor.ProcessQueueDispatchGuardTests.test_prepare_worker_workspace_blocks_dirty_reused_worktree test_supervisor.DispatchStatusSyncTests.test_run_once_fetches_worker_base_before_taking_runtime_lock test_supervisor.PruneOrphanWorktreesTests.test_prune_orphan_worktrees_uses_configured_source_root_for_git_metadata test_supervisor.PruneChairReviewWorktreesTests.test_prune_chair_review_worktrees_uses_configured_source_root_for_git_metadata",
+      "result": "Ran 12 tests, OK",
+      "run_by": "Codex",
+      "run_on": "2026-07-30"
+    },
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m unittest discover -s .orchestrator -p 'test_supervisor.py'",
+      "result": "Ran 583 tests in 7.936s, OK after rebasing task branch onto origin/dev",
+      "run_by": "Codex",
+      "run_on": "2026-07-30"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m unittest discover -s .orchestrator -p 'test_supervisor.py'",
+      "result": "Ran 583 tests in 4.369s, OK",
+      "run_by": "Claude",
+      "run_on": "2026-08-06",
+      "code_head_sha": "31c4b4b3749492d8ef53f45aa711be8361f3516b",
+      "note": "Re-verification by the reassigned owner on the current PR #4392 head after origin/dev was merged forward. This manifest revision adds bookkeeping only; it changes no code under .orchestrator/ or docs/conventions/."
+    }
+  ],
+  "reopen_reverification": {
+    "requested_by": "Human/Ops",
+    "requested_on": "2026-08-06",
+    "question": "Does the original blocking condition still apply under the new owner/reviewer?",
+    "conclusion": "No. The repository-level delivery is complete and pushed on PR #4392; CI is green except the canonical review gate, which fails only because no reviewer has approved this head yet. The task was not blocked on a technical condition -- it was left at in_progress and never moved to review, so the supervisor never dispatched the reviewer.",
+    "remaining_work": "Independent review by Antigravity, PR merge to dev, then the live follow-up below.",
+    "checked_state": {
+      "github_pr": 4392,
+      "pr_state": "OPEN",
+      "pr_head_sha": "31c4b4b3749492d8ef53f45aa711be8361f3516b",
+      "merge_state_status": "BLOCKED",
+      "blocking_check": "Pantheon canonical review gate: no review-proof tag (pantheon-review/approve/31c4b4b3749492d8ef53f45aa711be8361f3516b) for this head",
+      "other_checks": "Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance all SUCCESS"
+    }
+  },
+  "live_follow_up": [
+    "Promote the supervisor command root to a dev commit containing this change.",
+    "Set worker_worktrees.source_root to /home/lupin/pantheon-ci-deploy/dev-root in live-supervisor-mainroot-config.json.",
+    "Restart supervisor/watchdog and verify the next dispatch records workspace_source_root and does not emit the .git/worktrees read-only failure."
+  ],
+  "live_follow_up_owner": "Human/Ops -- auto workers cannot stop, restart, or repoint the live supervisor they are dispatched from, so the three live acceptance items above must be executed outside this task's worker lane.",
+  "non_goals": [
+    "Does not complete Pantheon or Agora product work.",
+    "Does not loosen worker isolation.",
+    "Does not send workers into the shared status checkout."
+  ]
+}
