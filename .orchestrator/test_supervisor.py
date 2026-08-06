@@ -22712,10 +22712,8 @@ class CodexCacheQuotaRoutingTests(unittest.TestCase):
                 {"providers": {}},
                 report,
             )
-        self.assertTrue(changed)
-        pause = state["provider_guardrails"]["dispatch_pauses"]["codex"]
-        self.assertEqual(pause["pause_kind"], "capacity_retryable")
-        self.assertNotIn("requires_live_auth_probe", pause)
+        # Transient failure under hysteresis threshold holds auth_ready=True, skipping dispatch pause creation
+        self.assertFalse(changed)
 
     def test_fresh_success_clears_only_the_affected_distinct_quota_group(self) -> None:
         state = {
@@ -24759,5 +24757,80 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
 
 
 
+    def test_refresh_provider_auth_before_dispatch_cached_probe_does_not_increment_streak(self) -> None:
+        """Verify cached probe replays in refresh_provider_auth_before_dispatch do not increment consecutive failure streak."""
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "consecutive_probe_failures": 0,
+                    "account_health": "healthy",
+                    "auth_probe": {
+                        "provider": "claude",
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        # 1st live probe timeout -> streak 1
+        live_probe = {
+            "provider": "claude",
+            "ready": False,
+            "status": "probe_timeout",
+            "checked_at": supervisor.utc_now(),
+            "source": "live",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=live_probe):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, provider_report, "claude")
+
+        claude_cap = provider_report["providers"]["claude"]
+        self.assertEqual(claude_cap["consecutive_probe_failures"], 1)
+        self.assertEqual(claude_cap["auth_ready"], True)
+
+        # 2nd cached probe replay -> streak should remain 1
+        cached_probe = {
+            "provider": "claude",
+            "ready": False,
+            "status": "probe_timeout",
+            "checked_at": supervisor.utc_now(),
+            "source": "cached",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=cached_probe):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, provider_report, "claude")
+
+        self.assertEqual(claude_cap["consecutive_probe_failures"], 1)
+        self.assertEqual(claude_cap["auth_ready"], True)
+
+    def test_reconcile_fresh_provider_probe_failures_ignores_held_hysteresis(self) -> None:
+        """Verify reconcile_fresh_provider_probe_failures does not pause providers when auth_ready is True under hysteresis."""
+        current_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "account_health": "degraded",
+                    "consecutive_probe_failures": 1,
+                    "probe_failure_kind": "capacity_retryable",
+                    "auth_probe": {
+                        "provider": "claude",
+                        "ready": False,
+                        "status": "models_cache_incompatible",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+        state = {}
+        with mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mock_pause:
+            changed = supervisor.reconcile_fresh_provider_probe_failures(self.config, state, None, current_report)
+            self.assertFalse(changed)
+            mock_pause.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
+
