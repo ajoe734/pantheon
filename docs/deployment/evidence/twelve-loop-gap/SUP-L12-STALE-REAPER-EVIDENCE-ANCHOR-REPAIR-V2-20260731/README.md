@@ -53,5 +53,14 @@ Not changed here:
 Machine-readable proof and the independent review decision belong in
 [`evidence.json`](evidence.json). Five focused regressions and the full supervisor test suite pass on task-branch head `5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e` (before merging dev `728fa361b`).
 Note that at current `dev` head (e.g. `23ae23c21` / `4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c`), `.orchestrator/supervisor.py` contains a dev-side import breakage (`provider_auth_probe_due` from `provider_permissions.py`), which is recorded as an out-of-scope condition in `evidence.json`.
+Note that `origin/dev` already carries the identical corrected anchor
+`9d53a94a295d71ee49aea6f4b96e47fbcfd29093` in both subject artifacts, introduced
+by commit `87dd23dc84552dc58f72bd58cb58b968d358b684`
+("SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731: anchor", 2026-08-01) via
+PR #4452. The diff between `origin/dev` and this branch for the subject artifact
+directory is empty. Merging PR #4465 is therefore additive-only (306 insertions,
+0 deletions per `git merge-tree` against `origin/dev`); this PR contributes the
+durable V2 evidence packet and its merge does not re-perform the dev-side repair.
+Machine-readable detail is in `evidence.json` under `repair.already_on_dev`.
 Independent exact-head review, protected merge, and governed closeout remain
 pending.
