@@ -1,8 +1,8 @@
 # SUP-L12 running owner reconciliation evidence
 
 Task: `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
-Owner: Claude
-Reviewer: Antigravity
+Owner: Antigravity
+Reviewer: Claude
 Review manifest: `evidence.json`
 
 ## Outcome
@@ -38,7 +38,7 @@ same run.
 
 | Observed | Row owner | Row reviewer | Row status | Run id | Queue event | Worker / runner status | PID | Exit | Command source SHA |
 |---|---|---|---|---|---|---|---:|---:|---|
-| `2026-08-06T13:22:00Z` | Claude | Antigravity | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
+| `2026-08-06T14:13:26Z` | Antigravity | Claude | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-07-29T15:22:01Z` | Codex | Antigravity | in_progress | `codex-20260729T150602Z-743e6017` | `evt-20260729T150450Z-97c245cd` | running / running | 1671740 | null | `c1e396495d37a1c9dfeea5704e7eb73db6acde0e` |
 
 Both rows match their authoritative assignment, so neither is drift. They are
@@ -82,9 +82,8 @@ Raw command/results are archived in `validation.txt`.
 
 ## Ownership reassignment (2026-08-06)
 
-The supervisor auto-reassigned ownership from Antigravity to Claude after
-repeated Antigravity quota-terminal runs and returned the task to `todo`.
-The canonical row now reads owner `Claude`, reviewer `Antigravity`.
+The supervisor auto-reassigned ownership from Claude to Antigravity at 2026-08-06T14:13:02Z.
+The canonical row now reads owner `Antigravity`, reviewer `Claude`.
 
 Because of that reassignment and because the task head advanced past the
 previously approved commit, the earlier approval no longer binds. It is kept

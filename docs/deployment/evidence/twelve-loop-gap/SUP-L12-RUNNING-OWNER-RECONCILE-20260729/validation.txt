@@ -1,6 +1,6 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
-Owner: Claude
-Reviewer: Antigravity
+Owner: Antigravity
+Reviewer: Claude
 Re-run: 2026-08-06, verified on task tree bce887978 (task branch merged
         forward from origin/dev at 850a8c760). Later commits on this
         branch touch only this evidence directory and the task brief, so

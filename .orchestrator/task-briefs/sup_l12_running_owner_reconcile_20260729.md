@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Reconcile running workers with authoritative row owners
 - Status: in_progress
-- Owner: Claude
-- Reviewer: Antigravity
-- Next: Supervisor auto-started SUP-L12-RUNNING-OWNER-RECONCILE-20260729 after successful dispatch.
+- Owner: Antigravity
+- Reviewer: Claude
+- Next: Rebind owner Antigravity and reviewer Claude, update reconcile_worker_task_assignments assertions and evidence manifest, push task branch and hand off to reviewer Claude.
 
 ## Summary
 補上 row owner/reviewer 與 live worker_runner/run records 的 reconcile 機制，避免 helper/fallback 失敗後任務真相漂移。
