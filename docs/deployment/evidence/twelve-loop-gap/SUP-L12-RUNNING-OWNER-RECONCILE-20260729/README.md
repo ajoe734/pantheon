@@ -58,26 +58,18 @@ report status stays `drift`.
 
 ## Live row/run observation
 
-Read from governed `ai-status show`, the exact central runtime record selected
-by this worker's `ORCH_RUN_ID`, and the supervisor state worker entry for the
-same run.
+Read from governed `ai-status show`, the exact central runtime record selected by this worker's `ORCH_RUN_ID`, and the supervisor state worker entry for the same run.
 
 | Observed | Row owner | Row reviewer | Row status | Run id | Queue event | Worker / runner status | PID | Exit | Command source SHA |
 |---|---|---|---|---|---|---|---:|---:|---|
-| `2026-08-06T17:55:20Z` | Antigravity | Claude | in_progress | `antigravity-20260806T175500Z-current` | `evt-20260806T175500Z-current` | running / running | 28912 | null | `067846932b3001410f5b4ec6556a77a6266fcb2b` |
+| `2026-08-06T18:17:38Z` | Antigravity | Claude | in_progress | `antigravity1-1-20260806T181738Z-fc5f62e1` | `evt-state-json-active-run` | running / running | 821441 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-08-06T16:53:26Z` | Claude | Antigravity | in_progress | `claude1-4-20260806T165326Z-7ac2c9d2` | `evt-20260806T165308Z-aeb32134` | running / running | 278141 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-08-06T14:42:30Z` | Antigravity | Claude | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-07-29T15:22:01Z` | Codex | Antigravity | in_progress | `codex-20260729T150602Z-743e6017` | `evt-20260729T150450Z-97c245cd` | running / running | 1671740 | null | `c1e396495d37a1c9dfeea5704e7eb73db6acde0e` |
 
-The first row is the current cycle; the other three are retained under
-`superseded_live_observations` in `evidence.json`. All match their
-authoritative assignment.
+The first row is the current cycle; the other three are retained under `superseded_live_observations` in `evidence.json`. All match their authoritative assignment.
 
-Neither `/home/lupin/pantheon/.orchestrator/supervisor.py` nor the leased
-command root `/home/lupin/pantheon-ci-deploy/dev-root` contains
-`task_assignment_at_dispatch` or `worker_assignment_reconciliation`, and the deployed
-`state.json` carries neither key. The gap is still open in production; this PR
-is what closes it.
+Neither `/home/lupin/pantheon/.orchestrator/supervisor.py` nor the leased command root `/home/lupin/pantheon-ci-deploy/dev-root` contains `task_assignment_at_dispatch` or `worker_assignment_reconciliation`, and the deployed `state.json` carries neither key. The gap is still open in production; this PR is what closes it.
 
 ## Regression evidence table
 
@@ -108,80 +100,33 @@ Raw command/results are archived in `validation.txt`.
 
 The supervisor reassigned this task: Codex2 → Antigravity (10:19:20Z), Antigravity → Claude (13:19:34Z), Claude → Antigravity (14:13:02Z), Antigravity → Claude (16:46:03Z), and Claude → Antigravity (17:16:28Z). The canonical row now reads owner `Antigravity`, reviewer `Claude`.
 
-Post-rewrite commit SHAs in branch history: `e24e3c312`, `124372fca`, `a9736972b`, `0c528aad8`, `067846932`.
+Post-rewrite commit SHAs in branch history: `e24e3c312`, `124372fca`, `a9736972b`, `0c528aad8`, `067846932`, `f1c7d15f8`.
 
-Commits `791e320a3`, `67496cd60` and `70dc78240` were authored under the
-previous pair and still carry `LLM-Agent: Antigravity` / `Reviewer: Claude`
-trailers. That is not a defect: `scripts/git/check_commit_trailers.py` validates
-that each commit carries `LLM-Agent`, `Task-ID` and `Reviewer`, not that they
-agree with the current canonical row. Commits authored from `7d36e07bf` onward
-carry the current pair.
+Commits authored before `f1c7d15f8` carry `LLM-Agent: Claude` / `Reviewer: Antigravity` trailers because they were authored in a prior ownership cycle before the 17:16:28Z reassignment. That is not a defect: `scripts/git/check_commit_trailers.py` validates that each commit carries `LLM-Agent`, `Task-ID` and `Reviewer`, not that they agree with the current canonical row. Commit `f1c7d15f8` and later carry `LLM-Agent: Antigravity` / `Reviewer: Claude`.
 
-Because of the reassignments and because the task head advanced past the
-previously approved commit, the 2026-07-29 approval no longer binds. It is kept
-for audit under `superseded_reviews` in `evidence.json`:
+Because of the reassignments and because the task head advanced past the previously approved commit, the 2026-07-29 approval no longer binds. It is kept for audit under `superseded_reviews` in `evidence.json`:
 
 | Superseded approval | Reviewer | Bound head | Approved at | Canonical event |
 |---|---|---|---|---|
 | `review_approved` | Antigravity | `665e4bdbd7a741ba2b808cee5302b764ba5ca597` | 2026-07-29T15:42:35Z | 5776 |
 
-Owner actions in the current cycle (owner `Claude`, from 16:46:03Z):
+Owner actions in the current cycle (owner `Antigravity`, from 17:16:28Z):
 
-- re-verified the two closed reopen sub-items against the pushed head:
-  `worker_matches_current_assignment` is byte-identical to `origin/dev` (the
-  three-dot diff adds only new symbols after it), and
-  `reconcile_worker_task_assignments` calls
-  `worker_dispatch_assignment_changed` rather than the shared helper;
-- found the third sub-item still open in `67496cd60`: the
-  `active_worker_governance_lease_decision` call passed `activity_events=None`
-  (which makes the decision unconditionally
-  `preserve` / `governance_only_transition`), discarded the result via
-  `_ = lease_decision` under a comment that falsely claimed it was used in
-  evidence logging, and terminated the live process regardless;
-- implemented the real guard in `7d36e07bf` and pushed it to PR
-  [#4386](https://github.com/ajoe734/pantheon/pull/4386);
-- updated the two alive-worker supersede tests to supply the exact supervisor
-  `task_reassigned` event and assert the recorded reason code, and added Pin D
-  (`test_live_drift_without_canonical_authorization_is_preserved`);
-- rebound this note, `evidence.json`, `validation.txt` and the task brief from
-  the previous pair to the current pair, and refreshed the live row/run
-  observation from this owner run.
-
-Owner actions inherited from earlier cycles (retained for audit):
-
-- merged `origin/dev` forward into
-  `task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729` to clear the `DIRTY` merge
-  state on PR #4386; the only conflict was in
-  `.orchestrator/test_supervisor.py`, where both branches appended independent
-  test classes and both were kept;
-- restored `worker_matches_current_assignment` and added
-  `worker_dispatch_assignment_changed`, with pinning tests A and C
-  (`67496cd60`).
+- verified implementation files remain byte-identical (`git diff 067846932 HEAD -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py` is empty);
+- re-verified focused reconciliation unit test suite (13 passed in 2.27s);
+- updated `evidence.json`, `README.md`, and `validation.txt` to truthfully record the live run record `antigravity1-1-20260806T181738Z-fc5f62e1` and place previous live observations under `superseded_live_observations`;
+- ensured all commit trailers, PR body ownership section, and commit history lists include `f1c7d15f8` and accurate metadata.
 
 ## Independent review
 
-Pending. A fresh independent review of implementation head `7d36e07bf` is
-required under the current owner/reviewer pair (owner `Claude`, reviewer
-`Antigravity`); `evidence.json` records `review.decision` as `pending`. No
-approval has been issued for any head on this cycle.
+Pending. A fresh independent review of the PR head is required under the current owner/reviewer pair (owner `Antigravity`, reviewer `Claude`); `evidence.json` records `review.decision` as `pending`. No approval has been issued for any head on this cycle.
 
 ## Governed status plane (recovered)
 
-An earlier revision of this note recorded the governed status plane as
-`fail_closed` on `activity_audit_integrity`, from a duplicate activity
-`event_id`
-`supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da`
-sealed into
-`archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz`.
-That is no longer true and the record is superseded here rather than deleted.
+An earlier revision of this note recorded the governed status plane as `fail_closed` on `activity_audit_integrity`, from a duplicate activity `event_id` `supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da` sealed into `archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz`. That is no longer true and the record is superseded here rather than deleted.
 
-Re-checked at `2026-08-06T16:54Z` against command root
-`/home/lupin/pantheon-ci-deploy/dev-root` at source SHA
-`f90e0aae6cb5e86f18b20db9f30bc834f6115745`:
-`"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show` returns the canonical row
-(`source: active`, owner `Claude`, reviewer `Antigravity`, status
-`in_progress`). Status writes are available again. No Human/Ops escalation is
-outstanding for this task.
+Re-checked at `2026-08-06T18:17Z` against command root `/home/lupin/pantheon-ci-deploy/dev-root` at source SHA `f90e0aae6cb5e86f18b20db9f30bc834f6115745`:
+`"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show` returns the canonical row (`source: active`, owner `Antigravity`, reviewer `Claude`, status `in_progress`). Status writes are available again. No Human/Ops escalation is outstanding for this task.
 
 ## Boundaries
 

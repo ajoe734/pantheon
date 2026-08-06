@@ -11,7 +11,7 @@
     "task_branch": "task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/evidence.json",
     "status": "in_progress",
-    "status_note": "Canonical row read through the governed command root at 2026-08-06T16:54Z: owner Claude, reviewer Antigravity, status in_progress, last_update 2026-08-06T16:53:51Z. The supervisor auto-reassigned ownership from Antigravity to Claude at 2026-08-06T16:46:03Z; the commits authored before that point still carry the previous pair's LLM-Agent/Reviewer trailers, which the trailer check accepts because it validates trailer presence per commit, not agreement with the current canonical row."
+    "status_note": "Canonical row read through the governed command root at 2026-08-06T18:17Z: owner Antigravity, reviewer Claude, status in_progress, last_update 2026-08-06T18:16:23Z."
   },
   "scope": {
     "owned_layer": "Supervisor task-row/worker-run assignment evidence, active assignment-drift reconciliation, duplicate active-run suppression, and optimistic stale-failure reassignment guards.",
@@ -47,29 +47,29 @@
     "governance_lease_guard": "reconcile_worker_task_assignments loads worker_governance_activity_snapshot(config) lazily (only when a loser is actually alive) and passes it to active_worker_governance_lease_decision, the same guard the poll_workers supersede path uses. action != 'terminate' records one deduplicated record_worker_governance_lease_guard observation and skips the supersede; a failed terminate_worker_process_generation records the same authorized_transition_termination_pending_confirmation / authorized_transition_process_identity_unproven reason codes as poll_workers. The chosen reason_code and source_event_id are carried into both the assignment_reconciliation evidence and the worker_assignment_reconciled audit event. A preserved worker stays active and unmatched, so it is still counted in active_drift_count and the report status stays 'drift' rather than 'healthy'."
   },
   "live_observation": {
-    "observed_at": "2026-08-06T17:02:46Z",
+    "observed_at": "2026-08-06T18:17:38Z",
     "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to this worker's own central runtime run record selected by ORCH_RUN_ID, plus the supervisor state worker entry for the same run.",
     "task_row": {
       "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
-      "owner": "Claude",
-      "reviewer": "Antigravity",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
       "status": "in_progress",
-      "last_update": "2026-08-06T16:53:51Z"
+      "last_update": "2026-08-06T18:16:23Z"
     },
     "worker_run": {
-      "run_id": "claude1-4-20260806T165326Z-7ac2c9d2",
-      "queue_event_id": "evt-20260806T165308Z-aeb32134",
-      "provider": "claude1-4",
+      "run_id": "antigravity1-1-20260806T181738Z-fc5f62e1",
+      "queue_event_id": "evt-state-json-active-run",
+      "provider": "gemini-3.6-flash-low",
       "runner_status": "running",
       "worker_status": "running",
-      "pid": 278141,
-      "child_pid": 278283,
+      "pid": 821441,
+      "child_pid": 821483,
       "exit_code": null,
       "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
-      "dispatch_reason": "owned_ready_dispatch",
-      "agent_id": "claude1_4",
-      "logical_agent_id": "claude",
-      "lease_acquired_at": "2026-08-06T16:53:26Z"
+      "dispatch_reason": "owned_in_progress_dispatch",
+      "agent_id": "antigravity1_1",
+      "logical_agent_id": "antigravity",
+      "lease_acquired_at": "2026-08-06T18:17:38Z"
     },
     "assignment_matches": true,
     "deployed_runtime_note": "Re-checked at 2026-08-06T17:02:46Z. The live supervisor state at /home/lupin/pantheon/.orchestrator/state.json still carries no worker_assignment_reconciliation key, and this run's worker record carries no task_assignment_at_dispatch key, because neither /home/lupin/pantheon/.orchestrator/supervisor.py nor the leased command root /home/lupin/pantheon-ci-deploy/dev-root at f90e0aae6cb5e86f18b20db9f30bc834f6115745 contains either symbol (grep -c returned 0 for both files). That is the gap this task closes: today the row/run join above has to be assembled by hand from three separate files, and a fleet summary reports no assignment truth at all."
@@ -389,6 +389,34 @@
     }
   ],
   "superseded_live_observations": [
+    {
+      "observed_at": "2026-08-06T17:02:46Z",
+      "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to central runtime run record selected by ORCH_RUN_ID.",
+      "task_row": {
+        "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+        "owner": "Claude",
+        "reviewer": "Antigravity",
+        "status": "in_progress",
+        "last_update": "2026-08-06T16:53:51Z"
+      },
+      "worker_run": {
+        "run_id": "claude1-4-20260806T165326Z-7ac2c9d2",
+        "queue_event_id": "evt-20260806T165308Z-aeb32134",
+        "provider": "claude1-4",
+        "runner_status": "running",
+        "worker_status": "running",
+        "pid": 278141,
+        "child_pid": 278283,
+        "exit_code": null,
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "dispatch_reason": "owned_ready_dispatch",
+        "agent_id": "claude1_4",
+        "logical_agent_id": "claude",
+        "lease_acquired_at": "2026-08-06T16:53:26Z"
+      },
+      "assignment_matches": true,
+      "superseded_by": "Ownership moved from Claude to Antigravity at 2026-08-06T17:16:28Z and current owner run was dispatched; live_observation now records current run antigravity1-1-20260806T181738Z-fc5f62e1."
+    },
     {
       "observed_at": "2026-08-06T14:42:30Z",
       "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to this worker's own central runtime run record selected by ORCH_RUN_ID, plus the supervisor state worker entry for the same run.",
