@@ -65,13 +65,18 @@ The full machine-readable rows are in `evidence.json`.
 
 ## Validation
 
-Re-verified on the current PR #4386 head `bce887978`:
+Verified on task tree `bce887978`. Every commit after it on this branch
+touches only this evidence directory and the task brief, so
+`.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` are
+byte-identical at the current PR #4386 head:
 
 - New reconciliation suite: 7 passed.
 - Related worker/reassignment/ownerless suites: 135 passed, 4 subtests passed.
 - Full supervisor suite: 613 passed, 162 subtests passed.
 - Python compilation and `git diff --check`: passed.
 - `.orchestrator/config.json`: unchanged relative to `origin/dev`.
+- Re-confirmed after the evidence refresh, on the tree handed to review:
+  reconciliation plus related suites, 142 passed, 4 subtests passed.
 
 Raw command/results are archived in `validation.txt`.
 

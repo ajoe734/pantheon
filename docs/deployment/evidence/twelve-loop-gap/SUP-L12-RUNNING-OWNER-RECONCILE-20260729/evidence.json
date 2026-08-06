@@ -212,7 +212,7 @@
   ],
   "validation": {
     "status": "pass",
-    "observed_at": "2026-08-06 (re-verified on task head bce887978, the current PR #4386 head)",
+    "observed_at": "2026-08-06, verified on task tree bce887978; later commits on this branch touch only this evidence directory and the task brief, so the implementation files are byte-identical at the current PR #4386 head",
     "commands": [
       {
         "command": "python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
@@ -237,6 +237,10 @@
       {
         "command": "git diff --name-only origin/dev...HEAD -- .orchestrator/config.json",
         "result": "pass (no paths)"
+      },
+      {
+        "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
+        "result": "142 passed, 4 subtests passed in 29.71s (re-confirmed after the evidence refresh, on the tree handed to review)"
       }
     ],
     "raw_log": "validation.txt"
@@ -255,7 +259,7 @@
     "pull_request": "https://github.com/ajoe734/pantheon/pull/4386",
     "task_head_commit": null,
     "merge_commit": null,
-    "note": "Head is rebound by the reviewer at approval time; PR #4386 was DIRTY until the origin/dev merge in this revision."
+    "note": "Head is rebound by the reviewer at approval time; this manifest cannot name its own commit. PR #4386 was DIRTY until the origin/dev merge at 850a8c760. The implementation diff has been unchanged since bce887978; every later commit is evidence-only."
   },
   "reassignment": {
     "observed_at": "2026-08-06T10:19:20Z",
@@ -275,7 +279,8 @@
       "Merged origin/dev forward into task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729 to clear the DIRTY merge state on PR #4386; the only conflict was in .orchestrator/test_supervisor.py, where both sides appended independent test classes and both were kept.",
       "Re-ran the full supervisor suite plus focused reconciliation suites on the merged tree.",
       "Rebound this manifest, README.md, validation.txt, and the task brief to the current owner/reviewer pair before requesting review.",
-      "Re-verified the full validation set on the current PR head bce887978 (613/162, 7, 135/4, py_compile, git diff --check, config boundary), refreshed the live row/run observation from the current owner run, and superseded the fail_closed status-plane record in place before handing off to review."
+      "Re-verified the full validation set on task tree bce887978 (613/162, 7, 135/4, py_compile, git diff --check, config boundary), refreshed the live row/run observation from the current owner run, and superseded the fail_closed status-plane record in place before handing off to review.",
+      "Re-confirmed the reconciliation and related regression suites (142 passed, 4 subtests) after the evidence refresh commit, and restated the head claims in this manifest, README.md and validation.txt so they stay true of whatever evidence-only commit ends up as the PR head."
     ],
     "blocked_status_writes": {
       "invariant": "activity_audit_integrity",

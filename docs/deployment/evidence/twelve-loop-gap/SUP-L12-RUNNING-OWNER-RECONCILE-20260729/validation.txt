@@ -1,8 +1,11 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
 Owner: Claude
 Reviewer: Antigravity
-Re-run: 2026-08-06, re-verified on the current PR #4386 head bce887978
-        (task branch merged forward from origin/dev at 850a8c760)
+Re-run: 2026-08-06, verified on task tree bce887978 (task branch merged
+        forward from origin/dev at 850a8c760). Later commits on this
+        branch touch only this evidence directory and the task brief, so
+        .orchestrator/supervisor.py and .orchestrator/test_supervisor.py
+        are byte-identical at the current PR #4386 head.
 
 Interpreter: /home/lupin/pantheon/.venv/bin/python
 
@@ -82,6 +85,18 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python
    note:   the deployed state.json carries no worker_assignment_reconciliation
            key -- the deployed command runtime predates this change, so the
            join above still has to be assembled by hand from three files
+
+12. Re-confirmation on the tree handed to review
+   command: cd .orchestrator && python -m pytest -q
+            test_supervisor.py::RunningWorkerOwnerReconciliationTests
+            test_supervisor.py::WorkerReassignmentTests
+            test_supervisor.py::PollWorkersRecoveryTests
+            test_supervisor.py::RuntimeLeaseReconciliationTests
+            test_supervisor.py::RunOnceSupervisorStateTests
+            test_supervisor.py::OwnerlessInProgressReconciliationTests
+   result: 142 passed, 4 subtests passed in 29.71s
+   note:   run after the evidence refresh commit, so the implementation
+           under test is exactly what the reviewer receives
 
 Environment note:
 Running the test module from .orchestrator/ is its native collection context
