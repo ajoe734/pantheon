@@ -26,10 +26,7 @@ fi
 # Keep the dashboard available even when state sync is slow or temporarily noisy.
 # Serve immediately from the last successful snapshot and refresh state in the background.
 (
-  if ! AI_NAME="${PANTHEON_DASHBOARD_REFRESH_ACTOR:-Human/ops}" \
-    PANTHEON_STATUS_ROOT="${ROOT_DIR}" \
-    timeout --foreground "${SYNC_TIMEOUT_SECONDS}" \
-    bash "$ROOT_DIR/scripts/sync-state.sh" >"${SYNC_LOG}" 2>&1; then
+  if ! timeout --foreground "${SYNC_TIMEOUT_SECONDS}" bash "$ROOT_DIR/scripts/sync-state.sh" >"${SYNC_LOG}" 2>&1; then
     {
       echo "Warning: sync-state.sh failed or timed out after ${SYNC_TIMEOUT_SECONDS}s; serving the last synced dashboard snapshot."
       tail -n 20 "${SYNC_LOG}" || true

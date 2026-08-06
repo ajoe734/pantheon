@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+import copy
 from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -762,6 +763,7 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
             "agent_id": worker.get("agent_id"),
             "provider": worker.get("provider"),
             "status": worker.get("status"),
+            "lease_status_description": worker_lease_status_description({}, worker),
         }
         for run_id, worker in workers.items()
         if worker.get("status") in active_statuses
@@ -1237,13 +1239,21 @@ def load_provider_report(config: dict[str, Any], *, refresh: bool | None = None)
     should_refresh = (
         bool(refresh)
         if refresh is not None
-        else bool(config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True))
+        else bool(config.get("supervisor", {}).get("auto_refresh_provider_capabilities", False))
     )
     if should_refresh:
         report = build_provider_capabilities(config)
         write_provider_capabilities(config, report=report)
         return report
-    return load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    if isinstance(report, dict) and isinstance(report.get("providers"), dict):
+        report = copy.deepcopy(report)
+        for _pkey, pdata in report["providers"].items():
+            if isinstance(pdata, dict):
+                auth_probe = pdata.get("auth_probe")
+                if isinstance(auth_probe, dict) and str(auth_probe.get("source") or "").strip().lower() == "live":
+                    auth_probe["source"] = "cached"
+    return report
 
 
 def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]) -> str | None:
@@ -1854,6 +1864,7 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(settings.get("enabled", False)),
         "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        "source_root": str(settings.get("source_root") or settings.get("repo_root") or "").strip(),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
@@ -1901,6 +1912,27 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     if not configured.is_absolute():
         configured = repo_root / configured
     return configured.resolve()
+
+
+def worker_worktree_source_root(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
+    """Return the writable git checkout used to create worker worktrees.
+
+    The supervisor can run split-root: canonical status, activity, and queue
+    files live in the shared status root, while the command checkout that owns
+    ``.git/worktrees`` can be somewhere else.  Worktree creation must use the
+    writable git source root; context materialization and status writes must
+    continue to use the status root.
+    """
+
+    active_settings = settings or worker_worktree_settings(config)
+    status_root = config_path(config, "status_file").parents[0]
+    configured = str(active_settings.get("source_root") or "").strip()
+    if not configured:
+        return status_root.resolve()
+    source_root = Path(os.path.expanduser(configured))
+    if not source_root.is_absolute():
+        source_root = status_root / source_root
+    return source_root.resolve()
 
 
 def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
@@ -2601,14 +2633,16 @@ def prepare_worker_workspace(
         return True, None
     if request.metadata.get("workspace_path"):
         if requires_isolated:
-            repo_root = config_path(config, "status_file").parents[0].resolve()
+            status_root = config_path(config, "status_file").parents[0].resolve()
+            source_root = worker_worktree_source_root(config, settings)
             workspace_path = Path(
                 os.path.expanduser(str(request.metadata["workspace_path"]))
             ).resolve()
-            if workspace_path == repo_root:
+            if workspace_path in {status_root, source_root}:
                 message = (
                     f"Cannot dispatch explicit retry for {workspace_task_id}: "
-                    "workspace_path resolves to the shared supervisor checkout. "
+                    "workspace_path resolves to the shared supervisor checkout "
+                    "or configured worker source checkout. "
                     "Refusing shared-checkout fallback."
                 )
                 write_activity_log(
@@ -2627,10 +2661,34 @@ def prepare_worker_workspace(
                 return False, message
         return True, None
 
-    repo_root = config_path(config, "status_file").parents[0].resolve()
+    status_root = config_path(config, "status_file").parents[0].resolve()
+    repo_root = worker_worktree_source_root(config, settings)
     branch = worker_task_branch(config, workspace_task_id)
     worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
     reused = False
+
+    if not repo_root.exists():
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"configured worker source root does not exist: {repo_root}."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "workspace_branch": branch,
+                "workspace_path": str(worktree_path),
+                "status_root": str(status_root),
+                "workspace_source_root": str(repo_root),
+                "refresh_status": "source_root_missing",
+            },
+        )
+        return False, message
 
     if settings.get("reuse_existing", True):
         existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
@@ -2653,6 +2711,8 @@ def prepare_worker_workspace(
                     "queue_event_id": queue_event_id,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                     "refresh_ok": refresh_ok,
                     "refresh_status": refresh_status,
                 },
@@ -2674,6 +2734,8 @@ def prepare_worker_workspace(
                         "message": message,
                         "workspace_branch": branch,
                         "workspace_path": str(worktree_path),
+                        "status_root": str(status_root),
+                        "workspace_source_root": str(repo_root),
                         "refresh_status": refresh_status,
                     },
                 )
@@ -2697,6 +2759,8 @@ def prepare_worker_workspace(
                     "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                 },
             )
             return False, message
@@ -2714,6 +2778,8 @@ def prepare_worker_workspace(
                     "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                 },
             )
             return False, message
@@ -2723,7 +2789,8 @@ def prepare_worker_workspace(
             "workspace_mode": "isolated_worktree",
             "workspace_path": str(worktree_path),
             "workspace_branch": branch,
-            "status_root": str(repo_root),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
         }
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
@@ -2733,7 +2800,8 @@ def prepare_worker_workspace(
         "workspace_task_id": workspace_task_id,
         "branch": branch,
         "path": str(worktree_path),
-        "status_root": str(repo_root),
+        "status_root": str(status_root),
+        "source_root": str(repo_root),
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
@@ -2749,7 +2817,8 @@ def prepare_worker_workspace(
             "queue_event_id": queue_event_id,
             "workspace_branch": branch,
             "workspace_path": str(worktree_path),
-            "status_root": str(repo_root),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
         },
     )
     return True, None
@@ -3197,6 +3266,48 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
             continue
+        retry_was_held = (
+            record.get("status") == RETRY_QUARANTINED_STATUS
+            and record.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        )
+        if record.get("status") == "retry_backoff" or retry_was_held:
+            retry_hold_reason = task_retry_quarantine_hold_reason(
+                task_map.get(str(event.get("task_id") or "").strip()),
+                retry_was_held=retry_was_held,
+            )
+            if retry_hold_reason:
+                held = hold_queue_retry_for_task_quarantine(record, retry_hold_reason)
+                if held:
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "dispatch_retry_held",
+                            "provider": event.get("provider"),
+                            "task_id": event.get("task_id"),
+                            "message": retry_hold_reason,
+                            "queue_event_id": event_id,
+                        },
+                    )
+                changed = held or changed
+                continue
+            if retry_was_held:
+                record["status"] = "retry_backoff"
+                record["next_retry_at"] = utc_now()
+                record.pop("retry_hold_kind", None)
+                record.pop("retry_hold_reason", None)
+                record.pop("retry_held_at", None)
+                record["processed_at"] = utc_now()
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_retry_released",
+                        "provider": event.get("provider"),
+                        "task_id": event.get("task_id"),
+                        "message": "Released held queue retry after governed task reopen.",
+                        "queue_event_id": event_id,
+                    },
+                )
+                changed = True
         if record.get("status") == "retry_backoff":
             next_retry_at = _parse_iso_utc(str(record.get("next_retry_at") or ""))
             if next_retry_at is not None and next_retry_at > datetime.now(timezone.utc):
@@ -3481,6 +3592,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(failure_worker),
             )
+            persist_task_failure_streak(config, state, failure_worker, failure_count)
             failure_kind = str(failure.get("kind") or "")
             rotation_outcome = maybe_rotate_provider_model(
                 config, state, request.provider, failure_kind, failure_reason
@@ -3489,8 +3601,42 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 failure_kind,
                 rotation_outcome=rotation_outcome,
             )
+            retry_schedule_candidate = (
+                failure_response is rewrite_provider_health.FailureResponse.ROTATE
+                or failure_response is rewrite_provider_health.FailureResponse.RETRY
+                or is_retryable_capacity_failure_kind(failure_kind)
+            )
+            if retry_schedule_candidate:
+                retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+                    config,
+                    request.task_id,
+                    retry_was_held=(
+                        record.get("retry_hold_kind")
+                        == RETRY_HELD_BY_TASK_QUARANTINE
+                    ),
+                )
+                if retry_hold_reason:
+                    held = hold_queue_retry_for_task_quarantine(record, retry_hold_reason)
+                    if held:
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "dispatch_retry_held",
+                                "provider": request.provider,
+                                "task_id": request.task_id,
+                                "queue_event_id": event_id,
+                                "message": retry_hold_reason,
+                                "raw_ref": raw_ref,
+                            },
+                        )
+                    changed = held or changed
+                    continue
             if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
-                clear_task_failure_streaks_for_task(state, str(request.task_id or ""))
+                clear_task_failure_streaks_for_task(
+                    state,
+                    str(request.task_id or ""),
+                    retain_task_projection=True,
+                )
                 schedule_queue_event_retry(
                     config,
                     record,
@@ -5396,10 +5542,7 @@ def failure_streak_threshold_task_ids(
     config: dict[str, Any],
     state: dict[str, Any],
 ) -> set[str]:
-    threshold = max(
-        1,
-        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
-    )
+    threshold = task_failure_streak_quarantine_threshold(config)
     task_ids: set[str] = set()
     for key, record in _task_failure_streak_bucket(state).items():
         if not isinstance(record, Mapping):
@@ -6279,6 +6422,24 @@ def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now:
     )
 
 
+def worker_lease_status_description(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> str:
+    """Return explicit lease state description: healthy_long_finalize, healthy_running, stuck_lease, or expired."""
+    now_dt = now or datetime.now(timezone.utc)
+    req_snap = worker.get("request_snapshot")
+    reason = str((req_snap if isinstance(req_snap, dict) else {}).get("reason") or "")
+    is_finalize_or_review = reason in {"owned_finalize_dispatch", "review_ready_dispatch"}
+    if worker_lease_is_expired(config, worker, now_dt):
+        return "expired"
+    if worker_heartbeat_is_stale(config, worker, now_dt) or (
+        worker_lease_requires_work_progress(config) and not worker_lease_progress_is_fresh(config, worker, now_dt)
+    ):
+        return "stuck_lease"
+    if is_finalize_or_review:
+        return "healthy_long_finalize" if reason == "owned_finalize_dispatch" else "healthy_long_review"
+    return "healthy_running"
+
+
+
 _QUOTA_RETRY_AT_PATTERN = re.compile(
     r"\btry again at\s+(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
@@ -6476,6 +6637,23 @@ def _dispatch_pause_bucket(state: dict[str, Any]) -> dict[str, Any]:
 
 def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
+
+
+def _task_failure_streak_projection_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    """Return task-scoped failure generations already projected to the board.
+
+    Provider buckets are deliberately cleared during model rotation. This
+    separate, bounded-until-progress ledger prevents that cleanup from making
+    the same failure look new while still letting the canonical task row count
+    every distinct worker failure across providers.
+    """
+
+    guardrails = _provider_guardrail_bucket(state)
+    bucket = guardrails.setdefault("task_failure_streak_projection_generations", {})
+    if not isinstance(bucket, dict):
+        bucket = {}
+        guardrails["task_failure_streak_projection_generations"] = bucket
+    return bucket
 
 
 def _failure_recovery_consumption_bucket(state: dict[str, Any]) -> dict[str, Any]:
@@ -8528,13 +8706,439 @@ def clear_task_failure_streak(
     _task_failure_streak_bucket(state).pop(_failure_streak_key(task_id, provider_id), None)
 
 
-def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | None) -> None:
+def _task_failure_streak_projection_generation_for_worker(
+    state: dict[str, Any],
+    worker: Mapping[str, Any],
+) -> str | None:
+    """Return the immutable provider-record generation for this worker run."""
+
+    identity = _failure_streak_task_identity(worker)
+    provider_id = worker_failure_streak_provider_id(dict(worker))
+    worker_run_id = _failure_streak_text(worker.get("run_id"))
+    if identity is None or not provider_id or worker_run_id is None:
+        return None
+    record = _task_failure_streak_bucket(state).get(
+        _failure_streak_key(identity[0], provider_id)
+    )
+    decoded = decode_task_failure_streak(record)
+    if decoded is None:
+        return None
+    for generation in reversed(decoded["generations"]):
+        if generation.get("worker_run_id") == worker_run_id:
+            return _failure_streak_text(generation.get("generation_id"))
+    return None
+
+
+def _task_failure_streak_projection_seen(
+    state: dict[str, Any],
+    task_id: str,
+    generation_id: str,
+) -> bool:
+    task_generations = _task_failure_streak_projection_bucket(state).get(task_id)
+    return isinstance(task_generations, dict) and task_generations.get(generation_id) is True
+
+
+def _record_task_failure_streak_projection(
+    state: dict[str, Any],
+    task_id: str,
+    generation_id: str,
+) -> None:
+    bucket = _task_failure_streak_projection_bucket(state)
+    task_generations = bucket.setdefault(task_id, {})
+    if not isinstance(task_generations, dict):
+        task_generations = {}
+        bucket[task_id] = task_generations
+    task_generations[generation_id] = True
+
+
+def clear_task_failure_streak_projection_generations_for_task(
+    state: dict[str, Any], task_id: str | None
+) -> None:
+    task_id = str(task_id or "").strip()
+    guardrails = state.get("provider_guardrails")
+    if not task_id or not isinstance(guardrails, dict):
+        return
+    bucket = guardrails.get("task_failure_streak_projection_generations")
+    if isinstance(bucket, dict):
+        bucket.pop(task_id, None)
+
+
+def clear_task_failure_streaks_for_task(
+    state: dict[str, Any],
+    task_id: str | None,
+    *,
+    retain_task_projection: bool = False,
+) -> None:
     task_id = str(task_id or "").strip()
     if not task_id:
         return
     bucket = _task_failure_streak_bucket(state)
     for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
         bucket.pop(key, None)
+    if not retain_task_projection:
+        clear_task_failure_streak_projection_generations_for_task(state, task_id)
+
+
+TASK_FAILURE_STREAK_QUARANTINED_STATUS = "quarantined"
+
+
+def task_failure_streak_quarantine_threshold(config: dict[str, Any]) -> int:
+    """Return the established failure-loop threshold used for task quarantine."""
+
+    return max(
+        1,
+        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
+    )
+
+
+def _task_failure_streak_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
+
+
+RETRY_QUARANTINED_STATUS = "retry_quarantined"
+RETRY_HELD_BY_TASK_QUARANTINE = "task_quarantine"
+
+
+def task_retry_quarantine_hold_reason(
+    task: Mapping[str, Any] | None,
+    *,
+    retry_was_held: bool,
+) -> str | None:
+    """Return why a queued retry must stay held for its canonical task row.
+
+    A task becomes retry-eligible again only through the governed reopen path,
+    which simultaneously restores a dispatchable status and resets the task-row
+    failure counter.  The latter check matters after the retry has been held:
+    it prevents a direct status edit from silently releasing the retry.
+    """
+
+    if not isinstance(task, Mapping):
+        return None
+    task_id = str(task.get("id") or "unknown task").strip() or "unknown task"
+    status = str(task.get("status") or "").strip().lower()
+    failure_streak = _task_failure_streak_value(task.get("failure_streak"))
+    if status == TASK_FAILURE_STREAK_QUARANTINED_STATUS:
+        return (
+            f"Retry for {task_id} is held because the task is quarantined; "
+            "use scripts/ai-status.sh reopen before another dispatch."
+        )
+    if retry_was_held and failure_streak != 0:
+        return (
+            f"Retry for {task_id} remains held until governed reopen resets "
+            "failure_streak to 0."
+        )
+    return None
+
+
+def task_retry_quarantine_hold_reason_for_task_id(
+    config: dict[str, Any],
+    task_id: str | None,
+    *,
+    retry_was_held: bool,
+) -> str | None:
+    """Read the canonical task row before scheduling a retry/fallback launch."""
+
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return None
+    try:
+        task = task_index_from_status(config, load_status(config)).get(normalized_task_id)
+    except (KeyError, OSError, RuntimeError):
+        # Preserve existing retry behavior when an optional status source is not
+        # configured (for example, narrow legacy unit fixtures).
+        return None
+    return task_retry_quarantine_hold_reason(task, retry_was_held=retry_was_held)
+
+
+def hold_worker_retry_for_task_quarantine(
+    worker: dict[str, Any],
+    reason: str,
+) -> bool:
+    """Durably hold one worker retry without spending its retry budget."""
+
+    if (
+        worker.get("status") == RETRY_QUARANTINED_STATUS
+        and worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        and worker.get("retry_hold_reason") == reason
+    ):
+        return False
+    worker["status"] = RETRY_QUARANTINED_STATUS
+    worker["retry_hold_kind"] = RETRY_HELD_BY_TASK_QUARANTINE
+    worker["retry_hold_reason"] = reason
+    worker["retry_held_at"] = utc_now()
+    worker["last_event_at"] = utc_now()
+    return True
+
+
+def hold_queue_retry_for_task_quarantine(
+    record: dict[str, Any],
+    reason: str,
+) -> bool:
+    """Durably hold one queue-event retry until its task is reopened."""
+
+    if (
+        record.get("status") == RETRY_QUARANTINED_STATUS
+        and record.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        and record.get("retry_hold_reason") == reason
+    ):
+        return False
+    record["status"] = RETRY_QUARANTINED_STATUS
+    record["retry_hold_kind"] = RETRY_HELD_BY_TASK_QUARANTINE
+    record["retry_hold_reason"] = reason
+    record["retry_held_at"] = utc_now()
+    record["processed_at"] = utc_now()
+    return True
+
+
+def _task_failure_streak_status_event(
+    *,
+    event_type: str,
+    task_id: str,
+    timestamp: str,
+    failure_streak: int,
+    message: str,
+    worker: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    event = {
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": event_type,
+        "task_id": task_id,
+        "failure_streak": failure_streak,
+        "message": message,
+    }
+    if worker is not None:
+        event.update(
+            {
+                "provider": worker.get("provider") or worker.get("agent_id"),
+                "worker_run_id": worker.get("run_id"),
+            }
+        )
+    encoded = json.dumps(
+        event,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    event["event_id"] = "supervisor-task-failure-streak-" + hashlib.sha256(encoded).hexdigest()
+    return event
+
+
+def _persist_task_failure_streak_locked(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    provider_failure_streak: int,
+) -> bool:
+    """Project one distinct worker failure onto its canonical task row.
+
+    The runtime guardrail bucket remains the detailed per-provider evidence
+    store. Its count can restart after model rotation, so the board-level
+    counter uses the immutable failure generation as its idempotency key and
+    treats the provider count only as a monotonic lower bound.
+    """
+
+    identity = _failure_streak_task_identity(worker)
+    failure_generation_id = _task_failure_streak_projection_generation_for_worker(
+        state, worker
+    )
+    if identity is None or provider_failure_streak <= 0 or failure_generation_id is None:
+        return False
+    task_id, owner, reviewer = identity
+    if _task_failure_streak_projection_seen(state, task_id, failure_generation_id):
+        return False
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    if (
+        str(task.get("owner") or "").strip() != owner
+        or str(task.get("reviewer") or "").strip() != reviewer
+    ):
+        return False
+
+    current_streak = _task_failure_streak_value(task.get("failure_streak"))
+    current_status = str(task.get("status") or "").strip().lower()
+    threshold = task_failure_streak_quarantine_threshold(config)
+    if current_status in {"done", "superseded"}:
+        return False
+    failure_streak = max(current_streak + 1, provider_failure_streak)
+    should_quarantine = failure_streak >= threshold
+    if should_quarantine and current_status == TASK_FAILURE_STREAK_QUARANTINED_STATUS:
+        return False
+
+    timestamp = utc_now()
+    task["failure_streak"] = failure_streak
+    if should_quarantine:
+        task["status"] = TASK_FAILURE_STREAK_QUARANTINED_STATUS
+        task.pop("waiting_for", None)
+        message = (
+            f"Supervisor quarantined {task_id} after {failure_streak} consecutive "
+            f"worker failures (threshold {threshold}). Reopen the task through "
+            "scripts/ai-status.sh before another dispatch."
+        )
+        event_type = "task_quarantined"
+    else:
+        message = (
+            f"Supervisor recorded worker failure streak {failure_streak}/{threshold} "
+            f"for {task_id}."
+        )
+        event_type = "task_failure_streak_updated"
+    task["last_update"] = timestamp
+    task["next"] = message
+    event = _task_failure_streak_status_event(
+        event_type=event_type,
+        task_id=task_id,
+        timestamp=timestamp,
+        failure_streak=failure_streak,
+        message=message,
+        worker=worker,
+    )
+    outbox = _compose_status_activity_outbox(status.get("status_activity_outbox"), event)
+    if outbox is None:
+        return False
+    status["status_activity_outbox"] = outbox
+    write_status(config, status, source="supervisor-task-failure-streak")
+    _record_task_failure_streak_projection(state, task_id, failure_generation_id)
+    return True
+
+
+def persist_task_failure_streak(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    provider_failure_streak: int,
+) -> bool:
+    """Atomically project a recorded worker failure to canonical task state."""
+
+    if not config.get("paths", {}).get("status_file"):
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        applied = _persist_task_failure_streak_locked(
+            config, state, worker, provider_failure_streak
+        )
+    if applied:
+        sync_status_pipeline(config)
+    return applied
+
+
+def _reset_task_failure_streak_locked(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+) -> bool:
+    identity = _failure_streak_task_identity(worker)
+    if identity is None:
+        return False
+    task_id, owner, reviewer = identity
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None or _task_failure_streak_value(task.get("failure_streak")) == 0:
+        return False
+    if (
+        str(task.get("owner") or "").strip() != owner
+        or str(task.get("reviewer") or "").strip() != reviewer
+    ):
+        return False
+
+    timestamp = utc_now()
+    task["failure_streak"] = 0
+    task["last_update"] = timestamp
+    message = f"Supervisor reset worker failure streak for {task_id} after worker completion."
+    event = _task_failure_streak_status_event(
+        event_type="task_failure_streak_reset",
+        task_id=task_id,
+        timestamp=timestamp,
+        failure_streak=0,
+        message=message,
+        worker=worker,
+    )
+    outbox = _compose_status_activity_outbox(status.get("status_activity_outbox"), event)
+    if outbox is None:
+        return False
+    status["status_activity_outbox"] = outbox
+    write_status(config, status, source="supervisor-task-failure-streak-reset")
+    return True
+
+
+def clear_task_failure_streak_after_worker_completion(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+) -> None:
+    """Clear every task runtime bucket and its task-row projection on completion."""
+
+    # A task-row completion acknowledges the full prior failure generation, not
+    # only the provider that happened to run the successful worker.  Retaining
+    # another provider's record would make its next failure inherit a stale
+    # count after the task row was reset and could quarantine immediately.
+    clear_task_failure_streaks_for_task(state, worker.get("task_id"))
+    if not config.get("paths", {}).get("status_file"):
+        return
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        applied = _reset_task_failure_streak_locked(config, worker)
+    if applied:
+        sync_status_pipeline(config)
+
+
+def reconcile_task_failure_streak_resets(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> bool:
+    """Honor an explicit task-row reset before considering failure-loop guards.
+
+    ``reopen`` and successful review transitions are governed by ai-status and
+    intentionally do not mutate supervisor runtime state directly.  A literal
+    task-row zero is therefore the durable acknowledgement that discards old
+    per-provider evidence before the task becomes dispatchable again.
+    """
+
+    current_status = status if isinstance(status, dict) else load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = str(schema.get("tasks_path", "tasks"))
+    task_id_field = str(schema.get("task_id_field", "id"))
+    reset_task_ids = {
+        str(task.get(task_id_field) or "").strip()
+        for task in current_status.get(tasks_path, []) or []
+        if isinstance(task, dict)
+        and "failure_streak" in task
+        and _task_failure_streak_value(task.get("failure_streak")) == 0
+    }
+    if not reset_task_ids:
+        return False
+    bucket = _task_failure_streak_bucket(state)
+    stale_keys = [
+        key
+        for key, record in bucket.items()
+        if isinstance(record, Mapping)
+        and str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        in reset_task_ids
+    ]
+    for key in stale_keys:
+        bucket.pop(key, None)
+    guardrails = state.get("provider_guardrails")
+    projection_bucket = (
+        guardrails.get("task_failure_streak_projection_generations")
+        if isinstance(guardrails, dict)
+        else None
+    )
+    projection_task_ids = (
+        [task_id for task_id in reset_task_ids if task_id in projection_bucket]
+        if isinstance(projection_bucket, dict)
+        else []
+    )
+    if isinstance(projection_bucket, dict):
+        for task_id in projection_task_ids:
+            projection_bucket.pop(task_id, None)
+    return bool(stale_keys or projection_task_ids)
 
 
 def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
@@ -9196,8 +9800,9 @@ def apply_provider_probe_to_report(
     provider_report: dict[str, Any],
     provider_key: str,
     probe: dict[str, Any],
+    config: dict[str, Any] | None = None,
 ) -> rewrite_provider_health.AccountHealth | None:
-    """Project one normalized provider probe into a capability report."""
+    """Project one normalized provider probe into a capability report with failure hysteresis."""
 
     providers = provider_report.setdefault("providers", {})
     if not isinstance(providers, dict):
@@ -9206,36 +9811,124 @@ def apply_provider_probe_to_report(
     if not isinstance(capability, dict):
         capability = {}
         providers[provider_key] = capability
+
+    has_existing_auth_ready = "auth_ready" in capability
+    old_can_auto_deliver = capability.get("auth_ready") is True
+    raw_ready = probe.get("ready")
+    if raw_ready is None:
+        # An unclassifiable probe carries no hysteresis decision, but it must still
+        # refresh the dashboard fields the pre-hysteresis code wrote before
+        # classify_probe returned None, or probe-less providers stop updating them.
+        capability["auth_error"] = probe.get("error")
+        capability["auth_method"] = probe.get("method")
+        capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+        capability["auth_probe"] = probe
+        return None
+    probe_ready = raw_ready is True
+
+    cfg = config or {}
+    max_consecutive_failures = int(
+        cfg.get("supervisor", {}).get("provider_probe_failure_hysteresis_threshold", 3)
+    )
+
+    probe_status = str(probe.get("status") or "").strip().lower()
+    cache_compatibility_failure = probe_status.startswith("models_cache_")
+
+    # Gate failure hysteresis on transient capacity/timeout/error failure kinds only.
+    # Terminal auth/credential revocations and quota_terminal failures MUST report
+    # effective_ready = False immediately (streak >= 1) so revoked accounts do not
+    # launch workers or bypass pre-dispatch auth gates.
+    failure_kind_raw = (
+        "capacity_retryable"
+        if cache_compatibility_failure
+        else rewrite_provider_health.classify_probe_failure_kind(
+            False,
+            status=probe.get("status"),
+        )
+    )
+    is_transient_failure = (
+        failure_kind_raw in {"capacity_retryable", "capacity"}
+        or probe_status in {"probe_timeout", "probe_error"}
+    )
+
+    if probe_ready:
+        consecutive_failures = 0
+        effective_ready = True
+    else:
+        source_raw = str(probe.get("source") or "live").strip().lower()
+        is_live_probe = source_raw == "live"
+        if is_live_probe:
+            current_streak = int(capability.get("consecutive_probe_failures", 0)) + 1
+        else:
+            current_streak = int(capability.get("consecutive_probe_failures", 0))
+        consecutive_failures = current_streak
+        # Hysteresis retains auth_ready=True on transient probe failures (timeout/error/capacity)
+        # when starting from a previously healthy/ready baseline until current_streak reaches max_consecutive_failures
+        if is_transient_failure and old_can_auto_deliver and current_streak < max_consecutive_failures:
+            effective_ready = True
+        else:
+            effective_ready = False
+
+    capability["consecutive_probe_failures"] = consecutive_failures
     capability["auth_error"] = probe.get("error")
     capability["auth_method"] = probe.get("method")
     capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
     capability["auth_probe"] = probe
-    probe_status = str(probe.get("status") or "").strip().lower()
-    cache_compatibility_failure = probe_status.startswith("models_cache_")
+
     health = (
         rewrite_provider_health.AccountHealth.DEGRADED
         if cache_compatibility_failure
         else rewrite_provider_health.classify_probe(
-            probe.get("ready"),
+            effective_ready,
             status=probe.get("status"),
         )
     )
     if health is None:
         return None
+
     failure_kind = (
         "capacity_retryable"
         if cache_compatibility_failure
         else rewrite_provider_health.classify_probe_failure_kind(
-            probe.get("ready"),
+            effective_ready,
             status=probe.get("status"),
         )
     )
-    capability["auth_ready"] = probe.get("ready") is True
+    capability["auth_ready"] = effective_ready
     capability["account_health"] = health.value
     capability["probe_failure_kind"] = failure_kind
-    ready = health is rewrite_provider_health.AccountHealth.HEALTHY
-    capability["local_cli_worker_supported"] = ready
-    capability["supports_auto_approve"] = ready
+
+    # Restore health-based capability derivation: only HEALTHY accounts support local CLI workers / auto approve.
+    # DEGRADED accounts (e.g. models_cache failure or transient capacity) MUST NOT be advertised as fully capable.
+    is_healthy = health is rewrite_provider_health.AccountHealth.HEALTHY
+    capability["local_cli_worker_supported"] = is_healthy
+    capability["supports_auto_approve"] = is_healthy
+
+    if has_existing_auth_ready and old_can_auto_deliver != effective_ready:
+        if isinstance(config, dict):
+            try:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "provider_capability_transitioned",
+                        "provider": provider_key,
+                        "old_can_auto_deliver": old_can_auto_deliver,
+                        "new_can_auto_deliver": effective_ready,
+                        "probe_status": probe.get("status"),
+                        "probe_error": probe.get("error"),
+                        "consecutive_failures": consecutive_failures,
+                        "message": (
+                            f"Provider {provider_key} capability transitioned: "
+                            f"can_auto_deliver {old_can_auto_deliver} -> {effective_ready} "
+                            f"(consecutive_failures={consecutive_failures}, error={probe.get('error')})"
+                        ),
+                    },
+                )
+            except (OSError, IOError, KeyError, TypeError, ValueError) as exc:
+                sys.stderr.write(
+                    f"[warning] Failed to write provider_capability_transitioned activity event for {provider_key}: {exc}\n"
+                )
+
     return health
 
 
@@ -9258,7 +9951,9 @@ def reconcile_fresh_provider_probe_failures(
     if not isinstance(providers, dict):
         return False
     for provider_key, current in providers.items():
-        if not isinstance(current, dict) or current.get("auth_ready") is not False:
+        if not isinstance(current, dict):
+            continue
+        if current.get("auth_ready") is not False:
             continue
         probe = current.get("auth_probe")
         if not isinstance(probe, dict) or str(probe.get("source") or "").strip().lower() != "live":
@@ -9327,8 +10022,11 @@ def refresh_provider_auth_before_dispatch(
         # into a fleet-wide dispatch outage.  The periodic report is the
         # declaration that this provider supports the owner-side gate.
         return None
+    capability = existing_providers[provider_key]
+    existing_probe = capability.get("auth_probe") if isinstance(capability.get("auth_probe"), dict) else None
+    force_probe = provider_auth_probe_due(config, provider_key, existing_probe)
     try:
-        probe = probe_provider_auth(config, provider_key, force=True)
+        probe = probe_provider_auth(config, provider_key, force=force_probe)
     except Exception as exc:  # probe failure is explicit not-ready, never a launch bypass
         probe = {
             "provider": provider_key,
@@ -9342,14 +10040,13 @@ def refresh_provider_auth_before_dispatch(
         }
     capability = existing_providers[provider_key]
     previously_ready = capability.get("auth_ready")
-    health = apply_provider_probe_to_report(provider_report, provider_key, probe)
+    previous_failures = capability.get("consecutive_probe_failures")
+    health = apply_provider_probe_to_report(provider_report, provider_key, probe, config=config)
     if health is None:
         return None
-    if capability["auth_ready"] != previously_ready:
-        # Persist auth transitions in both directions so the next dispatch gate
-        # consumes the same live pre-dispatch probe result.  Only persisting
-        # ready->not-ready left a stale not-ready capability on disk after a
-        # successful recovery probe, parking healthy lanes behind old auth data.
+    if capability["auth_ready"] != previously_ready or capability.get("consecutive_probe_failures") != previous_failures:
+        # Persist auth transitions and failure streak updates so subsequent dispatch cycles
+        # consume the persisted failure count across process ticks.
         try:
             write_provider_capabilities(config, report=provider_report)
         except Exception:  # a report write must never block or bypass dispatch gating
@@ -13185,6 +13882,25 @@ def maybe_reassign_task_after_worker_failure(
         return None
 
     task_status = str(task.get("status") or "").lower()
+    failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
+    owner = str(task.get("owner") or "")
+
+    if (
+        owner == failing_agent
+        and task_has_bound_finalize_delivery_identity(task)
+    ):
+        # Exact-head review/delivery identity is immutable once bound, in any
+        # status the task later drifts into (including blocked, which is not
+        # normally eligible for reassignment at all). Checking this ahead of
+        # the eligible_statuses gate closes the gap where a task that was
+        # review_approved and then knocked back to blocked by an unrelated,
+        # transient provider outage (quota exhaustion, a stale capability
+        # probe, a crashed worker process) lost this protection simply for
+        # being blocked instead of review_approved. A missing finalize worker
+        # may still retry and ultimately block fail-closed, but no provider
+        # failure may rewrite the owner named by the reviewed commit.
+        return None
+
     if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
         return None
 
@@ -13193,22 +13909,10 @@ def maybe_reassign_task_after_worker_failure(
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
 
-    failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
     failure = classify_worker_failure(config, worker, reason)
     failure_label = failure.get("label", "provider failure")
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
-    owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
-
-    if (
-        task_status in finalize_statuses
-        and owner == failing_agent
-        and task_has_bound_finalize_delivery_identity(task)
-    ):
-        # Exact-head review/delivery identity is immutable. A missing finalize
-        # worker may retry and ultimately block fail-closed, but provider
-        # failure must not rewrite the owner named by the reviewed commit.
-        return None
 
     if (
         task_status in review_statuses
@@ -13352,11 +14056,13 @@ def maybe_reassign_tasks_from_failure_streaks(
     max_reassignments = max(1, int(settings.get("max_failure_streak_reassignments_per_cycle", 4)))
     changed = False
     applied = 0
-    streaks = list((_task_failure_streak_bucket(state) or {}).items())
     try:
-        task_map = task_index_from_status(config, load_status(config))
+        status = load_status(config)
+        changed = reconcile_task_failure_streak_resets(config, state, status)
+        task_map = task_index_from_status(config, status)
     except (KeyError, OSError, RuntimeError):
         task_map = {}
+    streaks = list((_task_failure_streak_bucket(state) or {}).items())
     for _key, record in streaks:
         if applied >= max_reassignments:
             break
@@ -13555,6 +14261,27 @@ def maybe_trigger_retry_or_fallback(
     request = request_for_worker(config, worker)
     if request is None:
         return False, False
+    retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+        config,
+        worker.get("task_id"),
+        retry_was_held=(
+            worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        ),
+    )
+    if retry_hold_reason:
+        changed = hold_worker_retry_for_task_quarantine(worker, retry_hold_reason)
+        if changed:
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_retry_held",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": retry_hold_reason,
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+        return True, changed
     reassigned_to = maybe_reassign_task_after_worker_failure(config, state, worker, reason)
     if reassigned_to:
         worker["status"] = "reassigned"
@@ -13623,8 +14350,49 @@ def retry_due_workers(
 ) -> bool:
     changed = False
     for worker in list(state.get("workers", {}).values()):
-        if worker.get("status") != "retry_backoff":
+        retry_was_held = (
+            worker.get("status") == RETRY_QUARANTINED_STATUS
+            and worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        )
+        if worker.get("status") != "retry_backoff" and not retry_was_held:
             continue
+        retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+            config,
+            worker.get("task_id"),
+            retry_was_held=retry_was_held,
+        )
+        if retry_hold_reason:
+            held = hold_worker_retry_for_task_quarantine(worker, retry_hold_reason)
+            if held:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_retry_held",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": retry_hold_reason,
+                        "worker_run_id": worker.get("run_id"),
+                    },
+                )
+            changed = held or changed
+            continue
+        if retry_was_held:
+            worker["status"] = "retry_backoff"
+            worker["next_retry_at"] = _isoformat_utc(now)
+            worker.pop("retry_hold_kind", None)
+            worker.pop("retry_hold_reason", None)
+            worker.pop("retry_held_at", None)
+            worker["last_event_at"] = utc_now()
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_retry_released",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Released held worker retry after governed task reopen.",
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:
             continue
@@ -14254,6 +15022,7 @@ def poll_worker_failure_stage(
         "reassigned",
         "retried",
         "retry_backoff",
+        RETRY_QUARANTINED_STATUS,
         "superseded",
     }:
         return {"changed": False, "stop": True}
@@ -14283,6 +15052,7 @@ def poll_worker_failure_stage(
         raw_ref=raw_ref,
         rejected_head=worker_failure_rejected_head(worker),
     )
+    persist_task_failure_streak(config, state, worker, failure_count)
     console_log(
         f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
         quiet=SUPERVISOR_LOG_QUIET,
@@ -14300,7 +15070,33 @@ def poll_worker_failure_stage(
         rotation_outcome=rotation_outcome,
     )
     if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
-        clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
+        clear_task_failure_streaks_for_task(
+            state,
+            str(worker.get("task_id") or ""),
+            retain_task_projection=True,
+        )
+        retry_hold_reason = task_retry_quarantine_hold_reason_for_task_id(
+            config,
+            worker.get("task_id"),
+            retry_was_held=(
+                worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+            ),
+        )
+        if retry_hold_reason:
+            held = hold_worker_retry_for_task_quarantine(worker, retry_hold_reason)
+            if held:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_retry_held",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": retry_hold_reason,
+                        "worker_run_id": worker.get("run_id"),
+                        "raw_ref": raw_ref,
+                    },
+                )
+            return {"changed": held, "stop": True}
         schedule_worker_retry(config, worker, summarized_reason)
         write_activity_log(
             config,
@@ -14453,7 +15249,7 @@ def poll_worker_completion_stage(
     if completion_message is not None:
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
+        clear_task_failure_streak_after_worker_completion(config, state, worker)
         write_activity_log(
             config,
             {
@@ -14480,7 +15276,7 @@ def poll_worker_completion_stage(
     if task_status in terminal_statuses:
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
+        clear_task_failure_streak_after_worker_completion(config, state, worker)
         write_activity_log(
             config,
             {
@@ -14543,6 +15339,7 @@ def poll_worker_completion_stage(
             raw_ref=raw_ref,
             rejected_head=worker_failure_rejected_head(worker),
         )
+        persist_task_failure_streak(config, state, worker, failure_count)
         generic_threshold = max(
             1,
             int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
@@ -14665,7 +15462,7 @@ def poll_worker_assignment_stage(
             return {"changed": False, "stop": True}
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
+        clear_task_failure_streak_after_worker_completion(config, state, worker)
         write_activity_log(
             config,
             {
@@ -14694,6 +15491,15 @@ def poll_worker_assignment_stage(
         return {"changed": bool(changed), "stop": True}
 
     task = task_map.get(str(worker.get("task_id") or ""))
+    if (
+        worker.get("status") == RETRY_QUARANTINED_STATUS
+        and worker.get("retry_hold_kind") == RETRY_HELD_BY_TASK_QUARANTINE
+        and task_retry_quarantine_hold_reason(task, retry_was_held=True)
+    ):
+        # retry_due_workers owns release after a governed reopen. Until then,
+        # the expected assignment mismatch must not supersede this queue-backed
+        # parent or complete the queue event that reopen will release.
+        return {"changed": changed, "stop": True}
     handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
     lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:
@@ -14749,7 +15555,7 @@ def poll_worker_assignment_stage(
             worker["status"] = "completed"
             worker["last_event_at"] = utc_now()
             worker.pop("last_error", None)
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -15267,13 +16073,14 @@ def _cleanup_registered_worker_worktrees(
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
+    status_root = config_path(config, "status_file").parents[0]
+    repo_root = worker_worktree_source_root(config, worktree_settings)
     active_roots = active_worker_workspace_roots(config, state)
     live_paths = _scan_process_paths_in_root(base_root)
     max_removals = max(0, int(settings["max_removals_per_tick"]))
     archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
     if not archive_root.is_absolute():
-        archive_root = repo_root / archive_root
+        archive_root = status_root / archive_root
     merged_branches = _merged_task_branches(repo_root, list(settings["base_branches"])) if require_merged else set()
     if require_merged and not merged_branches:
         return False
@@ -15326,6 +16133,8 @@ def _cleanup_registered_worker_worktrees(
     summary: dict[str, Any] = {
         "at": utc_now(),
         "source": source,
+        "status_root": str(status_root.resolve()),
+        "workspace_source_root": str(repo_root),
         "checked": 0,
         "removed": 0,
         "skipped": 0,
@@ -15519,7 +16328,7 @@ def prune_chair_review_worktrees(config: dict[str, Any], state: dict[str, Any]) 
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
+    repo_root = worker_worktree_source_root(config, worktree_settings)
 
     max_age = settings["chair_review_max_age_seconds"]
     max_removals = max(0, settings["chair_review_max_removals_per_tick"])
@@ -16052,7 +16861,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
             worker.pop("last_error", None)
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16078,7 +16887,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         ):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16118,7 +16927,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         ):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
             finalize_queue_event_record(config, state, worker, "completed")
             write_activity_log(
                 config,
@@ -16165,6 +16974,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(worker),
             )
+            persist_task_failure_streak(config, state, worker, failure_count)
             failure_kind = str(failure.get("kind") or "")
             failure_response = decide_provider_failure_response(failure_kind)
             if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
@@ -16272,6 +17082,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 raw_ref=raw_ref,
                 rejected_head=worker_failure_rejected_head(worker),
             )
+            persist_task_failure_streak(config, state, worker, failure_count)
 
         if missing_process:
             if failure_count is None:
@@ -16296,6 +17107,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     raw_ref=raw_ref,
                     rejected_head=worker_failure_rejected_head(worker),
                 )
+                persist_task_failure_streak(config, state, worker, failure_count)
             reassigned_to = maybe_reassign_task_after_worker_failure(
                 config,
                 state,
@@ -16634,27 +17446,28 @@ def normalize_mainline_task_assignment(
     if not task_id:
         return False
     task_status = str(task.get("status") or "").lower()
+    owner = str(task.get("owner") or "").strip()
+
+    if task_has_bound_finalize_delivery_identity(task):
+        # An exact-head approval (a real, verified PR/commit reference) binds
+        # delivery identity. This must hold in every status the task can
+        # drift into -- including blocked, which this scan otherwise always
+        # treats as reassignable -- and regardless of whether the reviewer
+        # happens to be an explicit human gate. Availability scans must await
+        # closeout instead of rewriting the owner named by the reviewed
+        # commit; that owner is exactly what a downstream governed closeout
+        # (reconcile_merged_done) needs to stay stable in order to verify the
+        # reassignment chain automatically instead of requiring a human
+        # signoff for every transient provider outage.
+        return False
+
     eligible_statuses = {str(value).lower() for value in settings.get("eligible_statuses", [])}
     eligible_statuses.add("blocked")
     if task_status not in eligible_statuses:
         return False
 
-    owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
     explicit_human_reviewer = reviewer_is_explicit_human_gate(reviewer)
-    finalize_statuses = normalized_status_set(
-        ready_dispatch_settings(config).get("finalize_statuses"),
-        ["review_approved"],
-    )
-    if (
-        explicit_human_reviewer
-        and task_status in finalize_statuses
-        and task_has_bound_finalize_delivery_identity(task)
-    ):
-        # An exact-head approval binds both delivery ownership and the explicit
-        # human decision. Availability scans must await closeout instead of
-        # rewriting either side of that approved identity.
-        return False
     assignment_state = None if task_status == "in_progress" else state
     owner_allowed = agent_can_take_task(config, owner, task, state=assignment_state)
     reviewer_allowed = explicit_human_reviewer or agent_can_take_task(
@@ -17204,6 +18017,13 @@ def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> i
     if task_id.startswith("L12-") or task_id.startswith("SUP-L12-"):
         return 0
     return 1_000_000
+
+
+def task_l12_dispatch_priority_rank(task: dict[str, Any], base_priority: int) -> int:
+    return task_l12_review_priority_rank(task, base_priority)
+
+
+
 
 
 L12_PROVIDER_FIRST_AGENT_NAMES = frozenset(
@@ -18022,6 +18842,8 @@ def task_priority_preemption_protected(task: dict[str, Any] | None) -> bool:
     return task_id.startswith("SUP-L12-") and isinstance(preferred_lanes, list) and "Wave 0" in phase
 
 
+
+
 def worker_matches_current_assignment(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -18192,6 +19014,11 @@ def dispatch_ready_tasks(
         return False
 
     status = load_status(config)
+    failure_streak_resets_reconciled = reconcile_task_failure_streak_resets(
+        config,
+        state,
+        status,
+    )
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
@@ -18231,7 +19058,7 @@ def dispatch_ready_tasks(
         task_map=task_map,
         active_task_agents=active_task_agents,
         pending_task_agents=pending_task_agents,
-    )
+    ) or failure_streak_resets_reconciled
     failure_loop_task_agents = failure_loop_task_agents_for_task_map(
         config,
         state,
@@ -18241,7 +19068,6 @@ def dispatch_ready_tasks(
     )
     failure_loop_task_ids = failure_streak_threshold_task_ids(config, state)
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
-
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
@@ -18503,7 +19329,7 @@ def dispatch_ready_tasks(
             candidates.append(
                 (
                     priority,
-                    task_l12_review_priority_rank(task, priority),
+                    task_l12_dispatch_priority_rank(task, priority),
                     task_declared_priority_rank(task),
                     index,
                     task,
@@ -19189,7 +20015,19 @@ def probe_provider_reports(
         previous = load_json(config_path(config, "provider_capabilities"), default={}) or {}
     except KeyError:
         previous = {}
-    report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
+
+    refresh_interval = int(config.get("supervisor", {}).get("provider_capability_refresh_interval_seconds", 300))
+    should_tick_refresh = False
+    if refresh_interval > 0:
+        gen_at = _parse_iso_utc(str(previous.get("generated_at") or ""))
+        if gen_at is None or (datetime.now(timezone.utc) - gen_at).total_seconds() >= refresh_interval:
+            should_tick_refresh = True
+
+    if should_tick_refresh:
+        report = _safe_phase("load_provider_report_tick", load_provider_report, config, refresh=True, quiet=quiet)
+    else:
+        report = _safe_phase("load_provider_report", load_provider_report, config, refresh=False, quiet=quiet)
+
     if report is None:
         report = previous or {}
     recovery_targets = provider_recovery_probe_targets(
@@ -19275,7 +20113,7 @@ def probe_provider_reports(
             }
         if str(probe.get("source") or "").strip().lower() != "live":
             continue
-        apply_provider_probe_to_report(report, provider_key, probe)
+        apply_provider_probe_to_report(report, provider_key, probe, config=config)
         targeted = True
     if targeted:
         _safe_phase(
@@ -19420,8 +20258,24 @@ def run_once(
         github_runtime_snapshot,
     )
     if required_worker_base_refs:
-        repo_root = config_path(config, "status_file").parent
+        worktree_settings = worker_worktree_settings(config)
+        repo_root = worker_worktree_source_root(config, worktree_settings)
         for base_ref in required_worker_base_refs:
+            if not repo_root.exists():
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_worktree_base_refresh_failed",
+                        "message": (
+                            f"Worker base {base_ref} could not be refreshed before "
+                            f"runtime admission: configured worker source root does not exist: {repo_root}"
+                        ),
+                        "base_ref": base_ref,
+                        "workspace_source_root": str(repo_root),
+                        "refresh_status": "source_root_missing",
+                    },
+                )
+                continue
             fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
             if fetched:
                 prefetched_worker_base_refs.add(base_ref)
@@ -19435,6 +20289,7 @@ def run_once(
                         f"runtime admission: {fetch_error}"
                     ),
                     "base_ref": base_ref,
+                    "workspace_source_root": str(repo_root),
                 },
             )
     github_bus_changed = bool(
@@ -19864,6 +20719,7 @@ def _run_once_locked(
                 loop_started_at=loop_started_at,
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
+        changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
         changed = _safe_phase(
             "reap_stale_l12_missing_process_failure_streaks",
             reap_stale_l12_missing_process_failure_streaks,

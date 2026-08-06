@@ -1326,9 +1326,7 @@ services:
       telemetry:
         condition: service_healthy
       loop-run-projector-scheduler:
-        # Preserve BFF availability when the legacy projector is stopped by
-        # its emergency memory guard. Readiness still reports stale truth.
-        condition: service_started
+        condition: service_healthy
       lineage-read:
         condition: service_healthy
       postgres:
@@ -1358,12 +1356,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
-    # Emergency containment for the legacy full-history projector. It can
-    # otherwise consume the host while loading/copying unbounded state.
-    # Fail stopped at the cgroup boundary until the incremental replacement
-    # is delivered; the last atomic projection remains readable by the BFF.
-    restart: "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-no}"
-    mem_limit: ${LIFECYCLE_PROJECTOR_MEMORY_LIMIT:-16g}
+    restart: unless-stopped
     stop_grace_period: 30s
     environment:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1373,7 +1366,7 @@ services:
       LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
       LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
       LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
-      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-4}
+      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
       LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}

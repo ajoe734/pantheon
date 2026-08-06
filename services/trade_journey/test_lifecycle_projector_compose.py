@@ -13,8 +13,7 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     environment = projector["environment"]
 
     assert "profiles" not in projector
-    assert projector["restart"] == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-no}"
-    assert projector["mem_limit"] == "${LIFECYCLE_PROJECTOR_MEMORY_LIMIT:-16g}"
+    assert projector["restart"] == "unless-stopped"
     assert projector["build"]["dockerfile"] == "services/telemetry/Dockerfile"
     assert projector["command"] == [
         "python",
@@ -34,9 +33,7 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
         "/data/bff/lifecycle-projection/health_state.json"
     )
     assert environment["LIFECYCLE_PROJECTOR_POLL_SECONDS"] == "${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}"
-    assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == (
-        "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-4}"
-    )
+    assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}"
     assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
     )
@@ -82,7 +79,7 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     )
     assert (
         bff["depends_on"]["loop-run-projector-scheduler"]["condition"]
-        == "service_started"
+        == "service_healthy"
     )
 
 

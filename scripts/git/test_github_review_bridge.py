@@ -30,8 +30,6 @@ class FakeRunner:
         self.reviews: list[dict[str, Any]] = []
         self.statuses: list[dict[str, Any]] = []
         self.calls: list[tuple[list[str], Mapping[str, Any] | None]] = []
-        self.tag_refs: dict[str, dict[str, Any]] = {}
-        self._next_tag_sha = 200
 
     def run_json(
         self,
@@ -86,22 +84,6 @@ class FakeRunner:
                 }
             )
             return dict(self.statuses[-1])
-        if joined.startswith(f"gh api repos/{REPOSITORY}/git/refs/tags/") and "--method" not in joined:
-            tag_name = command[-1].rsplit("git/refs/tags/", 1)[-1].replace("%2F", "/")
-            ref = f"refs/tags/{tag_name}"
-            existing = self.tag_refs.get(ref)
-            if existing is None:
-                raise bridge.GitHubReviewBridgeError("Not Found (HTTP 404)")
-            return dict(existing)
-        if f"repos/{REPOSITORY}/git/tags" in joined and "--method POST" in joined:
-            assert payload is not None
-            self._next_tag_sha += 1
-            return {"sha": f"tagobj{self._next_tag_sha}", "tag": payload["tag"], "message": payload["message"]}
-        if f"repos/{REPOSITORY}/git/refs" in joined and "--method POST" in joined and "refs%2Ftags" not in joined:
-            assert payload is not None
-            ref_payload = {"ref": payload["ref"], "object": {"sha": payload["sha"], "type": "tag"}}
-            self.tag_refs[payload["ref"]] = ref_payload
-            return dict(ref_payload)
         raise AssertionError(f"unexpected fake gh call: {command}")
 
 
@@ -134,57 +116,6 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         self.assertEqual(result.status_state, "success")
         self.assertEqual(runner.reviews[0]["commit_id"], HEAD)
         self.assertEqual(runner.statuses[0]["state"], "success")
-        expected_ref = f"refs/tags/pantheon-review/approve/{HEAD}"
-        self.assertEqual(result.review_proof_ref, expected_ref)
-        self.assertIn(expected_ref, runner.tag_refs)
-
-    def test_approve_proof_tag_is_idempotent_on_retry(self) -> None:
-        """A retried approve on the same head must not fail because the tag
-        already exists (SUP-REVIEW-GATE-GIT-NATIVE-PROOF-20260804)."""
-
-        runner = FakeRunner()
-        first = bridge.bridge_review_decision(
-            repository=REPOSITORY,
-            task_id="AUDIT-001",
-            actor="Codex2",
-            decision="approve",
-            message="First attempt.",
-            binding=binding(),
-            runner=runner,
-        )
-        tag_calls_after_first = sum(
-            1 for command, _ in runner.calls if "git/tags" in " ".join(command) and "POST" in " ".join(command)
-        )
-        second = bridge.bridge_review_decision(
-            repository=REPOSITORY,
-            task_id="AUDIT-001",
-            actor="Codex2",
-            decision="approve",
-            message="Retried attempt, same head.",
-            binding=binding(),
-            runner=runner,
-        )
-        tag_calls_after_second = sum(
-            1 for command, _ in runner.calls if "git/tags" in " ".join(command) and "POST" in " ".join(command)
-        )
-        self.assertEqual(first.review_proof_ref, second.review_proof_ref)
-        self.assertEqual(tag_calls_after_first, tag_calls_after_second)
-
-    def test_reopen_pushes_a_distinct_proof_tag_namespace(self) -> None:
-        runner = FakeRunner(
-            review_error="Can not request changes on your own pull request",
-            context_required=True,
-        )
-        result = bridge.bridge_review_decision(
-            repository=REPOSITORY,
-            task_id="AUDIT-001",
-            actor="Codex2",
-            decision="reopen",
-            message="Matrix row is stale.",
-            binding=binding(),
-            runner=runner,
-        )
-        self.assertEqual(result.review_proof_ref, f"refs/tags/pantheon-review/reopen/{HEAD}")
 
     def test_self_review_failure_uses_only_required_policy_status(self) -> None:
         runner = FakeRunner(

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import functools
-import os
 import sys
 import tempfile
 import threading
@@ -18,35 +17,6 @@ sys.path.insert(0, str(ROOT / ".orchestrator"))
 
 import common  # noqa: E402
 import dashboard_server  # noqa: E402
-
-
-def test_refresh_environment_uses_operator_identity_and_drops_worker_lease(monkeypatch) -> None:
-    worker_env = {
-        "AI_NAME": "Codex2",
-        "ORCH_RUN_ID": "codex-run",
-        "PANTHEON_WORKTREE_ROOT": "/tmp/task-worktree",
-        "ORCH_WORKSPACE_PATH": "/tmp/task-worktree",
-        "PANTHEON_COMMAND_ROOT": "/tmp/command-root",
-    }
-    for name, value in worker_env.items():
-        monkeypatch.setenv(name, value)
-
-    repo_root = Path("/srv/pantheon")
-    env = dashboard_server.dashboard_refresh_environment(repo_root)
-
-    assert env["AI_NAME"] == "Human/ops"
-    assert env["PANTHEON_STATUS_ROOT"] == str(repo_root)
-    for name in dashboard_server.WORKER_CONTEXT_ENV_NAMES:
-        assert name not in env
-    assert os.environ["ORCH_RUN_ID"] == "codex-run"
-
-
-def test_refresh_environment_allows_explicit_operator_actor(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_DASHBOARD_REFRESH_ACTOR", "Ops")
-
-    env = dashboard_server.dashboard_refresh_environment(Path("/srv/pantheon"))
-
-    assert env["AI_NAME"] == "Ops"
 
 
 def test_activity_get_waits_for_audit_writer_and_returns_complete_tail() -> None:

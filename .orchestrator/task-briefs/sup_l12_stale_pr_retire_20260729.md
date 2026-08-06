@@ -1,16 +1,16 @@
-# Task Brief: SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731
+# Task Brief: SUP-L12-STALE-PR-RETIRE-20260729
 
 Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
-- Title: Preserve owner identity across review handoff and closeout
-- Status: todo
-- Owner: Codex2
+- Title: Retire stale L12 PRs after 1025Z gap audit
+- Status: in_progress
+- Owner: Claude
 - Reviewer: Antigravity
-- Next: Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.
+- Next: Supervisor re-dispatched SUP-L12-STALE-PR-RETIRE-20260729; task remains in progress.
 
 ## Summary
-Repair the supervisor failure-loop/closeout boundary so a successful review handoff does not look like a missing outcome and immutable delivery identity remains valid through governed reassignment.
+Retire or supersede stale L12 PRs without closing active product proof.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.

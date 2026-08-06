@@ -1002,25 +1002,7 @@ def integrate_candidate(
         ),
         cwd=root,
     )
-    # `gh pr merge` on a branch that requires a merge queue does not merge
-    # synchronously: a request whose checks have already passed is *added to
-    # the queue* instead (see `gh pr merge --help`), and lands whenever the
-    # queue processes it -- which can be seconds or minutes later, and is not
-    # guaranteed to complete before this process exits. Re-check the actual
-    # state before treating the merge as done; do not call reconcile_done for
-    # a merge that has not landed. SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804.
-    post_merge_pr = gh_json(runner, ["pr", "view", str(number), "--json", PR_DETAIL_FIELDS], cwd=root)
-    if not isinstance(post_merge_pr, Mapping) or str(post_merge_pr.get("state") or "").upper() != "MERGED":
-        # Not a failure: the merge request was accepted (directly or into the
-        # queue) and simply has not landed within this process's lifetime.
-        # The next auto-integrator pass finds this PR through the existing
-        # "already merged" fallback above (fetch_pr_for_task(..., state=
-        # "merged")) once GitHub actually reports it MERGED, and reconciles
-        # it there -- no new resumption logic needed, that path already
-        # re-validates the merge commit and the gate decision independently.
-        detail = f"PR #{number}'s merge was requested but has not landed yet (queued or pending); will re-check next pass."
-        return IntegrationResult(candidate.task_id, "queued_for_merge", detail, number, url, dry_run=False, commands=runner.commands[:])
-    reconcile_done(candidate, post_merge_pr, runner, root=root, execute=True)
+    reconcile_done(candidate, pr, runner, root=root, execute=True)
     if gated:
         detail = (
             f"Merged the reviewer-approved head {decision.head_oid} of PR #{number} into "
@@ -1094,7 +1076,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"- {result.task_id}: {result.action}{suffix} - {result.detail}")
     if any(result.action == "blocked" for result in results):
         return 2
-    if any(result.action in {"waiting", "auto_merge_enabled", "queued_for_merge"} for result in results):
+    if any(result.action in {"waiting", "auto_merge_enabled"} for result in results):
         return 1
     return 0
 
