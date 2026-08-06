@@ -1,0 +1,25 @@
+{
+  "task_id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+  "title": "Provider-first helper claim when preferred lane is busy",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "status": "in_progress",
+  "verified_commands": [
+    ".venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -v -k \"test_dispatcher_helper_claim\"",
+    ".venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -v -k \"test_dispatcher_reaps\""
+  ],
+  "verification_results": {
+    "helper_claim_tests": "12 passed",
+    "stale_reap_tests": "3 passed"
+  },
+  "changes": [
+    {
+      "file": ".orchestrator/supervisor.py",
+      "functions": [
+        "task_preferred_lane_blocks_helper_claim",
+        "task_next_preferred_helper_lane"
+      ],
+      "summary": "Applied l12_provider_first_candidates to task_preferred_lane_order in helper claim evaluation so L12 recovery tasks restrict helper claims to provider-first lanes when preferred lane is busy or paused."
+    }
+  ]
+}

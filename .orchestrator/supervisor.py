@@ -18518,11 +18518,14 @@ def task_preferred_lane_blocks_helper_claim(
     owner_paused: bool = False,
     state: dict[str, Any] | None = None,
 ) -> bool:
-    preferred_lanes = task_preferred_lane_order(config, task)
-    if not preferred_lanes:
+    raw_preferred_lanes = task_preferred_lane_order(config, task)
+    if not raw_preferred_lanes:
         return False
     idle_agent_name = canonical_agent_name(config, idle_agent_name)
     owner_name = canonical_agent_name(config, owner_name)
+    if idle_agent_name not in raw_preferred_lanes:
+        return True
+    preferred_lanes = l12_provider_first_candidates(task, raw_preferred_lanes)
     if idle_agent_name not in preferred_lanes:
         return True
     if owner_paused:
@@ -18546,6 +18549,7 @@ def task_next_preferred_helper_lane(
     state: dict[str, Any] | None = None,
 ) -> str | None:
     preferred_lanes = task_preferred_lane_order(config, task)
+    preferred_lanes = l12_provider_first_candidates(task, preferred_lanes)
     if not preferred_lanes:
         return None
     owner_name = canonical_agent_name(config, owner_name)
