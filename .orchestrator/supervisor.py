@@ -18885,8 +18885,26 @@ def worker_matches_current_assignment(
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
     if not task:
+        # If task is not in task_map (e.g. done/archived), active worker was dispatched under past row.
+        # Check task_assignment_at_dispatch vs current task row if available.
+        dispatch_snapshot = worker_dispatch_assignment_snapshot(worker)
+        if dispatch_snapshot:
+            # Task row removed/archived or absent from active status map
+            return True
         return False
     agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+    dispatch_snapshot = worker_dispatch_assignment_snapshot(worker)
+    if dispatch_snapshot:
+        dispatch_owner = str(dispatch_snapshot.get("owner") or "")
+        dispatch_reviewer = str(dispatch_snapshot.get("reviewer") or "")
+        current_owner = str(task.get("owner") or "")
+        current_reviewer = str(task.get("reviewer") or "")
+        # Genuine assignment change check: did owner or reviewer change?
+        if current_owner != dispatch_owner or current_reviewer != dispatch_reviewer:
+            return False
+        return True
+
+    # Fallback if dispatch snapshot is missing
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
@@ -18896,15 +18914,11 @@ def worker_matches_current_assignment(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
-    if task_status in dependency_done_statuses:
-        return False
     if task_status in review_statuses:
         return task.get(reviewer_field) == agent_name
-    if task_status in finalize_statuses:
+    if task_status in finalize_statuses or task_status in owned_statuses or task_status == "blocked":
         return task.get(owner_field) == agent_name
-    if task_status in owned_statuses:
-        return task.get(owner_field) == agent_name
-    return False
+    return True
 
 
 def worker_status_command_source_sha(worker: dict[str, Any]) -> str | None:
@@ -19279,8 +19293,8 @@ def reconcile_worker_task_assignments(
             ),
             duplicate_active=reason == "duplicate_active_worker",
         )
-        if alive_by_run.get(run_id, False) and not terminate_worker_pid(
-            worker.get("pid")
+        if alive_by_run.get(run_id, False) and not terminate_worker_process_generation(
+            worker
         ):
             continue
         timestamp = utc_now()
