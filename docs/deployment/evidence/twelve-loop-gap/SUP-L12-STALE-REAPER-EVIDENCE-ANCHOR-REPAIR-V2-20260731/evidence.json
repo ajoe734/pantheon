@@ -167,7 +167,7 @@
     "supersedes_pull_request": 4385,
     "implementation_anchor_commit": "5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e",
     "pull_request": 4465,
-    "task_head_sha": "e5eef026f32cc1faa5b35fd4f5399e723465df26",
+    "task_head_sha": "c44f0518fa49b94dc40bc153c147d5a86a280fdf",
     "merge_commit": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },
