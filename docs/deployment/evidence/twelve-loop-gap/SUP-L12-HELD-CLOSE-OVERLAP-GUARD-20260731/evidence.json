@@ -16,16 +16,16 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-06T15:47:00Z",
+    "evidence_cut_at": "2026-08-06T17:00:00Z",
     "evidence_cut_semantics": "Implementation-ready candidate only. Exact-head independent review, protected merge, immutable command-root promotion, and the Human/Ops restore of .github/workflows/canonical-review-gate.yml on dev are all still open and must not be inferred from this cut.",
     "id": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
     "overall_admission": "implementation_complete_pending_independent_review_and_human_ops_gate_restore",
-    "owner": "Antigravity",
+    "owner": "Claude",
     "phase": "Supervisor Runtime Repair / Guarded Dispatcher Held Sink",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/evidence.json",
-    "reviewer": "Claude",
+    "reviewer": "Antigravity",
     "target_environment": "Pantheon development supervisor runtime",
     "target_maturity": "merged_reviewed_live_promoted_guard",
     "task_branch": "task/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
@@ -46,7 +46,7 @@
     "task_packet": ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md"
   },
   "scope": {
-    "authoritative_write_owner": "Antigravity owns the exact overlap predicate, regressions, and candidate evidence (reassigned from Claude/Codex2 on 2026-08-06); Claude owns independent exact-head review.",
+    "authoritative_write_owner": "Claude owns the exact overlap predicate, regressions, and candidate evidence (ownership returned from Antigravity to Claude on 2026-08-06 after repeated Antigravity provider timeouts; originally Claude/Codex2); Antigravity owns independent exact-head review.",
     "composes_with": [
       "L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
       "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
@@ -69,47 +69,122 @@
     "owned_layer": "Current guarded dispatcher live-overlap admission for one exact controller-integration to held-close registry edge."
   },
   "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "094a0f16d27e95c079e5d834e4f0802c6b835036",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: order held close sink",
+        "parent": "ab5caf7d447becd54aa82b11c3b84c3dc8502d92",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false,
+        "note": "Re-cut root of task/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 on origin/dev tip ab5caf7d4. Carries the whole guard change and the in-envelope restore of the five files the PR #4590 stale-base squash removed or reverted. base_branch_repair and history_rewrite below are attached to this commit because it is the commit that performs the repair and the first commit of the re-cut branch.",
+        "base_branch_repair": {
+          "regression_commit": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
+          "regression_pull_request": 4590,
+          "regression_proof": "The dispatcher blob left on dev, d5f2f9092fafcd2d474ca8ecbf1b5af8eaf32dba, is byte-identical to the blob at ancestor commit 780c553a0. An earlier revision of this manifest recorded that 154 of the 166 deleted files still existed on origin/master; that is no longer true and is corrected here. Re-measured at 2026-08-06T17:00Z against a freshly fetched origin/master (tip 8ec60ff7477e6188149594a3f8ff9aec70f93e27, the promote v2026.08.06.2 merge of PR #4596), 0 of the 166 files deleted by 23ae23c21 exist on origin/master, and origin/master carries the same reverted dispatcher blob d5f2f9092. The promotion therefore propagated the regression to the release branch, so master is not a restore source for any of the 166 files, including .github/workflows/canonical-review-gate.yml. The only restore source is the pre-squash tree 23ae23c21^.",
+          "restored_in_this_pr": [
+            "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+            "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+            "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md",
+            "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+            "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json"
+          ],
+          "restore_fidelity": "The three catalog input files (INDEX.md, tasks.json, guarded-remediation-tasks.json) are byte-identical to their 23ae23c21^ blobs (0496eb4b56cbc9c2aad1d40038895e98409c0ec3, 56a131ef22cbc366b02d28752a7ae75b38ff3cd6, ad74e45b70e721638957191f5006567e1f5dc0dc). The dispatcher 640d5a18c8ae is the pre-squash file plus this task 142-line guard change, omitting _current_profile, _is_current_catalog, load_authoritative_task_snapshot and authoritative_snapshot_evidence. The test file 8d18ac893a6c provides 53 passing tests focusing on the guard, omitting 11 defs present at 23ae23c21^ (5 test_ defs: test_authority_uses_one_validated_snapshot_generation, test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap, test_current_dry_run_fails_closed_without_journal_authority, test_current_dry_run_fails_closed_without_provisioned_lock, test_previous_current_profile_remains_available_and_exact; plus 6 helper defs) while adding 5 new test defs — a net delta of -6 defs. The 5 dropped test_ defs all exercise 626631be8 authoritative-snapshot symbols this PR intentionally does not restore.",
+          "not_restored": "The remaining deleted files stay deleted here. .github/workflows/canonical-review-gate.yml is the fleet-blocking one and is Human/Ops scoped."
+        },
+        "history_rewrite": {
+          "previous_head": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
+          "reason": "The previous range origin/dev..7db2114e5 contained dfdcd07ffb244ce29182478654ffe7d6ec4178e9, whose 90-character subject failed the required Commit trailers check. That check re-scans the whole range, so a follow-up commit could not clear it. The same range was also CONFLICTING against dev.",
+          "method": "branch re-cut linearly on origin/dev tip and force-pushed with lease",
+          "approval_safety": "No review approval had ever been bound to the previous head, so no review-proof tag was orphaned.",
+          "recovery_ref": "local tag pre-rewrite-sup-l12-held-close"
+        }
+      },
+      {
+        "sha": "617318f052575f62ac2d97eff742b4e90c320cdb",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: refresh review evidence",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence-only. Added this manifest and README.md and the task brief update. Authored by Claude as owner."
+      },
+      {
+        "sha": "a31ddbf8bda75c9f2ce267a2ccb21071ecef291d",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: refresh evidence details and actor alignment",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence-only. Remediated the four defects raised at the Claude reopen of this head. Authored by Antigravity during the Antigravity ownership window."
+      },
+      {
+        "sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: evidence actor and count fixes",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence-only actor and dropped-def count corrections. Authored by Antigravity."
+      },
+      {
+        "sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: anchor evidence head-sha advance",
+        "delivery_state": "task_branch_candidate",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence-only head_sha and required_checks advance. Authored by Antigravity. Its pending check claim is corrected by the cancelled entries in required_checks."
+      }
+    ],
     "pull_request": {
       "number": 4425,
       "url": "https://github.com/ajoe734/pantheon/pull/4425",
-      "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+      "head_sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
       "base": "dev",
       "mergeable": "MERGEABLE",
-      "merge_state_status": "MERGEABLE",
-      "head_sha_note": "head_sha is the evidence-actor-and-count-fixes commit (7ab57c517) now on GitHub as PR #4425 HEAD. This is the current exact-head the reviewer must bind at review time. Prior head_sha 094a0f16d was the implementation commit; a31ddbf8b was the previous evidence refresh; 7ab57c517 is the evidence-only actor-and-count corrections commit."
+      "merge_state_status": "BLOCKED",
+      "head_sha_note": "head_sha is the GitHub PR #4425 HEAD observed at 2026-08-06T17:00Z, before this manifest revision was committed. This manifest cannot name its own commit, so the revision carrying these words necessarily advances the PR head past 02edfd5ca; the reviewer must read the live PR head and bind that exact sha at approve time rather than trusting this field. Head lineage: 094a0f16d implementation commit -> 617318f05 evidence packet -> a31ddbf8b evidence refresh -> 7ab57c517 actor and count fixes -> 02edfd5ca head and check refresh -> this owner-rebind revision. merge_state_status BLOCKED is the live gh value at 2026-08-06T17:00Z and reflects the missing required gate context, not a content conflict; mergeable stays MERGEABLE."
     },
     "required_checks": [
       {
         "workflow": "Branch CI Gate / Commit trailers",
         "event": "pull_request",
-        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
-        "conclusion": "pending",
-        "detail": "CI run 31120873389 and 31120876932 queued at 2026-08-06T16:44Z against current PR head. Result not yet available.",
-        "observed_at": "2026-08-06T16:50:00Z"
+        "head_sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
+        "conclusion": "queued",
+        "detail": "Runs 31121317427 and 31121320470 were created at 2026-08-06T16:56Z and were still queued with no job started at 2026-08-06T17:00Z. No conclusion is asserted at this head.",
+        "observed_at": "2026-08-06T17:00:00Z"
       },
       {
         "workflow": "Branch CI Gate / Runtime mirror guard",
         "event": "pull_request",
-        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
-        "conclusion": "pending",
-        "detail": "CI run 31120873389 and 31120876932 queued at 2026-08-06T16:44Z. Result not yet available.",
-        "observed_at": "2026-08-06T16:50:00Z"
+        "head_sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
+        "conclusion": "queued",
+        "detail": "Same two runs, same queued state. No conclusion is asserted at this head.",
+        "observed_at": "2026-08-06T17:00:00Z"
       },
       {
         "workflow": "Branch CI Gate / Python packaging provision",
         "event": "pull_request",
-        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
-        "conclusion": "pending",
-        "detail": "CI run 31120873389 and 31120876932 queued at 2026-08-06T16:44Z. Result not yet available.",
-        "observed_at": "2026-08-06T16:50:00Z"
+        "head_sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
+        "conclusion": "queued",
+        "detail": "Same two runs, same queued state. No conclusion is asserted at this head.",
+        "observed_at": "2026-08-06T17:00:00Z"
       },
       {
         "workflow": "Pantheon canonical review gate",
         "event": "status",
-        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+        "head_sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
         "conclusion": "not_produced",
-        "detail": "The gate workflow file is still deleted from dev by the PR #4590 squash, so the required context cannot be produced from the default branch. This blocks merge independently of review and is not repaired by this PR.",
-        "observed_at": "2026-08-06T16:50:00Z"
+        "detail": "The gate workflow file is deleted from dev by the PR #4590 squash and, as of 2026-08-06T17:00Z, from origin/master as well, so the required context cannot be produced from the default branch. This blocks merge independently of review and is not repaired by this PR.",
+        "observed_at": "2026-08-06T17:00:00Z"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+        "conclusion": "cancelled",
+        "detail": "Correction of record_log sequence 5, which carried these runs as pending. Runs 31120873389 and 31120876932 never resolved: both were cancelled when the 02edfd5ca push superseded the head, so no check result was ever produced at 7ab57c517.",
+        "observed_at": "2026-08-06T17:00:00Z"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "head_sha": "a31ddbf8bda75c9f2ce267a2ccb21071ecef291d",
+        "conclusion": "cancelled",
+        "detail": "Runs 31119671454 and 31119674636 were likewise cancelled when the head advanced. Historical only.",
+        "observed_at": "2026-08-06T17:00:00Z"
       },
       {
         "workflow": "Branch CI Gate / Commit trailers",
@@ -119,37 +194,7 @@
         "detail": "Pre-rewrite head observation only. subject exceeds 72 chars (90) on dfdcd07ffb244ce29182478654ffe7d6ec4178e9. The offending commit was removed by the re-cut; this entry is historical only.",
         "observed_at": "2026-08-06T15:33:00Z"
       }
-    ],
-    "delivery_commits": [
-      {
-        "sha": "094a0f16d27e95c079e5d834e4f0802c6b835036",
-        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: order held close sink",
-        "parent": "ab5caf7d447becd54aa82b11c3b84c3dc8502d92",
-        "delivery_state": "task_branch_candidate",
-        "hosted_cut_inclusion": false
-      }
-    ],
-    "history_rewrite": {
-      "previous_head": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
-      "reason": "The previous range origin/dev..7db2114e5 contained dfdcd07ffb244ce29182478654ffe7d6ec4178e9, whose 90-character subject failed the required Commit trailers check. That check re-scans the whole range, so a follow-up commit could not clear it. The same range was also CONFLICTING against dev.",
-      "method": "branch re-cut linearly on origin/dev tip and force-pushed with lease",
-      "approval_safety": "No review approval had ever been bound to the previous head, so no review-proof tag was orphaned.",
-      "recovery_ref": "local tag pre-rewrite-sup-l12-held-close"
-    },
-    "base_branch_repair": {
-      "regression_commit": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
-      "regression_pull_request": 4590,
-      "regression_proof": "The dispatcher blob left on dev, d5f2f9092fafcd2d474ca8ecbf1b5af8eaf32dba, is byte-identical to the blob at ancestor commit 780c553a0, and 154 of the 166 deleted files still exist on origin/master.",
-      "restored_in_this_pr": [
-        "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
-        "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
-        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md",
-        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
-        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json"
-      ],
-      "restore_fidelity": "The three catalog input files (INDEX.md, tasks.json, guarded-remediation-tasks.json) are byte-identical to their 23ae23c21^ blobs (0496eb4b56cbc9c2aad1d40038895e98409c0ec3, 56a131ef22cbc366b02d28752a7ae75b38ff3cd6, ad74e45b70e721638957191f5006567e1f5dc0dc). The dispatcher 640d5a18c8ae is the pre-squash file plus this task 142-line guard change, omitting _current_profile, _is_current_catalog, load_authoritative_task_snapshot and authoritative_snapshot_evidence. The test file 8d18ac893a6c provides 53 passing tests focusing on the guard, omitting 11 defs present at 23ae23c21^ (5 test_ defs: test_authority_uses_one_validated_snapshot_generation, test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap, test_current_dry_run_fails_closed_without_journal_authority, test_current_dry_run_fails_closed_without_provisioned_lock, test_previous_current_profile_remains_available_and_exact; plus 6 helper defs) while adding 5 new test defs — a net delta of -6 defs. The 5 dropped test_ defs all exercise 626631be8 authoritative-snapshot symbols this PR intentionally does not restore.",
-      "not_restored": "The remaining deleted files stay deleted here. .github/workflows/canonical-review-gate.yml is the fleet-blocking one and is Human/Ops scoped."
-    }
+    ]
   },
   "validation": {
     "commands": [
@@ -281,7 +326,7 @@
     },
     "two_person_approval": {
       "status": "pending",
-      "proof": "Independent Claude exact-head review is required before merge and closeout."
+      "proof": "Independent Antigravity exact-head review is required before merge and closeout."
     }
   },
   "acceptance": [
@@ -326,7 +371,7 @@
       "id": "AC5",
       "statement": "Deliver through exact-head review, protected merge, and immutable live promotion without product task apply.",
       "status": "pending",
-      "blocking_until": "Claude exact-head review of the re-cut branch, required checks green at the observed head, Human/Ops restore of .github/workflows/canonical-review-gate.yml on dev so the required gate context can be produced, then protected merge and command-root promotion",
+      "blocking_until": "Antigravity exact-head review of the re-cut branch, required checks green at the observed head, Human/Ops restore of .github/workflows/canonical-review-gate.yml on dev so the required gate context can be produced, then protected merge and command-root promotion",
       "evidence_refs": [
         "PR #4425",
         "Pantheon canonical review gate",
@@ -341,7 +386,7 @@
       "containment": "PR remains unmerged and canonical review gate remains closed.",
       "description": "The candidate has not yet received independent exact-head review, protected merge, or immutable command-root promotion.",
       "expiry": "At reviewed protected merge and verified promotion",
-      "owner": "Antigravity and Pantheon supervisor delivery flow",
+      "owner": "Claude and Pantheon supervisor delivery flow",
       "recheck_trigger": "PR #4425 head changes, review decision, merge, or command-root promotion",
       "severity": "high"
     },
@@ -357,17 +402,17 @@
     "dev_base_branch_regression": {
       "severity": "high",
       "blocking_for_this_task": true,
-      "description": "The PR #4590 stale-base squash (23ae23c2185d31d2aeacafaa9b051127a6d53136) deleted 166 files from dev, including .github/workflows/canonical-review-gate.yml. This PR repairs only the five files inside its own artifact envelope; the gate workflow is still missing from the default branch, so the required 'Pantheon canonical review gate' context cannot be produced and merge stays blocked.",
+      "description": "The PR #4590 stale-base squash (23ae23c2185d31d2aeacafaa9b051127a6d53136) deleted 166 files from dev, including .github/workflows/canonical-review-gate.yml. This PR repairs only the five files inside its own artifact envelope; the gate workflow is still missing from the default branch, so the required 'Pantheon canonical review gate' context cannot be produced and merge stays blocked. As of 2026-08-06T17:00Z the deletion has also reached origin/master through the promote v2026.08.06.2 merge (PR #4596, master tip 8ec60ff74), so none of the 166 files can be restored from master; the restore source is the pre-squash tree 23ae23c21^ or a promote ref cut before the deletion.",
       "containment": "The five in-envelope files are restored byte-identically and the diff against dev is eight files, so no unrelated lane is reverted by this PR.",
       "owner": "Human/Ops",
-      "expiry": "When dev regains .github/workflows/canonical-review-gate.yml and the remaining deleted files",
+      "expiry": "When dev regains .github/workflows/canonical-review-gate.yml and the remaining deleted files, and the same restore reaches origin/master",
       "recheck_trigger": "A restore commit on dev, or the required gate context turning producible for this PR"
     },
     "head_rewrite_and_unobserved_checks": {
       "severity": "medium",
       "blocking_for_this_task": true,
-      "description": "The branch was force-pushed after a linear re-cut, and the required checks recorded in this manifest were observed at the pre-rewrite head 7db2114e5. Check results at the new head are not asserted here.",
-      "containment": "The reviewer must read the live PR checks and bind the observed head at approve time.",
+      "description": "The branch was force-pushed after a linear re-cut, and no required check has ever produced a conclusion on this branch since. The runs at a31ddbf8b and 7ab57c517 were cancelled when the head advanced, and the runs at 02edfd5ca were still queued at the 2026-08-06T17:00Z cut. Each evidence-only revision advances the head and cancels the in-flight runs, so this manifest asserts no green check at any head.",
+      "containment": "The reviewer must read the live PR checks at the live head and bind that exact head at approve time. Merge protection independently withholds the merge until the required contexts pass.",
       "owner": "Claude and Antigravity",
       "expiry": "At an exact-head review bound to the observed PR head",
       "recheck_trigger": "PR #4425 head or check conclusions change"
@@ -375,7 +420,7 @@
     "cross_pr_collision_hazard": {
       "severity": "high",
       "blocking_for_this_task": true,
-      "description": "Open PR #4528 (task/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803, head 452f0af0f) restores the exact pre-regression file 24015de46e27 (without this guard) and the same two files. Whichever PR merges second will overwrite the whole file unless composed.",
+      "description": "Open PR #4528 (task/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803, head 452f0af0f6b47059eff7cb04abb524a71b1d3451, state OPEN and BLOCKED, re-observed 2026-08-06T17:00Z) restores the exact pre-regression dispatcher blob 24015de46e27 (without this guard) and touches the same catalog and test files. Whichever PR merges second will overwrite the whole file unless composed.",
       "containment": "Requires deliberate merge ordering and rebase/composition between PR #4425 and PR #4528 before merging.",
       "owner": "Antigravity and Claude",
       "expiry": "At merge of both PRs into dev",
@@ -411,6 +456,14 @@
       },
       "2026-08-06T15:47:00Z": {
         ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md": "51f8e1adf1feffeecdbb5108021701965e098a530f87b6e7d9f924a0fd766cf3",
+        "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "191218684286d4497067812efae6e34184af8e074558bf8ee25fe9f0bf3137f1",
+        "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "7f6e96635fee38e450e6822847154653d1f24af1e337c367209279cca036b491",
+        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md": "ca453af3f5efcc026436091bf8073efe04ebadc8cd4cf1f03250ccc6381bce56",
+        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json": "7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+        "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json": "9dbd2eb2b5cbaee395864ee2a2513424b3a488eb49248775d79168ba01f6ae69"
+      },
+      "2026-08-06T17:00:00Z": {
+        ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md": "06a501ce74e4c65b55f96eccecfbbd2f6ffc1abc052f873e2998bc348701e6ef",
         "scripts/dispatch_twelve_loop_gap_2026_07_26.py": "191218684286d4497067812efae6e34184af8e074558bf8ee25fe9f0bf3137f1",
         "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py": "7f6e96635fee38e450e6822847154653d1f24af1e337c367209279cca036b491",
         "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/INDEX.md": "ca453af3f5efcc026436091bf8073efe04ebadc8cd4cf1f03250ccc6381bce56",
@@ -468,6 +521,16 @@
       "reference": "PR #4425 head 7ab57c517; CI runs 31120873389 and 31120876932 queued at 16:44Z",
       "sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
       "note": "Wakeup cycle: advanced implementation_delivery.pull_request.head_sha from 094a0f16d (implementation commit) to 7ab57c517 (current GitHub PR HEAD, confirmed via gh pr view). Recorded required_checks at 7ab57c517 as pending; CI queued at 2026-08-06T16:44Z. canonical-review-gate.yml still not_produced (Human/Ops blocker unchanged). Task brief supervisor-reinjected Next field committed. Ready for Claude exact-head review once CI resolves."
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-08-06T17:00:00Z",
+      "kind": "owner_rebind_and_evidence_correction",
+      "status": "ready_for_independent_exact_head_review",
+      "actor": "Claude",
+      "reference": "PR #4425 head 02edfd5ca observed at 2026-08-06T17:00Z; canonical task row owner Claude, reviewer Antigravity",
+      "sha": "02edfd5cacfadcdb1414e6ee73a33ad281c834cd",
+      "note": "Ownership returned from Antigravity to Claude after repeated Antigravity provider timeouts; Antigravity is now the reviewer. Evidence-only revision, no implementation file changed. (1) Rebound task.owner, task.reviewer, scope.authoritative_write_owner, security_and_safety.two_person_approval.proof, acceptance AC5.blocking_until, and residual_risks.independent_review_and_delivery_pending.owner to the current pair. (2) Corrected base_branch_repair.regression_proof: the claim that 154 of the 166 files deleted by 23ae23c21 still exist on origin/master is false as of this cut. A fresh fetch shows 0 of 166 present on origin/master (tip 8ec60ff74, the promote v2026.08.06.2 merge of PR #4596), and origin/master carries the same reverted dispatcher blob d5f2f9092, so master is not a restore source and the Human/Ops gate restore must come from 23ae23c21^. (3) Corrected required_checks: sequence 5 recorded the 7ab57c517 runs as pending, but runs 31120873389 and 31120876932 were cancelled when the head advanced and never produced a result; the a31ddbf8b runs were cancelled the same way; the 02edfd5ca runs were still queued at this cut. (4) Made the manifest satisfy its declared schemas/product-evidence.schema.json: renamed delivery_commits to anchor_commits, listed all five branch commits, and re-parented base_branch_repair and history_rewrite onto the 094a0f16d anchor entry. The manifest previously declared schema_status formalized while failing validation with two errors; it now validates with zero. (5) Re-ran the full local acceptance at the current worktree tree: pytest scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py -> 53 passed; pytest scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -k 'not human_task_cards_mirror_assignment_header' -> 31 passed, 1 deselected; py_compile on all three scripts -> ok; --validate-only --current -> status valid, task_count 28, maximum_parallel_frontier_G1 25; --validate-only -> status valid, task_count 25. All five in-envelope blobs re-verified against 23ae23c21^."
     }
   ]
 }

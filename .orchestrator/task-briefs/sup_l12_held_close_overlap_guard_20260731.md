@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Order the held closeout sink behind current controller integration
 - Status: in_progress
-- Owner: Antigravity
-- Reviewer: Claude
-- Next: Evidence head_sha advanced to PR head 7ab57c517 (confirmed on GitHub); CI runs 31120873389/31120876932 queued at 16:44Z. Evidence sequence 5 recorded. PR #4425 is OPEN MERGEABLE. Required canonical-review-gate.yml still missing from dev (Human/Ops blocker). Ready for Claude exact-head review at 7ab57c517 once CI resolves.
+- Owner: Claude
+- Reviewer: Antigravity
+- Next: Ownership returned from Antigravity to Claude (repeated Antigravity provider timeouts); Antigravity is now the reviewer. Evidence packet rebound to the current pair and corrected: origin/master is no longer a restore source for the PR #4590 deletions (0 of 166 present at master tip 8ec60ff74), the 7ab57c517 and a31ddbf8b CI runs were cancelled rather than pending, and evidence.json now validates against schemas/product-evidence.schema.json with zero errors. Local acceptance re-ran clean (53 passed; 31 passed 1 deselected; py_compile ok; both --validate-only profiles valid, 25 G1 creates). PR #4425 is OPEN MERGEABLE but merge-BLOCKED because .github/workflows/canonical-review-gate.yml is missing from dev and master (Human/Ops). Ready for Antigravity exact-head review at the live PR head.
 
 ## Summary
 修正 current guarded dispatcher 對被 release gate 明確 hold 的 L12-CLOSE-001 誤判為 unordered overlap，同時維持所有其他 live overlap fail-closed。

@@ -28,7 +28,16 @@ files from `dev`. It is a regression, not an intentional removal:
   (`docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/`
   `INDEX.md`, `tasks.json`, `guarded-remediation-tasks.json`) were deleted, so
   `--validate-only --current` failed closed with `FileNotFoundError`.
-- 154 of the 166 deleted files still exist on `origin/master`.
+- The regression has since reached the release branch. Re-measured at
+  2026-08-06T17:00Z against a freshly fetched `origin/master` (tip
+  `8ec60ff7477e6188149594a3f8ff9aec70f93e27`, the promote `v2026.08.06.2`
+  merge of PR #4596), **0** of the 166 deleted files exist on `origin/master`,
+  and `origin/master` carries the same reverted dispatcher blob `d5f2f9092`.
+  An earlier revision of this packet recorded "154 of the 166 deleted files
+  still exist on `origin/master`"; that statement is superseded. `master` is
+  not a restore source for any of the 166 files, including
+  `.github/workflows/canonical-review-gate.yml`. The only restore source is
+  the pre-squash tree `23ae23c21^`.
 
 This PR restores exactly the five files above and nothing else. The three catalog input files (`INDEX.md`, `tasks.json`, `guarded-remediation-tasks.json`) are byte-identical to their `23ae23c21^` blobs, verified with `git hash-object`. The restored dispatcher `scripts/dispatch_twelve_loop_gap_2026_07_26.py` (`640d5a18c8ae`) is the pre-squash file plus this task's 142-line guard change (omitting the later `626631be8` additions `_current_profile`, `_is_current_catalog`, `load_authoritative_task_snapshot`, and `authoritative_snapshot_evidence`). The restored test file `scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py` (`8d18ac893a6c`) provides 53 passing tests focusing on the guard, omitting 11 defs present at `23ae23c21^` (5 `test_` defs: `test_authority_uses_one_validated_snapshot_generation`, `test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap`, `test_current_dry_run_fails_closed_without_journal_authority`, `test_current_dry_run_fails_closed_without_provisioned_lock`, `test_previous_current_profile_remains_available_and_exact`; plus 6 helper defs) while adding 5 new test defs — a net delta of −6 defs. The 5 dropped `test_` defs all exercise `626631be8` authoritative-snapshot symbols this PR intentionally does not restore; the omission is in scope and requires no code work.
 
@@ -42,16 +51,55 @@ Open PR #4528 (`task/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803`, h
 
 ## Task Actors Alignment
 
-Task actors are rebound in `evidence.json` and canonical task status:
-- **Owner**: `Antigravity`
-- **Reviewer**: `Claude`
+Ownership moved twice. It was reassigned from `Claude`/`Codex2` to `Antigravity`
+on 2026-08-06, then returned to `Claude` the same day after repeated Antigravity
+provider timeouts. The canonical task row and `evidence.json` now agree on the
+current pair:
+- **Owner**: `Claude`
+- **Reviewer**: `Antigravity`
+
+The commits authored while `Antigravity` held the task (`a31ddbf8b`,
+`7ab57c517`, `02edfd5ca`) carry the trailers that were correct at the time and
+are left untouched; only the manifest's live actor bindings are updated.
 
 ## Still blocking merge, Human/Ops scoped
 
-`.github/workflows/canonical-review-gate.yml` remains deleted from `dev`. While
-it is absent from the default branch the required "Pantheon canonical review
-gate" context cannot be produced, so this PR stays unmergeable at merge time
-even after an approving review. That repair is not attempted here.
+`.github/workflows/canonical-review-gate.yml` remains deleted from `dev`, and as
+of 2026-08-06T17:00Z it is also absent from `origin/master` — the promote
+`v2026.08.06.2` merge (PR #4596) carried the deletion to the release branch.
+While it is absent from the default branch the required "Pantheon canonical
+review gate" context cannot be produced, so this PR stays unmergeable at merge
+time even after an approving review. Because `master` no longer holds the file
+either, the Human/Ops restore must be sourced from the pre-squash tree
+`23ae23c21^` (or a `promote/*` ref cut before the deletion), not from `master`.
+That repair is not attempted here.
+
+## Required checks: nothing green has ever been produced here
+
+No required check has produced a conclusion on this branch. The runs at
+`a31ddbf8b` (31119671454, 31119674636) and at `7ab57c517` (31120873389,
+31120876932) were **cancelled** when the head advanced — an earlier revision of
+this packet recorded the `7ab57c517` runs as *pending*, which is corrected in
+`evidence.json`. The runs at `02edfd5ca` (31121317427, 31121320470) were still
+queued at the 2026-08-06T17:00Z cut. Every evidence-only revision advances the
+head and cancels the in-flight runs, so this packet asserts no check result at
+any head. The reviewer must read the live PR checks at the live head.
+
+## Schema conformance
+
+`evidence.json` declares `schema_version: loop_product_evidence.v1` and
+`schema_status.status: formalized`. Until this revision it failed
+`schemas/product-evidence.schema.json` with two errors (missing
+`anchor_commits`; `base_branch_repair`, `delivery_commits`, and
+`history_rewrite` disallowed under `implementation_delivery`). The blocks were
+renamed and re-parented onto the `094a0f16d` anchor entry without dropping any
+recorded fact, and the manifest now validates with zero errors:
+
+```
+python -c "import json,jsonschema; jsonschema.Draft202012Validator(
+  json.load(open('schemas/product-evidence.schema.json'))).validate(
+  json.load(open('docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/evidence.json')))"
+```
 
 ## Branch history re-cut
 
