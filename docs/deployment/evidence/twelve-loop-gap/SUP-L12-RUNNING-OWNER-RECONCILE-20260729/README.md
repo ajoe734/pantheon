@@ -32,16 +32,25 @@ the supervisor may report `assignment_truth=healthy`.
 
 ## Live row/run observation
 
-Read at `2026-07-29T15:22:01Z` from governed `ai-status show` and the exact
-central runtime record selected by this worker's `ORCH_RUN_ID`.
+Read from governed `ai-status show`, the exact central runtime record selected
+by this worker's `ORCH_RUN_ID`, and the supervisor state worker entry for the
+same run.
 
-| Row owner | Row reviewer | Row status | Run id | Queue event | Worker / runner status | PID | Exit | Command source SHA |
-|---|---|---|---|---|---|---:|---:|---|
-| Codex | Antigravity | in_progress | `codex-20260729T150602Z-743e6017` | `evt-20260729T150450Z-97c245cd` | running / running | 1671740 | null | `c1e396495d37a1c9dfeea5704e7eb73db6acde0e` |
+| Observed | Row owner | Row reviewer | Row status | Run id | Queue event | Worker / runner status | PID | Exit | Command source SHA |
+|---|---|---|---|---|---|---|---:|---:|---|
+| `2026-08-06T13:22:00Z` | Claude | Antigravity | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
+| `2026-07-29T15:22:01Z` | Codex | Antigravity | in_progress | `codex-20260729T150602Z-743e6017` | `evt-20260729T150450Z-97c245cd` | running / running | 1671740 | null | `c1e396495d37a1c9dfeea5704e7eb73db6acde0e` |
 
-The materialized task brief recorded `todo` with the same owner/reviewer. That
-is the expected pre-start snapshot; the governed successful-dispatch status
-sync advanced the canonical row to `in_progress`.
+Both rows match their authoritative assignment, so neither is drift. They are
+recorded because assembling this join is exactly the manual work the task
+removes: today the row, the runner record, and the supervisor worker entry live
+in three separate files.
+
+The deployed supervisor state
+(`/home/lupin/pantheon/.orchestrator/state.json`) carries no
+`worker_assignment_reconciliation` key, because the deployed command runtime
+`f90e0aae6cb5e86f18b20db9f30bc834f6115745` predates this change. The gap is
+still open in production; this PR is what closes it.
 
 ## Regression evidence table
 
@@ -56,7 +65,7 @@ The full machine-readable rows are in `evidence.json`.
 
 ## Validation
 
-Re-run on the dev-merged tree (task head `850a8c760`):
+Re-verified on the current PR #4386 head `bce887978`:
 
 - New reconciliation suite: 7 passed.
 - Related worker/reassignment/ownerless suites: 135 passed, 4 subtests passed.
@@ -98,18 +107,24 @@ Pending. A fresh independent review of the dev-merged head is required under
 the current owner/reviewer pair; `evidence.json` records `review.decision`
 as `pending`.
 
-## Governed status plane
+## Governed status plane (recovered)
 
-The governed status commands were unavailable while this revision was
-prepared. `"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show` and `recover`
-both fail closed on `activity_audit_integrity`: a duplicate activity
+An earlier revision of this note recorded the governed status plane as
+`fail_closed` on `activity_audit_integrity`, from a duplicate activity
 `event_id`
 `supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da`
-is sealed into
+sealed into
 `archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz`.
-The gate fires before any state change, so the canonical row is untouched.
-Repairing and re-sealing that archive is a Human/Ops action; no auto worker
-can clear it.
+That is no longer true and the record is superseded here rather than deleted.
+
+Re-checked at `2026-08-06T13:19:34Z` against command root
+`/home/lupin/pantheon-ci-deploy/dev-root` at source SHA
+`f90e0aae6cb5e86f18b20db9f30bc834f6115745`:
+`"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show` returns the canonical row
+(`source: active`, owner `Claude`, reviewer `Antigravity`, status
+`in_progress`). Status writes are available again, so the owner handoff for
+this cycle is recorded normally. No Human/Ops escalation is outstanding for
+this task.
 
 ## Boundaries
 

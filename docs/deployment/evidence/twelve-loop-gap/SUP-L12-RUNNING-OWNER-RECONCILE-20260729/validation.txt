@@ -1,8 +1,8 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
 Owner: Claude
 Reviewer: Antigravity
-Re-run: 2026-08-06, after merging origin/dev into
-        task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729 (task head 850a8c760)
+Re-run: 2026-08-06, re-verified on the current PR #4386 head bce887978
+        (task branch merged forward from origin/dev at 850a8c760)
 
 Interpreter: /home/lupin/pantheon/.venv/bin/python
 
@@ -12,15 +12,15 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python
 
 2. Full supervisor suite (repository root, native import path)
    command: PYTHONPATH=.orchestrator python -m pytest -q .orchestrator/test_supervisor.py
-   result: 613 passed, 162 subtests passed in 154.04s
+   result: 613 passed, 162 subtests passed in 200.88s
 
 3. New focused suite
    command: cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests
-   result: 7 passed in 0.84s
+   result: 7 passed in 1.73s
 
 4. Related regression suites
    command: cd .orchestrator && python -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests
-   result: 135 passed, 4 subtests passed in 15.64s
+   result: 135 passed, 4 subtests passed in 14.70s
 
 5. Diff hygiene
    command: git diff --check
@@ -55,17 +55,33 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python
            owner Claude and returned to todo. See superseded_reviews in
            evidence.json.
 
-10. Governed status plane
+10. Governed status plane -- SUPERSEDED, now recovered
    command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-RECONCILE-20260729
-   result: fail_closed / status_recovery_pending (status_activity_outbox)
-   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" recover
-   result: fail_closed / activity_audit_integrity -- duplicate activity
-           event_id
-           supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da
-           in archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz
-   effect: no start/handoff transition could be recorded for this cycle. The
-           gate fires before any state change, so the canonical row is
-           untouched. Human/Ops must repair and re-seal the archive.
+   result: PASS -- source: active, owner Claude, reviewer Antigravity,
+           status in_progress, last_update 2026-08-06T13:19:34Z
+   command root: /home/lupin/pantheon-ci-deploy/dev-root
+   source SHA:   f90e0aae6cb5e86f18b20db9f30bc834f6115745
+   note: an earlier revision of this file recorded both show and recover as
+         fail_closed on activity_audit_integrity (duplicate activity event_id
+         supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da
+         sealed into archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz).
+         That condition has cleared. The record is kept rather than deleted so
+         the missing start transition for the previous cycle stays explainable.
+         No Human/Ops escalation is outstanding for this task.
+
+11. Live row/run join (the manual work this task removes)
+   row:    owner Claude / reviewer Antigravity / status in_progress
+           (governed ai-status.sh show, 2026-08-06T13:19:34Z)
+   runner: run claude1-4-20260806T131930Z-35c86123, status running, pid 3131300,
+           child pid 3131399, exit null, source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745
+           (central runtime record selected by ORCH_RUN_ID)
+   worker: queue event evt-20260806T131924Z-05f82088, status running,
+           dispatch reason owned_ready_dispatch
+           (/home/lupin/pantheon/.orchestrator/state.json)
+   result: assignment matches; no drift
+   note:   the deployed state.json carries no worker_assignment_reconciliation
+           key -- the deployed command runtime predates this change, so the
+           join above still has to be assembled by hand from three files
 
 Environment note:
 Running the test module from .orchestrator/ is its native collection context

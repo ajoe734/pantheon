@@ -10,8 +10,8 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/evidence.json",
-    "status": "todo",
-    "status_note": "Canonical row at manifest revision time: owner Claude, reviewer Antigravity, status todo. The governed status plane was fail_closed on activity_audit_integrity when this revision was prepared, so no start/handoff transition could be recorded; see reassignment.blocked_status_writes."
+    "status": "in_progress",
+    "status_note": "Canonical row read through the governed command root at 2026-08-06T13:19:34Z: owner Claude, reviewer Antigravity, status in_progress. The activity_audit_integrity fail_closed condition recorded in the previous revision of this manifest has since cleared; see reassignment.blocked_status_writes.resolution."
   },
   "scope": {
     "owned_layer": "Supervisor task-row/worker-run assignment evidence, active assignment-drift reconciliation, duplicate active-run suppression, and optimistic stale-failure reassignment guards.",
@@ -45,34 +45,31 @@
     "health_reporting": "Runtime summaries report assignment_truth=unknown until a reconciliation report exists; verbose output prints the exact joined fields before reporting healthy or drift."
   },
   "live_observation": {
-    "observed_at": "2026-07-29T15:22:01Z",
-    "source": "Governed ai-status show plus the matching central .orchestrator/state.json worker record selected by ORCH_RUN_ID.",
+    "observed_at": "2026-08-06T13:22:00Z",
+    "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to this worker's own central runtime run record selected by ORCH_RUN_ID, plus the supervisor state worker entry for the same run.",
     "task_row": {
       "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
-      "owner": "Codex",
+      "owner": "Claude",
       "reviewer": "Antigravity",
       "status": "in_progress",
-      "last_update": "2026-07-29T15:06:26Z"
+      "last_update": "2026-08-06T13:19:34Z"
     },
     "worker_run": {
-      "run_id": "codex-20260729T150602Z-743e6017",
-      "queue_event_id": "evt-20260729T150450Z-97c245cd",
-      "worker_status": "running",
+      "run_id": "claude1-4-20260806T131930Z-35c86123",
+      "queue_event_id": "evt-20260806T131924Z-05f82088",
+      "provider": "claude1-4",
       "runner_status": "running",
-      "provider": "codex1-3",
-      "agent_id": "codex1_3",
-      "logical_agent_id": "codex",
-      "pid": 1671740,
+      "worker_status": "running",
+      "pid": 3131300,
+      "child_pid": 3131399,
       "exit_code": null,
-      "source_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
-      "dispatch_reason": "owned_ready_dispatch"
+      "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+      "dispatch_reason": "owned_ready_dispatch",
+      "agent_id": "claude1_4",
+      "logical_agent_id": "claude"
     },
-    "task_brief_at_dispatch": {
-      "owner": "Codex",
-      "reviewer": "Antigravity",
-      "status": "todo",
-      "interpretation": "The generated task brief predates the successful governed start transition. The canonical row advanced to in_progress without changing owner or reviewer."
-    }
+    "assignment_matches": true,
+    "deployed_runtime_note": "The live supervisor state at /home/lupin/pantheon/.orchestrator/state.json carries no worker_assignment_reconciliation key, because the deployed command runtime f90e0aae6cb5e86f18b20db9f30bc834f6115745 predates this task's change. That is the gap this task closes: today the row/run join above has to be assembled by hand from three separate files, and a fleet summary reports no assignment truth at all."
   },
   "reproduction_table": [
     {
@@ -215,7 +212,7 @@
   ],
   "validation": {
     "status": "pass",
-    "observed_at": "2026-08-06 (post origin/dev merge, task head 850a8c760)",
+    "observed_at": "2026-08-06 (re-verified on task head bce887978, the current PR #4386 head)",
     "commands": [
       {
         "command": "python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
@@ -223,15 +220,15 @@
       },
       {
         "command": "PYTHONPATH=.orchestrator python -m pytest -q .orchestrator/test_supervisor.py",
-        "result": "613 passed, 162 subtests passed in 154.04s"
+        "result": "613 passed, 162 subtests passed in 200.88s"
       },
       {
         "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests",
-        "result": "7 passed"
+        "result": "7 passed in 1.73s"
       },
       {
         "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
-        "result": "135 passed, 4 subtests passed"
+        "result": "135 passed, 4 subtests passed in 14.70s"
       },
       {
         "command": "git diff --check",
@@ -250,7 +247,8 @@
     "reviewed_commit": null,
     "reviewed_at": null,
     "notes": [
-      "Awaiting a fresh independent review of the dev-merged head under the current owner/reviewer pair."
+      "Awaiting a fresh independent review of the dev-merged head under the current owner/reviewer pair (owner Claude, reviewer Antigravity).",
+      "The reviewer binds the exact PR #4386 head at approval time; this manifest cannot name its own commit."
     ]
   },
   "delivery": {
@@ -276,12 +274,15 @@
     "owner_actions_this_cycle": [
       "Merged origin/dev forward into task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729 to clear the DIRTY merge state on PR #4386; the only conflict was in .orchestrator/test_supervisor.py, where both sides appended independent test classes and both were kept.",
       "Re-ran the full supervisor suite plus focused reconciliation suites on the merged tree.",
-      "Rebound this manifest, README.md, validation.txt, and the task brief to the current owner/reviewer pair before requesting review."
+      "Rebound this manifest, README.md, validation.txt, and the task brief to the current owner/reviewer pair before requesting review.",
+      "Re-verified the full validation set on the current PR head bce887978 (613/162, 7, 135/4, py_compile, git diff --check, config boundary), refreshed the live row/run observation from the current owner run, and superseded the fail_closed status-plane record in place before handing off to review."
     ],
     "blocked_status_writes": {
       "invariant": "activity_audit_integrity",
-      "detail": "Every governed ai-status.sh command, including read-only show and recover, fail_closes on a duplicate activity event_id supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da sealed into archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz. The gate fires before any state change, so the canonical row is untouched.",
-      "owner_escalation": "Human/Ops must repair and re-seal the archive; no auto worker can clear it."
+      "detail": "While the previous revision of this manifest was prepared, every governed ai-status.sh command -- including read-only show and recover -- fail_closed on a duplicate activity event_id supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da sealed into archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz. The gate fires before any state change, so the canonical row was never touched.",
+      "owner_escalation": "None outstanding. At the time it was recorded this needed a Human/Ops archive repair and re-seal, because no auto worker can clear a sealed archive; the condition cleared before that escalation was required. See resolution.",
+      "resolved": true,
+      "resolution": "Re-checked at 2026-08-06T13:19:34Z from command root /home/lupin/pantheon-ci-deploy/dev-root at source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745: the governed status plane no longer fail_closes. ai-status.sh show returns the canonical row (source active, owner Claude, reviewer Antigravity, status in_progress), so the duplicate archived activity event_id no longer blocks status writes and the owner handoff for this cycle can be recorded normally. Kept here as an audit record of why the previous revision of this manifest carried no start/handoff transition."
     }
   },
   "superseded_reviews": [
@@ -296,6 +297,40 @@
         "Reviewed implementation diff, unit test coverage (464 passed), evidence manifest, and PR #4386 head 665e4bdbd.",
         "Reconcile mechanisms for worker owner drift, duplicate active worker suppression, and optimistic stale-failure reassignment writes are verified."
       ]
+    }
+  ],
+  "superseded_live_observations": [
+    {
+      "observed_at": "2026-07-29T15:22:01Z",
+      "source": "Governed ai-status show plus the matching central .orchestrator/state.json worker record selected by ORCH_RUN_ID.",
+      "task_row": {
+        "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+        "owner": "Codex",
+        "reviewer": "Antigravity",
+        "status": "in_progress",
+        "last_update": "2026-07-29T15:06:26Z"
+      },
+      "worker_run": {
+        "run_id": "codex-20260729T150602Z-743e6017",
+        "queue_event_id": "evt-20260729T150450Z-97c245cd",
+        "provider": "codex1-3",
+        "agent_id": "codex1_3",
+        "logical_agent_id": "codex",
+        "runner_status": "running",
+        "worker_status": "running",
+        "pid": 1671740,
+        "exit_code": null,
+        "source_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+        "dispatch_reason": "owned_ready_dispatch"
+      },
+      "assignment_matches": true,
+      "task_brief_at_dispatch": {
+        "owner": "Codex",
+        "reviewer": "Antigravity",
+        "status": "todo",
+        "interpretation": "The generated task brief predates the successful governed start transition. The canonical row advanced to in_progress without changing owner or reviewer."
+      },
+      "superseded_by": "The task was reassigned to owner Claude and re-dispatched; live_observation now records the current owner run."
     }
   ]
 }
