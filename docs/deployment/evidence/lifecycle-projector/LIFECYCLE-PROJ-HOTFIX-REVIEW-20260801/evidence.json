@@ -47,7 +47,8 @@
       "pr_delta": [
         "docker-compose.yml",
         "services/trade_journey/test_lifecycle_projector_compose.py"
-      ]
+      ],
+      "finalized_by": "Antigravity"
     }
   }
 }
