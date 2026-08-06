@@ -24871,6 +24871,8 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertFalse(changed_again)
         self.assertEqual(worker["status"], "superseded")
+        self.assertEqual(worker["runner_status"], "superseded")
+        self.assertEqual(worker["exit_code"], 143)
         terminate_worker_pid.assert_called_once_with(4242)
         finalize_queue_event_record.assert_called_once()
         write_activity_log.assert_called_once()

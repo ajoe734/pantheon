@@ -19299,6 +19299,8 @@ def reconcile_worker_task_assignments(
         worker["status"] = "superseded"
         worker["last_event_at"] = timestamp
         worker["last_error"] = message
+        worker["runner_status"] = "superseded"
+        worker["exit_code"] = 143 if alive_by_run.get(run_id, False) else worker.get("exit_code")
         after = worker_assignment_truth_evidence(
             config,
             worker,
