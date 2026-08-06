@@ -248,7 +248,7 @@
       "previously_approved_head": "93e73039bbb84603917bca824aa37d0ffc24c4b6",
       "base_refresh_merge_commit": "fcca37ebd12a47aaf23fca447a80b162189c95f8",
       "final_head_not_self_named": "This manifest cannot name the commit that contains it; the refreshed exact head is carried in the handoff message and must be bound by the reviewer at approve time.",
-      "pr_diff_scope_after_refresh": "4 files, +586/-0, all under this evidence directory; git diff --check clean"
+      "pr_diff_scope_after_refresh": "4 files, all under this evidence directory; +586/-0 as captured at merge commit fcca37ebd, +818/-0 at the standing head once this closeout revision is counted; git diff --check clean"
     },
     "why_the_base_was_refreshed": {
       "trigger": "scripts/git/auto_integrator.py returned status=waiting, rebase_status=rebase_required for PR #4588.",

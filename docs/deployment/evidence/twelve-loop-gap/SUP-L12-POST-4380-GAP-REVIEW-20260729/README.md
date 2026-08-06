@@ -194,8 +194,8 @@ not used: rebasing a task branch whose entire delivery *is* an evidence manifest
 rewrites the commits that carry that manifest into the PR diff.
 
 A second exact-head review is required as a result. This is a base refresh, not
-new review content — the PR diff is still the same 4 files, +586/-0, and
-`git diff --check origin/dev...HEAD` is clean.
+new review content — the PR diff is still the same 4 evidence files (+586/-0
+as captured at `fcca37ebd`, +818/-0 once this revision counts; check clean).
 
 **A stale review-gate CheckRun was also cleared.** PR #4588 was `MERGEABLE` but
 `BLOCKED` while its canonical review gate commit status was already `success`.

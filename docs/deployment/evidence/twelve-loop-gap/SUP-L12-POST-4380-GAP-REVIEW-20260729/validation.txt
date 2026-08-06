@@ -226,7 +226,7 @@ $ git merge-base --is-ancestor origin/dev HEAD
 $ git merge --no-edit origin/dev            -> fcca37ebd12a47aaf23fca447a80b162189c95f8
 
 $ git diff --stat origin/dev...HEAD
-  4 files changed, 586 insertions(+)        <-- diff scope unchanged by the merge
+  4 files changed, 586 insertions(+)        <-- at fcca37ebd; 818 after this revision
 $ git diff --check origin/dev...HEAD        -> clean
 
 --------------------------------------------------------------------------
