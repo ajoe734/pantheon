@@ -137,7 +137,7 @@
         "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
         "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json"
       ],
-      "restore_fidelity": "The three catalog input files (INDEX.md, tasks.json, guarded-remediation-tasks.json) are byte-identical to their 23ae23c21^ blobs (0496eb4b56cbc9c2aad1d40038895e98409c0ec3, 56a131ef22cbc366b02d28752a7ae75b38ff3cd6, ad74e45b70e721638957191f5006567e1f5dc0dc). The dispatcher 640d5a18c8ae is the pre-squash file plus this task 142-line guard change, omitting _current_profile, _is_current_catalog, load_authoritative_task_snapshot and authoritative_snapshot_evidence. The test file 8d18ac893a6c provides 53 passing tests focusing on the guard.",
+      "restore_fidelity": "The three catalog input files (INDEX.md, tasks.json, guarded-remediation-tasks.json) are byte-identical to their 23ae23c21^ blobs (0496eb4b56cbc9c2aad1d40038895e98409c0ec3, 56a131ef22cbc366b02d28752a7ae75b38ff3cd6, ad74e45b70e721638957191f5006567e1f5dc0dc). The dispatcher 640d5a18c8ae is the pre-squash file plus this task 142-line guard change, omitting _current_profile, _is_current_catalog, load_authoritative_task_snapshot and authoritative_snapshot_evidence. The test file 8d18ac893a6c provides 53 passing tests focusing on the guard, omitting 11 defs present at 23ae23c21^ (5 test_ defs: test_authority_uses_one_validated_snapshot_generation, test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap, test_current_dry_run_fails_closed_without_journal_authority, test_current_dry_run_fails_closed_without_provisioned_lock, test_previous_current_profile_remains_available_and_exact; plus 6 helper defs) while adding 5 new test defs — a net delta of -6 defs. The 5 dropped test_ defs all exercise 626631be8 authoritative-snapshot symbols this PR intentionally does not restore.",
       "not_restored": "The remaining deleted files stay deleted here. .github/workflows/canonical-review-gate.yml is the fleet-blocking one and is Human/Ops scoped."
     }
   },
@@ -271,7 +271,7 @@
     },
     "two_person_approval": {
       "status": "pending",
-      "proof": "Independent Antigravity exact-head review is required before merge and closeout."
+      "proof": "Independent Claude exact-head review is required before merge and closeout."
     }
   },
   "acceptance": [
@@ -316,7 +316,7 @@
       "id": "AC5",
       "statement": "Deliver through exact-head review, protected merge, and immutable live promotion without product task apply.",
       "status": "pending",
-      "blocking_until": "Antigravity exact-head review of the re-cut branch, required checks green at the observed head, Human/Ops restore of .github/workflows/canonical-review-gate.yml on dev so the required gate context can be produced, then protected merge and command-root promotion",
+      "blocking_until": "Claude exact-head review of the re-cut branch, required checks green at the observed head, Human/Ops restore of .github/workflows/canonical-review-gate.yml on dev so the required gate context can be produced, then protected merge and command-root promotion",
       "evidence_refs": [
         "PR #4425",
         "Pantheon canonical review gate",
@@ -438,6 +438,16 @@
       "reference": "PR #4425; supersedes the 2026-08-06T14:36:02Z blocked record",
       "sha": "094a0f16d27e95c079e5d834e4f0802c6b835036",
       "note": "The base-branch blocker was re-verified against live state and only partly held. The conflict and the failing trailer check were both inside this task's own history and artifact envelope, so the branch was re-cut linearly on origin/dev ab5caf7d4 with the five in-envelope files restored. The fleet-wide canonical-review-gate.yml deletion remains Human/Ops scoped and still blocks merge."
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-08-06T16:43:00Z",
+      "kind": "evidence_actor_and_count_correction",
+      "status": "ready_for_independent_exact_head_review",
+      "actor": "Antigravity",
+      "reference": "PR #4425 head a31ddbf8b; evidence-only, no code change",
+      "sha": "a31ddbf8bda75c9f2ce267a2ccb21071ecef291d",
+      "note": "Evidence-only corrections (no code change): (1) security_and_safety.two_person_approval.proof: corrected actor from 'Antigravity' to 'Claude' (Claude is the reviewer); (2) acceptance AC5.blocking_until: same actor correction; (3) restore_fidelity in evidence.json and restore-fidelity paragraph in README.md: restated def counts unambiguously as 11 omitted (5 test_ defs + 6 helpers) and 5 added, net delta -6, replacing the previously ambiguous '6 defs omitted' phrasing. No implementation files changed."
     }
   ]
 }

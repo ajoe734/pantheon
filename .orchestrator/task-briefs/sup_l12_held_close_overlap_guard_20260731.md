@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Order the held closeout sink behind current controller integration
 - Status: in_progress
-- Owner: Claude
-- Reviewer: Antigravity
-- Next: Branch re-cut linearly on origin/dev tip ab5caf7d4 so the base-branch conflict and the legacy over-length commit subject are both gone. Delivery commit 094a0f16d carries the guard, its regression suite, and the catalog inputs that the PR #4590 stale-base squash deleted. Ready for Antigravity exact-head review.
+- Owner: Antigravity
+- Reviewer: Claude
+- Next: Reopen at PR #4425 head a31ddbf8b: defect 4 (manifest actor rebinding) is only partly applied. VERIFIED PASSING, do not redo: _held_close_overlap_is_release_ordered admits only the exact integration<->L12-CLOSE-001 registry pair pinned by CURRENT_CATALOG_CANONICAL_SHA256 plus per-task contract digests, all other overlaps still raise DispatchError; 53 passed on the regression suite; --validate-only --current reproduces task_count 28 and maximum_parallel_frontier_G1 25 with catalog_sha256 6adf2d2e987d8ebed96689e35db346e9f4eacb3d63a0b635bf8a51426f9ce02f; all 4 integrity.source_artifact_sha256 values recompute exactly; the 3 catalog inputs are byte-identical to their 23ae23c21^ blobs; origin/dev dispatcher def-set (24) is a strict subset of head (52) so the merge reverts nothing on dev; PR #4528 collision hazard is now recorded in both artifacts. REQUIRED FIXES (evidence-only, no code change): (1) evidence.json line 274 security_and_safety.two_person_approval.proof still reads 'Independent Antigravity exact-head review is required before merge and closeout' - Antigravity is the OWNER, so this states owner self-review satisfies two-person approval; the reviewer is Claude. (2) evidence.json line 319 acceptance AC5 blocking_until still opens with 'Antigravity exact-head review of the re-cut branch' - same wrong actor in the operative merge-gate condition. (3) README.md restore-fidelity paragraph says the test file omits '6 defs present at 23ae23c21^'; the literal count is 11 omitted defs (5 test_ defs: test_authority_uses_one_validated_snapshot_generation, test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap, test_current_dry_run_fails_closed_without_journal_authority, test_current_dry_run_fails_closed_without_provisioned_lock, test_previous_current_profile_remains_available_and_exact, plus 6 helpers) against 5 added - 6 is the NET delta, so restate it unambiguously. The 5 dropped tests all exercise the 626631be8 authoritative-snapshot symbols this PR intentionally does not restore, so the omission itself is in scope and needs no code work.
 
 ## Summary
 修正 current guarded dispatcher 對被 release gate 明確 hold 的 L12-CLOSE-001 誤判為 unordered overlap，同時維持所有其他 live overlap fail-closed。
@@ -15,9 +15,3 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
-
-## Base Branch Regression (2026-08-06)
-- `origin/dev` commit `23ae23c2185d31d2aeacafaa9b051127a6d53136` ("SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729: anchor owner handoff", PR #4590, merged 2026-08-06T11:57:30Z) is a stale-base squash: 227 files changed, 1750 insertions, 47932 deletions, 166 files deleted.
-- Proof that it is a regression and not an intentional removal: the resulting `scripts/dispatch_twelve_loop_gap_2026_07_26.py` blob is byte-identical to the blob at ancestor commit `780c553a0`, and 154 of the deleted files still exist on `origin/master`.
-- Repaired inside this task's own envelope: the two declared script artifacts and the three `docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch` catalog inputs the dispatcher reads, each restored byte-identical to its `23ae23c21^` blob.
-- Still outstanding and Human/Ops scoped: the remaining deleted files, including `.github/workflows/canonical-review-gate.yml`. While that workflow is absent from the default branch, the required "Pantheon canonical review gate" context cannot be produced from `dev`, so this PR remains unmergeable at merge time even once review passes.
