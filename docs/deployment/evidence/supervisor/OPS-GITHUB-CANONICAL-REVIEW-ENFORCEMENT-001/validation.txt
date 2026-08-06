@@ -1,15 +1,31 @@
 OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 validation
 Captured: 2026-08-06
-Head verified: 9e165a1d7edf751bc3b519e749ccf601eb231c57
+Head verified: fc500eb14680ce59145900ef760d1c1aad4d04ce
 
 Post-mainline composition:
 
 The task branch composes `origin/dev`
-`003688bd7402d051986c07f1769285925af24e1b` at composition merge
-`9e165a1d7edf751bc3b519e749ccf601eb231c57`, clearing the `CONFLICTING`
-mergeable state on PR #4303. The sole conflict was the leading comment block
+`34e1f494a251f6c2292a6675baa0ed65fdab7bb5` at composition merge
+`fc500eb14680ce59145900ef760d1c1aad4d04ce`.
+
+This is the second forward composition. The first,
+`9e165a1d7edf751bc3b519e749ccf601eb231c57` over `origin/dev`
+`003688bd7402d051986c07f1769285925af24e1b`, cleared the `CONFLICTING`
+mergeable state on PR #4303. Its sole conflict was the leading comment block
 of `.github/workflows/canonical-review-gate.yml`; both comment-only sides were
 retained and no executable workflow key, permission, trigger, or step changed.
+
+The second composition was needed because `origin/dev` advanced 20 commits
+(`003688bd7` -> `34e1f494a`) within two minutes of the exact-head approval of
+`e8843e3d706bd30ff4aa45926678ab369903c015`, so
+`scripts/git/auto_integrator.py` returned `rebase_required`: the approved head
+no longer contained `dev` and the approval would not have covered what
+actually merged. The refresh is a forward merge, not a rebase, so this
+evidence manifest stays in the PR diff. It reported no conflicts, and
+
+    git log 003688bd7402d051986c07f1769285925af24e1b..34e1f494a251f6c2292a6675baa0ed65fdab7bb5 -- <six task artifacts>
+
+is empty: no commit in that range touched any file this task owns.
 
 The generic gate retains dev's git-native exact-head review-proof
 implementation. The trusted-base, read-only attestation audit stays isolated
@@ -19,13 +35,16 @@ attestation.
 
 Focused commands:
 
-    python3 scripts/git/test_canonical_review_check.py
-    python3 scripts/git/test_canonical_review_gate_workflow.py
-    python3 scripts/git/test_task_review_merge_gate.py
-    python3 .orchestrator/test_github_bus.py
+    python3 -m pytest scripts/git/test_canonical_review_check.py
+    python3 -m pytest scripts/git/test_canonical_review_gate_workflow.py
+    python3 -m pytest scripts/git/test_task_review_merge_gate.py
+    python3 -m pytest scripts/git/test_github_review_bridge.py
+    PYTHONPATH=.orchestrator python3 -m pytest .orchestrator/test_github_bus.py
 
-PASS - 182 tests: 38 canonical-review-check, 22 generic-gate workflow,
-94 task-review-merge-gate, and 28 GitHub-bus tests.
+PASS - 193 tests (plus 2 subtests): 38 canonical-review-check, 22 generic-gate
+workflow, 94 task-review-merge-gate, 11 github-review-bridge, and 28
+GitHub-bus tests. The github-review-bridge suite was omitted from the earlier
+182-test aggregate; it is included here.
 
 Static checks:
 
@@ -84,7 +103,10 @@ Not run:
   requires Human/Ops and a credential boundary outside shared owner runtime.
 - No live branch protection, repository auto-merge setting, key, merge, or
   auto-merge mutation was authorized or performed.
-- The composition head has not yet been independently approved. Its generic
-  canonical-review status is correctly expected to fail closed until the
-  current reviewer `Antigravity` approves that exact pushed head through the
-  governed command, which creates the exact-head review-proof tag.
+- The refreshed composition head has not yet been independently approved. Its
+  generic canonical-review status is correctly expected to fail closed until
+  the current reviewer `Antigravity` approves that exact pushed head through
+  the governed command, which creates the exact-head review-proof tag. The
+  superseded head `e8843e3d706bd30ff4aa45926678ab369903c015` did carry a valid
+  Antigravity approval, proof tag, and green required status; it was retired
+  only by dev movement, not by any review finding.

@@ -29,14 +29,32 @@ activation remain Human/Ops operations.
 ## Current-dev composition
 
 The task branch now composes `origin/dev`
-`003688bd7402d051986c07f1769285925af24e1b` at composition merge
-`9e165a1d7edf751bc3b519e749ccf601eb231c57`, which clears the `CONFLICTING`
+`34e1f494a251f6c2292a6675baa0ed65fdab7bb5` at composition merge
+`fc500eb14680ce59145900ef760d1c1aad4d04ce`.
+
+This is the second forward composition. The first,
+`9e165a1d7edf751bc3b519e749ccf601eb231c57` over `origin/dev`
+`003688bd7402d051986c07f1769285925af24e1b`, cleared the `CONFLICTING`
 mergeable state PR #4303 had accumulated while `dev` advanced. The earlier
 merge anchor `4583c789ae35d0f16cc8718c73bfad7adfc09505` resolved the generic
 `Pantheon canonical review gate` in favor of the current git-native
 exact-head review-proof implementation.
 
-The only conflict in the newer composition was the leading comment block of
+The second composition was forced by timing, not by a review finding.
+`origin/dev` advanced 20 commits (`003688bd7` -> `34e1f494a`) within two
+minutes of Antigravity's exact-head approval of
+`e8843e3d706bd30ff4aa45926678ab369903c015`, whose proof tag and required
+status were both green. `scripts/git/auto_integrator.py` then returned
+`rebase_required`, because that approved head no longer contained `dev` and so
+the approval would not have covered what actually landed. The owner refreshed
+the branch with a forward merge rather than a rebase, which keeps this
+evidence manifest inside the PR diff. The merge reported no conflicts, and
+`git log 003688bd7..34e1f494a` restricted to this task's six artifacts is
+empty -- no commit in that range touched a file this task owns, so the
+refreshed head is behaviourally the same contract Antigravity already
+approved.
+
+The only conflict in the first composition was the leading comment block of
 `canonical-review-gate.yml`. Both sides were comment-only and both were kept:
 dev's `SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805` note on why the proof tag
 alone cannot satisfy the pinned `github-actions` context, followed by this

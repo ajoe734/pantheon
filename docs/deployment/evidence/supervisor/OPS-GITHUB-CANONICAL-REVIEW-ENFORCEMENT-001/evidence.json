@@ -21,12 +21,16 @@
     "trust_boundary": "Protected base-branch public-key registry plus reviewer Ed25519 private key outside candidate/status roots -> signed exact PR/head/base/owner/reviewer envelope -> dedicated external verifier pinned to captured dev/master base SHA -> exact-head check through an externally owned GitHub App whose installation token is unavailable to repository Actions/shared owner runtime -> dedicated App-pinned required branch check.",
     "repository_workflow_boundary": "canonical-review-attestation-audit.yml is read-only diagnostics: it rejects non-dev/master bases before checkout, pins the captured base SHA, has no checks:write or statuses:write permission, makes no check-runs or statuses API call, and never invokes the generic canonical_review_gate_ci.py status writer. canonical-review-gate.yml is the distinct generic required-status path: it verifies only the git-native exact-head review-proof tag emitted by the governed approval bridge. Its github-actions identity cannot satisfy the separately configured external-App-pinned reviewer attestation.",
     "mainline_composition": {
-      "origin_dev_base": "003688bd7402d051986c07f1769285925af24e1b",
+      "origin_dev_base": "34e1f494a251f6c2292a6675baa0ed65fdab7bb5",
       "workflow_boundary_anchor": "4583c789ae35d0f16cc8718c73bfad7adfc09505",
       "evidence_anchor": "b1091b7fdbbe213c040398dc104526f0b3f4211e",
-      "composition_merge": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
+      "composition_merge": "fc500eb14680ce59145900ef760d1c1aad4d04ce",
       "conflict_resolution": "The only conflict against origin/dev was in the leading comment block of .github/workflows/canonical-review-gate.yml. Both sides were comment-only and were retained verbatim: dev's SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805 note explaining why the review-proof tag alone cannot satisfy the pinned github-actions context, followed by this task's note that the same generic github-actions status is a separate lifecycle check and cannot stand in for the dedicated external-App-pinned reviewer attestation. No executable workflow key, permission, trigger, or step was changed by the resolution.",
-      "result": "The task branch now composes current origin/dev. The generic Pantheon canonical review gate remains dev's git-native implementation: it asks only whether the governed approval bridge pushed refs/tags/pantheon-review/approve/<head-sha> and never reads runner-local task state. The attestation audit remains isolated at .github/workflows/canonical-review-attestation-audit.yml, so the generic status writer cannot be mistaken for or replace the App-pinned dedicated external attestation issuer."
+      "result": "The task branch now composes current origin/dev. The generic Pantheon canonical review gate remains dev's git-native implementation: it asks only whether the governed approval bridge pushed refs/tags/pantheon-review/approve/<head-sha> and never reads runner-local task state. The attestation audit remains isolated at .github/workflows/canonical-review-attestation-audit.yml, so the generic status writer cannot be mistaken for or replace the App-pinned dedicated external attestation issuer.",
+      "prior_origin_dev_base": "003688bd7402d051986c07f1769285925af24e1b",
+      "prior_composition_merge": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
+      "second_composition_reason": "origin/dev advanced 20 commits (003688bd7 -> 34e1f494a) within two minutes of the exact-head approval of e8843e3d706bd30ff4aa45926678ab369903c015. scripts/git/auto_integrator.py refused to land PR #4303 with rebase_required: the approved head no longer contained dev, so the approval would not have covered what actually merged. The owner refreshed the branch by merging origin/dev forward at fc500eb14680ce59145900ef760d1c1aad4d04ce rather than by rebasing, which preserves this evidence manifest in the PR diff. None of the 20 dev commits touched any artifact of this task: git log 003688bd7402d051986c07f1769285925af24e1b..34e1f494a251f6c2292a6675baa0ed65fdab7bb5 over the six task artifacts is empty, so the refreshed composition changes no reviewed behaviour. The second merge reported no conflicts.",
+      "second_composition_conflicts": "none"
     },
     "legacy_status_is_not_authority": "The existing Pantheon canonical review gate user status and every github-actions App id 15368 check are additive compatibility evidence only; neither can satisfy the dedicated external App-pinned canonical check."
   },
@@ -94,12 +98,13 @@
   "validation": {
     "status": "pass",
     "record": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt",
-    "head_verified": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
-    "aggregate_python_tests": 182,
+    "head_verified": "fc500eb14680ce59145900ef760d1c1aad4d04ce",
+    "aggregate_python_tests": 193,
     "suites": {
       "canonical_review_check": 38,
       "canonical_review_gate_workflow": 22,
       "task_review_merge_gate": 94,
+      "github_review_bridge": 11,
       "github_bus": 28
     },
     "static_checks": [
@@ -119,7 +124,7 @@
       "live protection activation/probes require Human/Ops authorization",
       "actionlint: no executable available in this worker environment"
     ],
-    "head_verified_note": "Verification ran at composition merge 9e165a1d7edf751bc3b519e749ccf601eb231c57. Commits after it in this PR change only files under this evidence directory."
+    "head_verified_note": "Verification re-ran in full at composition merge fc500eb14680ce59145900ef760d1c1aad4d04ce, the second forward merge of origin/dev 34e1f494a251f6c2292a6675baa0ed65fdab7bb5. The prior 182-test run at 9e165a1d7edf751bc3b519e749ccf601eb231c57 is superseded; this run adds the 11 github-review-bridge tests the earlier aggregate omitted. Commits after fc500eb14680ce59145900ef760d1c1aad4d04ce in this PR change only files under this evidence directory."
   },
   "re_review": {
     "previous_rejected_heads": [
@@ -130,15 +135,20 @@
     "rejecting_reviewer": "Codex2",
     "current_reviewer": "Antigravity",
     "reviewer_reassignment": "The canonical task row now assigns owner Claude and reviewer Antigravity. The exact-head approval must come from Antigravity through the governed command; the earlier Codex2 rejections stand as history against superseded heads.",
-    "composed_origin_dev": "003688bd7402d051986c07f1769285925af24e1b",
+    "composed_origin_dev": "34e1f494a251f6c2292a6675baa0ed65fdab7bb5",
     "required_before_reviewer_approval": [
-      "Confirm PR #4303 is MERGEABLE against current dev (no longer CONFLICTING).",
-      "Confirm the PR head's diff against 9e165a1d7edf751bc3b519e749ccf601eb231c57 touches only this evidence directory, so the 182-test verification at 9e165a1d7 still describes the reviewed code.",
+      "Confirm PR #4303 is MERGEABLE and CLEAN against current dev 34e1f494a251f6c2292a6675baa0ed65fdab7bb5.",
+      "Confirm the PR head's diff against fc500eb14680ce59145900ef760d1c1aad4d04ce touches only this evidence directory, so the 193-test verification at fc500eb14680ce59145900ef760d1c1aad4d04ce still describes the reviewed code.",
+      "Confirm git log 003688bd7402d051986c07f1769285925af24e1b..34e1f494a251f6c2292a6675baa0ed65fdab7bb5 over this task's six artifacts is empty, which is what makes the refreshed head equivalent in behaviour to the already-approved e8843e3d706bd30ff4aa45926678ab369903c015.",
       "Expect the generic canonical review gate to fail closed on the fresh head until an independent approval creates its exact-head proof tag.",
       "Have Antigravity independently review this committed evidence manifest and approve only the exact current PR head through the governed command."
     ],
-    "code_composition_anchor": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
-    "head_for_review_note": "The reviewable PR head is the evidence-refresh commit that sits directly on top of composition merge 9e165a1d7edf751bc3b519e749ccf601eb231c57 and touches only this evidence directory. A manifest cannot name its own commit, so the reviewer must bind approval to the exact current head of PR #4303 and confirm that head's diff against 9e165a1d7 is documentation-only."
+    "code_composition_anchor": "fc500eb14680ce59145900ef760d1c1aad4d04ce",
+    "head_for_review_note": "The reviewable PR head is the evidence-refresh commit that sits directly on top of composition merge fc500eb14680ce59145900ef760d1c1aad4d04ce and touches only this evidence directory. A manifest cannot name its own commit, so the reviewer must bind approval to the exact current head of PR #4303 and confirm that head's diff against fc500eb14680ce59145900ef760d1c1aad4d04ce is documentation-only.",
+    "previous_approved_superseded_heads": [
+      "e8843e3d706bd30ff4aa45926678ab369903c015"
+    ],
+    "head_refresh_reason": "Head e8843e3d706bd30ff4aa45926678ab369903c015 was independently approved by Antigravity at 2026-08-06T11:25:38Z and its exact-head review-proof tag and required status both went green. It was superseded only because origin/dev moved past it before the integrator could land it; the refresh is a dev-forward merge that changes no file owned by this task."
   },
   "residual_risks": [
     {
