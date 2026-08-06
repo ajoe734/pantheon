@@ -173,3 +173,105 @@ L12-TRUTH-001                                       ARCHIVED 2026-07-29T06:17:18
 L12-POST-4380-GAP-DISPATCH-20260729                 MISSING  <-- the PR's own id, unchanged
 
 No row was gained or lost. The blocking finding is unaffected.
+
+==========================================================================
+CLOSEOUT REFRESH — 2026-08-06, owner finalize dispatch
+==========================================================================
+Run from the task worktree; governed status commands from
+PANTHEON_COMMAND_ROOT=/home/lupin/pantheon-ci-deploy/dev-root
+(PANTHEON_COMMAND_RUNTIME_SHA=f90e0aae6cb5e86f18b20db9f30bc834f6115745).
+
+$ AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-POST-4380-GAP-REVIEW-20260729
+  source=active status=review_approved owner=Claude reviewer=Antigravity
+  review_file=docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/evidence.json
+  review_binding: pr=4588 head_sha=93e73039bbb84603917bca824aa37d0ffc24c4b6 base=dev
+  github_review_bridge: decision=approve actor=Antigravity status_state=success
+                        review_proof_ref=refs/tags/pantheon-review/approve/93e73039bbb84603917bca824aa37d0ffc24c4b6
+
+--------------------------------------------------------------------------
+1. Stale review-gate CheckRun on the approved head
+--------------------------------------------------------------------------
+$ gh pr view 4588 --json state,mergeable,mergeStateStatus,headRefOid
+  state=OPEN mergeable=MERGEABLE mergeStateStatus=BLOCKED
+  headRefOid=93e73039bbb84603917bca824aa37d0ffc24c4b6
+
+$ gh pr checks 4588
+  Pantheon canonical review gate   fail   .../runs/31097849961   <-- pre-approval CheckRun
+  Pantheon canonical review gate   pass   (commit status) "SUP-L12-POST-4380-GAP-REVIEW-20260729
+                                           approve by Antigravity at 93e73039bbb8"
+  Commit trailers / Runtime mirror guard / Smoke acceptance /
+  Python packaging provision / Coordination drift / Handoff mirror   all pass
+
+$ gh run rerun 31097849961
+$ gh run view 31097849961 --json status,conclusion
+  completed/success
+$ gh pr view 4588 --json mergeStateStatus
+  CLEAN                                       <-- unblocked, head unchanged
+
+--------------------------------------------------------------------------
+2. Integrator refuses the approved head: base is behind
+--------------------------------------------------------------------------
+$ python scripts/git/auto_integrator.py --task-id SUP-L12-POST-4380-GAP-REVIEW-20260729 \
+    --status-file /home/lupin/pantheon/ai-status.json --json      # dry run
+  status=waiting
+  detail="PR #4588 needs a refreshed head to land on dev; the approval of
+          93e73039bbb84603917bca824aa37d0ffc24c4b6 would not cover it.
+          Owner refreshes the branch and the assigned reviewer re-approves the new head."
+
+$ git rev-parse origin/dev                  -> 4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c
+$ git rev-parse HEAD                        -> 93e73039bbb84603917bca824aa37d0ffc24c4b6
+$ git merge-base --is-ancestor origin/dev HEAD
+  rc=1                                      <-- the ancestry test the integrator requires
+
+$ git merge --no-edit origin/dev            -> fcca37ebd12a47aaf23fca447a80b162189c95f8
+
+$ git diff --stat origin/dev...HEAD
+  4 files changed, 586 insertions(+)        <-- diff scope unchanged by the merge
+$ git diff --check origin/dev...HEAD        -> clean
+
+--------------------------------------------------------------------------
+3. Verdict re-verified at origin/dev = 4ee7fc95
+--------------------------------------------------------------------------
+$ gh pr view 4382 --json state,mergeStateStatus,headRefOid,autoMergeRequest,reviewDecision
+  state=OPEN mergeStateStatus=BLOCKED
+  headRefOid=ca00f813f4e6a5dfcfb2cf402ebba425a034d03e     <-- reviewed head, unmoved
+  autoMergeRequest=null reviewDecision=""
+
+$ AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show L12-POST-4380-GAP-DISPATCH-20260729
+  Unknown task
+$ ls /home/lupin/pantheon/ai-task-archive/tasks/L12-POST-4380-GAP-DISPATCH-20260729.json
+  No such file or directory
+$ python scripts/git/task_review_merge_gate.py check L12-POST-4380-GAP-DISPATCH-20260729 \
+    --pr-json /tmp/pr4382.json                                        # rc=2
+  block L12-POST-4380-GAP-DISPATCH-20260729 policy=review_before_merge
+        reason=task_state_unavailable
+    canonical task state for L12-POST-4380-GAP-DISPATCH-20260729 is missing; refusing to merge
+
+$ sha256sum -c .../evidence.sha256
+  README.md: OK   evidence.json: OK   validation.txt: OK      (before this revision)
+$ jq empty .../evidence.json                                    -> exit 0
+
+Blocking finding, verdict, and requirement findings 1-5: all UNCHANGED.
+
+--------------------------------------------------------------------------
+4. Out-of-scope environment finding (escalated, not remediated)
+--------------------------------------------------------------------------
+Surfaced by the forward merge, which deleted these paths from the worktree
+because dev no longer carries them.
+
+$ git cat-file -e origin/dev:.github/workflows/canonical-review-gate.yml   -> NO
+$ git cat-file -e origin/master:.github/workflows/canonical-review-gate.yml -> YES
+$ git cat-file -e origin/dev:scripts/git/canonical_review_gate_ci.py       -> NO
+$ git cat-file -e origin/master:scripts/git/canonical_review_gate_ci.py    -> YES
+  (canonical-review-gate.yml is the ONLY workflow master has and dev lacks)
+
+$ git log --oneline -1 origin/dev -- .github/workflows/canonical-review-gate.yml
+  23ae23c21 SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729: anchor owner handoff (#4590)
+$ gh pr view 4590 --json mergedAt,changedFiles,additions,deletions
+  mergedAt=2026-08-06T11:57:30Z changedFiles=227 additions=1750 deletions=47932
+$ git show --diff-filter=D --name-only --format="" 23ae23c21 | wc -l
+  166
+
+An "anchor owner handoff" commit deleting 166 files / 47932 lines is a
+stale-base squash, not an intended removal. Escalated to Human/Ops; NOT
+remediated in this task, whose reviewed diff is 4 evidence files.

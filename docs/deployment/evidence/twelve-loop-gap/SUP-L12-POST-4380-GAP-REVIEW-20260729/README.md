@@ -169,3 +169,77 @@ rows in the table below were read from the canonical mirrors
 returned lock-busy. The mirror lagged the governed command by one transition on
 `SUP-L12-STALE-PR-RETIRE-20260729`, so treat mirror-sourced rows as
 "no later than" the state shown.
+
+## Closeout refresh (2026-08-06, owner finalize dispatch)
+
+The owner was dispatched to finalize this task at `review_approved`. It could
+not close on the approved head, so the base was refreshed and every claim was
+re-observed. **The verdict is unchanged**; this section records why the head
+moved and what was re-checked.
+
+**Why the head moved.** `scripts/git/auto_integrator.py` returned
+`waiting` / `rebase_required` for delivery PR #4588:
+
+> PR #4588 needs a refreshed head to land on dev; the approval of
+> `93e73039bbb84603917bca824aa37d0ffc24c4b6` would not cover it. Owner
+> refreshes the branch and the assigned reviewer re-approves the new head.
+
+For a `review_before_merge` PR the integrator never force-pushes an approved
+head. It instead requires `origin/dev` to already be an ancestor of the approved
+exact head, so it can smoke that immutable commit. `origin/dev` advanced to
+`4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c`, past the approved head, so that
+ancestry test failed. `origin/dev` was therefore merged forward into the task
+branch as `fcca37ebd12a47aaf23fca447a80b162189c95f8`. A rebase was deliberately
+not used: rebasing a task branch whose entire delivery *is* an evidence manifest
+rewrites the commits that carry that manifest into the PR diff.
+
+A second exact-head review is required as a result. This is a base refresh, not
+new review content — the PR diff is still the same 4 files, +586/-0, and
+`git diff --check origin/dev...HEAD` is clean.
+
+**A stale review-gate CheckRun was also cleared.** PR #4588 was `MERGEABLE` but
+`BLOCKED` while its canonical review gate commit status was already `success`.
+The cause was a pre-approval Canonical Review Gate run (`31097849961`,
+2026-08-06T11:35:22Z) that left a `FAILURE` CheckRun on the same head.
+`gh run rerun 31097849961` on the unchanged head concluded `success` and the PR
+moved `BLOCKED` -> `CLEAN` without touching the exact-head binding.
+
+**What was re-verified at `origin/dev = 4ee7fc95`:**
+
+- PR #4382 is still `OPEN`, still `BLOCKED`, still at head
+  `ca00f813f4e6a5dfcfb2cf402ebba425a034d03e`. The reviewed head did not move.
+- Governed `ai-status.sh show L12-POST-4380-GAP-DISPATCH-20260729` still returns
+  `Unknown task`, and no archive row exists for it.
+- `task_review_merge_gate.py check` still returns `block` /
+  `task_state_unavailable`.
+
+So the blocking finding and requirement findings 1-5 all stand.
+
+## Out-of-scope environment finding: dev lost the canonical review gate workflow
+
+This was found while merging `dev` forward — the merge deleted the files from
+this worktree because `dev` no longer has them. It is **not** part of this
+task's reviewed diff and was **not** remediated here.
+
+`origin/dev` no longer contains `.github/workflows/canonical-review-gate.yml`
+or `scripts/git/canonical_review_gate_ci.py`. `origin/master` still contains
+both, and that workflow is the *only* difference between the two branches'
+workflow sets.
+
+The cause is PR #4590
+(`SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729: anchor owner handoff`),
+squash-merged as `23ae23c2185d31d2aeacafaa9b051127a6d53136` at
+2026-08-06T11:57:30Z with 227 files changed, `+1750/-47932`. A commit titled
+"anchor owner handoff" that deletes 166 files is the signature of a stale-base
+squash, not an intended removal.
+
+Impact: the `Pantheon canonical review gate` context is required by `dev` branch
+protection. Task branches cut from `dev` after `23ae23c2` carry neither the
+workflow nor its CI helper, so nothing produces that CheckRun for them.
+Approvals still post the context as a commit status through
+`github_review_bridge.py`, so gated review PRs can still be satisfied, but the
+CI-side gate is gone from the default branch.
+
+Restoring a deleted required-check workflow to `dev` is outside this task's
+scope and outside its reviewed diff. It is escalated to Human/Ops in the handoff
+message rather than resolved locally.
