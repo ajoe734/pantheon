@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Independently review scheduler eligibility and grace exact head for live rescue
-- Status: blocked
-- Owner: Codex2
-- Reviewer: Antigravity
-- Next: Owner closeout verification passed, but the governed merge gate blocks PR #4402 because canonical `github.head_branch` still names the reviewed implementation branch `task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731` while the approved task PR uses `task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731`. Human/Ops must reconcile the task metadata or governed merge path without bypassing exact-head review; Antigravity remains the assigned reviewer.
+- Status: in_progress
+- Owner: Antigravity
+- Reviewer: Claude
+- Next: Reopened by Human/Ops: this task's waiting_for/blocked state predates the 2026-08-05 Codex-quota mass reassignment, which overwrote 'next' with the reassignment note but never re-examined whether the underlying block still applies -- and because blocked tasks are structurally invisible to dispatch_ready_tasks (root cause tracked in SUP-BLOCKED-TASK-RECONCILIATION-20260804), nothing has looked at this since. Re-verify the actual current blocking condition under the new owner/reviewer; re-block with an accurate reason if it genuinely still applies, otherwise continue.
 
 ## Summary
 Emergency independent review lane for the already implemented #4399 scheduler architecture fix. Human/Ops hands this review-only task to Antigravity so the true supervisor launches the reviewer without waiting on the closeout task that the old scheduler itself keeps killing.
