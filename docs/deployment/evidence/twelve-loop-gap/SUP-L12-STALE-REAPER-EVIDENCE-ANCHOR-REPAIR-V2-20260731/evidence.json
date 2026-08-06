@@ -3,15 +3,15 @@
   "task": {
     "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec",
-    "owner": "Claude",
-    "reviewer": "Antigravity",
-    "status": "ready_for_independent_review",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "in_progress",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
-    "evidence_cut_at": "2026-08-06T16:08:00Z"
+    "evidence_cut_at": "2026-08-06T16:12:00Z"
   },
   "supersession": {
     "prior_task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
@@ -222,7 +222,7 @@
     }
   ],
   "review": {
-    "reviewer": "Antigravity",
+    "reviewer": "Claude",
     "status": "pending_independent_review",
     "decision": null,
     "reviewed_head_sha": null,
