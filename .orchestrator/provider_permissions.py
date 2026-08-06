@@ -2273,6 +2273,33 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
         },
     }
+    existing_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    existing_providers = existing_report.get("providers", {}) if isinstance(existing_report.get("providers"), dict) else {}
+    from supervisor import apply_provider_probe_to_report
+    for pkey, pdata in report.get("providers", {}).items():
+        if isinstance(pdata, dict):
+            if pkey in existing_providers and isinstance(existing_providers[pkey], dict):
+                prev = existing_providers[pkey]
+                if "consecutive_probe_failures" in prev:
+                    pdata["consecutive_probe_failures"] = prev["consecutive_probe_failures"]
+                # Only inherit auth_ready if the previous report held an active probe-driven hysteresis hold
+                # (prev auth_ready was True while probe failed/was missing, and streak is within threshold).
+                prev_streak = int(prev.get("consecutive_probe_failures", 0))
+                max_streak = int(config.get("supervisor", {}).get("provider_probe_failure_hysteresis_threshold", 3))
+                if prev.get("auth_ready") is True and prev_streak < max_streak:
+                    pdata["auth_ready"] = True
+            auth_probe = pdata.get("auth_probe")
+            if isinstance(auth_probe, dict) and str(auth_probe.get("source") or "").strip().lower() == "live":
+                apply_provider_probe_to_report(report, pkey, auth_probe, config=config)
+
+    # Re-evaluate agent_adapters so can_auto_deliver incorporates hysteresis-held provider auth_ready
+    provider_caps = report.get("providers", {})
+    report["agent_adapters"] = {
+        agent_id: build_adapter(agent.get("adapter", "file_inbox"), config=config, provider_capabilities=provider_caps)
+        .capability(agent_id)
+        .as_dict()
+        for agent_id, agent in config.get("agents", {}).items()
+    }
     return report
 
 

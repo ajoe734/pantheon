@@ -2,9 +2,10 @@
   // Local-only overrides for this machine.
   // Copy to `.orchestrator/config.local.json` if you want a fresh personal override file.
   "supervisor": {
-    // Refresh provider capabilities on each supervisor loop so dashboard state updates
-    // after local auth or IAM changes.
-    "auto_refresh_provider_capabilities": true
+    // Set to true if you want to refresh provider capabilities on each supervisor loop
+    // (disabled by default so capability probing stays off the dispatch hot path).
+    "auto_refresh_provider_capabilities": false,
+    "provider_probe_failure_hysteresis_threshold": 3
   },
   "coordination": {
     "repositories": {
