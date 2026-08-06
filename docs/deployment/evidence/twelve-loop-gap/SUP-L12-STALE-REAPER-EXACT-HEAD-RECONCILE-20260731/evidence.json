@@ -3,21 +3,21 @@
   "task": {
     "id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
     "title": "Reconcile stale failure-streak reaper exact PR head before Wave 0 closeout",
-    "owner": "Codex2",
-    "reviewer": "Antigravity",
-    "status": "review_approved",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "review",
     "phase": "Supervisor Runtime Repair / Wave 0 Exact-Head Reconcile",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
-    "evidence_cut_at": "2026-07-31T12:17:11Z"
+    "evidence_cut_at": "2026-08-06T12:20:00Z"
   },
   "subject_task": {
     "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
-    "canonical_status": "review_approved",
-    "owner": "Codex",
-    "reviewer": "Antigravity",
+    "canonical_status": "blocked",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
     "canonical_reviewed_head": "86dd9006b15bba67a83886e4a2d672e511aa8709",
     "canonical_review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
     "canonical_row_is_sufficient_for_current_head": false
@@ -25,13 +25,13 @@
   "pull_request_snapshot": {
     "number": 4385,
     "url": "https://github.com/ajoe734/pantheon/pull/4385",
-    "state": "OPEN",
+    "state": "CLOSED",
     "base_ref": "dev",
     "head_ref": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
     "head_sha": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
     "head_tree": "d6e781f5c8717ea908ef9dbf4e0c780089266230",
-    "mergeable": "MERGEABLE",
-    "merge_state_status": "BLOCKED",
+    "mergeable": "UNKNOWN",
+    "merge_state_status": "CLOSED",
     "review_decision": "",
     "auto_merge_authorized": false,
     "observed_required_checks": {
@@ -44,7 +44,7 @@
       30560430682,
       30560426419
     ],
-    "observed_at": "2026-07-31T12:17:11Z"
+    "observed_at": "2026-08-06T12:20:00Z"
   },
   "head_relationship": {
     "canonical_reviewed_head": "86dd9006b15bba67a83886e4a2d672e511aa8709",
@@ -166,7 +166,7 @@
     "owner_reconciliation": "reopen_required",
     "exact_head_approval_eligible": false,
     "exact_head_rejected": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
-    "recommended_canonical_action": "Antigravity reopens SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 with F1's concrete correction; supersede only if PR #4385 is abandoned in favor of an explicit replacement.",
+    "recommended_canonical_action": "PR #4385 is now CLOSED. The narrow anchor correction must be submitted as a new PR against dev (or explicit supersede if replaced), and PR #4385 cannot be pushed to directly.",
     "wave0_dependency_satisfied": false,
     "protected_merge_still_required_after_repair": true,
     "root_freeze_still_required_after_repair": true,
@@ -255,16 +255,18 @@
     "command_runtime_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e"
   },
   "review": {
-    "reviewer": "Antigravity",
-    "status": "review_approved",
+    "reviewer": "Claude",
+    "status": "review",
     "decision": "reopen_subject_task",
     "reviewed_task_pr": "https://github.com/ajoe734/pantheon/pull/4395",
-    "reviewed_task_head_sha": "607a474688566b1a62c4ec24998c4d6864d62a88",
-    "reviewed_at": "2026-07-31T12:25:16Z",
+    "reviewed_task_head_sha": "edb1698aa6626d84039243d862dfdc33a8f87770",
+    "reviewed_at": "2026-08-06T12:20:00Z",
     "notes": [
-      "Independently verified PR #4385 exact head reconciliation evidence in this manifest.",
+      "Reviewed exact task PR #4395 head edb1698aa6626d84039243d862dfdc33a8f87770 (== origin task head == review_binding.head_sha).",
+      "Prior review: Antigravity independently verified PR #4385 exact head reconciliation evidence in this manifest at 2026-07-31T12:25:16Z for prior head 607a474688566b1a62c4ec24998c4d6864d62a88.",
       "Confirmed F1: PR #4385 head f5e70e86e01bde005dae5fed94b151c9bc07f389 references nonexistent implementation anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f instead of actual commit 9d53a94a295d71ee49aea6f4b96e47fbcfd29093.",
-      "Rejected PR #4385 exact head f5e70e86 for exact-head approval and required SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 to reopen for anchor SHA correction."
+      "Rejected PR #4385 exact head f5e70e86 for exact-head approval and required SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 to reopen for anchor SHA correction.",
+      "Rebind update: Rebound task and review blocks to current cycle (owner Antigravity, reviewer Claude, status review at head edb1698aa) and updated pull_request_snapshot to CLOSED state per Claude reopening directions."
     ]
   }
 }

@@ -53,13 +53,9 @@ Every path and its classification is recorded in
 
 ## Required correction
 
-1. Replace both invalid anchor references with the actual full SHA
-   `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`.
-2. Push the narrow correction to PR #4385; this necessarily creates a new head.
-3. Re-run the focused and full supervisor validations on that new head.
-4. Obtain independent review bound to that exact PR number/head/base and record
-   the decision in the reviewed evidence manifest.
-5. Only after protected merge may the underlying owner run governed closeout;
-   root-freeze remains a separate required gate.
+1. PR #4385 is now CLOSED. The narrow anchor correction (replacing invalid anchor `9d53a94a265c` with `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`) must be submitted as a new PR against dev or resolved via an explicit supersede.
+2. Re-run focused and full supervisor validations on the new PR head.
+3. Obtain independent review bound to the new PR number/head/base and record the decision in the reviewed evidence manifest.
+4. Only after protected merge may the underlying owner run governed closeout; root-freeze remains a separate required gate.
 
 No `.orchestrator/config.json` change is authorized or present in this task.
