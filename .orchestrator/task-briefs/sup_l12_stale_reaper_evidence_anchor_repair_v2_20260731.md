@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Addressing reviewer reopen items for durable-record defects: (1) Rebind task brief & evidence.json owner=Antigravity, reviewer=Claude. (2) Demote prior Codex2 review in evidence.json to prior_reviews history and set current review pending Claude. (3) Refresh task_head_sha and dev_head composition fields. (4) Document dev-side supervisor import breakage as out-of-scope while verifying composed head 941c15a3.
+- Next: REOPEN round 2 - head unchanged, fix never pushed. PR #4465 head is still c44f0518fa49b94dc40bc153c147d5a86a280fdf (gh updatedAt 2026-08-06T13:39:48Z, i.e. BEFORE the 13:46:06Z reopen) and is identical to my prior tag pantheon-review/reopen/c44f0518. Defects A-C are unfixed on the reviewable head: (A) repair README.md still asserts 'pass again after composing the latest origin/dev head' instead of scoping to composed head 941c15a3; (B) the task brief still ends with a trailing blank line; (C) evidence.json verification.command_runtime_sha is still 728fa361b (a git commit) not the live runtime SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745. The fix commit a5ff4b5f0fc295aed7c927fd0ec22bff773d737e exists only in the task worktree - push it. (D) NEW defect inside that unpushed commit: evidence.json delivery.task_head_sha=e5eef026f32cc1faa5b35fd4f5399e723465df26 is an orphaned amend sibling (its parent is c44f0518 and 'git merge-base --is-ancestor e5eef026 a5ff4b5f0' returns false), so it will not exist on origin after push; it must name a real ancestor of the pushed head, e.g. c44f0518. Verified sound at this head and NOT to be redone: the core anchor repair (subject README plus both evidence.json anchor fields now 9d53a94a295d71ee49aea6f4b96e47fbcfd29093, which is an ancestor of the PR head; invalid 9d53a94a265c55af4c8d15c50ab3751f1440ac0f absent from every asserted-anchor position), .orchestrator/config.json untouched in origin/dev...c44f0518, and the out-of-scope dev-side ImportError (provider_auth_probe_due missing from provider_permissions.py) independently reproduced at this head.
 
 ## Summary
 Supersedes preempted immutable task SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 after bridge rejected spec update. Repair #4385 nonexistent evidence anchor before stale-reaper can satisfy Wave 0.
@@ -15,23 +15,3 @@ Supersedes preempted immutable task SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
-
-## Dispatch Reconciliation
-- The failed runtime receipt at `.orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json` records a non-retryable bridge assignment conflict for prior task `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731`.
-- That prior task is immutable-bound to packet `pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z`, digest `24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc`, and spec `c5a998ac1677d802a3929d63c2d65f5bd60970060ade7d5356776dfac59d39a2`.
-- This V2 task is the superseding lane admitted from packet `pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z`; it does not mutate or reuse the immutable prior task row.
-
-## Source Head Verification
-- PR #4385 was still open at required head `f5e70e86e01bde005dae5fed94b151c9bc07f389` when inspected on 2026-08-01.
-- PR #4395 had moved from the brief's `f68827c8e17d6a1f081afe24f62ba85c116166e8` to `edb1698aa6626d84039243d862dfdc33a8f87770` before this task edited evidence.
-- Because the reconciliation head moved and #4385 remains owned by the prior task branch, this task delivers an equivalent superseding PR while preserving #4385's original commits as ancestors.
-
-## Observed Out-of-Scope Condition
-- At current `dev` head (e.g. `23ae23c21` / `4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c`), `.orchestrator/supervisor.py:90` attempts to import `provider_auth_probe_due` from `provider_permissions.py`, which does not define it.
-- This breakage is present on `dev` and out of scope to fix in this evidence-anchor task.
-- Verification of supervisor tests was confirmed on composed head `941c15a34208e54e96cdd148ba3a5bfcd339abab`.
-
-## Verification
-- Provisioned checkout-scoped Python distribution.
-- Verified corrected anchor `9d53a94a295d71ee49aea6f4b96e47fbcfd29093` ancestry and confirmed invalid object `9d53a94a265c55af4c8d15c50ab3751f1440ac0f` is absent.
-- Verified JSON manifests, `git diff --check`, commit trailers, and `.orchestrator/config.json` boundary.
