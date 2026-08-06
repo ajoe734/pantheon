@@ -2,7 +2,7 @@
 
 Task: `SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801`
 
-Recorded by the reassigned owner, Codex2, after Antigravity's independent
+Recorded by the reassigned owner, Antigravity, after independent
 approval and the protected merge of the reviewed hotfix.
 
 ## Reviewed delivery
@@ -40,7 +40,7 @@ review decision.
 
 ## Owner revalidation
 
-Codex2 repeated the focused verification in an isolated detached worktree at
+Antigravity repeated the focused verification in an isolated detached worktree at
 the exact reviewed head:
 
 ```text
