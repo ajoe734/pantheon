@@ -1,0 +1,164 @@
+{
+  "schema_version": "pantheon.l12_fleet_status_sync_closeout_refresh.v3",
+  "task": {
+    "id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "owner_prepared_awaiting_exact_head_wrapper_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+    "pull_request": 4313,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
+    "evidence_cut_at": "2026-08-06T10:40:00Z",
+    "supersedes": {
+      "schema_version": "pantheon.l12_fleet_status_sync_closeout_refresh.v2",
+      "evidence_cut_at": "2026-08-04T14:43:16Z",
+      "commit": "2ba2417f0860146bde82b773953eec8d55f6fba1",
+      "reason": "The v2 receipt recorded a fail-closed blocker on the source task. Every gate it named has since been satisfied on dev; this revision replaces the stale observation with the resolved outcome."
+    }
+  },
+  "scope": {
+    "owned_layer": "Task-scoped closeout receipt and independently reviewable evidence for the already merged fleet-status implementation and its now-merged source closeout.",
+    "not_changing": [
+      "PR #4282 implementation or regression tests",
+      "PR #4297 source closeout content or its merged evidence manifest",
+      "Generated canonical status, activity, archive, dashboard, or current-work files",
+      "Supervisor routing, review-gate, root-freeze, source-owner, or task-state transition authority",
+      "Hosted deployment, runtime activation, or capital authority"
+    ],
+    "changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728/evidence.sha256"
+    ],
+    "intentionally_uncommitted": [
+      {
+        "path": ".orchestrator/task-briefs/l12_fleet_status_sync_closeout_20260728.md",
+        "reason": "Orchestrator-regenerated dispatch mirror. It is generated state, it currently renders an older row snapshot than the canonical task row, and committing it would publish a stale mirror."
+      }
+    ]
+  },
+  "implementation_delivery": {
+    "source_task_id": "L12-FLEET-STATUS-SYNC-001",
+    "pull_request": 4282,
+    "exact_head": "e806affaa279f8b9d4b41bae6117a9431c99b90e",
+    "merge_commit": "a0020c5ac50e510467a5e80c412c7703245cf4dd",
+    "head_is_ancestor_of_origin_dev": true,
+    "merge_is_ancestor_of_origin_dev": true,
+    "implementation_restarted": false
+  },
+  "source_closeout_resolution": {
+    "resolved": true,
+    "pull_request": 4297,
+    "url": "https://github.com/ajoe734/pantheon/pull/4297",
+    "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+    "base_branch": "dev",
+    "state": "merged",
+    "merged_at": "2026-08-05T01:28:05Z",
+    "final_head_sha": "70360fb43755cf4b21c918f4a7996433acb22172",
+    "merge_commit": "5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61",
+    "merge_is_ancestor_of_origin_dev": true,
+    "final_head_is_ancestor_of_origin_dev": false,
+    "final_head_ancestry_note": "PR #4297 landed as a single squash commit, so its branch head is not itself an ancestor of dev. The squash merge commit 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61 is the ancestor that carries the content, and it contains both source evidence files.",
+    "merged_evidence_files": [
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.md"
+    ]
+  },
+  "governed_source_task_observation": {
+    "observed_at": "2026-08-06T10:40:00Z",
+    "source": "archive",
+    "snapshot_path": "ai-task-archive/tasks/L12-FLEET-STATUS-SYNC-001.json",
+    "archived_at": "2026-08-05T02:07:35Z",
+    "terminal_status": "done",
+    "terminal_outcome": "completed",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+    "review_binding": {
+      "pull_request": 4297,
+      "head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "base": "dev"
+    },
+    "delivery_commit": "5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61",
+    "delivery_head_merged_to_target": true,
+    "owner_reassignment_before_closeout": {
+      "ts": "2026-08-05T02:03:33Z",
+      "old_owner": "Codex",
+      "new_owner": "Claude",
+      "reviewer": "Antigravity",
+      "reason": "Auto-reassigned away from unavailable lane Codex."
+    },
+    "residual_observation": "The retained review_binding head 38057216e8e2a02f2acb3f375a119286af6e01b2 is not the final merged head 70360fb43755cf4b21c918f4a7996433acb22172 and is not an ancestor of dev. The governed done/archive transaction accepted the delivery on its own verification of merge commit 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61. This wrapper records that residue as an observation only; the source row is terminal and archived and this wrapper claims no authority to re-open or re-bind it.",
+    "assessment": "Every source-side gate the v2 receipt reported as pending is now satisfied on dev. No stale approval was reused by this wrapper."
+  },
+  "authority_gates": {
+    "source_metadata_reconciliation": {
+      "status": "resolved_by_source_owner",
+      "resolved_note": "Source ownership moved Codex -> Claude on 2026-08-05T02:03:33Z and the source owner completed the governed closeout."
+    },
+    "exact_head_independent_review": {
+      "status": "resolved",
+      "resolved_note": "PR #4297 passed the canonical review gate and merged into dev at 2026-08-05T01:28:05Z."
+    },
+    "root_freeze": {
+      "status": "not_required_by_this_wrapper",
+      "resolved_note": "This wrapper changes only task-scoped evidence documents. It touches no runtime, command root, or capital surface, so it requires no root-freeze actor."
+    },
+    "source_merge_and_archive": {
+      "status": "resolved",
+      "resolved_note": "L12-FLEET-STATUS-SYNC-001 archived done/completed at 2026-08-05T02:07:35Z."
+    },
+    "wrapper_review_merge_and_done": {
+      "status": "pending",
+      "required_reviewer": "Antigravity",
+      "reason": "This revision must receive an exact-head independent review bound to the refreshed PR #4313 head before the owner may merge and run the governed done."
+    }
+  },
+  "verification": {
+    "commands": [
+      "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
+      "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show L12-FLEET-STATUS-SYNC-001",
+      "gh pr view 4297 --repo ajoe734/pantheon --json state,headRefOid,mergeCommit,mergedAt,baseRefName",
+      "gh pr view 4313 --repo ajoe734/pantheon --json number,state,headRefOid,mergeStateStatus,reviewDecision,statusCheckRollup",
+      "git merge-base --is-ancestor e806affaa279f8b9d4b41bae6117a9431c99b90e origin/dev",
+      "git merge-base --is-ancestor a0020c5ac50e510467a5e80c412c7703245cf4dd origin/dev",
+      "git merge-base --is-ancestor 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61 origin/dev",
+      "git ls-tree -r --name-only 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61 -- docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/"
+    ],
+    "post_edit_commands": [
+      "jq . evidence.json",
+      "sha256sum -c evidence.sha256",
+      "git diff --check"
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Do not restart PR #4282 implementation.",
+      "status": "pass",
+      "note": "Implementation head and merge commit re-verified as ancestors of current origin/dev; no implementation file is in this wrapper's scope."
+    },
+    {
+      "id": "AC2",
+      "criterion": "Refresh or supersede PR #4297 from current dev and obtain an exact-head review.",
+      "status": "pass",
+      "note": "The source owner refreshed #4297 to head 70360fb43755cf4b21c918f4a7996433acb22172; it passed the canonical review gate and merged as 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Source merge and canonical done/archive.",
+      "status": "pass",
+      "note": "L12-FLEET-STATUS-SYNC-001 is archived done/completed at 2026-08-05T02:07:35Z with review_file docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json."
+    },
+    {
+      "id": "AC4",
+      "criterion": "Independently review, merge, and finalize this wrapper after source closeout.",
+      "status": "pending",
+      "note": "Owner work is complete and this receipt is committed before review, as required by the review evidence manifest rule. Awaiting Antigravity exact-head review on PR #4313."
+    }
+  ]
+}
