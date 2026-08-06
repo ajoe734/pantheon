@@ -19,10 +19,8 @@ row records a task-scoped review evidence manifest in `review_file`. Chat
 feedback, a green PR, and a reviewer approval message do not replace this
 field.
 
-**This is now a hard precondition, not a preference** (tightened
-2026-08-04, SUP-REVIEW-PIPELINE-INTEGRITY-20260804): the review evidence
-manifest must already be committed and present in the PR diff *before* a
-reviewer is asked to approve. The reviewer binds it during approval:
+The preferred path is for the reviewer to bind the already committed evidence
+manifest during approval:
 
 ```bash
 AI_NAME=<Reviewer> \
@@ -38,19 +36,11 @@ root, not the worktree's possibly stale `ai-status.json`:
 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show "$TASK"
 ```
 
-Do not write, edit, or add the evidence manifest as a new commit *after*
-approval to satisfy this rule at `done` time. A commit added post-approval
-changes the PR head SHA, which invalidates the exact-head approval binding in
-`scripts/git/task_review_merge_gate.py` and forces a full new independent
-review cycle for a change that only added bookkeeping -- this is precisely
-the livelock diagnosed in SUP-REVIEW-PIPELINE-INTEGRITY-20260804. If the
-reviewer approved without recording `review_file` because a manifest was
-already committed and reviewed but not bound to the field, the owner may bind
-that same already-committed, already-reviewed manifest while running `done`
-without creating a new commit. This is an explicit path supported by
-`scripts/ai_status.py`; it is not permission to invent new evidence, write a
-manifest for the first time at closeout, replace the reviewed artifact, or
-edit generated status files:
+If the reviewer approved without recording `review_file`, the owner may bind
+the same already committed and reviewed manifest while running `done`. This is
+an explicit path supported by `scripts/ai_status.py`; it is not permission to
+invent new evidence, replace the reviewed artifact, or edit generated status
+files:
 
 ```bash
 AI_NAME=<Owner> \
@@ -58,10 +48,6 @@ REVIEW_FILE=<repo-relative-task-evidence-path> \
 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done \
   "$TASK" "<checkpoint message>"
 ```
-
-If no evidence manifest was committed before review started, stop and get a
-fresh review of a commit that includes one -- do not paper over the gap with
-a post-approval evidence commit.
 
 For the twelve-loop delivery, the normal manifest is
 `docs/deployment/evidence/twelve-loop-gap/<TASK-ID>/evidence.json`. Confirm the

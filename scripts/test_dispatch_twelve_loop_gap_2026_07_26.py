@@ -250,11 +250,7 @@ def test_dirty_runtime_detection_includes_catalog_and_docs(
 
 def test_validate_only_cli() -> None:
     result = subprocess.run(
-        [
-            "python3",
-            str(SCRIPT),
-            "--validate-only",
-        ],
+        ["python3", str(SCRIPT), "--validate-only"],
         cwd=ROOT,
         capture_output=True,
         text=True,

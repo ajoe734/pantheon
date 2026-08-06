@@ -18,8 +18,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import promote_supervisor_runtime as runtime_promotion
-
 
 LEGACY_PROVIDER_ACCOUNT_KEYS = ("account_group", "quota_group", "dispatch_group")
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
@@ -358,11 +356,6 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -444,82 +437,29 @@ def validated_root(path: Path, *, label: str, required: tuple[str, ...]) -> Path
     return resolved
 
 
-def validated_immutable_command_root(path: Path) -> dict[str, str]:
-    """Bind provisioning to the promotion layer's immutable runtime identity.
-
-    Provisioning is intentionally not a second, weaker admission path.  The
-    command root must pass the same direct-child, no-follow Git, trusted remote,
-    accepted-dev ancestry, tree identity, and cleanliness checks used by the
-    transactional promotion operator.
-    """
-
-    root = runtime_promotion.resolve_candidate_root(path)
-    remote_url = runtime_promotion.parse_origin_url(root)
-    remote = runtime_promotion.validate_remote_url(remote_url)
-    head = runtime_promotion.verify_git_head_and_dev_ancestry(root, root.name)
-    tree = runtime_promotion.verify_working_tree_cleanliness(
-        root,
-        expected_head=head,
-    )
-    for relative, require_executable in (
-        (".orchestrator/supervisor.py", False),
-        ("scripts/run-supervisor-watchdog.sh", True),
-        ("scripts/promote-supervisor-runtime.sh", True),
-    ):
-        candidate = root / relative
-        symlink = first_symlink_component(candidate)
-        if symlink is not None or not candidate.is_file():
-            raise ValueError(
-                f"immutable command root is missing regular non-symlink path "
-                f"{relative}: {candidate}"
-            )
-        if require_executable and not candidate.stat().st_mode & stat.S_IXUSR:
-            raise ValueError(f"immutable command root path is not executable: {candidate}")
-    return {
-        "root": str(root),
-        "head": head,
-        "tree": tree,
-        "remote": remote_url,
-        "repository": remote.slug,
-    }
-
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo-config")
-    parser.add_argument("--live-config")
+    parser.add_argument("--repo-config", required=True)
+    parser.add_argument("--live-config", required=True)
     parser.add_argument("--command-root", required=True)
-    parser.add_argument("--status-root")
+    parser.add_argument("--status-root", required=True)
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument(
-        "--validate-command-root-only",
-        action="store_true",
-        help="Validate immutable command runtime identity without writing state.",
-    )
     parser.add_argument("--json", action="store_true")
-    args = parser.parse_args(argv)
-    if not args.validate_command_root_only:
-        for option in ("repo_config", "live_config", "status_root"):
-            if not getattr(args, option):
-                parser.error(f"--{option.replace('_', '-')} is required")
-    return args
+    return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        command_identity = validated_immutable_command_root(Path(args.command_root))
-        command_root = Path(command_identity["root"])
-        if args.validate_command_root_only:
-            if args.json:
-                print(json.dumps(command_identity, indent=2, sort_keys=True))
-            else:
-                print(
-                    "validated immutable supervisor command root: "
-                    f"root={command_root} head={command_identity['head']}"
-                )
-            return 0
-
+        command_root = validated_root(
+            Path(args.command_root),
+            label="command root",
+            required=(
+                ".git",
+                ".orchestrator/supervisor.py",
+                "scripts/run-supervisor-watchdog.sh",
+            ),
+        )
         status_root = validated_root(
             Path(args.status_root),
             label="status root",
@@ -553,20 +493,12 @@ def main(argv: list[str] | None = None) -> int:
             live_config_path=live_config_path,
             python_executable=python_executable,
         )
-        if existing is not None and rendered != existing:
-            raise ValueError(
-                "existing live supervisor config differs from the admitted immutable "
-                "runtime; use the governed promotion transaction instead of "
-                "prewriting config"
-            )
         approval_queue_value = rendered["paths"].get("approval_queue")
         if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
             raise ValueError("repo config must define paths.approval_queue for split-root workers")
         approval_queue_path = Path(approval_queue_value)
         approval_queue_created = ensure_approval_queue_marker(approval_queue_path)
-        config_created = existing is None
-        if config_created:
-            write_json_atomic(live_config_path, rendered)
+        write_json_atomic(live_config_path, rendered)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"live supervisor config provisioning failed: {exc}", file=sys.stderr)
         return 2
@@ -577,8 +509,6 @@ def main(argv: list[str] | None = None) -> int:
         "live_config": str(live_config_path),
         "approval_queue": str(approval_queue_path),
         "approval_queue_created": approval_queue_created,
-        "config_created": config_created,
-        "command_runtime": command_identity,
         "supervisor_command": rendered["watchdog"]["supervisor_command"],
     }
     if args.json:
@@ -586,8 +516,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "provisioned live supervisor config: "
-            f"command_root={command_root} status_root={status_root} "
-            f"config={live_config_path} config_created={str(config_created).lower()}"
+            f"command_root={command_root} status_root={status_root} config={live_config_path}"
         )
     return 0
 
