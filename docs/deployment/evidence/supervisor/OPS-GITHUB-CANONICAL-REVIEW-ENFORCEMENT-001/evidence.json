@@ -3,8 +3,8 @@
   "schema_status": "repository_contract_ready_external_issuer_and_live_activation_withheld",
   "task": {
     "id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
-    "owner": "Codex",
-    "reviewer": "Codex2",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
@@ -21,9 +21,12 @@
     "trust_boundary": "Protected base-branch public-key registry plus reviewer Ed25519 private key outside candidate/status roots -> signed exact PR/head/base/owner/reviewer envelope -> dedicated external verifier pinned to captured dev/master base SHA -> exact-head check through an externally owned GitHub App whose installation token is unavailable to repository Actions/shared owner runtime -> dedicated App-pinned required branch check.",
     "repository_workflow_boundary": "canonical-review-attestation-audit.yml is read-only diagnostics: it rejects non-dev/master bases before checkout, pins the captured base SHA, has no checks:write or statuses:write permission, makes no check-runs or statuses API call, and never invokes the generic canonical_review_gate_ci.py status writer. canonical-review-gate.yml is the distinct generic required-status path: it verifies only the git-native exact-head review-proof tag emitted by the governed approval bridge. Its github-actions identity cannot satisfy the separately configured external-App-pinned reviewer attestation.",
     "mainline_composition": {
-      "origin_dev_base": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+      "origin_dev_base": "003688bd7402d051986c07f1769285925af24e1b",
       "workflow_boundary_anchor": "4583c789ae35d0f16cc8718c73bfad7adfc09505",
-      "result": "The merge resolves canonical-review-gate.yml in favor of the current git-native exact-head proof implementation from origin/dev. The generic Pantheon canonical review gate now asks only whether the governed approval bridge pushed refs/tags/pantheon-review/approve/<head-sha>; it never reads runner-local task state. The attestation audit remains isolated at canonical-review-attestation-audit.yml, so the generic status writer cannot be mistaken for or replace the App-pinned dedicated external attestation issuer."
+      "evidence_anchor": "b1091b7fdbbe213c040398dc104526f0b3f4211e",
+      "composition_merge": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
+      "conflict_resolution": "The only conflict against origin/dev was in the leading comment block of .github/workflows/canonical-review-gate.yml. Both sides were comment-only and were retained verbatim: dev's SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805 note explaining why the review-proof tag alone cannot satisfy the pinned github-actions context, followed by this task's note that the same generic github-actions status is a separate lifecycle check and cannot stand in for the dedicated external-App-pinned reviewer attestation. No executable workflow key, permission, trigger, or step was changed by the resolution.",
+      "result": "The task branch now composes current origin/dev. The generic Pantheon canonical review gate remains dev's git-native implementation: it asks only whether the governed approval bridge pushed refs/tags/pantheon-review/approve/<head-sha> and never reads runner-local task state. The attestation audit remains isolated at .github/workflows/canonical-review-attestation-audit.yml, so the generic status writer cannot be mistaken for or replace the App-pinned dedicated external attestation issuer."
     },
     "legacy_status_is_not_authority": "The existing Pantheon canonical review gate user status and every github-actions App id 15368 check are additive compatibility evidence only; neither can satisfy the dedicated external App-pinned canonical check."
   },
@@ -75,8 +78,8 @@
     {
       "id": "AC7",
       "claim": "Branch, commit, push, PR checks, exact-head independent review, merge, and archive evidence.",
-      "status": "review_resubmission_pending_push",
-      "evidence": "PR #4303 heads 6e427581ebd328e1c39e10342c999fec769d318d and 293cb1d4780653c9753ee19d9567f917511b7b70 were rejected by Codex2. Corrective provenance anchor 86b9e6cb0d0f9fba6c3990e59207346a012f7e90 removes repository issuance of the attestation, requires dedicated external App canary provenance, rejects same-name Actions checks/shared-owner Apps, and pins only allowed base SHAs. The latest composition anchor 4583c789ae35d0f16cc8718c73bfad7adfc09505 merges current origin/dev 4361a26ad9ff375ae61667ceb689b6fa28ff8058 and replaces the runner-local task-state gate with the git-native exact-head review-proof gate. Push this evidence-refresh head to PR #4303, wait for the new-head checks, and obtain a new Codex2 exact-head approval before merge. External App provisioning, authorized activation, and governed archived closeout remain separately pending."
+      "status": "review_pending_exact_head_approval",
+      "evidence": "PR #4303 heads 6e427581e, 293cb1d47, and 8b45c9834 were rejected by the previous reviewer Codex2. Corrective provenance anchor 86b9e6cb0 removed repository issuance of the attestation, required dedicated external App canary provenance, and rejected same-name Actions checks and shared-owner Apps. Composition merge 9e165a1d7edf751bc3b519e749ccf601eb231c57 brings the branch up to origin/dev 003688bd7402d051986c07f1769285925af24e1b, clearing the CONFLICTING mergeable state, with the sole conflict resolved comment-only in canonical-review-gate.yml. 182 focused tests and ten static/CLI checks pass at that head. Remaining: push, PR check results, and a fresh exact-head approval from the current reviewer Antigravity. External App provisioning, authorized activation, and governed archived closeout remain separately pending."
     }
   ],
   "non_interference": {
@@ -91,38 +94,47 @@
   "validation": {
     "status": "pass",
     "record": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt",
-    "aggregate_python_tests": 175,
+    "head_verified": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
+    "aggregate_python_tests": 182,
     "suites": {
       "canonical_review_check": 38,
-      "task_review_merge_gate": 92,
-      "canonical_review_gate_workflow": 17,
+      "canonical_review_gate_workflow": 22,
+      "task_review_merge_gate": 94,
       "github_bus": 28
     },
     "static_checks": [
-      "py_compile",
-      "evidence JSON parse",
-      "workflow YAML parse",
+      "py_compile (canonical_review_check.py, canonical_review_gate_ci.py)",
+      "JSON parse of all five task evidence manifests",
+      "YAML safe-load of both canonical-review workflows post-merge",
       "attestation-audit workflow base allowlist/base-SHA/read-only contract",
       "mainline generic-status / external-attestation separation contract",
-      "git diff --check",
-      "machine-plan CLI positive readback",
+      "git diff --check over the full origin/dev...HEAD range",
+      "machine-plan CLI positive readback (dedicated external App canary -> plan v2)",
+      "machine-plan CLI generic github-actions canary rejection (issuer_provenance_invalid)",
       "machine-plan CLI lost-existing-check negative readback",
-      "machine-plan CLI github-actions canary negative rejection",
       "machine-plan CLI same-name Actions check negative readback"
     ],
     "not_run": [
       "dedicated external GitHub App provisioning and successful live canary require Human/Ops",
-      "live protection activation/probes require Human/Ops authorization"
+      "live protection activation/probes require Human/Ops authorization",
+      "actionlint: no executable available in this worker environment"
     ]
   },
   "re_review": {
-    "previous_rejected_head": "8b45c98347565c94189de985d65ad68bdbe22ba2",
-    "latest_code_composition_anchor": "4583c789ae35d0f16cc8718c73bfad7adfc09505",
-    "composed_origin_dev": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+    "previous_rejected_heads": [
+      "6e427581ebd328e1c39e10342c999fec769d318d",
+      "293cb1d4780653c9753ee19d9567f917511b7b70",
+      "8b45c98347565c94189de985d65ad68bdbe22ba2"
+    ],
+    "rejecting_reviewer": "Codex2",
+    "current_reviewer": "Antigravity",
+    "reviewer_reassignment": "The canonical task row now assigns owner Claude and reviewer Antigravity. The exact-head approval must come from Antigravity through the governed command; the earlier Codex2 rejections stand as history against superseded heads.",
+    "composed_origin_dev": "003688bd7402d051986c07f1769285925af24e1b",
+    "head_for_review": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
     "required_before_reviewer_approval": [
-      "Push the evidence-refresh commit to PR #4303 and confirm the PR is mergeable against current dev.",
-      "Record the new exact head and its non-review CI results in PR metadata; the generic canonical review gate is expected to fail closed until an independent approval creates its exact-head proof tag.",
-      "Have Codex2 independently review this committed evidence manifest and approve only the exact current PR head through the governed command."
+      "Push this composition head to PR #4303 and confirm the PR is no longer CONFLICTING against current dev.",
+      "Record the new exact head and its non-review CI results; the generic canonical review gate is expected to fail closed until an independent approval creates its exact-head proof tag.",
+      "Have Antigravity independently review this committed evidence manifest and approve only the exact current PR head through the governed command."
     ]
   },
   "residual_risks": [

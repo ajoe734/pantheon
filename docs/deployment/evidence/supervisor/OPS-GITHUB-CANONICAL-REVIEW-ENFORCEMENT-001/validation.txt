@@ -1,15 +1,20 @@
 OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 validation
-Captured: 2026-08-04
+Captured: 2026-08-06
+Head verified: 9e165a1d7edf751bc3b519e749ccf601eb231c57
 
 Post-mainline composition:
 
 The task branch composes `origin/dev`
-`4361a26ad9ff375ae61667ceb689b6fa28ff8058`; merge anchor
-`4583c789ae35d0f16cc8718c73bfad7adfc09505` retains its git-native
-exact-head review-proof workflow at `.github/workflows/canonical-review-gate.yml`.
-The trusted-base, read-only attestation audit is isolated at
-`.github/workflows/canonical-review-attestation-audit.yml`; it cannot invoke
-the generic status writer or publish the external-App-pinned reviewer
+`003688bd7402d051986c07f1769285925af24e1b` at composition merge
+`9e165a1d7edf751bc3b519e749ccf601eb231c57`, clearing the `CONFLICTING`
+mergeable state on PR #4303. The sole conflict was the leading comment block
+of `.github/workflows/canonical-review-gate.yml`; both comment-only sides were
+retained and no executable workflow key, permission, trigger, or step changed.
+
+The generic gate retains dev's git-native exact-head review-proof
+implementation. The trusted-base, read-only attestation audit stays isolated
+at `.github/workflows/canonical-review-attestation-audit.yml`; it cannot
+invoke the generic status writer or publish the external-App-pinned reviewer
 attestation.
 
 Focused commands:
@@ -19,18 +24,38 @@ Focused commands:
     python3 scripts/git/test_task_review_merge_gate.py
     python3 .orchestrator/test_github_bus.py
 
-PASS — 175 tests: 38 canonical-review-check, 17 generic-gate workflow,
-92 task-review-merge-gate, and 28 GitHub-bus tests.
+PASS - 182 tests: 38 canonical-review-check, 22 generic-gate workflow,
+94 task-review-merge-gate, and 28 GitHub-bus tests.
 
 Static checks:
 
 - `python3 -m py_compile scripts/git/canonical_review_check.py
   scripts/git/canonical_review_gate_ci.py`: PASS.
-- JSON parse of task `evidence.json`: PASS.
-- YAML safe-load of both canonical-review workflows: PASS.
-- `git diff --check`: PASS.
+- JSON parse of all five task evidence manifests: PASS.
+- YAML safe-load of both canonical-review workflows post-merge: PASS.
+- `git diff --check origin/dev...HEAD`: PASS.
 - `actionlint`: not run because no `actionlint` executable is available in
   this worker environment.
+
+CLI-level machine-plan checks (synthetic fixtures only, no live API call):
+
+- `protection-plan` with a dedicated external App canary (id 987654, slug
+  `pantheon-canonical-reviewer`, owner `pantheon-governance`, completed
+  success): exit 0, schema `pantheon.canonical-review-protection-plan/v2`,
+  issuer bound to the canary check-run id, head sha, and payload digest;
+  activation ordered auto-merge disable -> admin enforcement -> required-check
+  update, with the exact inverse rollback emitted.
+- `protection-plan` with the generic `github-actions` canary (App id 15368):
+  exit 1, `issuer_provenance_invalid`, "the generic github-actions App cannot
+  be the canonical issuer".
+- `verify-protection` against the plan-conformant post-activation readback:
+  `all_entrypoints_blocked_without_exact_approval: true`.
+- `verify-protection` after dropping the pre-existing
+  `Pantheon canonical review gate` check: readback fails
+  (`all_entrypoints_blocked_without_exact_approval: false`).
+- `verify-protection` with a same-name attestation context re-pinned to App id
+  15368: readback fails
+  (`all_entrypoints_blocked_without_exact_approval: false`).
 
 Focused assertions covered:
 
@@ -59,7 +84,7 @@ Not run:
   requires Human/Ops and a credential boundary outside shared owner runtime.
 - No live branch protection, repository auto-merge setting, key, merge, or
   auto-merge mutation was authorized or performed.
-- The fresh PR head has not yet been independently approved. Its generic
-  canonical-review status is correctly expected to fail closed until Codex2
-  approves that exact pushed head through the governed command, which creates
-  the exact-head review-proof tag.
+- The composition head has not yet been independently approved. Its generic
+  canonical-review status is correctly expected to fail closed until the
+  current reviewer `Antigravity` approves that exact pushed head through the
+  governed command, which creates the exact-head review-proof tag.

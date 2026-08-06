@@ -29,10 +29,20 @@ activation remain Human/Ops operations.
 ## Current-dev composition
 
 The task branch now composes `origin/dev`
-`4361a26ad9ff375ae61667ceb689b6fa28ff8058`. The merge anchor
-`4583c789ae35d0f16cc8718c73bfad7adfc09505` resolves the generic
+`003688bd7402d051986c07f1769285925af24e1b` at composition merge
+`9e165a1d7edf751bc3b519e749ccf601eb231c57`, which clears the `CONFLICTING`
+mergeable state PR #4303 had accumulated while `dev` advanced. The earlier
+merge anchor `4583c789ae35d0f16cc8718c73bfad7adfc09505` resolved the generic
 `Pantheon canonical review gate` in favor of the current git-native
-exact-head review-proof implementation. It asks GitHub only whether the
+exact-head review-proof implementation.
+
+The only conflict in the newer composition was the leading comment block of
+`canonical-review-gate.yml`. Both sides were comment-only and both were kept:
+dev's `SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805` note on why the proof tag
+alone cannot satisfy the pinned `github-actions` context, followed by this
+task's note that the same generic status is a separate lifecycle check and
+cannot stand in for the dedicated external-App-pinned reviewer attestation.
+No workflow key, permission, trigger, or step changed in the resolution. It asks GitHub only whether the
 governed approval bridge pushed
 `refs/tags/pantheon-review/approve/<head-sha>`; it does not attempt to read
 the live task board from a GitHub-hosted runner.
@@ -185,6 +195,9 @@ Reviewer should independently verify:
 - the trusted-base attestation audit cannot invoke
   `canonical_review_gate_ci.py` or post any generic commit status, while the
   distinct mainline git-native exact-head proof gate remains present;
-- the fresh PR head must receive a fresh Codex2 approval: its generic gate
-  fails closed until the governed approval transaction has pushed the
-  corresponding exact-head review-proof tag.
+- the fresh PR head must receive a fresh exact-head approval from the current
+  reviewer `Antigravity`: its generic gate fails closed until the governed
+  approval transaction has pushed the corresponding exact-head review-proof
+  tag. The task row reassigned owner to `Claude` and reviewer to `Antigravity`
+  after the earlier `Codex2` rejections, which stand as history against the
+  superseded heads `6e427581e`, `293cb1d47`, and `8b45c9834`.
