@@ -1,118 +1,154 @@
 {
   "schema_version": "supervisor_exact_head_pr_closeout_v2.v2",
-  "observed_at": "2026-08-04T15:27:55Z",
+  "observed_at": "2026-08-06T11:50:07Z",
+  "supersedes_observation": "2026-08-04T15:27:55Z",
   "task": {
     "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
     "title": "Supersede Wave0X #4396 governed closeout with current-head spec",
-    "owner": "Codex",
-    "reviewer": "Codex2",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
     "status_at_observation": "in_progress",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
-    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json"
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json",
+    "reverification_mandate": "Reopened by Human/Ops to re-verify whether the recorded block still applies under the new owner/reviewer pair."
   },
-  "immutable_requeue_receipt": {
-    "source": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json",
-    "authoritative_status_root": "/home/lupin/pantheon",
-    "status": "failed",
-    "packet_id": "pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z",
-    "subject_task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
-    "immutable_binding": {
-      "packet": "pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z",
-      "packet_digest": "24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc",
-      "task_spec_hash": "c8668db8bc7a7af97044001566e77df54d40dde70f8453bfc2c99acd6e535be4"
+  "reverification_outcome": {
+    "prior_block_still_applies": "partially",
+    "resolved_since_prior_observation": [
+      "PR #4396 has merged; the original 'blocked by merge/root-freeze closeout' condition for the subject PR no longer holds.",
+      "PR #4468 is no longer BEHIND; GitHub now reports mergeable=MERGEABLE."
+    ],
+    "still_applies": [
+      "PR #4468 remains OPEN/BLOCKED on the Commit trailers required check because of two already-pushed overlength subjects.",
+      "PR #4386 remains OPEN and CONFLICTING, so it still cannot count as completed support."
+    ],
+    "new_since_prior_observation": [
+      "The canonical status plane is fail_closed fleet-wide on an archived duplicate activity event_id; no governed status command (read or write) succeeds."
+    ]
+  },
+  "canonical_status_plane": {
+    "state": "fail_closed",
+    "invariant": "activity_audit_integrity",
+    "message": "duplicate activity event_id in /home/lupin/pantheon/archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz: supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da",
+    "duplicated_event": {
+      "event_id": "supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da",
+      "type": "task_reassigned",
+      "emitting_agent": "Orchestrator",
+      "subject_task_id": "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "event_ts": "2026-08-06T10:18:56Z",
+      "archive_member_lines": [794, 809],
+      "rows_byte_identical": true
     },
-    "conclusion": "The prior task ID rejected the requeue before admission because it is immutable-bound to the earlier packet and task spec. This V2 task records a new task identity; it does not mutate or count the preempted task."
+    "commands_attempted": [
+      {
+        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+        "result": "fail_closed / status_recovery_pending"
+      },
+      {
+        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh recover",
+        "result": "fail_closed / activity_audit_integrity (ran twice, identical result)"
+      },
+      {
+        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh blocker <task> \"probe\"",
+        "result": "ActivityAuditInvariantError / activity_audit_integrity"
+      }
+    ],
+    "worker_remediation_available": false,
+    "reason": "The duplicate is inside an already-rotated, gzipped archive member, so `recover` cannot clear it. Repair means editing an immutable audit archive, which workers are forbidden to do.",
+    "escalation": "Human/Ops must repair the archived activity audit chain; until then no task in the fleet can record a governed status transition, including the blocker for this task."
   },
   "pr_4396": {
     "url": "https://github.com/ajoe734/pantheon/pull/4396",
     "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
-    "state": "OPEN",
-    "draft": false,
+    "state": "MERGED",
+    "prior_observed_state": "OPEN/BEHIND",
     "base_ref": "dev",
     "head_ref": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
-    "historical_expected_head": "19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f",
-    "canonical_review_binding_head": "9d7dfadbcd929e95a0ec1ddf1787ad236c94470d",
-    "current_head": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
-    "head_lineage": {
-      "historical_expected_head_is_ancestor_of_current": true,
-      "canonical_review_binding_head_is_ancestor_of_current": true,
-      "current_head_change": "The current head is a later merge of dev and therefore requires a current exact-head gate; the earlier review binding cannot be treated as current-head approval."
-    },
-    "merge_state_status": "BEHIND",
-    "mergeable": "MERGEABLE",
-    "auto_merge_request": null,
-    "github_review_decision": "",
-    "branch_ci": {
-      "commit_trailers": "success",
-      "python_packaging_provision": "success",
-      "runtime_mirror_guard": "success",
-      "smoke_acceptance": "success"
-    }
-  },
-  "canonical_reconciliation_row": {
-    "status": "review_approved",
-    "owner": "Codex2",
-    "reviewer": "Codex",
-    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
-    "review_binding_head": "9d7dfadbcd929e95a0ec1ddf1787ad236c94470d",
-    "recorded_approval_actor": "Antigravity"
-  },
-  "auto_integrator_dry_run": {
-    "command": "AUTO_INTEGRATOR_DRY_RUN=1 AUTO_INTEGRATOR_MAX_TASKS=1 ./scripts/run-auto-integrator.sh --task-id SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --json",
-    "candidate_count": 1,
-    "action": "blocked",
-    "unblock_task_id": "INTEGRATION-UNBLOCK-SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731-REVIEW-GATE-APPROVAL-REV",
-    "reason": "PR #4396 is gated by review-before-merge and not mergeable: approval_reviewer_mismatch - approval was recorded by 'Antigravity' but the canonical reviewer for SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 is 'Codex'."
+    "final_head": "48d92e56c2c68ed8cb80cc19f2bbd88b23342906",
+    "prior_observed_head": "ba282edd81c00e75d3c96c820922ee3bb9d7f6ac",
+    "merge_commit": "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9",
+    "merged_at": "2026-08-05T02:00:30Z",
+    "merge_commit_is_ancestor_of_origin_dev": true,
+    "auto_merge_was_enabled": true,
+    "prior_auto_integrator_blocker": "approval_reviewer_mismatch (Antigravity vs canonical reviewer Codex)",
+    "prior_blocker_still_applies": false,
+    "note": "The subject PR reached protected merge, so the merge/root-freeze closeout condition recorded in the task summary is discharged. The canonical row for the reconcile task could not be re-read because the status plane is fail_closed."
   },
   "subject_pr_4386": {
     "url": "https://github.com/ajoe734/pantheon/pull/4386",
     "state": "OPEN",
-    "current_head": "ae014fe404d7d12ebddce8d0c4dc2be050211f09",
+    "current_head": "43d59e78ea361985146008fbe65f6436f8c0595b",
+    "prior_observed_head": "ae014fe404d7d12ebddce8d0c4dc2be050211f09",
     "merge_state_status": "DIRTY",
     "mergeable": "CONFLICTING",
-    "branch_ci": "all listed checks success",
+    "github_review_decision": "",
+    "auto_merge_request": null,
+    "last_updated_at": "2026-08-04T15:50:11Z",
     "countable_as_completed_support": false,
-    "reason": "The subject PR has neither protected merge nor governed owner closeout."
-  },
-  "closeout_decision": {
-    "status": "blocked_pending_independent_review_and_protected_merge",
-    "done_transition_performed": false,
-    "reason": "Neither a non-draft PR, successful CI, nor a review_approved row satisfies the required exact-head review, protected merge, and governed closeout gates."
+    "reason": "Still neither protected-merged nor governed-closed out; the head moved since the prior observation but the conflict remains."
   },
   "task_delivery_pr": {
     "number": 4468,
     "url": "https://github.com/ajoe734/pantheon/pull/4468",
-    "current_head": "1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d",
+    "state": "OPEN",
+    "current_head": "4bdfe4cdb2c54760b82a90429b53301c30b730f7",
+    "prior_observed_head": "1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d",
+    "merge_state_status": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "behind_origin_dev": true,
     "merge_policy": "review_before_merge",
     "auto_merge_request": null,
+    "github_review_decision": "",
+    "exact_head_binding": "none; the canonical review gate reports no review-proof tag for 4bdfe4cdb, so this head is not frozen",
     "branch_ci": {
       "python_packaging_provision": "success",
       "runtime_mirror_guard": "success",
       "smoke_acceptance": "skipped_after_failed_prerequisite",
       "commit_trailers": "failure",
-      "canonical_review_gate": "failure_pending_Codex2_review-proof"
+      "canonical_review_gate": "failure_pending_Antigravity_review-proof"
     },
     "commit_trailer_failure": {
+      "workflow_run": "https://github.com/ajoe734/pantheon/actions/runs/30924388685",
       "affected_commits": [
         {
           "sha": "9636815e1102da9f3257f8a26f26e30d05d9b087",
-          "subject_length": 78
+          "subject_length": 78,
+          "limit": 72,
+          "preexisting_pushed_commit": true
         },
         {
           "sha": "7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e",
           "subject_length": 112,
+          "limit": 72,
           "preexisting_pushed_commit": true
         }
       ],
-      "required_remediation": "A maintainer-approved replacement branch or an authorized rewrite is required because the earlier failing commit was already pushed before this worker's dispatch."
+      "why_unfixable_by_a_follow_up_commit": "The Commit trailers check re-scans every commit in the PR range, so both overlength subjects are re-evaluated on each new head. No additional commit can make this check green.",
+      "required_remediation": "A maintainer-approved replacement branch or an authorized history rewrite (delete the origin task branch, or reset plus --force-with-lease) preserving the required trailers.",
+      "authorization_status": "not granted; the reviewer's standing instruction requires maintainer authorization before any rewrite or replacement branch, and the closeout spec forbids force-push recovery unless explicitly authorized"
     },
-    "canonical_review_gate_failure": "Expected until assigned reviewer Codex2 records review proof for this exact head."
+    "canonical_review_gate_failure": "Expected until assigned reviewer Antigravity records review proof for this exact head; it is not independently actionable while the Commit trailers check stays red."
+  },
+  "closeout_decision": {
+    "status": "blocked_pending_status_plane_repair_and_rewrite_authorization",
+    "done_transition_performed": false,
+    "blocker_recorded_in_canonical_row": false,
+    "blocker_record_failure_reason": "The governed blocker command itself fails closed on the same activity audit invariant.",
+    "reason": "Two independent gates remain. (1) The canonical status plane is fail_closed fleet-wide, so no governed transition of any kind can be recorded. (2) PR #4468 cannot go green without an authorized rewrite of two already-pushed overlength commits.",
+    "ordered_unblock_steps": [
+      "Human/Ops repairs the duplicated activity event_id in the archived audit member so `ai-status.sh recover` can complete.",
+      "Maintainer authorizes the replacement branch or history rewrite for task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731.",
+      "Owner rebuilds the branch from dev tip with subjects <= 72 chars and required trailers, then reopens the exact-head PR.",
+      "Reviewer Antigravity binds review proof to the new exact head; auto-integrator merges; owner runs governed done."
+    ]
   },
   "scope_boundary": {
     "runtime_implementation_changed": false,
     "config_changed": false,
-    "canonical_status_files_edited_directly": false
+    "canonical_status_files_edited_directly": false,
+    "activity_audit_archive_edited": false,
+    "force_push_or_branch_deletion_performed": false
   }
 }

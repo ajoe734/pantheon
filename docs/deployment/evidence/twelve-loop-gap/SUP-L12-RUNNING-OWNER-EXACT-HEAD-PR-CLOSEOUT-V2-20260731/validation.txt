@@ -1,38 +1,56 @@
 SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 validation
-Observed: 2026-08-04T15:27:55Z
+Observed: 2026-08-06T11:50:07Z
+Supersedes: 2026-08-04T15:27:55Z observation (owner Codex / reviewer Codex2)
+Command root: /home/lupin/pantheon-ci-deploy/dev-root @ f90e0aae6cb5e86f18b20db9f30bc834f6115745
 
-1. Canonical state
-   command: AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731
-   result: owner=Codex; reviewer=Codex2; status=in_progress.
+1. Canonical state could not be read
+   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731
+   result: {"status":"fail_closed"}; invariant=status_recovery_pending; pending_planes=["status_activity_outbox"].
+   Owner/reviewer below are taken from the regenerated task-brief mirror (Claude / Antigravity), not from a canonical read.
 
-2. Immutable prior-task proof
-   source: $PANTHEON_STATUS_ROOT/.orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json
-   result: status=failed; the old task SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 was rejected before admission because it remains bound to pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z, digest 24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc, and spec c8668db8bc7a7af97044001566e77df54d40dde70f8453bfc2c99acd6e535be4.
+2. Governed recovery attempted and rejected
+   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" recover        (run twice)
+   result: both runs fail_closed; invariant=activity_audit_integrity; message="duplicate activity event_id in /home/lupin/pantheon/archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz: supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da".
 
-3. PR #4396 exact-head and checks
-   command: gh pr view 4396 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision,statusCheckRollup,url
-   result: OPEN; non-draft; head=ba282edd81c00e75d3c96c820922ee3bb9d7f6ac; mergeStateStatus=BEHIND; mergeable=MERGEABLE; autoMergeRequest=null; reviewDecision empty; all listed Branch CI checks successful.
-   command: git merge-base --is-ancestor 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f ba282edd81c00e75d3c96c820922ee3bb9d7f6ac; git merge-base --is-ancestor 9d7dfadbcd929e95a0ec1ddf1787ad236c94470d ba282edd81c00e75d3c96c820922ee3bb9d7f6ac
-   result: both exit 0; the historical expected and canonical review-binding heads are ancestors, not the current PR head.
-   command: gh pr checks 4396 --repo ajoe734/pantheon
-   result: commit trailers, Python packaging provision, runtime mirror guard, and smoke acceptance all pass.
+3. Governed write plane confirmed dead
+   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" blocker SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 "probe: canonical status plane fail_closed"
+   result: common.ActivityAuditInvariantError on the same invariant, raised from validated_activity_event_digests_unlocked (.orchestrator/common.py:4144). Reads and writes are both blocked; the blocker for this task could not be recorded canonically.
 
-4. Canonical review binding and auto-integrator eligibility
-   command: AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731
-   result: review_approved row has owner=Codex2, reviewer=Codex, review binding head=9d7dfadbcd929e95a0ec1ddf1787ad236c94470d, and recorded approval actor=Antigravity.
-   command: AUTO_INTEGRATOR_DRY_RUN=1 AUTO_INTEGRATOR_MAX_TASKS=1 ./scripts/run-auto-integrator.sh --task-id SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --json
-   result: blocked; approval_reviewer_mismatch because the recorded approval actor is Antigravity while the canonical reviewer is Codex. Proposed unblock task: INTEGRATION-UNBLOCK-SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731-REVIEW-GATE-APPROVAL-REV.
+4. Duplicate audit event isolated
+   command: zcat /home/lupin/pantheon/archive/logs/ai-activity-log.jsonl-d234b0ec…gz | grep -n supervisor-reassign-6d984db0…
+   result: two byte-identical rows at lines 794 and 809; ts=2026-08-06T10:18:56Z; agent=Orchestrator; type=task_reassigned; task_id=LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801; Codex2->Antigravity with reviewer unchanged (Claude).
+   detection site: .orchestrator/common.py:3942 (INSERT into source_events raises sqlite3.IntegrityError).
+   assessment: the duplicate is inside a rotated archive member (mtime 2026-08-06 11:36), so `recover` cannot clear it. Not worker-repairable; editing the audit archive is forbidden. Human/Ops escalation.
 
-5. Subject PR #4386 fail-closed boundary
-   command: gh pr view 4386 --repo ajoe734/pantheon --json number,state,headRefOid,mergeStateStatus,mergeable,statusCheckRollup,url
-   result: OPEN; head=ae014fe404d7d12ebddce8d0c4dc2be050211f09; mergeStateStatus=DIRTY; mergeable=CONFLICTING; listed Branch CI checks pass. It is not countable until protected merge and governed owner closeout.
+5. PR #4396 re-verified — prior block discharged
+   command: gh pr view 4396 --json number,state,mergeStateStatus,headRefOid,isDraft,baseRefName,headRefName,autoMergeRequest,mergedAt,mergeCommit
+   result: state=MERGED (was OPEN/BEHIND); final head=48d92e56c2c68ed8cb80cc19f2bbd88b23342906 (prior observation recorded ba282edd81c00e75d3c96c820922ee3bb9d7f6ac); merge commit=9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9; mergedAt=2026-08-05T02:00:30Z; auto-merge had been enabled.
+   command: git merge-base --is-ancestor 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9 origin/dev
+   result: exit 0 — the merge commit is on dev. The recorded merge/root-freeze closeout block for the subject PR no longer applies, and the prior approval_reviewer_mismatch auto-integrator blocker is moot.
+   not re-checked: the canonical row for SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731, because the status plane is fail_closed.
 
-6. Local artifact validation
-   command: jq empty docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json
+6. Subject PR #4386 re-verified — block still applies
+   command: gh pr view 4386 --json number,state,mergeStateStatus,headRefOid,mergeable,reviewDecision,updatedAt,autoMergeRequest
+   result: state=OPEN; head=43d59e78ea361985146008fbe65f6436f8c0595b (prior observation recorded ae014fe404d7d12ebddce8d0c4dc2be050211f09 — stale); mergeStateStatus=DIRTY; mergeable=CONFLICTING; no review decision; no auto-merge; updatedAt=2026-08-04T15:50:11Z. Still not countable as completed support.
+
+7. V2 delivery PR #4468 re-verified
+   command: gh pr view 4468 --json number,state,mergeStateStatus,headRefOid,isDraft,baseRefName,headRefName,autoMergeRequest,mergeable,reviewDecision,statusCheckRollup; gh pr checks 4468
+   result: state=OPEN; head=4bdfe4cdb2c54760b82a90429b53301c30b730f7 (prior observation recorded 1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d); mergeStateStatus=BLOCKED; mergeable=MERGEABLE (no longer BEHIND as a merge blocker); no review decision; no auto-merge. Python packaging provision and runtime mirror guard pass; smoke acceptance skipping; Commit trailers failure; Pantheon canonical review gate failure ("no review-proof tag (pantheon-review/approve/4bdfe4cdb…)").
+   command: git merge-base --is-ancestor origin/dev 4bdfe4cdb2c54760b82a90429b53301c30b730f7
+   result: non-zero — the branch is behind origin/dev (34e1f494a251f6c2292a6675baa0ed65fdab7bb5), but GitHub does not currently treat that as the merge blocker.
+
+8. Commit trailers failure root cause confirmed unchanged
+   command: gh api repos/ajoe734/pantheon/actions/jobs/92042868159/logs   (run 30924388685)
+   result: "[trailers] 9636815e1102da9f3257f8a26f26e30d05d9b087: subject exceeds 72 chars (78)" and "[trailers] 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e: subject exceeds 72 chars (112)".
+   command: for c in 7cc9b02fa 9636815e1 1d8cfb4b8 4bdfe4cdb; do s=$(git log -1 --format=%s $c); echo "${#s}"; done
+   result: 112, 78, 67, 64 — matches the CI reading. Both failing commits were pushed before this dispatch.
+   assessment: the check re-scans the whole PR range, so a follow-up commit cannot clear it. Remediation requires a maintainer-approved replacement branch or an authorized rewrite; no such authorization exists, so no force-push, branch deletion, or history rewrite was performed.
+
+9. Local artifact validation
+   command: /home/lupin/pantheon/.venv/bin/python -c "import json; json.load(open('docs/deployment/evidence/.../evidence.json'))"
    result: pass.
    command: git diff --check
    result: pass.
 
-7. V2 delivery PR checks
-   command: gh pr view 4468 --repo ajoe734/pantheon --json state,headRefOid,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,latestReviews,statusCheckRollup; gh pr checks 4468 --repo ajoe734/pantheon --required; gh run view 30923005137 --repo ajoe734/pantheon --log-failed; gh run view 30923003535 --repo ajoe734/pantheon --log-failed
-   result: OPEN; head=1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d; mergeStateStatus=BEHIND; mergeable=MERGEABLE; no GitHub review, auto-merge, or review-proof tag. Python packaging provision and runtime mirror guard pass. Smoke acceptance is skipped after prerequisite failure. Commit trailers fails because 9636815e1102da9f3257f8a26f26e30d05d9b087 has a 78-character subject and already-pushed 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e has a 112-character subject. Canonical review gate fails as expected because no pantheon-review/approve/1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d review-proof tag exists.
+10. Scope boundary
+   No runtime, config, supervisor, or routing file was touched. No canonical status file was hand-edited. No activity audit archive was edited. The regenerated task-brief mirror is left uncommitted.
