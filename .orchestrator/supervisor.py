@@ -9790,7 +9790,8 @@ def apply_provider_probe_to_report(
         consecutive_failures = 0
         effective_ready = True
     else:
-        is_live_probe = str(probe.get("source") or "").strip().lower() == "live"
+        probe_source = str(probe.get("source") or "live").strip().lower()
+        is_live_probe = probe_source == "live"
         if is_live_probe:
             current_streak = int(capability.get("consecutive_probe_failures", 0)) + 1
         else:

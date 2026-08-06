@@ -22712,10 +22712,8 @@ class CodexCacheQuotaRoutingTests(unittest.TestCase):
                 {"providers": {}},
                 report,
             )
-        self.assertTrue(changed)
-        pause = state["provider_guardrails"]["dispatch_pauses"]["codex"]
-        self.assertEqual(pause["pause_kind"], "capacity_retryable")
-        self.assertNotIn("requires_live_auth_probe", pause)
+        # Transient failure under hysteresis threshold holds auth_ready=True, skipping dispatch pause creation
+        self.assertFalse(changed)
 
     def test_fresh_success_clears_only_the_affected_distinct_quota_group(self) -> None:
         state = {
