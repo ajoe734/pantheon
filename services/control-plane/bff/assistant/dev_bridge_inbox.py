@@ -283,7 +283,6 @@ def drain_task_packet_inbox(
     inbox_dir: Optional[str] = None,
     limit: Optional[int] = None,
     dry_run: bool = False,
-    dispatch_env: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Drain queued packets through the verifier-backed governed dispatcher."""
     root = _repo_root(repo_root)
@@ -335,8 +334,7 @@ def drain_task_packet_inbox(
                 packet = packet_from_payload(payload)
                 receipt["packetId"] = packet.packet_id
                 result = dispatch_task_packet(
-                    BridgeDispatchRequest(packet=packet, repoRoot=str(root), dryRun=dry_run),
-                    runtime_env=dispatch_env,
+                    BridgeDispatchRequest(packet=packet, repoRoot=str(root), dryRun=dry_run)
                 )
                 receipt["result"] = result.model_dump(mode="json", by_alias=True)
                 if result.retryable and not dry_run:

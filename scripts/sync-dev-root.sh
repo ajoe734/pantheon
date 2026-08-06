@@ -16,10 +16,9 @@
 #     land while environment overrides and canonical status paths are preserved;
 #   - run check_config_drift.py --fix to realign non-allowlisted live config
 #     toggles (e.g. a hand-disabled chair_review) and report dev-root lag;
-#   - if code or live config changed, or the live process runs from a root other
-#     than dev-root, durably declare a PID-bound intentional restart before
-#     SIGTERM so the watchdog relaunches from the configured command root
-#     without charging the crash-loop budget (flock guarantees one instance).
+#   - if code or live config changed, durably declare a PID-bound intentional
+#     restart before SIGTERM so the watchdog relaunches without charging the
+#     crash-loop budget (flock guarantees one instance).
 set -uo pipefail
 
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
@@ -46,7 +45,6 @@ fi
 # authority for which checkout is actually executing the control loop.
 pid="$(cat "$PID_FILE" 2>/dev/null || true)"
 ACTIVE_ROOT=""
-root_split=0
 if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
   active_cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
   if [[ -n "$active_cwd" ]]; then
@@ -58,7 +56,6 @@ if [[ -z "$ACTIVE_ROOT" ]]; then
 elif [[ "$ACTIVE_ROOT" == "$DEV_ROOT" ]]; then
   log "active supervisor root matches dev-root ($DEV_ROOT)"
 else
-  root_split=1
   log "ACTIVE_ROOT_SPLIT: live supervisor pid=$pid runs from $ACTIVE_ROOT, not $DEV_ROOT"
 fi
 
@@ -132,7 +129,7 @@ if [[ "$live_hash_before" != "$live_hash_after" ]]; then
   log "updated split-root live supervisor config"
 fi
 
-if [[ "$updated" -eq 1 || "$config_updated" -eq 1 || "$root_split" -eq 1 ]]; then
+if [[ "$updated" -eq 1 || "$config_updated" -eq 1 ]]; then
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     target_sha="$(git -C "$DEV_ROOT" rev-parse "$REF")"
     if ! python3 "$DEV_ROOT/.orchestrator/supervisor_watchdog.py" \
@@ -148,4 +145,4 @@ if [[ "$updated" -eq 1 || "$config_updated" -eq 1 || "$root_split" -eq 1 ]]; the
   fi
 fi
 
-log "done (updated=${updated} config_updated=${config_updated} root_split=${root_split})"
+log "done (updated=${updated} config_updated=${config_updated})"

@@ -2001,49 +2001,6 @@ provision_dev_supervisor_watchdog() {
   error "persistent dev supervisor watchdog did not become healthy"
 }
 
-provision_dev_dashboard_autostart() {
-  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
-  local probe_file
-  local attempt
-
-  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] \
-    || error "dashboard autostart provisioning is dev-only"
-  [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
-    || error "dashboard autostart provisioning requires PANTHEON_STATUS_ROOT_HOST"
-
-  info "provisioning persistent dashboard recovery for ${PANTHEON_STATUS_ROOT_HOST}"
-  python3 "${command_root}/scripts/dashboard_autostart_install.py" \
-    --repo "${PANTHEON_STATUS_ROOT_HOST}" \
-    --method auto \
-    --start-now
-
-  if systemctl --user show-environment >/dev/null 2>&1; then
-    systemctl --user is-enabled --quiet pantheon-dashboard-autostart.timer \
-      || error "dashboard autostart systemd timer is not enabled"
-    systemctl --user is-active --quiet pantheon-dashboard-autostart.timer \
-      || error "dashboard autostart systemd timer is not active"
-  else
-    crontab -l 2>/dev/null | grep -Fq '# pantheon-dashboard-autostart' \
-      || error "dashboard autostart cron fallback is not installed"
-  fi
-
-  probe_file="$(mktemp)"
-  for attempt in $(seq 1 10); do
-    if curl -fsS --max-time 5 http://127.0.0.1:4180/index.html >"$probe_file" \
-      && grep -Fq '協作看板' "$probe_file"; then
-      rm -f "$probe_file"
-      info "persistent dashboard recovery is healthy"
-      return 0
-    fi
-    sleep 2
-  done
-
-  rm -f "$probe_file"
-  systemctl --user status pantheon-dashboard-autostart.timer --no-pager || true
-  systemctl --user status pantheon-dashboard-autostart.service --no-pager || true
-  error "persistent dashboard recovery did not become healthy"
-}
-
 docker_storage_diagnostics() {
   local label="$1"
 
@@ -2243,7 +2200,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     provision_dev_supervisor_watchdog
-    provision_dev_dashboard_autostart
     ;;
 
   bff)
