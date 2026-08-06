@@ -1778,6 +1778,64 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_worker_workspace_uses_configured_source_root_for_git_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            status_root.mkdir()
+            source_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "source_root": str(source_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-SOURCE-ROOT-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-source-root",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon-status" / "ops-source-root-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        self.assertEqual(request.metadata["workspace_branch"], "task/OPS-SOURCE-ROOT-001")
+        self.assertEqual(request.metadata["status_root"], str(status_root.resolve()))
+        self.assertEqual(request.metadata["workspace_source_root"], str(source_root.resolve()))
+        lease = state["worker_worktrees"]["leases"]["OPS-SOURCE-ROOT-001"]
+        self.assertEqual(lease["path"], str(expected_path))
+        self.assertEqual(lease["status_root"], str(status_root.resolve()))
+        self.assertEqual(lease["source_root"], str(source_root.resolve()))
+        create_worktree.assert_called_once_with(source_root.resolve(), expected_path, "task/OPS-SOURCE-ROOT-001", "origin/dev")
+        self.assertEqual(write_activity_log.call_args.args[1]["workspace_source_root"], str(source_root.resolve()))
+
     def test_prepare_github_retry_allocates_isolated_worktree_outside_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -1889,6 +1947,49 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "workspace_task_id": "OPS-RETRY-001",
                     "require_isolated_worktree": True,
                     "workspace_path": str(repo_root),
+                },
+            )
+            with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-github-retry",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("shared supervisor checkout", message or "")
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["refresh_status"],
+            "shared_checkout_rejected",
+        )
+
+    def test_prepare_github_retry_rejects_source_root_checkout_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            status_root.mkdir()
+            source_root.mkdir()
+            config = {
+                **self.config,
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "source_root": str(source_root),
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-RETRY-001",
+                reason="github_retry",
+                metadata={
+                    "workspace_task_id": "OPS-RETRY-001",
+                    "require_isolated_worktree": True,
+                    "workspace_path": str(source_root),
                 },
             )
             with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
@@ -6241,6 +6342,12 @@ class DispatchStatusSyncTests(unittest.TestCase):
         """The exact origin/dev network refresh must precede admission."""
 
         call_order: list[str] = []
+        source_root = self.root / "command-root"
+        source_root.mkdir()
+        self.config["worker_worktrees"] = {
+            "enabled": True,
+            "source_root": str(source_root),
+        }
 
         @contextlib.contextmanager
         def runtime_lock(*_args: object, **_kwargs: object):
@@ -6250,7 +6357,8 @@ class DispatchStatusSyncTests(unittest.TestCase):
             finally:
                 call_order.append("lock_exit")
 
-        def fetch_base(_repo_root: Path, base_ref: str) -> tuple[bool, None]:
+        def fetch_base(repo_root: Path, base_ref: str) -> tuple[bool, None]:
+            self.assertEqual(repo_root, source_root.resolve())
             self.assertEqual(base_ref, "origin/dev")
             call_order.append("fetch_base")
             return True, None
@@ -21898,6 +22006,50 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertTrue(result)
 
+    def test_prune_orphan_worktrees_uses_configured_source_root_for_git_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            base = (Path(tmpdir) / "wt").resolve()
+            wt_path = base / "task-x"
+            status_root.mkdir()
+            source_root.mkdir()
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+            merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="  task/X\n", stderr="")
+            clean_status = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "branch", "--merged"): merged_proc,
+                ("git", "-C", record_path, "status", "--porcelain"): clean_status,
+                ("git", "-C", str(source_root.resolve()), "worktree", "remove", record_path): remove_ok,
+            }
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(base),
+                    "source_root": str(source_root),
+                },
+                "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+            }
+            state: dict = {}
+            with (
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=records) as worktree_records,
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.prune_orphan_worktrees(config, state)
+
+        self.assertTrue(result)
+        worktree_records.assert_called_once_with(source_root.resolve())
+        summary = state["worker_worktree_cleanup"]["last_run"]
+        self.assertEqual(summary["status_root"], str(status_root.resolve()))
+        self.assertEqual(summary["workspace_source_root"], str(source_root.resolve()))
+
     def test_skips_dirty_worktree_when_dirty_archive_disabled(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
@@ -22094,6 +22246,46 @@ class PruneChairReviewWorktreesTests(unittest.TestCase):
         ):
             result = supervisor.prune_chair_review_worktrees(config, state)
         self.assertTrue(result)
+        log.assert_called_once()
+
+    def test_prune_chair_review_worktrees_uses_configured_source_root_for_git_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            base = (Path(tmpdir) / "wt").resolve()
+            name = "chair-review-20260620-061500-claude"
+            wt_path = base / name
+            status_root.mkdir()
+            source_root.mkdir()
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            records = [{"worktree": record_path, "branch": "refs/heads/dev"}]
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "-C", str(source_root.resolve()), "worktree", "remove", "--force", record_path): remove_ok,
+            }
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(base),
+                    "source_root": str(source_root),
+                },
+                "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+            }
+            state: dict = {}
+            with (
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=records) as worktree_records,
+                mock.patch.object(supervisor, "write_activity_log") as log,
+                mock.patch.object(supervisor.time, "time", return_value=1_000_000.0),
+                mock.patch.object(Path, "stat", self._fake_stat({name: 1_000_000.0 - 10_000})),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.prune_chair_review_worktrees(config, state)
+
+        self.assertTrue(result)
+        worktree_records.assert_called_once_with(source_root.resolve())
         log.assert_called_once()
 
     def test_skips_recent_chair_review_worktree(self) -> None:

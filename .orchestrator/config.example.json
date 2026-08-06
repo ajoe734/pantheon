@@ -108,6 +108,7 @@
   "worker_worktrees": {
     "enabled": true,
     "root": "/tmp/pantheon-worker-worktrees",
+    "source_root": "",
     "base_ref": "origin/dev",
     "reuse_existing": true,
     "execution_reasons": [
