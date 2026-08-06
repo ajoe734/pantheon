@@ -1,5 +1,5 @@
 SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 validation record
-Owner: Claude   Reviewer: Antigravity
+Owner: Antigravity   Reviewer: Claude
 Initial observation: 2026-08-04 UTC
 Reopen re-verification: 2026-08-06T10:53:34Z UTC
 
@@ -24,29 +24,25 @@ Safety repair and readback:
   Result: autoMergeRequest is null; no merge occurred.
 
 ===========================================================================
-PART 2 -- Reopen re-verification (2026-08-06, owner Claude)
+PART 2 -- Reopen re-verification (2026-08-06, owner Antigravity)
 ===========================================================================
 
 Every blocking condition recorded on 2026-08-04 was re-tested against live
 state rather than carried forward on trust.
 
 B1. Contents-API lookup defect (`-f ref=` performed a POST, returned 404)
-- git show origin/dev:scripts/ai_status.py | sed -n '7195,7210p'
-  Result: dev now builds an explicit query string and calls
-    ["api", "--method", "GET", "repos/<repo>/contents/<path>?ref=<sha>"]
-  RESOLVED ON DEV. This branch's independent fix for the same defect was
-  dropped as a duplicate rather than re-landed.
-- git show origin/dev:scripts/test_ai_status.py | grep -n review_evidence_file_committed
-  Result: dev carries test_review_evidence_file_committed_uses_exact_head_get_query
-  at line 1813, asserting exactly that call shape.
+- git show origin/dev:scripts/ai_status.py | grep review_evidence_file_committed
+  Result: 0 hits. PR #4590 (squash commit 23ae23c21) deleted review_evidence_file_committed
+  and test_review_evidence_file_committed_uses_exact_head_get_query from dev.
+  DROPPED ON DEV. The function is no longer called; this branch's independent fix for the
+  same defect was dropped as obsolete.
 
 B2. dev required-status policy did not include the canonical review gate
 - gh api repos/ajoe734/pantheon/branches/dev/protection
   Result: required_status_checks.contexts =
     ["Commit trailers", "Runtime mirror guard", "Smoke acceptance",
      "Pantheon canonical review gate"]
-  RESOLVED. The required-status review path is policy-recognized again, so the
-  self-review HTTP 422 on the shared ajoe734 principal is no longer a block.
+  RESOLVED. The required-status review path is policy-recognized again.
 
 B3. Task PR #4550 failed the Commit trailers gate
 - gh run view 30931736474 --log-failed
@@ -54,8 +50,7 @@ B3. Task PR #4550 failed the Commit trailers gate
   72 chars (76)", over range origin/dev..ba552fc9083cbb189945adb848f58112fa7ef92d.
   The gate re-scans the whole PR range, so a follow-up commit cannot repair it.
   RESOLVED IN THIS RUN: the task branch was reset onto the current dev tip
-  (003688bd7) and the over-length commit dropped. The branch is republished with
-  --force-with-lease; PR #4550 is preserved.
+  (003688bd7) and the over-length commit dropped. Commit subjects are strictly <= 70 chars.
 
 Live PR state:
 - gh pr view 4396 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision
@@ -65,11 +60,9 @@ Live PR state:
   2026-08-05T02:00:30Z, SQUASH.
 - git merge-base --is-ancestor 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9 origin/dev
   Result: YES (exit 0). The merge is genuinely on dev.
-- git ls-tree -r --name-only origin/dev -- docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/
-  Result: README.md, evidence.json, validation.txt all present on dev.
 - gh pr view 4386 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision
-  Result: OPEN, head 43d59e78ea361985146008fbe65f6436f8c0595b, mergeStateStatus
-  DIRTY, mergeable CONFLICTING, autoMergeRequest null.
+  Result: OPEN, head bce88797825c4da98f444854fbc38e1ec3d2f43d, mergeStateStatus
+  BLOCKED, mergeable MERGEABLE, autoMergeRequest null.
 - gh pr view 4386 --repo ajoe734/pantheon --json statusCheckRollup
   Result: Pantheon canonical review gate FAILURE; other contexts SUCCESS.
 

@@ -70,7 +70,7 @@
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
     "closed_at": "2026-08-05T02:04:15Z",
     "closeout_next": "Owner finalized approved task after PR #4396 squash-merged into dev as 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9.",
-    "evidence_present_on_dev": true,
+    "evidence_present_on_dev": false,
     "note": "The reviewer-of-record changed from the Codex pair recorded in the 2026-08-04 gate denial to Antigravity/Claude before closeout, which is what cleared the original approval_reviewer_mismatch."
   },
   "review_gate_history": {
@@ -128,6 +128,6 @@
   "independent_review": {
     "status": "pending",
     "required_reviewer": "Claude",
-    "decision_scope": "Verify that (a) PR #4396 is genuinely merged into dev via protected merge and its reconcile task archived done, (b) each 2026-08-04 blocker is accurately reported, (c) the duplicate ai_status.py fix was correctly dropped in favour of dev's, and (d) PR #4386 is correctly still not counted complete."
+    "decision_scope": "Verify that (a) PR #4396 is genuinely merged into dev via protected merge and its reconcile task archived done, (b) each 2026-08-04 blocker is accurately reported, (c) the duplicate ai_status.py fix was correctly dropped since its call sites were deleted by PR #4590, and (d) PR #4386 is correctly still not counted complete."
   }
 }
