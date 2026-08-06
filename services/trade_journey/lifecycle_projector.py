@@ -36,6 +36,7 @@ from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     validate_envelope,
 )
+from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
 from services.trade_journey.materializer import JourneyMaterializer
 
 
@@ -1055,7 +1056,6 @@ class LifecycleProjector:
         inc_mat.apply_batch(
             batch_entries,
             controller=controller,
-            stage_specs_fn=self._stage_specs,
             journey_events_fn=self._journey_events,
             loop_record_builder_fn=self._loop_records_for_entries,
         )
@@ -1145,7 +1145,14 @@ class LifecycleProjector:
             controller["generation"] = int(candidate["generation"])
             controller["last_successful_publish_at"] = now
             controller["last_successful_publish_generation"] = int(candidate["generation"])
-            journey_payload, loop_payload = self._render(candidate)
+            inc_mat = IncrementalLifecycleMaterializer(candidate)
+            journey_payload, loop_payload = inc_mat.render_full_payloads(
+                schema_version_journey=JOURNEY_STORE_SCHEMA,
+                schema_version_loop=LOOP_STORE_SCHEMA,
+                generation=int(candidate["generation"]),
+                controller=controller,
+                journey_events_fn=self._journey_events,
+            )
             self._publish_candidate(candidate, journey_payload, loop_payload)
         else:
             # Only freshness changed.  Keep that hot-path bounded instead of
@@ -1183,7 +1190,14 @@ class LifecycleProjector:
             controller["generation"] = int(candidate["generation"])
             controller["last_successful_publish_at"] = now
             controller["last_successful_publish_generation"] = int(candidate["generation"])
-            journey_payload, loop_payload = self._render(candidate)
+            inc_mat = IncrementalLifecycleMaterializer(candidate)
+            journey_payload, loop_payload = inc_mat.render_full_payloads(
+                schema_version_journey=JOURNEY_STORE_SCHEMA,
+                schema_version_loop=LOOP_STORE_SCHEMA,
+                generation=int(candidate["generation"]),
+                controller=controller,
+                journey_events_fn=self._journey_events,
+            )
             self._publish_candidate(candidate, journey_payload, loop_payload)
         else:
             _atomic_write_json(self.state_path, candidate)

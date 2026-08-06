@@ -8,12 +8,15 @@
     "status": "in_progress",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-REDUCER-001",
-    "evidence_cut_at": "2026-08-06T15:26:00Z"
+    "head_sha": "045f7822de829d6d0bb6760d727f058b4710cc80",
+    "evidence_cut_at": "2026-08-06T15:59:07Z"
   },
   "scope": {
     "owned": [
       "services/trade_journey/lifecycle_projector.py",
       "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "services/trade_journey/test_canonical_paper_lifecycle_integration.py",
       "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/"
     ],
     "not_changing": [
@@ -26,6 +29,12 @@
       "LIFECYCLE-PROJ-BFF-001"
     ]
   },
+  "file_checksums": {
+    "services/trade_journey/lifecycle_projector.py": "50ea3e9f6bc0feccc5768955eee75b0eee71964809c9f5a35eac66a906ca61a1",
+    "services/trade_journey/incremental_materializer.py": "ee53e1f50a0c12c343d0983aa8f403ead9684a8bade776e1e477ecddcbb30dad",
+    "services/trade_journey/test_lifecycle_projector.py": "5d57fd1e0a6a4b80eb9cc8f10c84f0ecac65741abbde60451c8a26b1af789491",
+    "services/trade_journey/test_canonical_paper_lifecycle_integration.py": "e339fef9222738b55718632ce430ae29199b5f56ef4f4345ace7ad5630d04ba6"
+  },
   "contract_proof": {
     "reducer_bounded": "Full global rebuilds removed from the active worker path; materialization is scoped per aggregate journey",
     "idempotency_preserved": "Exact duplicates short-circuit and conflicting event fingerprints fail closed",
@@ -33,15 +42,15 @@
   },
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
-      "result": "pass; 20 passed in 4.79s"
+      "command": "python3 scripts/dev/provision_python_distribution.py && ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 22 passed in 4.79s"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
-      "result": "pass; 119 passed, 19 skipped in 22.39s"
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
+      "result": "pass; 121 passed, 19 skipped in 20.98s"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py && git diff --check",
+      "command": "./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py && git diff --check",
       "result": "pass"
     }
   ]

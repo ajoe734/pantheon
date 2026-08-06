@@ -722,3 +722,94 @@ def test_default_freshness_window_covers_observed_large_volume_poll(tmp_path, mo
     assert observed["freshness"]["max_age_seconds"] == 120.0
     assert observed["freshness"]["age_seconds"] == 61.0
     assert observed["ready"] is True
+
+
+def test_incremental_materializer_duplicate_out_of_order_replay_and_equivalence(tmp_path):
+    from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
+
+    rows = lifecycle_rows()
+    p1 = LifecycleProjector(
+        state_path=tmp_path / "ctrl1.json",
+        bundle_root=tmp_path / "b1",
+        deployment_sha="sha1",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    res1 = p1.project_records(rows, mode="live", source_high_watermark=8)
+    assert res1.accepted == 8
+    assert res1.duplicates == 0
+
+    inc = IncrementalLifecycleMaterializer(p1.state)
+    assert len(inc.aggregates) == 1
+    agg = inc.aggregates["tj-paper-001"]
+    assert len(agg.events_by_id) == 8
+
+    # Batch 2: replay exact duplicate batch
+    batch_entries = [p1.state["canonical_events"][r["payload"]["event_id"]] for r in rows]
+    affected, accepted, duplicates = inc.apply_batch(
+        batch_entries,
+        controller=p1.state["controller"],
+        journey_events_fn=LifecycleProjector._journey_events,
+        loop_record_builder_fn=LifecycleProjector._loop_records_for_entries,
+    )
+    assert accepted == 0
+    assert duplicates == 8
+    assert len(affected) == 0
+
+    # Test out-of-order arrival for new journey
+    rows_j2 = []
+    for r in rows:
+        r_copy = json.loads(json.dumps(r))
+        new_id = _uuid(int(r["ingested_seq"]) + 100)
+        r_copy["event_id"] = new_id
+        payload = r_copy["payload"]
+        payload["event_id"] = new_id
+        payload["correlation_envelope"] = dict(payload["correlation_envelope"])
+        payload["correlation_envelope"]["journey_id"] = "tj-paper-002"
+        rows_j2.append(r_copy)
+
+    # Ingest j2 in reverse order
+    p2 = LifecycleProjector(
+        state_path=tmp_path / "ctrl2.json",
+        bundle_root=tmp_path / "b2",
+        deployment_sha="sha2",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    res_rev = p2.project_records(list(reversed(rows_j2)), mode="live", source_high_watermark=16)
+    assert res_rev.accepted == 8
+
+    # Verify output equivalence between inc_mat render and full render
+    j_inc, l_inc = inc.render_full_payloads(
+        schema_version_journey="pantheon.trade-journey-projection.v1",
+        schema_version_loop="pantheon.loop-run-projection.v1",
+        generation=1,
+        controller=p1.state["controller"],
+        journey_events_fn=LifecycleProjector._journey_events,
+    )
+    j_full, l_full = p1._render(p1.state)
+    assert j_inc["events"] == j_full["events"]
+    assert l_inc["records"] == l_full["records"]
+
+
+def test_incremental_materializer_conflicting_fingerprint_fails_closed(tmp_path):
+    from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
+
+    rows = lifecycle_rows()
+    p = LifecycleProjector(
+        state_path=tmp_path / "ctrl_conf.json",
+        bundle_root=tmp_path / "b_conf",
+        deployment_sha="sha_conf",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    p.project_records(rows[:1], mode="live", source_high_watermark=1)
+    inc = IncrementalLifecycleMaterializer(p.state)
+
+    conflicting_entry = json.loads(json.dumps(p.state["canonical_events"][rows[0]["payload"]["event_id"]]))
+    conflicting_entry["fingerprint"] = "0000000000000000000000000000000000000000000000000000000000000000"
+
+    with pytest.raises(ConflictingLifecycleEvent):
+        inc.apply_batch(
+            [conflicting_entry],
+            controller=p.state["controller"],
+            journey_events_fn=LifecycleProjector._journey_events,
+            loop_record_builder_fn=LifecycleProjector._loop_records_for_entries,
+        )

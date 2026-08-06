@@ -7,19 +7,9 @@ retaining full historical event logs or performing full global rebuilds.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
-import json
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-from services.trade_journey.materializer import JourneyMaterializer, JourneyProjection, STAGES
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-
-
-def _fingerprint(value: Any) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+from services.trade_journey.materializer import JourneyMaterializer, JourneyProjection
 
 
 @dataclass
@@ -69,27 +59,11 @@ class IncrementalLifecycleMaterializer:
             agg.last_ingested_seq = max(agg.last_ingested_seq, int(entry.get("ingested_seq") or 0))
             agg.last_sequence_no = max(agg.last_sequence_no, int(entry.get("sequence_no") or 0))
 
-    def rematerialize_all(
-        self,
-        *,
-        controller: Mapping[str, Any],
-        journey_events_fn: Any,
-        loop_record_builder_fn: Any,
-    ) -> None:
-        for agg in self.aggregates.values():
-            self._rematerialize_aggregate(
-                agg,
-                controller=controller,
-                journey_events_fn=journey_events_fn,
-                loop_record_builder_fn=loop_record_builder_fn,
-            )
-
     def apply_batch(
         self,
         canonical_entries: Sequence[Mapping[str, Any]],
         *,
         controller: Mapping[str, Any],
-        stage_specs_fn: Any,
         journey_events_fn: Any,
         loop_record_builder_fn: Any,
     ) -> tuple[set[str], int, int]:
