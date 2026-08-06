@@ -9790,7 +9790,11 @@ def apply_provider_probe_to_report(
         consecutive_failures = 0
         effective_ready = True
     else:
-        current_streak = int(capability.get("consecutive_probe_failures", 0)) + 1
+        is_live_probe = str(probe.get("source") or "").strip().lower() == "live"
+        if is_live_probe:
+            current_streak = int(capability.get("consecutive_probe_failures", 0)) + 1
+        else:
+            current_streak = int(capability.get("consecutive_probe_failures", 0))
         consecutive_failures = current_streak
         # Hysteresis retains auth_ready=True on transient probe failures (timeout/error/capacity)
         # when starting from a previously healthy/ready baseline until current_streak reaches max_consecutive_failures
@@ -9883,8 +9887,7 @@ def reconcile_fresh_provider_probe_failures(
     for provider_key, current in providers.items():
         if not isinstance(current, dict):
             continue
-        account_health = current.get("account_health")
-        if current.get("auth_ready") is not False and account_health in (None, "healthy"):
+        if current.get("auth_ready") is not False:
             continue
         probe = current.get("auth_probe")
         if not isinstance(probe, dict) or str(probe.get("source") or "").strip().lower() != "live":
