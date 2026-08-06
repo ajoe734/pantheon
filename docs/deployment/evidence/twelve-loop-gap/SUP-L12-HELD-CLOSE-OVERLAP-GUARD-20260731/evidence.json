@@ -72,41 +72,51 @@
     "pull_request": {
       "number": 4425,
       "url": "https://github.com/ajoe734/pantheon/pull/4425",
-      "head_sha": "094a0f16d27e95c079e5d834e4f0802c6b835036",
+      "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
       "base": "dev",
-      "mergeable": "pending_re_observation_after_force_push",
-      "merge_state_status": "pending_re_observation_after_force_push",
-      "head_sha_note": "head_sha names this task's delivery commit. The commit that carries this manifest sits one commit above it and cannot name its own digest, so the reviewer must bind the PR head observed on GitHub at review time."
+      "mergeable": "MERGEABLE",
+      "merge_state_status": "MERGEABLE",
+      "head_sha_note": "head_sha is the evidence-actor-and-count-fixes commit (7ab57c517) now on GitHub as PR #4425 HEAD. This is the current exact-head the reviewer must bind at review time. Prior head_sha 094a0f16d was the implementation commit; a31ddbf8b was the previous evidence refresh; 7ab57c517 is the evidence-only actor-and-count corrections commit."
     },
     "required_checks": [
       {
         "workflow": "Branch CI Gate / Commit trailers",
         "event": "pull_request",
-        "head_sha": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
-        "conclusion": "failure",
-        "detail": "subject exceeds 72 chars (90) on dfdcd07ffb244ce29182478654ffe7d6ec4178e9, the only finding. This is the last observation of the pre-rewrite head; the offending commit is no longer in the range after the re-cut, and the check must be re-observed at the new head.",
-        "observed_at": "2026-08-06T15:33:00Z"
+        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+        "conclusion": "pending",
+        "detail": "CI run 31120873389 and 31120876932 queued at 2026-08-06T16:44Z against current PR head. Result not yet available.",
+        "observed_at": "2026-08-06T16:50:00Z"
       },
       {
         "workflow": "Branch CI Gate / Runtime mirror guard",
         "event": "pull_request",
-        "head_sha": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
-        "conclusion": "success",
-        "observed_at": "2026-08-06T15:33:00Z"
+        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+        "conclusion": "pending",
+        "detail": "CI run 31120873389 and 31120876932 queued at 2026-08-06T16:44Z. Result not yet available.",
+        "observed_at": "2026-08-06T16:50:00Z"
       },
       {
         "workflow": "Branch CI Gate / Python packaging provision",
         "event": "pull_request",
-        "head_sha": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
-        "conclusion": "success",
-        "observed_at": "2026-08-06T15:33:00Z"
+        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+        "conclusion": "pending",
+        "detail": "CI run 31120873389 and 31120876932 queued at 2026-08-06T16:44Z. Result not yet available.",
+        "observed_at": "2026-08-06T16:50:00Z"
       },
       {
         "workflow": "Pantheon canonical review gate",
         "event": "status",
-        "head_sha": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
+        "head_sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
         "conclusion": "not_produced",
         "detail": "The gate workflow file is still deleted from dev by the PR #4590 squash, so the required context cannot be produced from the default branch. This blocks merge independently of review and is not repaired by this PR.",
+        "observed_at": "2026-08-06T16:50:00Z"
+      },
+      {
+        "workflow": "Branch CI Gate / Commit trailers",
+        "event": "pull_request",
+        "head_sha": "7db2114e5c18d3a8183ebae2ca92bfcc07bae52b",
+        "conclusion": "failure",
+        "detail": "Pre-rewrite head observation only. subject exceeds 72 chars (90) on dfdcd07ffb244ce29182478654ffe7d6ec4178e9. The offending commit was removed by the re-cut; this entry is historical only.",
         "observed_at": "2026-08-06T15:33:00Z"
       }
     ],
@@ -445,9 +455,19 @@
       "kind": "evidence_actor_and_count_correction",
       "status": "ready_for_independent_exact_head_review",
       "actor": "Antigravity",
-      "reference": "PR #4425 head a31ddbf8b; evidence-only, no code change",
-      "sha": "a31ddbf8bda75c9f2ce267a2ccb21071ecef291d",
+      "reference": "PR #4425 head 7ab57c517 (GitHub-observed); the corrections were committed at 7ab57c517 and confirmed on GitHub before the worktree remote-tracking ref updated",
+      "sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
       "note": "Evidence-only corrections (no code change): (1) security_and_safety.two_person_approval.proof: corrected actor from 'Antigravity' to 'Claude' (Claude is the reviewer); (2) acceptance AC5.blocking_until: same actor correction; (3) restore_fidelity in evidence.json and restore-fidelity paragraph in README.md: restated def counts unambiguously as 11 omitted (5 test_ defs + 6 helpers) and 5 added, net delta -6, replacing the previously ambiguous '6 defs omitted' phrasing. No implementation files changed."
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-08-06T16:51:00Z",
+      "kind": "evidence_head_sha_advance_and_ci_pending",
+      "status": "ready_for_independent_exact_head_review_pending_ci",
+      "actor": "Antigravity",
+      "reference": "PR #4425 head 7ab57c517; CI runs 31120873389 and 31120876932 queued at 16:44Z",
+      "sha": "7ab57c517eb15c4a2af35c8788b2d8ab00a6383d",
+      "note": "Wakeup cycle: advanced implementation_delivery.pull_request.head_sha from 094a0f16d (implementation commit) to 7ab57c517 (current GitHub PR HEAD, confirmed via gh pr view). Recorded required_checks at 7ab57c517 as pending; CI queued at 2026-08-06T16:44Z. canonical-review-gate.yml still not_produced (Human/Ops blocker unchanged). Task brief supervisor-reinjected Next field committed. Ready for Claude exact-head review once CI resolves."
     }
   ]
 }
