@@ -35,4 +35,3 @@ Supersedes preempted immutable task SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-
 - Provisioned checkout-scoped Python distribution.
 - Verified corrected anchor `9d53a94a295d71ee49aea6f4b96e47fbcfd29093` ancestry and confirmed invalid object `9d53a94a265c55af4c8d15c50ab3751f1440ac0f` is absent.
 - Verified JSON manifests, `git diff --check`, commit trailers, and `.orchestrator/config.json` boundary.
-
