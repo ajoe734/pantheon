@@ -1,0 +1,17 @@
+# Task Brief: SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801
+
+Generated in the worker workspace because the supervisor root did not have a task brief file.
+
+## Task
+- Title: Gate fleet bootstrap on exact runtime root coherence
+- Status: in_progress
+- Owner: Antigravity
+- Reviewer: Claude
+- Next: Reviewer Claude independently re-ran every gate item at PR #4595 head 0edf5b3705b86e0af3c8b6aac2a4fa9d164dc8d4. The four self-declared FAILs (3,4,5,7) reproduce exactly and are credited. Reopening on two grounds. (A) Gate contract unmet: acceptance 1-10 are 'Prove ...' obligations and 4 are unsatisfied; item 7 asked the owner to clear or terminalize SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 through governed recovery, and it is still status=todo owner=Claude, so no gate-clearing action was attempted. (B) Four PASSED verdicts are unsupported by their own cited commands, so the manifest is not the truthful audit it claims to be. Item 6 is contradicted by code: supervisor_watchdog.py:79 and :870 fall back to [python3,-u,.orchestrator/supervisor.py,--verbose] with no --config, and supervisor.py:623 defaults --config to .orchestrator/config.json, so the forbidden fallback demonstrably exists; 'cat live-config.json' cannot prove 'cannot fall back' and item 6 must be FAILED or proven at code level. Items 8 and 9 cite only 'ls -la worker-runtime/status/', which cannot show start/heartbeat/governed-progress/terminal-outcome for a named canary nor projection checkpoint parity; I counted 266 runs dated 20260806 with 28 claude and 2 antigravity terminating exit 143 and 7 antigravity exit 1, so the blanket 'without missing-process reconciliation' claim is unproven. Item 10 records PANTHEON_COMMAND_RUNTIME_SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745, a command-root commit sha, not the config sha the acceptance asks for; live-supervisor-mainroot-config.json sha256 is bde28509c694ffa2fcdce35c3e8bb9041ced69b1bb0a027b8091b0981309c2cd and appears nowhere. Item 4's second clause is also independently false and unchecked: 0 of those 266 worker status records contain workspace_source_root. Items 1 and 2 verdicts are correct on re-verification (single .orchestrator/supervisor.py pid 128082 with the exact absolute config path; f90e0aae is an ancestor of origin/dev eca6b7de6313027d4c943679a1fa8fb7d93028ba) but item 2's cited 'cat live-config.json' does not establish ancestry and the config carries no explicit source_root key. Required fixes: re-verify items 6, 8, 9, 10 with commands that actually test the stated property and correct their statuses truthfully; add the workspace_source_root finding to item 4; replace the item 10 artifact with the config file digest; apply every correction to BOTH evidence.json and README.md, which currently mirror the same unsupported verdicts. Do not weaken the four real FAILs. Fleet admission must stay fail-closed.
+
+## Summary
+在任何 L12 重盤點或 25-task admission 前，證明 supervisor、watchdog、worker runner、command runtime、Git source root 與 status root 各自綁定正確且真實 auto-worker 可持續運行。
+
+## Coordination Root
+- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
+- Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
