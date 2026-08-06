@@ -128,48 +128,69 @@ def compare_dispatch_reason(config: dict[str, Any], tasks: list[dict[str, Any]])
     return rows
 
 
-def compare_outbox_indicators(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Compare tasks on board between flag-off and flag-on outbox indicators."""
+def _load_ai_status_module():
+    """Import scripts/ai_status.py as the oracle for outbox indicator behaviour."""
+
+    import importlib.util
+
+    module_path = Path(__file__).resolve().parents[2] / "scripts" / "ai_status.py"
+    spec = importlib.util.spec_from_file_location("shadow_ai_status", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def compare_outbox_indicators(state: dict[str, Any]) -> dict[str, Any]:
+    """Shadow the status-write pending markers against the incumbent board.
+
+    The load-bearing assertion is the flag-off one: `SUP-STATUS-OUTBOX-
+    INTEGRITY-VISIBILITY-20260804` must be inert until it is switched on, so a
+    flag-off pass has to reproduce the incumbent task rows byte for byte. The
+    flag-on pass is reported as an informational delta, not a mismatch.
+    """
+
+    import os
     from copy import deepcopy
 
-    # Flag OFF calculation
-    state_off = deepcopy(state)
-    for task in state_off.get("tasks", []):
-        if isinstance(task, dict):
-            task.pop("status_write_pending", None)
-            task.pop("status_write_pending_count", None)
+    ai_status = _load_ai_status_module()
+    env_var = ai_status.STATUS_OUTBOX_VISIBILITY_ENABLED_ENV
 
-    # Flag ON calculation
-    import os
-    import scripts.ai_status as ai_status
-    state_on = deepcopy(state)
-    env_var = getattr(ai_status, "STATUS_OUTBOX_VISIBILITY_ENABLED_ENV", "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED")
-    old_env = os.environ.get(env_var)
-    os.environ[env_var] = "1"
-    try:
-        ai_status._update_pending_outbox_indicators(state_on)
-    finally:
-        if old_env is None:
-            os.environ.pop(env_var, None)
-        else:
-            os.environ[env_var] = old_env
+    def run(enabled: bool) -> list[dict[str, Any]]:
+        candidate = deepcopy(state)
+        previous = os.environ.get(env_var)
+        os.environ[env_var] = "1" if enabled else "0"
+        try:
+            ai_status._update_pending_outbox_indicators(candidate)
+        finally:
+            if previous is None:
+                os.environ.pop(env_var, None)
+            else:
+                os.environ[env_var] = previous
+        rows = candidate.get("tasks", [])
+        return [row for row in rows if isinstance(row, dict)]
 
-    tasks_off = {str(t.get("id")): t for t in state_off.get("tasks", []) if isinstance(t, dict)}
-    tasks_on = {str(t.get("id")): t for t in state_on.get("tasks", []) if isinstance(t, dict)}
+    incumbent = [row for row in state.get("tasks", []) if isinstance(row, dict)]
+    off_rows = run(False)
+    on_rows = run(True)
 
-    rows: list[dict[str, Any]] = []
-    for tid in sorted(tasks_off.keys()):
-        t_off = tasks_off[tid]
-        t_on = tasks_on.get(tid, {})
-        off_pending = t_off.get("status_write_pending", False)
-        on_pending = t_on.get("status_write_pending", False)
-        rows.append({
-            "task": tid,
-            "off_pending": off_pending,
-            "on_pending": on_pending,
-            "on_count": t_on.get("status_write_pending_count"),
-        })
-    return rows
+    def canonical(rows: list[dict[str, Any]]) -> str:
+        return json.dumps(rows, sort_keys=True, ensure_ascii=False)
+
+    marked = [
+        {
+            "task": str(row.get("id") or ""),
+            "count": row.get("status_write_pending_count"),
+        }
+        for row in on_rows
+        if row.get("status_write_pending")
+    ]
+    return {
+        "checked": len(incumbent),
+        "agree": canonical(off_rows) == canonical(incumbent),
+        "marked_when_enabled": marked,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,9 +242,17 @@ def main(argv: list[str] | None = None) -> int:
         if dr_mismatch:
             exit_code = 1
 
-        outbox_rows = compare_outbox_indicators(board)
-        pending_tasks = [r for r in outbox_rows if r["on_pending"]]
-        print(f"outbox_indicators shadow: {len(outbox_rows)} tasks checked, {len(pending_tasks)} marked pending when flag enabled")
+        outbox = compare_outbox_indicators(board)
+        if not outbox["agree"]:
+            print("  MISMATCH outbox_indicators: flag-off rows differ from the incumbent board")
+            exit_code = 1
+        for row in outbox["marked_when_enabled"]:
+            print(f"  pending {row['task']}: {row['count']} queued status writes")
+        print(
+            f"outbox_indicators shadow: {outbox['checked']} tasks, "
+            f"{0 if outbox['agree'] else 1} mismatch, "
+            f"{len(outbox['marked_when_enabled'])} marked pending when flag enabled"
+        )
 
     return exit_code
 

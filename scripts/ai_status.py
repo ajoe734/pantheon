@@ -2459,58 +2459,61 @@ def is_status_outbox_visibility_enabled() -> bool:
     return False
 
 
-def _update_pending_outbox_indicators(state: dict[str, Any]) -> None:
-    if not is_status_outbox_visibility_enabled():
-        for task in state.get("tasks", []):
-            if isinstance(task, dict):
-                task.pop("status_write_pending", None)
-                task.pop("status_write_pending_count", None)
-        return
+def _pending_outbox_write_counts(state: dict[str, Any]) -> dict[str, int]:
+    """Count queued writes per task id across both outbox planes.
 
-    has_pending_archive = state.get(STATUS_ARCHIVE_OUTBOX_KEY) not in (None, {}, [])
+    Only writes that name a task are counted. A board-wide event (a wave
+    open/close, for example) must never make an untouched task look stale.
+    """
+
     pending_activity = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
-    has_pending_activity = pending_activity not in (None, {}, [])
-
     pending_events = (
-        pending_activity.get("events", [])
-        if isinstance(pending_activity, dict) and isinstance(pending_activity.get("events"), list)
-        else []
+        pending_activity.get("events")
+        if isinstance(pending_activity, dict)
+        else None
     )
+    if not isinstance(pending_events, list):
+        pending_events = []
 
+    pending_archive = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
     archive_snapshots = (
-        state.get(STATUS_ARCHIVE_OUTBOX_KEY, {}).get("snapshots", [])
-        if has_pending_archive and isinstance(state.get(STATUS_ARCHIVE_OUTBOX_KEY), dict)
-        else []
+        pending_archive.get("snapshots") if isinstance(pending_archive, dict) else None
     )
     if not isinstance(archive_snapshots, list):
         archive_snapshots = []
 
-    # Map task_id -> count of pending writes (activity events + archive snapshots) for that specific task
-    task_pending_counts: dict[str, int] = {}
-    for event in pending_events:
-        if isinstance(event, dict) and isinstance(event.get("task_id"), str) and event["task_id"]:
-            tid = event["task_id"]
-            task_pending_counts[tid] = task_pending_counts.get(tid, 0) + 1
+    counts: dict[str, int] = {}
+    for queued in (*pending_events, *archive_snapshots):
+        if not isinstance(queued, dict):
+            continue
+        task_id = queued.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        counts[task_id] = counts.get(task_id, 0) + 1
+    return counts
 
-    for snap in archive_snapshots:
-        if isinstance(snap, dict) and isinstance(snap.get("task_id"), str) and snap["task_id"]:
-            tid = snap["task_id"]
-            task_pending_counts[tid] = task_pending_counts.get(tid, 0) + 1
 
-    unbound_count = (
-        sum(1 for e in pending_events if isinstance(e, dict) and not (isinstance(e.get("task_id"), str) and e.get("task_id")))
-        + (sum(1 for s in archive_snapshots if isinstance(s, dict) and not (isinstance(s.get("task_id"), str) and s.get("task_id"))) if archive_snapshots else (1 if has_pending_archive else 0))
+def _update_pending_outbox_indicators(state: dict[str, Any]) -> None:
+    """Stamp per-task markers for status writes queued behind an integrity block.
+
+    The outbox already makes the write itself durable. Without these markers the
+    task row stays byte-identical to its pre-attempt state, so a stale board row
+    is indistinguishable from a task nobody touched. Flag off restores exactly
+    the incumbent shape by removing the markers.
+    """
+
+    counts = (
+        _pending_outbox_write_counts(state)
+        if is_status_outbox_visibility_enabled()
+        else {}
     )
-
     for task in state.get("tasks", []):
         if not isinstance(task, dict):
             continue
-        task_id = str(task.get("id") or "")
-        specific_count = task_pending_counts.get(task_id, 0)
-        
-        if specific_count > 0:
+        pending = counts.get(str(task.get("id") or ""), 0)
+        if pending > 0:
             task["status_write_pending"] = True
-            task["status_write_pending_count"] = specific_count
+            task["status_write_pending_count"] = pending
         else:
             task.pop("status_write_pending", None)
             task.pop("status_write_pending_count", None)
@@ -3449,6 +3452,29 @@ def task_delivery_layer(task: dict[str, Any]) -> str:
     return "primary"
 
 
+def pending_status_write_count(task: dict[str, Any]) -> int:
+    """Return how many status writes are queued behind a canonical integrity block."""
+
+    if not isinstance(task, dict) or not task.get("status_write_pending"):
+        return 0
+    count = task.get("status_write_pending_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        return 0
+    return count
+
+
+def display_task_status(task: dict[str, Any]) -> str:
+    """Render a status, flagging a row a queued write has not been able to update."""
+
+    status = task.get("status")
+    text = "" if status is None else str(status)
+    pending = pending_status_write_count(task)
+    if not pending:
+        return text
+    noun = "write" if pending == 1 else "writes"
+    return f"{text} (stale: {pending} {noun} queued)"
+
+
 def display_task_title(task: dict[str, Any]) -> str:
     title = str(task.get("title") or "")
     if task.get("task_class") != "sidecar":
@@ -3511,7 +3537,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                     phase=cell(task.get("phase") or "Unassigned"),
                     title=cell(display_task_title(task)),
                     owner=cell(task.get("owner")),
-                    status=cell(task.get("status")),
+                    status=cell(display_task_status(task)),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -3636,6 +3662,33 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     else:
         lines.append("| _(none)_ | - | - | - | - | - | - |")
 
+    pending_write_tasks = [
+        task for task in state["tasks"] if pending_status_write_count(task)
+    ]
+    if pending_write_tasks:
+        lines.extend(
+            [
+                "",
+                "## Status Write Backlog",
+                "",
+                "Canonical status writes for these tasks are durably queued behind an",
+                "integrity block. Their rows below may be stale; a stale row here is",
+                "not evidence that the task was never touched.",
+                "",
+                "| Task | Owner | Displayed Status | Queued Writes |",
+                "|---|---|---|---|",
+            ]
+        )
+        for task in pending_write_tasks:
+            lines.append(
+                "| `{id}` | {owner} | {status} | {count} |".format(
+                    id=cell(task.get("id")),
+                    owner=cell(task.get("owner")),
+                    status=cell(task.get("status")),
+                    count=pending_status_write_count(task),
+                )
+            )
+
     lines.extend(["", "## Task Board", "", "| ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |", "|---|---|---|---|---|---|---|---|---|---|"])
 
     for task in state["tasks"]:
@@ -3648,7 +3701,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                 summary=cell(task.get("summary_zh") or "-"),
                 owner=cell(task.get("owner")),
                 reviewer=cell(task.get("reviewer")),
-                status=cell(task.get("status")),
+                status=cell(display_task_status(task)),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),
