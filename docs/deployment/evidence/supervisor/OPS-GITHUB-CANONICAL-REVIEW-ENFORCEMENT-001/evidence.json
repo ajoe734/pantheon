@@ -118,7 +118,8 @@
       "dedicated external GitHub App provisioning and successful live canary require Human/Ops",
       "live protection activation/probes require Human/Ops authorization",
       "actionlint: no executable available in this worker environment"
-    ]
+    ],
+    "head_verified_note": "Verification ran at composition merge 9e165a1d7edf751bc3b519e749ccf601eb231c57. Commits after it in this PR change only files under this evidence directory."
   },
   "re_review": {
     "previous_rejected_heads": [
@@ -130,12 +131,14 @@
     "current_reviewer": "Antigravity",
     "reviewer_reassignment": "The canonical task row now assigns owner Claude and reviewer Antigravity. The exact-head approval must come from Antigravity through the governed command; the earlier Codex2 rejections stand as history against superseded heads.",
     "composed_origin_dev": "003688bd7402d051986c07f1769285925af24e1b",
-    "head_for_review": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
     "required_before_reviewer_approval": [
-      "Push this composition head to PR #4303 and confirm the PR is no longer CONFLICTING against current dev.",
-      "Record the new exact head and its non-review CI results; the generic canonical review gate is expected to fail closed until an independent approval creates its exact-head proof tag.",
+      "Confirm PR #4303 is MERGEABLE against current dev (no longer CONFLICTING).",
+      "Confirm the PR head's diff against 9e165a1d7edf751bc3b519e749ccf601eb231c57 touches only this evidence directory, so the 182-test verification at 9e165a1d7 still describes the reviewed code.",
+      "Expect the generic canonical review gate to fail closed on the fresh head until an independent approval creates its exact-head proof tag.",
       "Have Antigravity independently review this committed evidence manifest and approve only the exact current PR head through the governed command."
-    ]
+    ],
+    "code_composition_anchor": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
+    "head_for_review_note": "The reviewable PR head is the evidence-refresh commit that sits directly on top of composition merge 9e165a1d7edf751bc3b519e749ccf601eb231c57 and touches only this evidence directory. A manifest cannot name its own commit, so the reviewer must bind approval to the exact current head of PR #4303 and confirm that head's diff against 9e165a1d7 is documentation-only."
   },
   "residual_risks": [
     {
