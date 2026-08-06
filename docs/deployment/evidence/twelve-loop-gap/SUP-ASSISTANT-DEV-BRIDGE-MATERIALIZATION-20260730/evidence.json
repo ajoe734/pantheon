@@ -1,0 +1,156 @@
+{
+  "schema_version": "1.0.0",
+  "record_type": "pantheon.task-evidence-manifest.v1",
+  "task": {
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+    "title": "Repair supervisor DevTaskPacket materialization readback",
+    "owner": "Codex2",
+    "delivery_worker_identity": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "review_approved",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+    "phase": "Supervisor Runtime Repair / Dev Bridge",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Supervisor-to-inbox governed runtime binding and exact canonical task-state readback before DevTaskPacket admission.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      "task-state event or checkpoint schema",
+      "scripts/ai_status.py mutation semantics",
+      "assistant packet signing constraints",
+      "admission and replay record schemas"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
+    ]
+  },
+  "incident_reproduction": {
+    "observed_at": "2026-07-30T17:02:00Z",
+    "packet_id": "pkt-l12-actionable-gap-execution-20260730T163500Z",
+    "receipt": {
+      "status": "processed",
+      "admission_status": "admitted",
+      "error_count": 0
+    },
+    "activity_rows": {
+      "line_start": 4227,
+      "line_end": 4234,
+      "assigned_at_start": "2026-07-30T16:34:53Z",
+      "assigned_at_end": "2026-07-30T16:35:14Z",
+      "task_count": 8
+    },
+    "canonical_readback": {
+      "task_count": 0,
+      "result": "all eight activity-only assignments absent after authoritative projection"
+    },
+    "classification": "receipt/activity false positive caused by file-only assignment outside the authoritative task-state journal"
+  },
+  "implementation": {
+    "supervisor_binding": {
+      "status_root": "resolved from the configured canonical status file",
+      "command_runtime": "status_command_runtime_env(config)",
+      "journal": "the provisioned absolute task-state event log from the live config",
+      "required_flag": "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK=1",
+      "config_edit_required": false
+    },
+    "success_gate": [
+      "the projected active/archive task row exactly matches the signed task spec and bridge provenance",
+      "governed ai_status.py show returns the exact canonical task row",
+      "verify_task_state_store.py reports journal/checkpoint and ai-status.json parity",
+      "only then may the admission record persist, the packet be marked seen, and the receipt become processed"
+    ],
+    "supervisor_visibility": [
+      "receipt result auditRefs.materializationReadback",
+      "runtime assistant_dev_bridge.last_result",
+      "assistant_dev_packet_inbox_drained canonical_task_ids and canonical_readbacks"
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "A queued DevTaskPacket is drained by the supervisor tick path",
+      "result": "pass",
+      "evidence": ".orchestrator/supervisor.py invokes drain_assistant_dev_packet_inbox before _run_scan_locked; the contract test asserts the order"
+    },
+    {
+      "criterion": "Every dispatched task appears in canonical ai-status.json and task-state event/checkpoint readback",
+      "result": "pass",
+      "evidence": "authoritative positive regression verifies active task source, task-spec hash, event count, last event id, and equal journal/projection digests"
+    },
+    {
+      "criterion": "Receipt/admission cannot report success without canonical materialization",
+      "result": "pass",
+      "evidence": "admission and replay marking execute only after _validate_materialized_tasks returns a verified readback"
+    },
+    {
+      "criterion": "Regression covers activity-log-only false positive dispatch",
+      "result": "pass",
+      "evidence": "test_activity_log_and_projection_only_dispatch_cannot_create_admission"
+    },
+    {
+      "criterion": "No .orchestrator/config.json edit is required",
+      "result": "pass",
+      "evidence": "supervisor forwards status_command_runtime_env(config); git scope contains no config change"
+    }
+  ],
+  "verification": {
+    "verified_at": "2026-07-30T17:13:49Z",
+    "commands": [
+      {
+        "command": "python3 -m py_compile services/control-plane/bff/assistant/dev_bridge_dispatcher.py services/control-plane/bff/assistant/dev_bridge_inbox.py .orchestrator/supervisor.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py scripts/test_verify_task_state_store.py .orchestrator/rewrite/test_task_state_store.py",
+        "result": "143 passed in 26.02s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/assistant/tests scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "result": "159 passed in 24.69s"
+      }
+    ],
+    "negative_controls": [
+      {
+        "case": "activity and exact ai-status projection exist without journal commit",
+        "expected": "invalid_materialization; no admission; packet not seen",
+        "result": "pass"
+      },
+      {
+        "case": "supervisor requires readback but no journal binding is supplied",
+        "expected": "invalid_materialization; file/activity-only dispatch is not admissible",
+        "result": "pass"
+      }
+    ]
+  },
+  "independent_review": {
+    "status": "approved",
+    "reviewer": "Antigravity",
+    "owner_is_reviewer": false,
+    "required_checks": [
+      "confirm the activity-only negative control exercises a zero-exit assignment with projection and activity but no journal event",
+      "confirm successful receipts carry canonical task ids and checkpoint parity",
+      "confirm no .orchestrator/config.json change",
+      "record approve or required changes before owner closeout"
+    ],
+    "decision": "PR #4390 head d8e51bbb744cb69c35e0b98bb2be3c78719880b8 independently verified. 159 assistant tests + 143 bridge/task-state tests pass. Confirmed activity-only negative control rejects non-journaled dispatch and canonical readback gate enforces strict materialization before admission.",
+    "decided_at": "2026-07-30T17:18:44Z",
+    "reviewed_commit": "d8e51bbb744cb69c35e0b98bb2be3c78719880b8",
+    "closeout_recording": "Owner persisted the already-issued governed review decision without changing the reviewed implementation."
+  },
+  "residual_risks": [
+    {
+      "risk": "The readback gate adds one governed show subprocess per task plus one journal parity subprocess per packet.",
+      "mitigation": "The supervisor already bounds packets per tick; all commands have 30-second timeouts and operational read failures remain retryable."
+    },
+    {
+      "risk": "No live production packet is replayed from this unmerged branch.",
+      "mitigation": "The authoritative integration regression uses the real governed ai_status and task-state verifier against an isolated status root; live proof belongs after merge/deployment."
+    }
+  ]
+}

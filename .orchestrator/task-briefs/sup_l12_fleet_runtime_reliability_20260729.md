@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: L12 fleet runtime reliability readback
-- Status: review
-- Owner: Antigravity
-- Reviewer: Codex2
-- Next: Corrected readback removes unsupported all-time provider split, narrows command-root claims to verified current runtime metadata, sets Reviewer to Codex2, and is ready for Codex2 review.
+- Status: in_progress
+- Owner: Codex
+- Reviewer: Antigravity
+- Next: Revalidating the approved readback and preparing the existing task PR for fresh Antigravity review after the owner/reviewer reassignment.
 
 ## Summary
 盤點 supervisor/auto-worker runtime，記錄 Antigravity/Claude2/Codex/Codex2 實際可用性與失敗循環，不改 config。
