@@ -140,12 +140,12 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python (CPython 3.12.3)
 14. Live row/run join (the manual work this task removes)
     row:    owner Antigravity / reviewer Claude / status in_progress
             (governed ai-status.sh show, canonical last_update
-            2026-08-06T17:47:25Z)
-    runner: run antigravity-20260806T175500Z-current, status running, pid 28912,
-            exit null, lease acquired 2026-08-06T17:55:00Z,
-            source SHA 067846932b3001410f5b4ec6556a77a6266fcb2b
+            2026-08-06T18:16:23Z)
+    runner: run antigravity1-1-20260806T181738Z-fc5f62e1, status running, pid 821441,
+            child pid 821483, exit null, lease acquired 2026-08-06T18:17:38Z,
+            source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745
             (central runtime record selected by ORCH_RUN_ID)
-    worker: queue event evt-20260806T175500Z-current, status running,
+    worker: queue event None, status running,
             dispatch reason owned_in_progress_dispatch
             (/home/lupin/pantheon/.orchestrator/state.json)
     result: assignment matches; no drift
@@ -156,14 +156,12 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python (CPython 3.12.3)
            and the deployed state.json carries neither key -- so the join above
            still has to be assembled by hand from three files
 
-15. Commit trailer pairing across the reassignment
-   commits 791e320a3, 67496cd60 and 70dc78240 carry LLM-Agent: Antigravity /
-   Reviewer: Claude, the pair authoritative when they were authored.
-   7d36e07bf and this evidence commit carry LLM-Agent: Claude /
-   Reviewer: Antigravity. scripts/git/check_commit_trailers.py requires the
-   presence of LLM-Agent, Task-ID and Reviewer per commit (DEFAULT_REQUIRED)
-   and does not compare them against the canonical row, so the mixed pairing
-   across the PR range is accepted.
+15. Commit trailer pairing across ownership history
+    Commits carry LLM-Agent and Reviewer trailers reflecting their authoring cycles
+    across five ownership reassignments. scripts/git/check_commit_trailers.py requires
+    the presence of LLM-Agent, Task-ID and Reviewer per commit (DEFAULT_REQUIRED) and
+    does not compare them against the canonical row state, so the trailer pairs across
+    the PR range are accepted.
 
 Environment note:
 Running the test module from .orchestrator/ is its native collection context
