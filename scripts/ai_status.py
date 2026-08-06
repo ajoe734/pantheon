@@ -36,6 +36,7 @@ STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
 LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
 LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
 LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
@@ -2087,6 +2088,9 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
+    task_clean = deepcopy(task)
+    task_clean.pop("status_write_pending", None)
+    task_clean.pop("status_write_pending_count", None)
     snapshot = {
         "version": 1,
         "task_id": task_id,
@@ -2099,7 +2103,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         or iso_now(),
         "terminal_status": "done",
         "terminal_outcome": terminal_outcome,
-        "task": deepcopy(task),
+        "task": task_clean,
         "handoffs": related_handoffs,
         "blockers": related_blockers,
     }
@@ -2416,12 +2420,17 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
     for expected in pending["snapshots"]:
         task_id = str(expected["task_id"])
         active = active_by_id.get(task_id)
-        if active is not None and _canonical_json_sha256(active) != _canonical_json_sha256(
-            expected["task"]
-        ):
-            raise RuntimeError(
-                f"active terminal task changed during archive recovery: {task_id}"
-            )
+        if active is not None:
+            active_clean = deepcopy(active)
+            active_clean.pop("status_write_pending", None)
+            active_clean.pop("status_write_pending_count", None)
+            expected_clean = deepcopy(expected["task"])
+            expected_clean.pop("status_write_pending", None)
+            expected_clean.pop("status_write_pending_count", None)
+            if _canonical_json_sha256(active_clean) != _canonical_json_sha256(expected_clean):
+                raise RuntimeError(
+                    f"active terminal task changed during archive recovery: {task_id}"
+                )
     state["tasks"] = [
         task
         for task in state.get("tasks", [])
@@ -2438,8 +2447,73 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
         if str(blocker.get("task_id") or "") not in archived_ids
     ]
     state[STATUS_ARCHIVE_OUTBOX_KEY] = None
+    _update_pending_outbox_indicators(state)
     save_state(state)
     return True
+
+
+def is_status_outbox_visibility_enabled() -> bool:
+    val = os.environ.get(STATUS_OUTBOX_VISIBILITY_ENABLED_ENV)
+    if val is not None:
+        return val.strip().lower() in ("1", "true", "yes", "on")
+    return False
+
+
+def _update_pending_outbox_indicators(state: dict[str, Any]) -> None:
+    if not is_status_outbox_visibility_enabled():
+        for task in state.get("tasks", []):
+            if isinstance(task, dict):
+                task.pop("status_write_pending", None)
+                task.pop("status_write_pending_count", None)
+        return
+
+    has_pending_archive = state.get(STATUS_ARCHIVE_OUTBOX_KEY) not in (None, {}, [])
+    pending_activity = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+    has_pending_activity = pending_activity not in (None, {}, [])
+
+    pending_events = (
+        pending_activity.get("events", [])
+        if isinstance(pending_activity, dict) and isinstance(pending_activity.get("events"), list)
+        else []
+    )
+
+    archive_snapshots = (
+        state.get(STATUS_ARCHIVE_OUTBOX_KEY, {}).get("snapshots", [])
+        if has_pending_archive and isinstance(state.get(STATUS_ARCHIVE_OUTBOX_KEY), dict)
+        else []
+    )
+    if not isinstance(archive_snapshots, list):
+        archive_snapshots = []
+
+    # Map task_id -> count of pending writes (activity events + archive snapshots) for that specific task
+    task_pending_counts: dict[str, int] = {}
+    for event in pending_events:
+        if isinstance(event, dict) and isinstance(event.get("task_id"), str) and event["task_id"]:
+            tid = event["task_id"]
+            task_pending_counts[tid] = task_pending_counts.get(tid, 0) + 1
+
+    for snap in archive_snapshots:
+        if isinstance(snap, dict) and isinstance(snap.get("task_id"), str) and snap["task_id"]:
+            tid = snap["task_id"]
+            task_pending_counts[tid] = task_pending_counts.get(tid, 0) + 1
+
+    unbound_count = (
+        sum(1 for e in pending_events if isinstance(e, dict) and not (isinstance(e.get("task_id"), str) and e.get("task_id")))
+        + (sum(1 for s in archive_snapshots if isinstance(s, dict) and not (isinstance(s.get("task_id"), str) and s.get("task_id"))) if archive_snapshots else (1 if has_pending_archive else 0))
+    )
+
+    for task in state.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "")
+        specific_count = task_pending_counts.get(task_id, 0)
+        
+        if specific_count > 0:
+            task["status_write_pending"] = True
+            task["status_write_pending_count"] = specific_count
+        else:
+            task.pop("status_write_pending", None)
+            task.pop("status_write_pending_count", None)
 
 
 def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
@@ -2498,7 +2572,13 @@ def recover_status_activity_outbox(
                 continue
             missing.append(event)
             existing[event_id] = digest
-        _append_logs_unlocked(missing)
+        try:
+            _append_logs_unlocked(missing)
+        except ActivityAuditInvariantError:
+            _update_pending_outbox_indicators(state)
+            save_state(state)
+            refresh_derived_status_views(state)
+            raise
         final = _active_activity_event_digests_unlocked(pending_event_ids)
         if set(final) != pending_event_ids:
             final = _activity_event_index_unlocked(pending_event_ids)
@@ -2508,6 +2588,7 @@ def recover_status_activity_outbox(
         ):
             raise RuntimeError("status activity outbox append/readback mismatch")
         state[STATUS_ACTIVITY_OUTBOX_KEY] = None
+        _update_pending_outbox_indicators(state)
         save_state(state)
     return True
 
@@ -2522,6 +2603,7 @@ def commit_state_with_activity_outbox(
             "transaction_id": "ai-status-tx-" + _canonical_json_sha256(events),
             "events": deepcopy(events),
         }
+    _update_pending_outbox_indicators(state)
     save_state(state)
     if state.get(STATUS_ARCHIVE_OUTBOX_KEY) not in (None, {}, []):
         _status_archive_fault("pending_status")

@@ -128,6 +128,50 @@ def compare_dispatch_reason(config: dict[str, Any], tasks: list[dict[str, Any]])
     return rows
 
 
+def compare_outbox_indicators(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compare tasks on board between flag-off and flag-on outbox indicators."""
+    from copy import deepcopy
+
+    # Flag OFF calculation
+    state_off = deepcopy(state)
+    for task in state_off.get("tasks", []):
+        if isinstance(task, dict):
+            task.pop("status_write_pending", None)
+            task.pop("status_write_pending_count", None)
+
+    # Flag ON calculation
+    import os
+    import scripts.ai_status as ai_status
+    state_on = deepcopy(state)
+    env_var = getattr(ai_status, "STATUS_OUTBOX_VISIBILITY_ENABLED_ENV", "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED")
+    old_env = os.environ.get(env_var)
+    os.environ[env_var] = "1"
+    try:
+        ai_status._update_pending_outbox_indicators(state_on)
+    finally:
+        if old_env is None:
+            os.environ.pop(env_var, None)
+        else:
+            os.environ[env_var] = old_env
+
+    tasks_off = {str(t.get("id")): t for t in state_off.get("tasks", []) if isinstance(t, dict)}
+    tasks_on = {str(t.get("id")): t for t in state_on.get("tasks", []) if isinstance(t, dict)}
+
+    rows: list[dict[str, Any]] = []
+    for tid in sorted(tasks_off.keys()):
+        t_off = tasks_off[tid]
+        t_on = tasks_on.get(tid, {})
+        off_pending = t_off.get("status_write_pending", False)
+        on_pending = t_on.get("status_write_pending", False)
+        rows.append({
+            "task": tid,
+            "off_pending": off_pending,
+            "on_pending": on_pending,
+            "on_count": t_on.get("status_write_pending_count"),
+        })
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="Path to a supervisor config JSON.")
@@ -176,6 +220,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"dispatch_reason shadow: {len(dr_rows)} (task,agent) pairs, {len(dr_mismatch)} mismatch")
         if dr_mismatch:
             exit_code = 1
+
+        outbox_rows = compare_outbox_indicators(board)
+        pending_tasks = [r for r in outbox_rows if r["on_pending"]]
+        print(f"outbox_indicators shadow: {len(outbox_rows)} tasks checked, {len(pending_tasks)} marked pending when flag enabled")
 
     return exit_code
 
