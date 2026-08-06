@@ -17,10 +17,14 @@ This task supersedes `SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731` aft
    - The merge commit `9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9` is confirmed to be an ancestor of `origin/dev` (`git merge-base --is-ancestor 9cb030dc1 origin/dev` returned 0).
 3. **Evidence Manifest**:
    - The evidence manifest for `SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731` was committed inside merge commit `9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9` at `docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json`. Note that while commit 23ae23c21 subsequently pruned this path from `dev`, the manifest remains fully accessible in history via merge commit `9cb030dc1`.
-4. **CI & Gate Observation**:
-   - PR #4594 commit check status: `Commit trailers` check failed on subject line >72 chars in `94981c430` (fixed in rewritten commit).
+4. **CI & Gate Observation for PR #4396 & PR #4594**:
+   - On PR #4396 head `48d92e56c2c68ed8cb80cc19f2bbd88b23342906`, Branch CI Gate checks ("Commit trailers" run 30968000543/30967998113, "Runtime mirror guard", "Python packaging provision", "Smoke acceptance") succeeded (conclusion=SUCCESS).
+   - On PR #4396 head `48d92e56c2c68ed8cb80cc19f2bbd88b23342906`, "Pantheon canonical review gate" (run 30968000531) concluded FAILURE ("SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731: no review-proof tag (pantheon-review/approve/48d92e56c2c68ed8cb80cc19f2bbd88b23342906)"), resulting in an aggregate commit status state of failure. PR #4396 was merged into `dev` despite the canonical review gate failure.
+   - On PR #4594 commit check status: `Commit trailers` check failed on subject line >72 chars in `94981c430` (fixed in current branch head commit `0d72a21397173a7b9d37a1170fe6e07a456545b2`).
    - "Pantheon canonical review gate" workflow (`.github/workflows/canonical-review-gate.yml`) was removed from `dev` in commit 23ae23c21 and is currently absent on `dev`.
-5. **Governed Closeout Criteria**:
+5. **Auto-Integrator Eligibility Dry-Run**:
+   - Auto-integrator dry-run execution is moot because PR #4396 was already merged into `dev` at 2026-08-05T02:00:30Z via merge commit `9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9`.
+6. **PR #4386 Status & Governed Closeout Criteria**:
    - PR #4396 is merged and its merge commit is verified on `origin/dev`.
-   - Non-draft status, PR #4386 reconciliation, and exact-head criteria are satisfied.
-
+   - PR #4386 (`SUP-L12-RUNNING-OWNER-RECONCILE-20260729`) remains in state=OPEN (`mergedAt=null`, `mergeCommit=null`, `mergeStateStatus=UNKNOWN/BLOCKED`) on head `d73fa0c7b38af96883153b261080ec3b9c81c202` and its task status is `review` (not `done`).
+   - PR #4386 is explicitly NOT counted as complete, satisfying the prohibition rule in acceptance criteria 5.
