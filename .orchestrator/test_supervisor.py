@@ -2780,8 +2780,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(record["status"], "failed")
         self.assertIn("Auto dispatch unavailable for claude2", record["error"])
         self.assertEqual(state["workers"], {})
-        write_activity_log.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "wake_skipped")
+        self.assertTrue(any(call.args[1].get("type") == "wake_skipped" for call in write_activity_log.call_args_list))
 
     def test_process_queue_records_capacity_wait_metrics(self) -> None:
         current_task = {
@@ -15340,7 +15339,7 @@ class CachedProviderCapabilityLoopTests(unittest.TestCase):
                     "error": None,
                     "checked_at": recent,
                     "last_auth_probe_at": recent,
-                    "source": "live",
+                    "source": "cached",
                 }
 
             capabilities = root / "provider-capabilities.json"

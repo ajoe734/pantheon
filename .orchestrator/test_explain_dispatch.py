@@ -352,5 +352,62 @@ class TestExplainDispatch(unittest.TestCase):
                     load_orchestrator_state(config)
 
 
+    def test_single_probe_failure_hysteresis(self) -> None:
+        import supervisor
+        report = {"providers": {"codex": {"auth_ready": True}}}
+        single_failure = {"provider": "codex", "ready": False, "status": "timeout", "error": "probe timeout"}
+        
+        # Single failure should NOT mark auth_ready as False due to default threshold (3)
+        health = supervisor.apply_provider_probe_to_report(report, "codex", single_failure, config=self.config)
+        self.assertTrue(report["providers"]["codex"]["auth_ready"])
+        self.assertEqual(report["providers"]["codex"]["consecutive_probe_failures"], 1)
+
+        state = {"seen_event_keys": {}}
+        task = {"id": "TASK-HYST-1", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.load_provider_report", return_value=report):
+            res = explain_dispatch_for_task(self.config, state, "TASK-HYST-1", target_agent_filter="Codex")
+            self.assertFalse(res["agents"]["Codex"]["blocked"])
+
+    def test_n_consecutive_probe_failures_blocks_dispatch(self) -> None:
+        import supervisor
+        report = {"providers": {"codex": {"auth_ready": True}}}
+        failure = {"provider": "codex", "ready": False, "status": "timeout", "error": "probe timeout"}
+        
+        config = dict(self.config)
+        config["supervisor"] = {"provider_probe_failure_hysteresis_threshold": 2}
+        
+        # Probe 1: 1 failure < threshold 2
+        supervisor.apply_provider_probe_to_report(report, "codex", failure, config=config)
+        self.assertTrue(report["providers"]["codex"]["auth_ready"])
+
+        # Probe 2: 2 failures == threshold 2 -> effective_ready = False
+        activity_logs = []
+        with unittest.mock.patch("supervisor.write_activity_log", side_effect=lambda cfg, entry: activity_logs.append(entry)):
+            supervisor.apply_provider_probe_to_report(report, "codex", failure, config=config)
+
+        self.assertFalse(report["providers"]["codex"]["auth_ready"])
+        self.assertEqual(report["providers"]["codex"]["consecutive_probe_failures"], 2)
+        self.assertTrue(any(e.get("type") == "provider_capability_transitioned" for e in activity_logs))
+
+        state = {"seen_event_keys": {}}
+        task = {"id": "TASK-HYST-2", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.load_provider_report", return_value=report):
+            res = explain_dispatch_for_task(config, state, "TASK-HYST-2", target_agent_filter="Codex")
+            self.assertTrue(res["agents"]["Codex"]["blocked"])
+
+
+    def test_unsupported_probe_does_not_revoke_auth(self) -> None:
+        import supervisor
+        report = {"providers": {"unknown_prov": {"auth_ready": True}}}
+        unsupported_probe = {"provider": "unknown_prov", "ready": None, "status": "unsupported_probe"}
+        
+        health = supervisor.apply_provider_probe_to_report(report, "unknown_prov", unsupported_probe, config=self.config)
+        self.assertIsNone(health)
+        self.assertTrue(report["providers"]["unknown_prov"]["auth_ready"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
