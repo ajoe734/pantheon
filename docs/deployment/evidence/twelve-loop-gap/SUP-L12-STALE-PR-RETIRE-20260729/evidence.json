@@ -1,19 +1,38 @@
 {
   "schema_version": 1,
   "task_id": "SUP-L12-STALE-PR-RETIRE-20260729",
-  "audit_timestamp": "2026-08-04T15:06:41Z",
-  "owner": "Codex",
-  "reviewer": "Codex2",
+  "audit_timestamp": "2026-08-06T10:37:41Z",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
   "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md",
   "audit_method": {
-    "github": "gh pr view <number> --repo aJoe734/pantheon --json number,title,state,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,mergedAt,closedAt,updatedAt,autoMergeRequest,url",
-    "canonical_status": "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task-id>",
+    "github": "gh pr view <number> --repo ajoe734/pantheon --json number,title,state,headRefName,headRefOid,baseRefName,mergeStateStatus,mergedAt,closedAt,updatedAt,mergeCommit,url",
+    "canonical_status": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task-id>",
     "ancestry": "git merge-base --is-ancestor <commit> origin/dev"
   },
-  "review": {
-    "status": "pending_independent_review",
-    "required_reviewer": "Codex2",
-    "decision": null
+  "scope_boundary": {
+    "in_scope_prs": [4367, 4364, 4297, 4313],
+    "supporting_prs": [4365, 4366],
+    "rule": "This task only adjudicates the PR set named by the 1025Z three-pass gap audit. Other open L12-prefixed PRs belong to distinct nonterminal canonical task rows with their own owners and reviewers; retiring them from here would preempt those rows.",
+    "out_of_scope_open_l12_prs_observed_2026-08-06": [4561, 4550, 4528, 4468, 4465, 4455, 4452, 4450, 4425, 4395, 4389, 4386, 4382, 4362]
+  },
+  "reassignment_history": {
+    "note": "This task was reopened by Human/Ops on 2026-08-06 after the 2026-08-05 Codex-quota mass reassignment moved it from Codex/Codex2 to Claude/Antigravity without re-examining the underlying block. The re-verification below found no surviving blocking condition, so the task continued rather than being re-blocked.",
+    "previous_owner": "Codex",
+    "previous_reviewer": "Codex2",
+    "prior_review_findings_resolved": [
+      {
+        "finding": "committed README.md had a trailing blank line at EOF; git diff --check reported it",
+        "resolved_at_commit": "343bc50bedd6ca9012613ba5d4167dfad0ce4b83",
+        "reverification": "git diff --check origin/dev...HEAD (clean, exit 0) and sha256sum -c evidence.sha256 (OK) at head 343bc50bedd6ca9012613ba5d4167dfad0ce4b83"
+      },
+      {
+        "finding": "pushed task brief falsely recorded status review_approved and claimed an independent review at old head eedccf8c6aaf495d85e6ff2b07fa4a678b000db4",
+        "resolved_at_commit": "343bc50bedd6ca9012613ba5d4167dfad0ce4b83",
+        "reverification": "git show 343bc50be:.orchestrator/task-briefs/sup_l12_stale_pr_retire_20260729.md records status in_progress and claims no review decision"
+      }
+    ],
+    "blocking_condition_recheck": "PR #4372 mergeStateStatus is BLOCKED solely because the canonical review gate reports no review-proof tag (pantheon-review/approve/<head>) for head 343bc50bed. Commit trailers, Python packaging provision, Runtime mirror guard and Smoke acceptance all pass. That is the ordinary pre-approval state, not a blocker: it clears when the assigned reviewer approves this exact head."
   },
   "branch_provenance": {
     "note": "The pre-dispatch local branch history contained ac6ee7f2f1b4290fa067024fd84efa5a79832647 with a P0-TW-PAPER-ACTIVATE-001 subject and trailers. Its actual patch changes only this task's brief, and the full PR diff relative to origin/dev is limited to the four task-scoped files listed below. This task did not rewrite the already-pushed branch history or force-push.",
@@ -26,7 +45,8 @@
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/README.md",
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/evidence.json",
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/evidence.sha256"
-    ]
+    ],
+    "trailer_disclosure": "Commits 0484563ba..343bc50be carry LLM-Agent: Codex / Reviewer: Codex2 because they predate the reassignment. They are already pushed and are not amended or rewritten. Commits from this cycle carry LLM-Agent: Claude / Reviewer: Antigravity."
   },
   "supporting_merged_prs": [
     {
@@ -57,12 +77,14 @@
       "head_branch": "task/SUP-L12-REVIEW-PRIORITY-GATE-20260729",
       "head_sha": "574e420ec4e78b58a6fdc530fffe2d9ab4220295",
       "base_branch": "dev",
-      "merge_state_status": "BEHIND",
-      "auto_merge_request": false,
+      "merge_state_status": "BLOCKED",
+      "closed_at": "2026-07-29T11:38:20Z",
+      "merged_at": null,
       "associated_task": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
-      "task_status": "archived (per 1025Z gap audit)",
+      "task_status": "archived (ai-task-archive/tasks/SUP-L12-REVIEW-PRIORITY-GATE-20260729.json)",
       "action": "RETIRED_ALREADY_CLOSED",
-      "rationale": "The receipt duplicates the delivery and closeout evidence already merged by #4365 and #4366. It remains closed and unmerged; no further PR mutation is necessary."
+      "rationale": "The receipt duplicates the delivery and closeout evidence already merged by #4365 and #4366. It remains closed and unmerged; no further PR mutation is necessary.",
+      "recheck_2026-08-06": "Unchanged since the 2026-08-04 audit: still CLOSED, still unmerged, same head."
     },
     {
       "pr_number": 4364,
@@ -72,32 +94,36 @@
       "head_branch": "task/L12-VERIFY-OBS-001",
       "head_sha": "f3756cec99a8c44d47c075a475c25cf86a4d3171",
       "base_branch": "dev",
-      "merge_state_status": "BEHIND",
-      "auto_merge_request": false,
+      "merge_state_status": "BLOCKED",
+      "updated_at": "2026-07-30T15:33:34Z",
       "associated_task": "L12-VERIFY-OBS-001",
       "task_owner": "Antigravity",
       "task_reviewer": "Claude2",
       "task_status": "review",
       "action": "PRESERVED_OPEN",
-      "rationale": "This remains active product-proof work. The canonical task row's next field names a different stale head, but that discrepancy is not an exact reviewer finding that the product proof is invalid. Closing it would violate this task's explicit non-closure condition; the assigned owner/reviewer must refresh and review the exact current head."
+      "rationale": "This remains active product-proof work. The canonical task row's next field names a different stale head, but that discrepancy is not an exact reviewer finding that the product proof is invalid. Closing it would violate this task's explicit non-closure condition; the assigned owner/reviewer must refresh and review the exact current head.",
+      "recheck_2026-08-06": "Unchanged: still OPEN at the same head, canonical row still status review under owner Antigravity / reviewer Claude2. The preservation decision still holds."
     },
     {
       "pr_number": 4297,
       "title": "L12-FLEET-STATUS-SYNC-001: anchor closeout evidence",
       "url": "https://github.com/ajoe734/pantheon/pull/4297",
-      "state": "OPEN",
+      "state": "MERGED",
       "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
-      "head_sha": "23a7d3244ad89d093a006ff6ace86f13053d794c",
+      "head_sha_at_2026-08-04_audit": "23a7d3244ad89d093a006ff6ace86f13053d794c",
+      "head_sha_at_merge": "70360fb43755cf4b21c918f4a7996433acb22172",
+      "merge_commit": "5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61",
+      "merged_at": "2026-08-05T01:28:05Z",
       "base_branch": "dev",
-      "merge_state_status": "BEHIND",
-      "auto_merge_request": false,
+      "is_ancestor_of_origin_dev": true,
       "associated_task": "L12-FLEET-STATUS-SYNC-001",
-      "task_owner": "Codex2",
-      "task_reviewer": "Codex",
-      "task_status": "review_approved",
-      "review_binding_head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2",
-      "action": "PRESERVED_REFRESH_REQUIRED",
-      "rationale": "The active row is already review-approved, while the live PR head differs from its canonical review binding and is behind dev. It must be refreshed and independently reviewed at an exact new head, not closed as duplicate proof."
+      "task_status": "done, archived (ai-task-archive/tasks/L12-FLEET-STATUS-SYNC-001.json)",
+      "task_owner": "Claude",
+      "task_reviewer": "Antigravity",
+      "task_review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+      "action": "PRESERVED_THEN_RESOLVED_BY_OWNER_REFRESH",
+      "rationale": "The 2026-08-04 decision was PRESERVED_REFRESH_REQUIRED: refresh and independent exact-head review rather than closure. That is exactly what happened. The branch was refreshed from 23a7d3244ad89d093a006ff6ace86f13053d794c to 70360fb43755cf4b21c918f4a7996433acb22172 and merged on 2026-08-05; its task is archived done. Closing this PR as a stale duplicate would have destroyed work that subsequently merged.",
+      "recheck_2026-08-06": "State changed from OPEN to MERGED. The merge commit 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61 is an ancestor of origin/dev; the pre-merge head SHA is not, which is the expected squash-merge shape."
     },
     {
       "pr_number": 4313,
@@ -107,29 +133,47 @@
       "head_branch": "task/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
       "head_sha": "88a2c7b6bd96e23c8323b15f2675f413b7f9a5c2",
       "base_branch": "dev",
-      "merge_state_status": "BEHIND",
-      "auto_merge_request": false,
+      "merge_state_status": "BLOCKED",
+      "updated_at": "2026-08-04T14:46:03Z",
       "associated_task": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728",
-      "task_owner": "Codex",
-      "task_reviewer": "Codex2",
-      "task_status": "blocked",
-      "waiting_for": "Codex2",
-      "action": "PRESERVED_BLOCKED",
-      "rationale": "This is the current task-scoped refresh/closeout path, with a canonical blocker and no accepted replacement. It must remain open until the declared owner/reviewer resolve its refresh and closeout gate."
+      "task_owner": "Claude",
+      "task_reviewer": "Antigravity",
+      "task_status": "in_progress",
+      "action": "PRESERVED_OPEN",
+      "rationale": "Still the current task-scoped refresh/closeout path with no accepted replacement, so it must remain open until its declared owner and reviewer resolve it.",
+      "recheck_2026-08-06": "The canonical row is no longer blocked on Codex2: after the 2026-08-05 reassignment it is in_progress under owner Claude / reviewer Antigravity. The 2026-08-04 PRESERVED_BLOCKED label is therefore superseded by PRESERVED_OPEN with an active nonterminal owner. The PR head is unchanged. Note that its now-merged sibling #4297 covers L12-FLEET-STATUS-SYNC-001, not this closeout row, so #4297's merge does not make #4313 a duplicate; that determination belongs to the owner of L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728, not to this retirement task."
     }
   ],
   "conclusion": {
     "retired_prs": [4367],
-    "preserved_prs": [4297, 4313, 4364],
+    "preserved_prs": [4313, 4364],
+    "preserved_then_merged_prs": [4297],
     "github_mutations_by_this_task": [],
-    "reason_no_additional_pr_was_closed": "Every other scoped PR belongs to a nonterminal canonical task row; #4364 is also explicitly protected active product proof."
+    "reason_no_additional_pr_was_closed": "Every other scoped PR belongs to a nonterminal canonical task row; #4364 is also explicitly protected active product proof. The 2026-08-06 recheck strengthens this: #4297, which this task chose to preserve rather than close, was refreshed by its owner and merged into dev on 2026-08-05.",
+    "acceptance_mapping": {
+      "confirm_4367_superseded": "Confirmed. #4365 merge commit 18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d and #4366 merge commit 8ea01a8e3993b3dabc6cd475c7058d299eaf4a01 are both ancestors of origin/dev; #4367 is closed and unmerged.",
+      "close_or_supersede_with_exact_rationale": "#4367 is retired as already-closed with the exact PR/head rationale above. No other scoped PR qualified, and each non-closure is justified per PR.",
+      "do_not_close_4364": "Honored. #4364 stays open; no GitHub mutation was made against it by this task.",
+      "record_pr_number_state_head_owner_task_action": "Recorded per PR in pr_decisions above, with both the 2026-08-04 observation and the 2026-08-06 recheck."
+    }
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "required_reviewer": "Antigravity",
+    "decision": null,
+    "binding_head_sha": null,
+    "note": "Antigravity must validate the exact PR heads and rechecks above at the exact PR #4372 head, then approve with REVIEW_FILE bound to this manifest."
   },
   "verification": [
-    "git fetch origin dev --quiet",
+    "git fetch origin +refs/heads/dev:refs/remotes/origin/dev (origin/dev at 003688bd7402d051986c07f1769285925af24e1b)",
     "git merge-base --is-ancestor 18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d origin/dev (pass)",
     "git merge-base --is-ancestor 8ea01a8e3993b3dabc6cd475c7058d299eaf4a01 origin/dev (pass)",
-    "git merge-base --is-ancestor 23a7d3244ad89d093a006ff6ace86f13053d794c origin/dev (not ancestor; expected for open refresh path)",
+    "git merge-base --is-ancestor 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61 origin/dev (pass; #4297 merge commit)",
+    "git merge-base --is-ancestor 70360fb43755cf4b21c918f4a7996433acb22172 origin/dev (not ancestor; expected for a squash-merged head)",
     "git merge-base --is-ancestor 88a2c7b6bd96e23c8323b15f2675f413b7f9a5c2 origin/dev (not ancestor; expected for open refresh path)",
-    "git merge-base --is-ancestor f3756cec99a8c44d47c075a475c25cf86a4d3171 origin/dev (not ancestor; expected for active review path)"
+    "git merge-base --is-ancestor f3756cec99a8c44d47c075a475c25cf86a4d3171 origin/dev (not ancestor; expected for active review path)",
+    "git diff --check origin/dev...HEAD (clean)",
+    "sha256sum -c docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/evidence.sha256 (OK)",
+    "gh pr checks 4372 --repo ajoe734/pantheon (Commit trailers, Python packaging provision, Runtime mirror guard, Smoke acceptance pass; canonical review gate fails only for the missing pre-approval review-proof tag)"
   ]
 }

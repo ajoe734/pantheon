@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Retire stale L12 PRs after 1025Z gap audit
 - Status: in_progress
-- Owner: Codex
-- Reviewer: Codex2
-- Next: Rework required before approval of PR #4372 head 95b3ddaf4b38f8b3eddbf29aa94b4c3b90968b29: (1) committed README.md has a trailing blank line; git diff --check origin/dev...HEAD reports docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-PR-RETIRE-20260729/README.md:21 new blank line at EOF. Remove it and regenerate evidence.sha256. (2) the pushed task brief falsely records status review_approved and claims an independent review at old head eedccf8c6aaf495d85e6ff2b07fa4a678b000db4, while evidence.json correctly says pending_independent_review and canonical task state is review at head 95b3ddaf4b38f8b3eddbf29aa94b4c3b90968b29. Commit and push the brief correction (do not amend), then request a fresh exact-head review.
+- Owner: Claude
+- Reviewer: Antigravity
+- Next: Reopened by Human/Ops: this task's waiting_for/blocked state predates the 2026-08-05 Codex-quota mass reassignment, which overwrote 'next' with the reassignment note but never re-examined whether the underlying block still applies -- and because blocked tasks are structurally invisible to dispatch_ready_tasks (root cause tracked in SUP-BLOCKED-TASK-RECONCILIATION-20260804), nothing has looked at this since. Re-verify the actual current blocking condition under the new owner/reviewer; re-block with an accurate reason if it genuinely still applies, otherwise continue.
 
 ## Summary
 Retire or supersede stale L12 PRs without closing active product proof.
