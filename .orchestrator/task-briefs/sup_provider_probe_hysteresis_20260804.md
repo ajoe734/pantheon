@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Decouple provider capability probing from the dispatch hot path and add failure hysteresis
-- Status: todo
+- Status: in_progress
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Codex quota exhausted 2026-08-05: reassigned Codex2->Antigravity / Codex->Claude to keep fleet moving
+- Next: Investigated reviewer reopening feedback (PR commit structure & hysteresis edge cases); updated review manifest Head SHA and created anchor commit 0ceb95c8a. Continuing detailed fixes.
 
 ## Summary
 The single highest-value fix from the 2026-08-04 session: a flaky, auto-refreshing, inline capability probe silently zeroed out dispatch for Claude/Claude2/Antigravity for hours because one transient CLI timeout under load was treated as ground truth with no debounce and no visible signal.
