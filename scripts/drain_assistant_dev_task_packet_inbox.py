@@ -15,7 +15,7 @@ STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or CODE_ROOT).resolve(
 
 # Import path resolution precedence: CODE_ROOT first so local script code is used,
 # followed by STATUS_ROOT so central status packages/libraries can be resolved.
-for root in (CODE_ROOT, STATUS_ROOT):
+for root in (STATUS_ROOT, CODE_ROOT):
     bff_dir = root / "services" / "control-plane" / "bff"
     if bff_dir.exists() and str(bff_dir) not in sys.path:
         sys.path.insert(0, str(bff_dir))
