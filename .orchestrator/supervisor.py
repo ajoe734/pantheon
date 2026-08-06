@@ -18456,6 +18456,7 @@ def plan_helper_claim_assignment(
             owner_name=owner_name,
         ),
     )
+    fallbacks = l12_provider_first_candidates(task, fallbacks)
     if not fallbacks:
         return None
     idle_agent_name = canonical_agent_name(config, idle_agent_name)

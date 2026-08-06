@@ -4014,6 +4014,66 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
+    def test_dispatcher_helper_claim_l12_filters_non_provider_first_fallback(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"},
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Claude2",
+                        "Codex2",
+                        "Antigravity",
+                    ],
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                {"queue": {"events": {}}, "workers": {}},
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
     def test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused(self) -> None:
         config = {
             "schema": {

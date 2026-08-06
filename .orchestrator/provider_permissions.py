@@ -266,6 +266,10 @@ def _previous_provider_auth_probe(config: dict[str, Any], provider_id: str) -> d
     return {}
 
 
+def provider_auth_probe_due(config: dict[str, Any], provider_id: str, previous: dict[str, Any]) -> bool:
+    return _auth_probe_due(config, provider_id, previous)
+
+
 def _auth_probe_due(config: dict[str, Any], provider_id: str, previous: dict[str, Any]) -> bool:
     settings = _auth_probe_settings(config, provider_id)
     if not to_bool(settings.get("enabled", True)):
