@@ -107,7 +107,7 @@
       "id": "AC4",
       "criterion": "Run focused stale-reaper tests, full supervisor tests, JSON, diff, trailer, and config-boundary checks.",
       "status": "pass",
-      "proof": "Five focused regressions and all 473 supervisor tests passed on composed head 941c15a3; both JSON manifests, diff whitespace, commit trailers, anchor ancestry, and config boundary passed."
+      "proof": "Five focused regressions and all 473 supervisor tests passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b); both JSON manifests, diff whitespace, commit trailers, anchor ancestry, and config boundary passed."
     },
     {
       "id": "AC5",
@@ -127,12 +127,12 @@
       {
         "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
         "result": "pass",
-        "conclusion": "Five focused stale-reaper regressions passed on composed head 941c15a3."
+        "conclusion": "Five focused stale-reaper regressions passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b)."
       },
       {
         "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "All 473 supervisor tests passed in 10.915 seconds on composed head 941c15a3."
+        "conclusion": "All 473 supervisor tests passed in 10.915 seconds on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b)."
       },
       {
         "command": "jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json && jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
