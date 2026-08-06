@@ -10,7 +10,7 @@ was squash-merged into `dev` on 2026-08-05 as
 its own review manifest.
 
 Subject PR #4386 is a separate matter and is **still not complete**. It remains
-open and blocked (`MERGEABLE`/`BLOCKED` at head `bce88797`), and its canonical row
+open and blocked (`MERGEABLE`/`BLOCKED` at observed head `f9dc99de61c3fdec2e08c14ea5824d767e5e2bff`), and its canonical row
 `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` is `todo`. Nothing in this evidence
 counts it, or the running-owner support claim that depends on it, as delivered.
 
@@ -41,7 +41,7 @@ This branch had carried its own independent fix for the first defect. Since PR #
 | PR #4396 | `MERGED` 2026-08-05T02:00:30Z, squash commit `9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9`, ancestor of `dev` | Governably integrated through protected merge. |
 | Reconcile task row | Archived `done`, owner `Antigravity`, reviewer `Claude`, closed 2026-08-05T02:04:15Z | Owner closeout followed the merge, in that order. |
 | Historical gate denial | `approval_reviewer_mismatch` against the then-current `Codex` reviewer assignment | Superseded; no merge ever occurred under the mismatched authority. |
-| PR #4386 | Open, `MERGEABLE`/`BLOCKED`, head `bce88797825c4da98f444854fbc38e1ec3d2f43d`, canonical review gate `FAILURE` | Not countable as complete. |
+| PR #4386 | Observed 2026-08-06T13:49:14Z: head `f9dc99de61c3fdec2e08c14ea5824d767e5e2bff`, `OPEN`, `MERGEABLE`/`BLOCKED`, required checks SUCCESS, canonical review gate context ABSENT awaiting review | Not countable as complete. |
 | `SUP-L12-RUNNING-OWNER-RECONCILE-20260729` | `todo`, owner `Claude`, reviewer `Antigravity` | Not `review_approved`; auto-integrator reports `candidate_count 0`. |
 
 ## Safety repair (historical, 2026-08-04)

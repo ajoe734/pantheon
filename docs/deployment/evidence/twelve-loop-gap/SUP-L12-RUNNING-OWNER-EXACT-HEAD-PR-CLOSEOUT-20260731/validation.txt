@@ -61,10 +61,12 @@ Live PR state:
 - git merge-base --is-ancestor 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9 origin/dev
   Result: YES (exit 0). The merge is genuinely on dev.
 - gh pr view 4386 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision
-  Result: OPEN, head bce88797825c4da98f444854fbc38e1ec3d2f43d, mergeStateStatus
-  BLOCKED, mergeable MERGEABLE, autoMergeRequest null.
+  Result: OPEN, observed 2026-08-06T13:49:14Z at head f9dc99de61c3fdec2e08c14ea5824d767e5e2bff,
+  mergeStateStatus BLOCKED, mergeable MERGEABLE, autoMergeRequest null.
 - gh pr view 4386 --repo ajoe734/pantheon --json statusCheckRollup
-  Result: Pantheon canonical review gate FAILURE; other contexts SUCCESS.
+  Result: Required checks (Commit trailers, Runtime mirror guard, Python packaging provision,
+  Smoke acceptance) all SUCCESS. Pantheon canonical review gate context is ABSENT (awaiting
+  fresh exact-head review, which is why mergeStateStatus is BLOCKED).
 
 Canonical task rows (read through $PANTHEON_COMMAND_ROOT, not the worktree):
 - "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731
