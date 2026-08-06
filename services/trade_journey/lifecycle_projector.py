@@ -788,6 +788,15 @@ class LifecycleProjector:
         self.clock = clock
         self.state = self._load_state()
         self.state["restart_count"] = int(self.state.get("restart_count", 0)) + 1
+        # The folded aggregates live in memory for the process lifetime.  They
+        # are rebuilt from disk exactly once, at startup, so no poll pays the
+        # cost of re-reading the whole read model.
+        self._materializer = IncrementalLifecycleMaterializer(
+            self.state, journey_events_fn=self._journey_events
+        )
+        self._serialized_aggregates = self._materializer.serialize_aggregates()
+        self.state["aggregates"] = self._serialized_aggregates
+        self.state.pop("canonical_events", None)
 
     @property
     def checkpoint(self) -> int:
@@ -803,7 +812,7 @@ class LifecycleProjector:
             "checkpoint": 0,
             "generation": 0,
             "restart_count": 0,
-            "canonical_events": {},
+            "aggregates": {},
             "identity_chains": {},
             "quarantine": [],
             "controller": {
@@ -895,6 +904,21 @@ class LifecycleProjector:
             self._health_snapshot(candidate),
         )
 
+    def _bounded_state_copy(self) -> dict[str, Any]:
+        """Copy the mutable non-aggregate state without duplicating event data.
+
+        Only fixed-size scalars, the controller dict, the bounded quarantine
+        ring and a shallow key copy of ``identity_chains`` are duplicated;
+        ``_admit_identity`` replaces chain entries rather than mutating them, so
+        the shallow copy is safe.  Aggregates are staged separately, which is
+        why no poll deep-copies the read model.
+        """
+        candidate = dict(self.state)
+        candidate["controller"] = copy.deepcopy(self.state.get("controller") or {})
+        candidate["quarantine"] = list(self.state.get("quarantine") or [])
+        candidate["identity_chains"] = dict(self.state.get("identity_chains") or {})
+        return candidate
+
     def project_records(
         self,
         records: Iterable[Mapping[str, Any]],
@@ -904,19 +928,21 @@ class LifecycleProjector:
     ) -> ProjectionResult:
         if mode not in PROJECTION_MODES:
             raise ValueError(f"unsupported projection mode: {mode}")
-        candidate = copy.deepcopy(self.state)
-        accepted = duplicates = ignored = quarantined = 0
+        candidate = self._bounded_state_copy()
+        duplicates = ignored = quarantined = 0
         max_seen = int(candidate.get("checkpoint", 0))
         now = self.clock()
 
-        from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
-        inc_mat = IncrementalLifecycleMaterializer(candidate)
+        inc_mat = self._materializer
+        inc_mat.reset_stats()
 
         ordered_records = sorted(
             (dict(record) for record in records),
             key=lambda row: (int(row.get("ingested_seq") or 0), str(row.get("event_id") or "")),
         )
         batch_entries: list[dict[str, Any]] = []
+        batch_fingerprints: dict[str, str] = {}
+        promotions: dict[str, set[str]] = {}
         for row in ordered_records:
             sequence = int(row.get("ingested_seq") or 0)
             if mode in {"live", "recovery"} and sequence <= 0:
@@ -936,23 +962,32 @@ class LifecycleProjector:
                 }
             )
 
-            # Check duplicate against existing materializer aggregates
+            # Idempotency is resolved against committed aggregate state *and*
+            # against the entries already accepted from this same batch, so an
+            # intra-batch duplicate is never double-counted and an intra-batch
+            # conflict fails closed before the controller is touched at all.
             try:
-                identity = self._identity(event) if event.get("event_type") in LIFECYCLE_EVENT_TYPES else {}
-                journey_id = identity.get("journey_id")
+                journey_id = self._identity(event).get("journey_id")
             except InvalidLifecycleEvent:
                 journey_id = None
-            existing_agg = inc_mat.aggregates.get(journey_id) if journey_id else None
-            if existing_agg and event_id in existing_agg.events_by_id:
-                existing_entry = existing_agg.events_by_id[event_id]
-                if existing_entry.get("fingerprint") != fingerprint:
+            known_fingerprint = None
+            if journey_id is not None:
+                aggregate = inc_mat.aggregates.get(journey_id)
+                if aggregate is not None:
+                    known_fingerprint = aggregate.event_fingerprints.get(event_id)
+            if known_fingerprint is None:
+                known_fingerprint = batch_fingerprints.get(event_id)
+            if known_fingerprint is not None:
+                if known_fingerprint != fingerprint:
                     raise ConflictingLifecycleEvent(
                         f"conflicting canonical event_id: {event_id}"
                     )
                 duplicates += 1
-                if mode == "live" and existing_entry.get("source_mode") != "live":
-                    existing_entry["source_mode"] = "live"
-                    existing_entry["accepted_live"] = True
+                if mode == "live" and journey_id is not None:
+                    # A recovery/backfill event re-delivered live promotes the
+                    # stored aggregate; the promotion is staged, not applied to
+                    # committed state, so a failed publish cannot leak it.
+                    promotions.setdefault(journey_id, set()).add(event_id)
                 continue
 
             try:
@@ -986,7 +1021,16 @@ class LifecycleProjector:
                 "accepted_live": mode == "live",
             }
             batch_entries.append(entry)
-            accepted += 1
+            batch_fingerprints[event_id] = fingerprint
+
+        # Fold the batch into deep copies of only the aggregates it touches.
+        # Conflicts raise here, before checkpoint/generation/controller move.
+        staged, affected, accepted, staged_duplicates = inc_mat.stage_batch(
+            batch_entries,
+            promotions=promotions,
+            journey_events_fn=self._journey_events,
+        )
+        duplicates += staged_duplicates
 
         if mode in {"live", "recovery"}:
             candidate["checkpoint"] = max_seen
@@ -1023,13 +1067,7 @@ class LifecycleProjector:
         )
         if mode == "live" and accepted:
             controller["last_live_success_at"] = now
-            live_times = [
-                entry["event"]["created_at"]
-                for agg in inc_mat.aggregates.values()
-                for entry in agg.events_by_id.values()
-                if entry.get("source_mode") == "live"
-            ] + [entry["event"]["created_at"] for entry in batch_entries if entry.get("source_mode") == "live"]
-            controller["last_live_event_at"] = max(live_times) if live_times else None
+            controller["last_live_event_at"] = inc_mat.last_live_event_at(staged)
         elif mode == "recovery":
             controller["last_recovery_at"] = now
         elif mode == "backfill":
@@ -1058,28 +1096,23 @@ class LifecycleProjector:
         controller["last_successful_publish_at"] = now
         controller["last_successful_publish_generation"] = int(candidate["generation"])
 
-        inc_mat.apply_batch(
-            batch_entries,
-            controller=controller,
-            journey_events_fn=self._journey_events,
-            loop_record_builder_fn=self._loop_records_for_entries,
+        # Only the staged aggregates are re-serialized; the rest are carried
+        # over by reference from the previous poll.
+        candidate["aggregates"] = inc_mat.serialize_aggregates(
+            base=self._serialized_aggregates, staged=staged
         )
-
-        # Store updated aggregates in candidate state dict
-        candidate["aggregates"] = {
-            jid: agg.to_dict() for jid, agg in inc_mat.aggregates.items()
-        }
 
         journey_payload, loop_payload = inc_mat.render_full_payloads(
             schema_version_journey=JOURNEY_STORE_SCHEMA,
             schema_version_loop=LOOP_STORE_SCHEMA,
             generation=int(candidate["generation"]),
             controller=controller,
-            journey_events_fn=self._journey_events,
-            loop_record_builder_fn=self._loop_records_for_entries,
+            staged=staged,
         )
 
         self._publish_candidate(candidate, journey_payload, loop_payload)
+        inc_mat.commit(staged)
+        self._serialized_aggregates = candidate["aggregates"]
         self.state = candidate
         return ProjectionResult(
             checkpoint=int(candidate["checkpoint"]),
@@ -1101,7 +1134,7 @@ class LifecycleProjector:
         mode: str,
     ) -> None:
         """Persist a semantic health heartbeat without advancing live truth."""
-        candidate = copy.deepcopy(self.state)
+        candidate = self._bounded_state_copy()
         now = self.clock()
         controller = candidate.setdefault("controller", {})
         semantic_fields = (
@@ -1156,14 +1189,11 @@ class LifecycleProjector:
             controller["generation"] = int(candidate["generation"])
             controller["last_successful_publish_at"] = now
             controller["last_successful_publish_generation"] = int(candidate["generation"])
-            inc_mat = IncrementalLifecycleMaterializer(candidate)
-            journey_payload, loop_payload = inc_mat.render_full_payloads(
+            journey_payload, loop_payload = self._materializer.render_full_payloads(
                 schema_version_journey=JOURNEY_STORE_SCHEMA,
                 schema_version_loop=LOOP_STORE_SCHEMA,
                 generation=int(candidate["generation"]),
                 controller=controller,
-                journey_events_fn=self._journey_events,
-                loop_record_builder_fn=self._loop_records_for_entries,
             )
             self._publish_candidate(candidate, journey_payload, loop_payload)
         else:
@@ -1174,7 +1204,7 @@ class LifecycleProjector:
 
     def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
         """Record source failure while preserving the last-good read-model bundle."""
-        candidate = copy.deepcopy(self.state)
+        candidate = self._bounded_state_copy()
         controller = candidate.setdefault("controller", {})
         previous_semantics = (
             controller.get("status"),
@@ -1202,14 +1232,11 @@ class LifecycleProjector:
             controller["generation"] = int(candidate["generation"])
             controller["last_successful_publish_at"] = now
             controller["last_successful_publish_generation"] = int(candidate["generation"])
-            inc_mat = IncrementalLifecycleMaterializer(candidate)
-            journey_payload, loop_payload = inc_mat.render_full_payloads(
+            journey_payload, loop_payload = self._materializer.render_full_payloads(
                 schema_version_journey=JOURNEY_STORE_SCHEMA,
                 schema_version_loop=LOOP_STORE_SCHEMA,
                 generation=int(candidate["generation"]),
                 controller=controller,
-                journey_events_fn=self._journey_events,
-                loop_record_builder_fn=self._loop_records_for_entries,
             )
             self._publish_candidate(candidate, journey_payload, loop_payload)
         else:
@@ -1331,54 +1358,6 @@ class LifecycleProjector:
                 f"identity chain conflict for {journey_id}: {', '.join(mismatched)}"
             )
 
-    def _render(self, state: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        canonical_entries = list((state.get("canonical_events") or {}).values())
-        if not canonical_entries and isinstance(state.get("aggregates"), dict):
-            for agg in state["aggregates"].values():
-                events_map = agg.get("events_by_id") if isinstance(agg, dict) else getattr(agg, "events_by_id", {})
-                canonical_entries.extend(events_map.values())
-        canonical_entries.sort(key=self._entry_sort_key)
-        journey_events: list[dict[str, Any]] = []
-        for entry in canonical_entries:
-            journey_events.extend(self._journey_events(entry))
-        journey_events.sort(key=JourneyMaterializer._sort_key)
-        materializer = JourneyMaterializer()
-        materializer.rebuild(journey_events)
-        controller = copy.deepcopy(state.get("controller") or {})
-        controller["generation"] = int(state.get("generation", 0))
-        controller["restart_count"] = int(state.get("restart_count", 0))
-        loop_records = self._loop_records(canonical_entries, materializer, controller)
-        journey_payload = {
-            "schema_version": JOURNEY_STORE_SCHEMA,
-            "projector_owned": True,
-            "generation": int(state.get("generation", 0)),
-            "projection_mode": controller.get("mode"),
-            "accepted_live": bool(controller.get("accepted_live")),
-            "controller": controller,
-            "events": journey_events,
-        }
-        loop_payload = {
-            "schema_version": LOOP_STORE_SCHEMA,
-            "projector_owned": True,
-            "generation": int(state.get("generation", 0)),
-            "projection_mode": controller.get("mode"),
-            "accepted_live": bool(controller.get("accepted_live")),
-            "controller": controller,
-            "records": {record["id"]: record for record in loop_records},
-        }
-        return journey_payload, loop_payload
-
-    @staticmethod
-    def _entry_sort_key(entry: Mapping[str, Any]) -> tuple[str, int, str, str]:
-        identity = entry.get("identity") or {}
-        event = entry.get("event") or {}
-        return (
-            str(identity.get("journey_id") or ""),
-            int(entry.get("sequence_no") or 0),
-            str(event.get("created_at") or ""),
-            str(event.get("event_id") or ""),
-        )
-
     @classmethod
     def _journey_events(cls, entry: Mapping[str, Any]) -> list[dict[str, Any]]:
         source = entry["event"]
@@ -1488,79 +1467,6 @@ class LifecycleProjector:
         if event_type == "reconciliation_failed":
             return [("reconciliation", "failed")]
         return []
-
-    @staticmethod
-    def _loop_records_for_entries(
-        entry_lists: Sequence[Sequence[Mapping[str, Any]]],
-        materializer: JourneyMaterializer,
-        controller: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
-        records: list[dict[str, Any]] = []
-        for lifecycle in entry_lists:
-            if not lifecycle:
-                continue
-            sorted_lifecycle = sorted(lifecycle, key=LifecycleProjector._entry_sort_key)
-            identity = dict(sorted_lifecycle[0]["identity"])
-            journey_id = identity["journey_id"]
-            projection = materializer.get(
-                journey_id,
-                tenant_id=identity["tenant_id"],
-                environment=identity["environment"],
-            )
-            if projection is None:
-                continue
-            event_types = [entry["event"]["event_type"] for entry in sorted_lifecycle]
-            source_modes = sorted({str(entry["source_mode"]) for entry in sorted_lifecycle})
-            accepted_live = any(bool(entry.get("accepted_live")) for entry in sorted_lifecycle)
-            status = projection.snapshot.get("status") or "open"
-            records.append(
-                {
-                    "id": identity["loop_run_id"],
-                    "loop_run_id": identity["loop_run_id"],
-                    "journey_id": journey_id,
-                    "loop_type": "paper_execution",
-                    "status": "active" if status in {"open", "executing", "partially_filled"} else status,
-                    "activePeriod": {
-                        "start": projection.snapshot.get("created_at"),
-                        "end": projection.snapshot.get("updated_at")
-                        if status in {"completed", "completed_with_variance", "failed", "cancelled"}
-                        else None,
-                    },
-                    **identity,
-                    "source": "canonical_telemetry_lifecycle_projector",
-                    "source_modes": source_modes,
-                    "accepted_live": accepted_live,
-                    "projection_mode": "live" if accepted_live else "+".join(source_modes),
-                    "canonical_event_count": len(sorted_lifecycle),
-                    "fill_event_count": sum(
-                        event_type
-                        in {"paper_fill_simulated", "fill_received", "order_partially_filled", "order_filled"}
-                        for event_type in event_types
-                    ),
-                    "position_event_count": sum("position_snapshot" in event_type for event_type in event_types),
-                    "reconciliation_event_count": sum(event_type.startswith("reconciliation_") for event_type in event_types),
-                    "last_canonical_event_id": sorted_lifecycle[-1]["event"]["event_id"],
-                    "last_source_offset": sorted_lifecycle[-1].get("ingested_seq"),
-                    "last_projected_at": controller.get("last_projection_success_at"),
-                    "controller_id": controller.get("controller_id"),
-                    "controller_generation": controller.get("generation"),
-                    "deployment_sha": controller.get("deployment_sha"),
-                }
-            )
-        return records
-
-    @staticmethod
-    def _loop_records(
-        entries: Sequence[Mapping[str, Any]],
-        materializer: JourneyMaterializer,
-        controller: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
-        grouped: dict[str, list[Mapping[str, Any]]] = {}
-        for entry in entries:
-            grouped.setdefault(entry["identity"]["journey_id"], []).append(entry)
-        entry_lists = [lifecycle for _, lifecycle in sorted(grouped.items())]
-        return LifecycleProjector._loop_records_for_entries(entry_lists, materializer, controller)
-
 
 def _stage_status(value: Any) -> str:
     token = str(value or "unknown").strip().lower()

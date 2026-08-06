@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import types
 import uuid
@@ -15,16 +16,20 @@ from services.trade_journey.correlation_envelope import (
     mint_trade_envelope,
     propagate_envelope,
 )
+from services.trade_journey import lifecycle_projector as lifecycle_projector_module
 from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
     DEFAULT_HEALTH_MAX_AGE_SECONDS,
     LIFECYCLE_EVENT_TYPE_QUERY,
+    LIFECYCLE_EVENT_TYPES,
     LifecycleProjector,
     PostgresLifecycleSource,
+    _fingerprint,
     _record_worker_failure,
     projector_readiness,
 )
+from services.trade_journey.materializer import JourneyMaterializer
 
 
 IDENTITY = {
@@ -265,7 +270,8 @@ def test_exact_duplicate_is_idempotent_and_conflicting_duplicate_is_atomic(tmp_p
             [conflicting], mode="live", source_high_watermark=2
         )
     after_state = json.loads((tmp_path / "controller_state.json").read_text())
-    assert after_state["canonical_events"] == before_state["canonical_events"]
+    assert after_state["aggregates"] == before_state["aggregates"]
+    assert len(before_state["aggregates"]["tj-paper-001"]["event_fingerprints"]) == 2
 
 
 def test_out_of_order_aggregate_sequence_and_restart_converge(tmp_path):
@@ -724,151 +730,446 @@ def test_default_freshness_window_covers_observed_large_volume_poll(tmp_path, mo
     assert observed["ready"] is True
 
 
-def test_incremental_materializer_duplicate_out_of_order_replay_and_equivalence(tmp_path):
-    from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
+NOW = "2026-07-22T12:00:00Z"
 
-    rows = lifecycle_rows()
-    p1 = LifecycleProjector(
-        state_path=tmp_path / "ctrl1.json",
-        bundle_root=tmp_path / "b1",
-        deployment_sha="sha1",
-        clock=lambda: "2026-07-22T12:00:00Z",
-    )
-    res1 = p1.project_records(rows, mode="live", source_high_watermark=8)
-    assert res1.accepted == 8
-    assert res1.duplicates == 0
 
-    inc = IncrementalLifecycleMaterializer(p1.state)
-    assert len(inc.aggregates) == 1
-    agg = inc.aggregates["tj-paper-001"]
-    assert len(agg.events_by_id) == 8
-
-    # Batch 2: replay exact duplicate batch
-    batch_entries = [p1.state["aggregates"]["tj-paper-001"]["events_by_id"][r["payload"]["event_id"]] for r in rows]
-    affected, accepted, duplicates = inc.apply_batch(
-        batch_entries,
-        controller=p1.state["controller"],
-        journey_events_fn=LifecycleProjector._journey_events,
-        loop_record_builder_fn=LifecycleProjector._loop_records_for_entries,
-    )
-    assert accepted == 0
-    assert duplicates == 8
-    assert len(affected) == 0
-
-    # Test out-of-order arrival for new journey
-    rows_j2 = []
-    for r in rows:
-        r_copy = json.loads(json.dumps(r))
-        new_id = _uuid(int(r["ingested_seq"]) + 100)
-        r_copy["event_id"] = new_id
-        payload = r_copy["payload"]
-        payload["event_id"] = new_id
+def journey_rows(journey_id: str, *, id_base: int, seq_base: int) -> list[dict]:
+    """Clone the canonical eight-event lifecycle onto a distinct journey."""
+    rows: list[dict] = []
+    for index, row in enumerate(lifecycle_rows()):
+        clone = json.loads(json.dumps(row))
+        event_id = _uuid(id_base + index)
+        run_id = f"run-{journey_id}"
+        clone["event_id"] = event_id
+        clone["ingested_seq"] = seq_base + index + 1
+        payload = clone["payload"]
+        payload["event_id"] = event_id
+        payload["run_id"] = run_id
+        payload["metadata"]["run_id"] = run_id
         payload["correlation_envelope"] = dict(payload["correlation_envelope"])
-        payload["correlation_envelope"]["journey_id"] = "tj-paper-002"
-        rows_j2.append(r_copy)
+        payload["correlation_envelope"]["journey_id"] = journey_id
+        rows.append(clone)
+    return rows
 
-    # Ingest j2 in reverse order
-    p2 = LifecycleProjector(
-        state_path=tmp_path / "ctrl2.json",
-        bundle_root=tmp_path / "b2",
-        deployment_sha="sha2",
-        clock=lambda: "2026-07-22T12:00:00Z",
-    )
-    res_rev = p2.project_records(list(reversed(rows_j2)), mode="live", source_high_watermark=16)
-    assert res_rev.accepted == 8
 
-    # Verify output equivalence between inc_mat render and full render
-    j_inc, l_inc = inc.render_full_payloads(
-        schema_version_journey="pantheon.trade-journey-projection.v1",
-        schema_version_loop="pantheon.loop-run-projection.v1",
-        generation=1,
-        controller=p1.state["controller"],
-        journey_events_fn=LifecycleProjector._journey_events,
+def _baseline_entry_sort_key(entry: dict) -> tuple[str, int, str, str]:
+    identity = entry["identity"]
+    event = entry["event"]
+    return (
+        str(identity.get("journey_id") or ""),
+        int(entry.get("sequence_no") or 0),
+        str(event.get("created_at") or ""),
+        str(event.get("event_id") or ""),
     )
-    j_full, l_full = p1._render(p1.state)
-    assert j_inc["events"] == j_full["events"]
-    assert l_inc["records"] == l_full["records"]
+
+
+def _baseline_loop_record(lifecycle, materializer, controller):
+    """Transcription of the pre-incremental full-rebuild loop-record rule."""
+    ordered = sorted(lifecycle, key=_baseline_entry_sort_key)
+    identity = dict(ordered[0]["identity"])
+    journey_id = identity["journey_id"]
+    projection = materializer.get(
+        journey_id, tenant_id=identity["tenant_id"], environment=identity["environment"]
+    )
+    if projection is None:
+        return None
+    event_types = [entry["event"]["event_type"] for entry in ordered]
+    source_modes = sorted({str(entry["source_mode"]) for entry in ordered})
+    accepted_live = any(bool(entry.get("accepted_live")) for entry in ordered)
+    status = projection.snapshot.get("status") or "open"
+    return {
+        "id": identity["loop_run_id"],
+        "loop_run_id": identity["loop_run_id"],
+        "journey_id": journey_id,
+        "loop_type": "paper_execution",
+        "status": "active" if status in {"open", "executing", "partially_filled"} else status,
+        "activePeriod": {
+            "start": projection.snapshot.get("created_at"),
+            "end": projection.snapshot.get("updated_at")
+            if status in {"completed", "completed_with_variance", "failed", "cancelled"}
+            else None,
+        },
+        **identity,
+        "source": "canonical_telemetry_lifecycle_projector",
+        "source_modes": source_modes,
+        "accepted_live": accepted_live,
+        "projection_mode": "live" if accepted_live else "+".join(source_modes),
+        "canonical_event_count": len(ordered),
+        "fill_event_count": sum(
+            event_type
+            in {"paper_fill_simulated", "fill_received", "order_partially_filled", "order_filled"}
+            for event_type in event_types
+        ),
+        "position_event_count": sum("position_snapshot" in event_type for event_type in event_types),
+        "reconciliation_event_count": sum(
+            event_type.startswith("reconciliation_") for event_type in event_types
+        ),
+        "last_canonical_event_id": ordered[-1]["event"]["event_id"],
+        "last_source_offset": ordered[-1].get("ingested_seq"),
+        "last_projected_at": controller.get("last_projection_success_at"),
+        "controller_id": controller.get("controller_id"),
+        "controller_generation": controller.get("generation"),
+        "deployment_sha": controller.get("deployment_sha"),
+    }
+
+
+def _baseline_full_rebuild(batches, *, controller, ingested_at_default):
+    """Full-rebuild reference derived from the raw source rows alone.
+
+    This deliberately shares no state with the incremental reducer: it
+    re-accumulates every canonical entry from the rows the projector was handed,
+    re-derives every journey event, rebuilds one global ``JourneyMaterializer``,
+    and recomputes every loop record.  That is the algorithm the bounded reducer
+    replaced, so an equivalence assertion against it cannot be satisfied by the
+    reducer simply agreeing with itself.
+    """
+    entries: dict[str, dict] = {}
+    for mode, rows in batches:
+        ordered_rows = sorted(
+            rows,
+            key=lambda row: (int(row.get("ingested_seq") or 0), str(row.get("event_id") or "")),
+        )
+        for row in ordered_rows:
+            event = LifecycleProjector._source_event(row)
+            if event["event_type"] not in LIFECYCLE_EVENT_TYPES:
+                continue
+            event_id = event["event_id"]
+            fingerprint = _fingerprint(
+                {
+                    "event_id": event_id,
+                    "event_type": event["event_type"],
+                    "created_at": event["created_at"],
+                    "payload": event,
+                }
+            )
+            existing = entries.get(event_id)
+            if existing is not None:
+                assert existing["fingerprint"] == fingerprint
+                if mode == "live" and existing["source_mode"] != "live":
+                    existing["source_mode"] = "live"
+                    existing["accepted_live"] = True
+                continue
+            entries[event_id] = {
+                "fingerprint": fingerprint,
+                "event": event,
+                "identity": LifecycleProjector._identity(event),
+                "sequence_no": LifecycleProjector._sequence_no(event),
+                "ingested_seq": int(row.get("ingested_seq") or 0),
+                "ingested_at": str(row.get("ingested_at") or ingested_at_default),
+                "source_mode": mode,
+                "accepted_live": mode == "live",
+            }
+
+    ordered = sorted(entries.values(), key=_baseline_entry_sort_key)
+    journey_events: list[dict] = []
+    for entry in ordered:
+        journey_events.extend(LifecycleProjector._journey_events(entry))
+    journey_events.sort(key=JourneyMaterializer._sort_key)
+    materializer = JourneyMaterializer()
+    materializer.rebuild(journey_events)
+
+    grouped: dict[str, list[dict]] = {}
+    for entry in ordered:
+        grouped.setdefault(entry["identity"]["journey_id"], []).append(entry)
+    records: dict[str, dict] = {}
+    for _journey_id, lifecycle in sorted(grouped.items()):
+        record = _baseline_loop_record(lifecycle, materializer, controller)
+        if record:
+            records[record["id"]] = record
+    return journey_events, records
+
+
+def test_reducer_output_matches_independent_full_rebuild_baseline(tmp_path):
+    rows = lifecycle_rows()
+    # Aggregate sequence 6, 2, 8 delivered in that arrival order.
+    out_of_order: list[dict] = []
+    for arrival, index in enumerate([5, 1, 7], start=1):
+        clone = json.loads(json.dumps(rows[index]))
+        clone["ingested_seq"] = arrival
+        out_of_order.append(clone)
+    second = journey_rows("tj-paper-002", id_base=200, seq_base=100)
+
+    batches = [
+        ("recovery", out_of_order),
+        ("recovery", rows),
+        ("live", list(reversed(second))),
+        ("live", rows[:2]),
+    ]
+    projector = _projector(tmp_path, clock=lambda: NOW)
+    for mode, batch in batches:
+        projector.project_records(batch, mode=mode, source_high_watermark=200)
+
+    expected_events, expected_records = _baseline_full_rebuild(
+        batches, controller=projector.state["controller"], ingested_at_default=NOW
+    )
+    published_events = _current_json(tmp_path, "trade_journey_events.json")["events"]
+    published_records = _current_json(tmp_path, "loop_runs.json")["records"]
+
+    assert published_events == expected_events
+    assert published_records == expected_records
+    assert len(published_records) == 2
+
+
+def test_recovery_events_redelivered_live_promote_the_published_read_model(tmp_path):
+    rows = lifecycle_rows()
+    projector = _projector(tmp_path, clock=lambda: NOW)
+    projector.project_records(rows, mode="recovery", source_high_watermark=8)
+
+    recovered = _current_json(tmp_path, "loop_runs.json")["records"]["lr-run-paper-001"]
+    assert recovered["source_modes"] == ["recovery"]
+    assert recovered["accepted_live"] is False
+    assert recovered["projection_mode"] == "recovery"
+
+    result = projector.project_records(rows, mode="live", source_high_watermark=8)
+    assert result.accepted == 0
+    assert result.duplicates == 8
+
+    promoted = _current_json(tmp_path, "loop_runs.json")["records"]["lr-run-paper-001"]
+    assert promoted["source_modes"] == ["live"]
+    assert promoted["accepted_live"] is True
+    assert promoted["projection_mode"] == "live"
+
+    events = _current_json(tmp_path, "trade_journey_events.json")["events"]
+    assert {event["source_mode"] for event in events} == {"live"}
+    assert {event["source"] for event in events} == {"canonical_telemetry_live"}
+    assert all(event["accepted_live"] for event in events)
+
+
+def test_intra_batch_duplicate_is_counted_and_intra_batch_conflict_fails_closed(tmp_path):
+    rows = lifecycle_rows()
+    duplicated = rows + [json.loads(json.dumps(rows[0]))]
+    projector = _projector(tmp_path / "dup", clock=lambda: NOW)
+    result = projector.project_records(duplicated, mode="live", source_high_watermark=8)
+    assert result.accepted == 8
+    assert result.duplicates == 1
+    assert (
+        _current_json(tmp_path / "dup", "loop_runs.json")["records"]["lr-run-paper-001"][
+            "canonical_event_count"
+        ]
+        == 8
+    )
+
+    conflicting = json.loads(json.dumps(rows[0]))
+    conflicting["payload"]["metrics"] = {"action": "changed"}
+    blocked = _projector(tmp_path / "conflict", clock=lambda: NOW)
+    with pytest.raises(ConflictingLifecycleEvent):
+        blocked.project_records(rows + [conflicting], mode="live", source_high_watermark=8)
+    assert blocked.checkpoint == 0
+    assert blocked.state["generation"] == 0
+    assert blocked.state["aggregates"] == {}
+    assert not (tmp_path / "conflict" / "controller_state.json").exists()
+    assert not (tmp_path / "conflict" / "current").exists()
+
+
+def test_reducer_work_is_bounded_by_batch_and_affected_aggregates(tmp_path, monkeypatch):
+    projector = _projector(tmp_path, clock=lambda: NOW)
+    batches = {
+        poll: journey_rows(f"tj-bounded-{poll:03d}", id_base=1000 * poll, seq_base=100 * poll)
+        for poll in range(1, 7)
+    }
+    observed: list[dict] = []
+    for poll in range(1, 6):
+        projector.project_records(
+            batches[poll], mode="live", source_high_watermark=100 * poll + 8
+        )
+        observed.append(dict(projector._materializer.stats))
+
+    # Total history grows 8 -> 40 events across five polls while per-poll work
+    # stays flat.  The pre-fix reducer re-derived every stored journey on every
+    # publish, so these would read 8, 16, 24, 32, 40.
+    assert [stats["entries_derived"] for stats in observed] == [8, 8, 8, 8, 8]
+    assert [stats["aggregates_rematerialized"] for stats in observed] == [1, 1, 1, 1, 1]
+    assert [stats["aggregates_snapshotted"] for stats in observed] == [1, 1, 1, 1, 1]
+    assert len(_current_json(tmp_path, "loop_runs.json")["records"]) == 5
+    assert len(_current_json(tmp_path, "trade_journey_events.json")["events"]) == 40
+
+    # A pure duplicate replay touches one aggregate and rebuilds nothing.
+    projector.project_records(batches[3], mode="live", source_high_watermark=708)
+    assert projector._materializer.stats == {
+        "entries_derived": 0,
+        "aggregates_rematerialized": 0,
+        "aggregates_snapshotted": 1,
+    }
+
+    # No poll may deep-copy the read model.  The only deep copies are the fixed
+    # controller dict and the affected aggregates themselves.
+    copied: list = []
+    real_deepcopy = lifecycle_projector_module.copy.deepcopy
+
+    def spy(obj, *args, **kwargs):
+        copied.append(obj)
+        return real_deepcopy(obj, *args, **kwargs)
+
+    monkeypatch.setattr(lifecycle_projector_module.copy, "deepcopy", spy)
+    projector.project_records(batches[6], mode="live", source_high_watermark=708)
+    assert copied, "expected the controller deep copy to be observed"
+    assert not [item for item in copied if isinstance(item, dict) and "aggregates" in item]
+    assert not [item for item in copied if isinstance(item, dict) and "canonical_events" in item]
+
+    assert "canonical_events" not in projector.state
+    assert len(projector.state["aggregates"]) == 6
+    stored = projector.state["aggregates"]["tj-bounded-006"]
+    assert "events_by_id" not in stored
+    assert sorted(stored["event_fingerprints"]) == sorted(stored["event_modes"])
+
+
+def _records_without_controller_stamp(records: dict) -> dict:
+    from services.trade_journey.incremental_materializer import LOOP_RECORD_CONTROLLER_STAMP
+
+    return {
+        record_id: {
+            key: value
+            for key, value in record.items()
+            if key not in LOOP_RECORD_CONTROLLER_STAMP
+        }
+        for record_id, record in records.items()
+    }
 
 
 def test_record_poll_and_source_failure_preserve_loop_records(tmp_path):
-    projector = LifecycleProjector(
-        state_path=tmp_path / "ctrl_poll.json",
-        bundle_root=tmp_path,
-        deployment_sha="sha_poll",
-        clock=lambda: "2026-07-22T12:00:00Z",
-    )
+    projector = _projector(tmp_path, clock=lambda: NOW)
     projector.project_records(lifecycle_rows(), mode="live", source_high_watermark=8)
-    initial_loop = json.loads((tmp_path / "current" / "loop_runs.json").read_text())
-    assert len(initial_loop["records"]) == 1
+    initial = _current_json(tmp_path, "loop_runs.json")["records"]
+    assert len(initial) == 1
+    aggregate_half = _records_without_controller_stamp(initial)
 
-    # 1. Semantic-change record_poll (e.g. mode change)
     projector.record_poll(source_high_watermark=8, backlog=0, mode="recovery")
-    poll_loop = json.loads((tmp_path / "current" / "loop_runs.json").read_text())
-    assert len(poll_loop["records"]) == 1
+    after_poll = _current_json(tmp_path, "loop_runs.json")["records"]
+    assert _records_without_controller_stamp(after_poll) == aggregate_half
+    assert after_poll["lr-run-paper-001"]["controller_generation"] == 2
 
-    # 2. Semantic-change record_source_failure
     projector.record_source_failure("database connection lost", backlog=5)
-    failure_loop = json.loads((tmp_path / "current" / "loop_runs.json").read_text())
-    assert len(failure_loop["records"]) == 1
+    after_failure = _current_json(tmp_path, "loop_runs.json")["records"]
+    assert _records_without_controller_stamp(after_failure) == aggregate_half
+    assert after_failure["lr-run-paper-001"]["controller_generation"] == 3
+
+    # A heartbeat must not resurrect a full rebuild either.
+    projector._materializer.reset_stats()
+    projector.record_poll(source_high_watermark=99, backlog=91, mode="recovery")
+    assert projector._materializer.stats["entries_derived"] == 0
+    assert projector._materializer.stats["aggregates_rematerialized"] == 0
+    assert len(_current_json(tmp_path, "loop_runs.json")["records"]) == 1
 
 
-def test_bounded_aggregate_growth_and_memory_isolation(tmp_path):
-    from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
-
-    projector = LifecycleProjector(
-        state_path=tmp_path / "ctrl_bounded.json",
-        bundle_root=tmp_path,
-        deployment_sha="sha_bounded",
-        clock=lambda: "2026-07-22T12:00:00Z",
-    )
-    rows = lifecycle_rows()
-    projector.project_records(rows, mode="live", source_high_watermark=8)
-
-    rematerialize_calls = 0
-    orig_rematerialize = IncrementalLifecycleMaterializer._rematerialize_aggregate
-
-    def tracked_rematerialize(self, agg, *, controller, journey_events_fn, loop_record_builder_fn):
-        nonlocal rematerialize_calls
-        rematerialize_calls += 1
-        return orig_rematerialize(self, agg, controller=controller, journey_events_fn=journey_events_fn, loop_record_builder_fn=loop_record_builder_fn)
-
-    # Ingest 5 subsequent polls touching only journey 1 (replaying exact duplicates or adding events)
-    with pytest.MonkeyPatch.context() as m:
-        m.setattr(IncrementalLifecycleMaterializer, "_rematerialize_aggregate", tracked_rematerialize)
-        for _ in range(5):
-            projector.project_records(rows, mode="live", source_high_watermark=8)
-
-    # With duplicate detection and bounded aggregate tracking, no affected aggregate was rematerialized
-    assert rematerialize_calls == 0
-
-    # Ensure state does not store canonical_events dict
-    assert "canonical_events" not in projector.state or not projector.state.get("canonical_events")
-    assert "aggregates" in projector.state
-    assert len(projector.state["aggregates"]) == 1
-
-
-def test_incremental_materializer_conflicting_fingerprint_fails_closed(tmp_path):
+def test_stage_batch_conflicting_fingerprint_fails_closed_without_mutating_state(tmp_path):
     from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
 
     rows = lifecycle_rows()
-    p = LifecycleProjector(
-        state_path=tmp_path / "ctrl_conf.json",
-        bundle_root=tmp_path / "b_conf",
-        deployment_sha="sha_conf",
-        clock=lambda: "2026-07-22T12:00:00Z",
+    projector = _projector(tmp_path, clock=lambda: NOW)
+    projector.project_records(rows[:1], mode="live", source_high_watermark=1)
+
+    materializer = IncrementalLifecycleMaterializer(
+        projector.state, journey_events_fn=LifecycleProjector._journey_events
     )
-    p.project_records(rows[:1], mode="live", source_high_watermark=1)
-    inc = IncrementalLifecycleMaterializer(p.state)
+    aggregate = materializer.aggregates["tj-paper-001"]
+    assert len(aggregate.event_fingerprints) == 1
+    assert not hasattr(aggregate, "events_by_id")
 
-    conflicting_entry = json.loads(json.dumps(p.state["aggregates"]["tj-paper-001"]["events_by_id"][rows[0]["payload"]["event_id"]]))
-    conflicting_entry["fingerprint"] = "0000000000000000000000000000000000000000000000000000000000000000"
-
+    event = LifecycleProjector._source_event(rows[0])
+    conflicting_entry = {
+        "fingerprint": "0" * 64,
+        "event": event,
+        "identity": LifecycleProjector._identity(event),
+        "sequence_no": LifecycleProjector._sequence_no(event),
+        "ingested_seq": 1,
+        "ingested_at": NOW,
+        "source_mode": "live",
+        "accepted_live": True,
+    }
     with pytest.raises(ConflictingLifecycleEvent):
-        inc.apply_batch(
-            [conflicting_entry],
-            controller=p.state["controller"],
-            journey_events_fn=LifecycleProjector._journey_events,
-            loop_record_builder_fn=LifecycleProjector._loop_records_for_entries,
-        )
+        materializer.stage_batch([conflicting_entry])
+    assert materializer.aggregates["tj-paper-001"].event_fingerprints == aggregate.event_fingerprints
 
 
+def test_state_transaction_failure_leaves_no_torn_state_and_restart_converges(
+    tmp_path, monkeypatch
+):
+    projector = _projector(tmp_path, clock=lambda: NOW)
+    original_commit = lifecycle_projector_module._commit_prepared_json
+
+    def fail_state_commit(path, prepared):
+        if Path(path).name == "controller_state.json":
+            raise OSError("injected state transaction failure")
+        return original_commit(path, prepared)
+
+    monkeypatch.setattr(lifecycle_projector_module, "_commit_prepared_json", fail_state_commit)
+    rows = lifecycle_rows()
+    with pytest.raises(OSError, match="injected state transaction failure"):
+        projector.project_records(rows, mode="live", source_high_watermark=8)
+
+    assert not (tmp_path / "controller_state.json").exists()
+    assert projector.checkpoint == 0
+    assert projector.state["aggregates"] == {}
+    assert projector._materializer.aggregates == {}
+    monkeypatch.undo()
+
+    recovered = _projector(tmp_path, clock=lambda: NOW)
+    result = recovered.project_records(rows, mode="live", source_high_watermark=8)
+    assert result.accepted == 8
+    assert recovered.checkpoint == 8
+
+    expected_events, expected_records = _baseline_full_rebuild(
+        [("live", rows)],
+        controller=recovered.state["controller"],
+        ingested_at_default=NOW,
+    )
+    assert _current_json(tmp_path, "trade_journey_events.json")["events"] == expected_events
+    assert _current_json(tmp_path, "loop_runs.json")["records"] == expected_records
+
+
+def _sigkill_child_during_publish(tmp_path: Path, crash_point: str, rows: list[dict]) -> int:
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - the child is SIGKILLed before it returns
+        try:
+            if crash_point == "before_bundle_switch":
+                publisher = AtomicProjectionBundle(
+                    tmp_path,
+                    before_switch=lambda _path: os.kill(os.getpid(), signal.SIGKILL),
+                )
+                projector = _projector(tmp_path, clock=lambda: NOW, publisher=publisher)
+            else:
+                projector = _projector(tmp_path, clock=lambda: NOW)
+                original_commit = lifecycle_projector_module._commit_prepared_json
+
+                def kill_on_state_commit(path, prepared):
+                    if Path(path).name == "controller_state.json":
+                        os.kill(os.getpid(), signal.SIGKILL)
+                    return original_commit(path, prepared)
+
+                lifecycle_projector_module._commit_prepared_json = kill_on_state_commit
+            projector.project_records(rows, mode="live", source_high_watermark=8)
+        except BaseException:
+            os._exit(2)
+        os._exit(3)
+    _child, status = os.waitpid(pid, 0)
+    return status
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="SIGKILL convergence needs fork()")
+@pytest.mark.parametrize("crash_point", ["before_bundle_switch", "after_bundle_switch"])
+def test_sigkill_mid_publish_converges_on_restart(tmp_path, crash_point):
+    rows = lifecycle_rows()
+    status = _sigkill_child_during_publish(tmp_path, crash_point, rows)
+    assert os.WIFSIGNALED(status), f"child exited normally with status {status}"
+    assert os.WTERMSIG(status) == signal.SIGKILL
+
+    # The state file is only committed after the bundle switch, so neither crash
+    # point can leave a controller state that claims events the bundle lacks.
+    assert not (tmp_path / "controller_state.json").exists()
+    if crash_point == "before_bundle_switch":
+        assert not (tmp_path / "current").exists()
+    else:
+        assert _current_json(tmp_path, "loop_runs.json")["generation"] == 1
+
+    restarted = _projector(tmp_path, clock=lambda: NOW)
+    result = restarted.project_records(rows, mode="live", source_high_watermark=8)
+    assert result.accepted == 8
+    assert restarted.checkpoint == 8
+
+    expected_events, expected_records = _baseline_full_rebuild(
+        [("live", rows)],
+        controller=restarted.state["controller"],
+        ingested_at_default=NOW,
+    )
+    assert _current_json(tmp_path, "trade_journey_events.json")["events"] == expected_events
+    assert _current_json(tmp_path, "loop_runs.json")["records"] == expected_records
