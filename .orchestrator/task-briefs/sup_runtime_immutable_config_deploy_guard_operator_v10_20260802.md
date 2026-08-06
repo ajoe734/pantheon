@@ -5,7 +5,7 @@ Human/Ops batch-reconciled evidence reflecting current owner/reviewer identity.
 ## Task
 - Status: review_approved
 - Owner: Antigravity
-- Reviewer: Codex
+- Reviewer: Claude
 
 ## Merged Delivery
 - Repository: ajoe734/pantheon
