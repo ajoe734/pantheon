@@ -10,6 +10,8 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import canonical_review_gate_ci as gate_ci
+import github_review_bridge as bridge
+import test_github_review_bridge as bridge_tests
 
 HEAD = "b" * 40
 REPOSITORY = "ajoe734/pantheon"
@@ -192,6 +194,84 @@ class DefaultTagLookupTests(unittest.TestCase):
         with mock.patch("subprocess.run", return_value=completed):
             result = gate_ci.default_tag_lookup(REPOSITORY, "refs/tags/pantheon-review/approve/x")
         self.assertIsNone(result)
+
+
+class WorkflowDispatchContractTests(unittest.TestCase):
+    """SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805: the bridge's dispatch call
+    and the workflow's `workflow_dispatch` declaration are a cross-file
+    contract that nothing else checks. A drifted workflow filename or input
+    name would 404, and the dispatch is deliberately best-effort -- so the
+    failure is silent, and approvals would quietly go back to sitting on a
+    blocked PR. Pin both halves here."""
+
+    workflow_path = Path(__file__).resolve().parents[2] / ".github/workflows/canonical-review-gate.yml"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import yaml
+
+        cls.workflow = yaml.safe_load(cls.workflow_path.read_text())
+        # PyYAML resolves the bare `on:` key to the boolean True.
+        cls.triggers = cls.workflow.get(True, cls.workflow.get("on"))
+
+    def test_bridge_constant_names_the_real_workflow_file(self) -> None:
+        self.assertTrue(self.workflow_path.is_file())
+        self.assertEqual(
+            bridge.CANONICAL_REVIEW_GATE_WORKFLOW_FILE, self.workflow_path.name
+        )
+
+    def test_workflow_declares_the_dispatch_inputs_the_bridge_sends(self) -> None:
+        declared = self.triggers["workflow_dispatch"]["inputs"]
+        self.assertEqual(set(declared), {"head_ref", "head_sha"})
+        for name, spec in declared.items():
+            with self.subTest(input=name):
+                self.assertTrue(spec.get("required"), f"{name} must be required")
+                self.assertEqual(spec.get("type"), "string")
+
+        runner = bridge_tests.FakeRunner()
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Exact-head review passed.",
+            binding=bridge_tests.binding(),
+            runner=runner,
+        )
+        self.assertEqual(len(runner.dispatches), 1)
+        self.assertEqual(set(runner.dispatches[0]["inputs"]), set(declared))
+
+    def test_pull_request_triggers_are_still_declared(self) -> None:
+        """The dispatch path is additive: a normal push must still gate."""
+
+        pull_request = self.triggers["pull_request"]
+        self.assertEqual(
+            set(pull_request["types"]),
+            {"opened", "synchronize", "reopened", "ready_for_review"},
+        )
+
+    def test_gate_step_prefers_dispatch_inputs_and_falls_back_to_the_pr(self) -> None:
+        steps = self.workflow["jobs"]["gate"]["steps"]
+        (gate_step,) = [step for step in steps if "env" in step]
+        self.assertEqual(
+            gate_step["env"]["HEAD_REF"],
+            "${{ github.event.inputs.head_ref || github.event.pull_request.head.ref }}",
+        )
+        self.assertEqual(
+            gate_step["env"]["HEAD_SHA"],
+            "${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}",
+        )
+
+    def test_concurrency_group_is_defined_for_a_dispatch_run(self) -> None:
+        """On workflow_dispatch there is no `pull_request` context, so a group
+        keyed only on the PR number would collapse every dispatch run into one
+        shared group and cancel-in-progress would kill concurrent approvals."""
+
+        self.assertEqual(
+            self.workflow["concurrency"]["group"],
+            "canonical-review-gate-"
+            "${{ github.event.pull_request.number || github.event.inputs.head_sha }}",
+        )
 
 
 if __name__ == "__main__":
