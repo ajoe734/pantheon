@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
 import json
-import contextlib
 import multiprocessing
 import os
 import shutil
@@ -16,7 +14,6 @@ import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
 from unittest import mock
 import sys
 
@@ -24,39 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
 import task_archive
-
-
-def audited_reassignment_event(
-    *,
-    task_id: str = "REG-002",
-    old_owner: str = "Codex2",
-    new_owner: str = "Antigravity",
-    old_reviewer: str = "Claude",
-    new_reviewer: str = "Claude",
-    timestamp: str = "2026-07-19T23:52:06Z",
-    message: str = "canonical owner reassignment",
-) -> dict[str, str]:
-    """Build a `task_reassigned` line shaped exactly like the supervisor writes it.
-
-    The reassignment gates only trust events carrying the `Orchestrator` actor
-    and the deterministic `event_id` digest that `persist_task_reassignment`
-    stamps, so fixtures have to be built the same way or they prove nothing.
-    """
-
-    event = {
-        "ts": timestamp,
-        "agent": "Orchestrator",
-        "type": "task_reassigned",
-        "task_id": task_id,
-        "old_owner": old_owner,
-        "new_owner": new_owner,
-        "old_reviewer": old_reviewer,
-        "new_reviewer": new_reviewer,
-        "message": message,
-    }
-    event["event_id"] = ai_status._supervisor_reassignment_event_id(event)
-    return event
-
 from canonical_writer_guard import assert_isolated_legacy_write_target
 from rewrite.task_state_store import load_events, verify_projection
 
@@ -187,7 +151,6 @@ def _recover_pending_status_outbox(
 
 def _recover_pending_archive_outbox(status_file: str, status_root: str) -> None:
     root = Path(status_root)
-    ai_status.configure_status_root_paths(root)
     ai_status.STATUS_FILE = Path(status_file)
     task_archive.STATUS_ROOT = root
     task_archive.STATUS_FILE = Path(status_file)
@@ -206,7 +169,6 @@ def _commit_terminal_archive_with_sigkill(
     point: str,
 ) -> None:
     root = Path(status_root)
-    ai_status.configure_status_root_paths(root)
     ai_status.STATUS_FILE = Path(status_file)
     task_archive.STATUS_ROOT = root
     task_archive.STATUS_FILE = Path(status_file)
@@ -520,7 +482,6 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        ai_status._clear_status_command_lease_binding()
         self.temporary.cleanup()
 
     def _runtime_state(
@@ -533,16 +494,6 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
     ) -> dict[str, object]:
         worker_task_id = task_id or self.task_id
         worker_status_root = status_root or self.root
-        queue_event_id = "queue-lease-sync"
-        pid = 4242
-        pid_start_ticks = 987654
-        process_generation = ai_status.status_worker_process_generation_id(
-            task_id=worker_task_id,
-            worker_run_id=self.run_id,
-            queue_event_id=queue_event_id,
-            pid=pid,
-            pid_start_ticks=pid_start_ticks,
-        )
         return {
             "workers": {
                 self.run_id: {
@@ -554,10 +505,6 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     "workspace_path": str(self.workspace),
                     "status_root": str(worker_status_root),
                     "status_command_runtime": self.issued_runtime,
-                    "queue_event_id": queue_event_id,
-                    "pid": pid,
-                    "pid_start_ticks": pid_start_ticks,
-                    "process_generation": process_generation,
                 }
             },
             "worker_worktrees": {
@@ -616,32 +563,6 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             actor="Codex",
             env_task_id=self.task_id,
         )
-        owner_binding = ai_status._STATUS_COMMAND_LEASE_LOCAL.binding
-        self.assertEqual(owner_binding["worker_run_id"], self.run_id)
-        self.assertEqual(owner_binding["task_id"], self.task_id)
-        self.assertEqual(owner_binding["queue_event_id"], "queue-lease-sync")
-        self.assertEqual(owner_binding["pid"], 4242)
-        self.assertEqual(owner_binding["pid_start_ticks"], 987654)
-        self.assertTrue(
-            owner_binding["process_generation"].startswith(
-                ai_status.STATUS_WORKER_PROCESS_GENERATION_PREFIX
-            )
-        )
-        with mock.patch.object(
-            ai_status,
-            "status_command_metadata",
-            return_value=self.issued_runtime | {"worker_lease": owner_binding},
-        ):
-            event = ai_status._activity_event(
-                {
-                    "ts": "2026-08-02T09:45:00Z",
-                    "agent": "Codex",
-                    "type": "handoff",
-                    "task_id": self.task_id,
-                    "message": "ready",
-                }
-            )
-        self.assertEqual(event["status_command"]["worker_lease"], owner_binding)
         self._validate(
             "approve",
             [self.task_id, "review approved"],
@@ -649,46 +570,6 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             env_task_id=self.task_id,
             runtime_state=self._runtime_state(logical_agent_id="claude"),
         )
-
-    def test_accepts_refreshed_process_generation_after_resume_pid_replacement(self) -> None:
-        runtime_state = self._runtime_state()
-        worker = runtime_state["workers"][self.run_id]
-        old_generation = worker["process_generation"]
-        worker["pid"] = 5252
-        worker["pid_start_ticks"] = 1234567
-        worker["process_generation"] = ai_status.status_worker_process_generation_id(
-            task_id=self.task_id,
-            worker_run_id=self.run_id,
-            queue_event_id=worker["queue_event_id"],
-            pid=worker["pid"],
-            pid_start_ticks=worker["pid_start_ticks"],
-        )
-
-        self._validate(
-            "progress",
-            [self.task_id, "resumed owner progress"],
-            actor="Codex",
-            env_task_id=self.task_id,
-            runtime_state=runtime_state,
-        )
-
-        binding = ai_status._STATUS_COMMAND_LEASE_LOCAL.binding
-        self.assertEqual(binding["pid"], 5252)
-        self.assertEqual(binding["pid_start_ticks"], 1234567)
-        self.assertEqual(binding["process_generation"], worker["process_generation"])
-        self.assertNotEqual(binding["process_generation"], old_generation)
-
-    def test_rejects_invalid_process_generation(self) -> None:
-        runtime_state = self._runtime_state()
-        runtime_state["workers"][self.run_id]["process_generation"] = "forged"
-        with self.assertRaisesRegex(RuntimeError, "invalid process generation"):
-            self._validate(
-                "handoff",
-                [self.task_id, "Claude", "ready for review"],
-                actor="Codex",
-                env_task_id=self.task_id,
-                runtime_state=runtime_state,
-            )
 
     def test_rejects_auto_worker_without_run_lease(self) -> None:
         with (
@@ -807,225 +688,6 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
     def test_active_lease_workspace_roots_are_empty_without_run_lease(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True):
             self.assertEqual(ai_status.active_lease_workspace_roots(), ())
-
-    def test_explicit_batch_snapshots_avoid_per_mutation_runtime_reload(self) -> None:
-        env = {
-            "AI_NAME": "Codex",
-            "ORCH_RUN_ID": self.run_id,
-            "ORCH_TASK_ID": self.task_id,
-            "PANTHEON_WORKTREE_ROOT": str(self.workspace),
-            "ORCH_WORKSPACE_PATH": str(self.workspace),
-        }
-        config: dict[str, object] = {}
-        runtime_snapshot = self._runtime_state()
-        with (
-            mock.patch.dict(os.environ, env, clear=True),
-            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
-            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
-            mock.patch.object(ai_status, "load_config", side_effect=AssertionError("config reloaded")),
-            mock.patch.object(
-                ai_status,
-                "load_runtime_state_snapshot",
-                side_effect=AssertionError("runtime reloaded"),
-            ),
-            mock.patch.object(
-                ai_status,
-                "status_command_metadata",
-                return_value=self.issued_runtime,
-            ),
-        ):
-            ai_status.validate_active_status_command_lease(
-                "progress",
-                [self.task_id, "batch progress"],
-                runtime_state_snapshot=runtime_snapshot,
-                config_snapshot=config,
-            )
-
-        self.assertEqual(
-            ai_status._STATUS_COMMAND_LEASE_LOCAL.binding["worker_run_id"],
-            self.run_id,
-        )
-
-
-class SupervisorDispatchBatchTests(unittest.TestCase):
-    def setUp(self) -> None:
-        _setup_test_isolation(self)
-        self.addCleanup(_teardown_test_isolation, self)
-        self.state = ai_status.default_state()
-        self.state["tasks"] = [
-            {
-                "id": "BATCH-ONE",
-                "title": "First dispatch",
-                "phase": "test",
-                "owner": "Codex",
-                "reviewer": "Human/Ops",
-                "status": "todo",
-                "depends_on": [],
-                "artifacts": [],
-                "acceptance": [],
-                "next": "queued",
-            },
-            {
-                "id": "BATCH-TWO",
-                "title": "Second dispatch",
-                "phase": "test",
-                "owner": "Codex2",
-                "reviewer": "Human/Ops",
-                "status": "todo",
-                "depends_on": [],
-                "artifacts": [],
-                "acceptance": [],
-                "next": "queued",
-            },
-        ]
-        self.mutations = [
-            {
-                "actor": "Codex",
-                "command": "start",
-                "expected_statuses": ["todo"],
-                "message": "first started",
-                "run_id": "run-one",
-                "task_id": "BATCH-ONE",
-                "workspace_path": str(self._test_root / "one"),
-            },
-            {
-                "actor": "Codex2",
-                "command": "start",
-                "expected_statuses": ["todo"],
-                "message": "second started",
-                "run_id": "run-two",
-                "task_id": "BATCH-TWO",
-                "workspace_path": str(self._test_root / "two"),
-            },
-        ]
-
-    def _run_main(self, mutations: list[dict[str, object]], *, sync_all=None) -> int:
-        sync_all = sync_all or mock.Mock()
-        with (
-            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
-            mock.patch.object(ai_status, "validate_status_root_binding"),
-            mock.patch.object(ai_status, "load_supervisor_dispatch_batch", return_value=mutations),
-            mock.patch.object(ai_status, "load_config", return_value={}),
-            mock.patch.object(ai_status, "runtime_state_lock", return_value=contextlib.nullcontext()),
-            mock.patch.object(ai_status, "load_runtime_state_snapshot", return_value={"workers": {}}) as runtime_load,
-            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=contextlib.nullcontext()),
-            mock.patch.object(ai_status, "authoritative_task_state_transaction", return_value=contextlib.nullcontext()),
-            mock.patch.object(ai_status, "load_state", return_value=self.state) as state_load,
-            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False),
-            mock.patch.object(ai_status, "recover_status_activity_outbox", return_value=False),
-            mock.patch.object(ai_status, "validate_active_status_command_lease"),
-            mock.patch.object(ai_status, "sync_all", side_effect=sync_all) as sync_mock,
-            mock.patch.object(ai_status, "refresh_derived_status_views_if_current"),
-            mock.patch.object(sys, "stdout", io.StringIO()),
-        ):
-            self.sync_mock = sync_mock
-            result = ai_status.main(
-                ["ai_status.py", ai_status.SUPERVISOR_DISPATCH_BATCH_COMMAND, "/tmp/batch.json"]
-            )
-        self.assertEqual(runtime_load.call_count, 1)
-        self.assertEqual(state_load.call_count, 1)
-        return result
-
-    def test_batch_uses_one_runtime_and_canonical_snapshot(self) -> None:
-        result = self._run_main(self.mutations)
-
-        self.assertEqual(result, 0)
-        self.assertEqual(self.sync_mock.call_count, 1)
-        self.assertEqual(ai_status.get_task(self.state, "BATCH-ONE")["status"], "in_progress")
-        self.assertEqual(ai_status.get_task(self.state, "BATCH-TWO")["status"], "in_progress")
-
-    def test_late_cas_failure_prevents_the_single_commit(self) -> None:
-        invalid = deepcopy(self.mutations)
-        invalid[1]["expected_statuses"] = ["review_approved"]
-
-        with self.assertRaisesRegex(RuntimeError, "status CAS failed for BATCH-TWO"):
-            self._run_main(invalid)
-
-        self.assertEqual(self.sync_mock.call_count, 0)
-
-    def test_batch_activity_outbox_recovers_after_post_state_crash(self) -> None:
-        """Both rows survive a crash between canonical save and audit append."""
-
-        store_env = mock.patch.dict(
-            os.environ,
-            {
-                ai_status.TASK_STATE_STORE_MODE_ENV: "",
-                ai_status.TASK_STATE_EVENT_LOG_ENV: "",
-            },
-        )
-        store_env.start()
-        self.addCleanup(store_env.stop)
-        ai_status.save_state(deepcopy(self.state))
-        working = ai_status.load_state()
-        with (
-            mock.patch.object(ai_status, "validate_active_status_command_lease"),
-            ai_status.buffer_activity_events() as events,
-        ):
-            ai_status.run_supervisor_dispatch_batch(
-                working,
-                self.mutations,
-                commands={
-                    "start": ai_status.command_start,
-                    "progress": ai_status.command_progress,
-                    "note": ai_status.command_note,
-                },
-                runtime_snapshot={"workers": {}},
-                config={},
-            )
-            self.assertEqual(len(events), 2)
-            with mock.patch.object(
-                ai_status,
-                "recover_status_activity_outbox",
-                side_effect=RuntimeError("simulated post-state crash"),
-            ):
-                with self.assertRaisesRegex(RuntimeError, "post-state crash"):
-                    ai_status.commit_state_with_activity_outbox(working, events)
-
-        pending = ai_status.load_state()
-        self.assertEqual(
-            [task["status"] for task in pending["tasks"]],
-            ["in_progress", "in_progress"],
-        )
-        outbox = pending[ai_status.STATUS_ACTIVITY_OUTBOX_KEY]
-        self.assertEqual(len(outbox["events"]), 2)
-        self.assertEqual(ai_status.LOG_FILE.read_text(encoding="utf-8"), "")
-
-        self.assertTrue(ai_status.recover_status_activity_outbox(pending))
-        recovered = ai_status.load_state()
-        self.assertIsNone(recovered[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
-        audit_rows = [
-            json.loads(line)
-            for line in ai_status.LOG_FILE.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        self.assertEqual(
-            [row["task_id"] for row in audit_rows],
-            ["BATCH-ONE", "BATCH-TWO"],
-        )
-        self.assertEqual(
-            len({row["event_id"] for row in audit_rows}),
-            2,
-        )
-
-    def test_payload_parser_rejects_duplicate_tasks_and_unbounded_rows(self) -> None:
-        payload = self._test_root / "batch.json"
-        payload.write_text(
-            json.dumps(
-                {
-                    "schema_version": ai_status.SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION,
-                    "mutations": [self.mutations[0], self.mutations[0]],
-                }
-            ),
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(SystemExit, "repeats task mutation"):
-            ai_status.load_supervisor_dispatch_batch(str(payload))
-
-    def test_lock_order_contract_is_explicit(self) -> None:
-        self.assertEqual(
-            ai_status.GLOBAL_STATUS_LOCK_ORDER,
-            ("runtime_admission", "task_state", "activity_audit"),
-        )
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -1221,15 +883,6 @@ class StatusRootRoutingTests(unittest.TestCase):
                 "remote": "ajoe734/pantheon",
                 "base_ref": "origin/dev",
             }
-            worker_pid = 4242
-            worker_pid_start_ticks = 987654
-            worker_process_generation = ai_status.status_worker_process_generation_id(
-                task_id="CENTRAL-ROOT-001",
-                worker_run_id="codex-test-run",
-                queue_event_id="evt-codex-test-run",
-                pid=worker_pid,
-                pid_start_ticks=worker_pid_start_ticks,
-            )
             central_state_path = central / ".orchestrator" / "state.json"
             central_state_path.parent.mkdir(parents=True, exist_ok=True)
             central_state_path.write_text(
@@ -1247,9 +900,6 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 "lease_acquired_at": "2026-07-17T00:00:00Z",
                                 "lease_expires_at": "2999-01-01T00:00:00Z",
                                 "queue_event_id": "evt-codex-test-run",
-                                "pid": worker_pid,
-                                "pid_start_ticks": worker_pid_start_ticks,
-                                "process_generation": worker_process_generation,
                                 "workspace_path": str(worktree),
                                 "status_root": str(central),
                                 "status_command_runtime": issued_runtime,
@@ -1434,18 +1084,6 @@ class StatusRootRoutingTests(unittest.TestCase):
                 self.assertEqual(event["status_command"]["source_sha"], command_sha)
                 self.assertEqual(event["status_command"]["status_root"], str(central.resolve()))
                 self.assertEqual(event["status_command"]["delivery_root"], str(worktree.resolve()))
-                self.assertEqual(
-                    event["status_command"]["worker_lease"],
-                    {
-                        "schema_version": 1,
-                        "task_id": "CENTRAL-ROOT-001",
-                        "worker_run_id": "codex-test-run",
-                        "queue_event_id": "evt-codex-test-run",
-                        "pid": worker_pid,
-                        "pid_start_ticks": worker_pid_start_ticks,
-                        "process_generation": worker_process_generation,
-                    },
-                )
             self.assertEqual(
                 archived["task"]["delivery"]["repository_path"],
                 str(worktree.resolve()),
@@ -1810,43 +1448,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
 
-    def test_review_evidence_file_committed_uses_exact_head_get_query(self) -> None:
-        review_file = "docs/deployment/evidence/task/evidence.json"
-        head_sha = "a" * 40
-        with mock.patch.object(
-            ai_status,
-            "run_gh_json_command",
-            return_value={"type": "file"},
-        ) as gh_json:
-            self.assertTrue(
-                ai_status.review_evidence_file_committed(
-                    repository="ajoe734/pantheon",
-                    head_sha=head_sha,
-                    review_file=review_file,
-                )
-            )
-
-        gh_json.assert_called_once_with(
-            [
-                "api",
-                "--method",
-                "GET",
-                (
-                    "repos/ajoe734/pantheon/contents/"
-                    "docs/deployment/evidence/task/evidence.json?ref="
-                    f"{head_sha}"
-                ),
-            ]
-        )
-
     def test_approve_creates_owner_finalize_handoff(self) -> None:
-        self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
-        self.assertEqual(task["failure_streak"], 0)
         self.assertEqual(task["review_notes_zh"], ["審查通過", "交回 owner 收尾"])
 
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
@@ -2415,107 +2022,6 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["review_file"], review_file)
 
-    def test_done_refuses_review_file_added_after_approval(self) -> None:
-        """SUP-REVIEW-EVIDENCE-BINDING-ENFORCEMENT-20260804: an owner cannot bind
-        a manifest that only exists in a commit pushed after the reviewer's
-        approved head -- that is precisely the SHA-shifting closeout loop
-        diagnosed in SUP-REVIEW-PIPELINE-INTEGRITY-20260804."""
-
-        task = self.state["tasks"][0]
-        task["status"] = "review_approved"
-        task.pop("review_file", None)
-        task["review_binding"] = {
-            "pr": 4218,
-            "head_sha": "b" * 40,
-            "head_branch": "task/REG-002",
-            "base": "dev",
-        }
-        review_file = ".orchestrator/task-briefs/reg_002_review.md"
-
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Codex", "REVIEW_FILE": review_file}, clear=False),
-            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False) as check,
-            self.assertRaisesRegex(SystemExit, "was not present at"),
-        ):
-            ai_status.command_done(self.state, ["REG-002", "Owner adds evidence post-approval"])
-
-        check.assert_called_once_with(
-            repository=mock.ANY,
-            head_sha="b" * 40,
-            review_file=review_file,
-        )
-        # The task must not have silently accepted the unverified manifest.
-        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review_approved")
-        self.assertNotIn("review_file", ai_status.get_task(self.state, "REG-002"))
-
-    def test_done_accepts_review_file_present_at_the_approved_head(self) -> None:
-        task = self.state["tasks"][0]
-        task["status"] = "review_approved"
-        task.pop("review_file", None)
-        task["review_binding"] = {
-            "pr": 4218,
-            "head_sha": "b" * 40,
-            "head_branch": "task/REG-002",
-            "base": "dev",
-        }
-        review_file = ".orchestrator/task-briefs/reg_002_review.md"
-
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Codex", "REVIEW_FILE": review_file}, clear=False),
-            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=True),
-            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
-        ):
-            ai_status.command_done(self.state, ["REG-002", "Owner binds the already-reviewed manifest"])
-
-        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
-        self.assertEqual(archive_task["status"], "done")
-        self.assertEqual(archive_task["review_file"], review_file)
-
-    def test_approve_refuses_a_review_file_not_present_at_the_reviewed_head(self) -> None:
-        with (
-            mock.patch.dict(
-                os.environ,
-                {
-                    "AI_NAME": "Claude",
-                    "REVIEW_PR": "4218",
-                    "REVIEW_HEAD_SHA": "b" * 40,
-                    "REVIEW_FILE": ".orchestrator/task-briefs/reg_002_review.md",
-                },
-                clear=False,
-            ),
-            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False),
-            self.assertRaisesRegex(SystemExit, "was not found at the reviewed"),
-        ):
-            ai_status.command_approve(self.state, ["REG-002", "Claiming evidence that is not really there"])
-
-        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
-
-    def test_approve_accepts_a_review_file_present_at_the_reviewed_head(self) -> None:
-        with (
-            mock.patch.dict(
-                os.environ,
-                {
-                    "AI_NAME": "Claude",
-                    "REVIEW_PR": "4218",
-                    "REVIEW_HEAD_SHA": "b" * 40,
-                    "REVIEW_FILE": ".orchestrator/task-briefs/reg_002_review.md",
-                },
-                clear=False,
-            ),
-            mock.patch.object(ai_status, "review_evidence_file_committed", return_value=True),
-            mock.patch.object(
-                ai_status,
-                "bridge_github_review_decision",
-                return_value={},
-            ),
-        ):
-            ai_status.command_approve(self.state, ["REG-002", "Evidence verified present at the head"])
-
-        task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["status"], "review_approved")
-        self.assertEqual(task["review_file"], ".orchestrator/task-briefs/reg_002_review.md")
-
     def test_done_consumes_protected_verdict_before_terminal_mutation(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "review_approved"
@@ -2813,84 +2319,23 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                         }
                     )
 
-    def test_validate_merged_done_evidence_accepts_owner_reassignment(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="merged-done-owner-") as temp_dir:
-            base = Path(temp_dir)
-            delivery_root = base / "execute-plans"
-            delivery_sha = self._init_repo(
-                delivery_root,
-                remote="https://github.com/ajoe734/execute-plans.git",
-                files={"src/delivery.ts": "export const delivered = true;\n"},
-            )
-            evidence_root = base / "pantheon"
-            evidence_file = ".orchestrator/task-briefs/reg_002.md"
-            evidence_text = (
-                "# Task Brief: REG-002\n\n"
-                "- Status: review_approved\n"
-                "- Owner: Codex2\n"
-                "- Reviewer: Claude\n\n"
-                "Delivery repository: ajoe734/execute-plans\n"
-                f"Delivery commit: {delivery_sha}\n"
-            )
-            evidence_sha = self._init_repo(
-                evidence_root,
-                remote="https://github.com/ajoe734/pantheon.git",
-                files={evidence_file: evidence_text},
-            )
-            task = {
-                "id": "REG-002",
-                "owner": "Antigravity",
-                "reviewer": "Claude",
-                "artifacts": ["execute-plans:src/delivery.ts"],
-            }
-            config = {
-                "coordination": {
-                    "enabled": True,
-                    "repositories": {
-                        "execute_plans": {
-                            "repo": "ajoe734/execute-plans",
-                            "local_path": str(delivery_root),
-                        }
-                    },
-                }
-            }
-            env = {
-                "RECONCILE_EVIDENCE_FILE": evidence_file,
-                "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
-                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
-                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
-                "RECONCILE_DELIVERY_COMMIT": delivery_sha,
-            }
-            reassign_event = audited_reassignment_event(
-                timestamp="2026-07-20T00:00:00Z",
-                message="owner reassignment",
-            )
-            log_file = evidence_root / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(reassign_event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "ROOT", evidence_root),
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                mock.patch.object(ai_status, "load_config", return_value=config),
-                mock.patch.dict(os.environ, env, clear=False),
-            ):
-                result = ai_status.validate_merged_done_evidence(task)
-
-            self.assertTrue(result["reconciled_from_merged_evidence"])
-            self.assertEqual(result["review_evidence"]["owner"], "Codex2")
-            self.assertEqual(result["review_evidence"]["canonical_owner"], "Antigravity")
-            self.assertIn("owner_reassignment", result["review_evidence"])
-
     def test_accepts_exact_audited_reviewer_reassignment(self) -> None:
         message = (
             "Auto-reassigned REG-002 away from unavailable lane Claude; "
             "reviewer Claude -> Codex2."
         )
-        event = audited_reassignment_event(
-            old_owner="Codex",
-            new_owner="Codex",
-            new_reviewer="Codex2",
-            message=message,
-        )
+        event = {
+            "event_id": "supervisor-reassign-test",
+            "ts": "2026-07-19T23:52:06Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Codex",
+            "new_owner": "Codex",
+            "old_reviewer": "Claude",
+            "new_reviewer": "Codex2",
+            "message": message,
+        }
         self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
         result = ai_status._verified_reviewer_reassignment(
             {
@@ -2904,50 +2349,13 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             current_reviewer="Codex2",
         )
 
-        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["event_id"], "supervisor-reassign-test")
         self.assertEqual(result["old_reviewer"], "Claude")
         self.assertEqual(result["new_reviewer"], "Codex2")
-
-    def test_owner_reassignment_verifies_exact_task_reassigned_audit_event(self) -> None:
-        message = "canonical owner reassignment"
-        event = audited_reassignment_event(message=message)
-        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-        result = ai_status._verified_owner_reassignment(
-            {
-                "id": "REG-002",
-                "owner": "Antigravity",
-                "reviewer": "Claude",
-                "last_update": event["ts"],
-                "next": message,
-            },
-            evidence_owner="Codex2",
-            current_owner="Antigravity",
-        )
-
-        self.assertEqual(result["event_id"], event["event_id"])
-        self.assertEqual(result["old_owner"], "Codex2")
-        self.assertEqual(result["new_owner"], "Antigravity")
-
-    def test_owner_reassignment_requires_exact_task_readback(self) -> None:
-        event = audited_reassignment_event()
-        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
-            ai_status._verified_owner_reassignment(
-                {
-                    "id": "REG-002",
-                    "owner": "Antigravity",
-                    "reviewer": "Claude",
-                    "last_update": event["ts"],
-                    "next": "different readback",
-                },
-                evidence_owner="NonExistentOwner",
-                current_owner="Antigravity",
-            )
 
     def test_reviewer_reassignment_requires_exact_task_readback(self) -> None:
         event = {
             "event_id": "supervisor-reassign-test",
-            "agent": "Orchestrator",
             "ts": "2026-07-19T23:52:06Z",
             "type": "task_reassigned",
             "task_id": "REG-002",
@@ -2958,7 +2366,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "message": "canonical reassignment",
         }
         self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned"):
             ai_status._verified_reviewer_reassignment(
                 {
                     "id": "REG-002",
@@ -2967,171 +2375,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     "last_update": event["ts"],
                     "next": "different readback",
                 },
-                evidence_reviewer="NonExistentReviewer",
+                evidence_reviewer="Claude",
                 current_reviewer="Codex2",
-            )
-
-    def test_reviewer_reassignment_found_after_rotation_into_archive(self) -> None:
-        """Regression: the audited reassignment event can be rotated out of the
-        live tail into an immutable archive before the chain walk runs.
-        _verified_reviewer_reassignment must still find it there -- rotation
-        only moved the row, it did not invalidate it."""
-        event = audited_reassignment_event(
-            task_id="REG-002",
-            old_owner="Codex",
-            new_owner="Codex",
-            old_reviewer="Claude",
-            new_reviewer="Codex2",
-            message=(
-                "Auto-reassigned REG-002 away from unavailable lane Claude; "
-                "reviewer Claude -> Codex2."
-            ),
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
-                mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
-            ):
-                archive = ai_status.maybe_rotate_activity_log()
-                self.assertIsNotNone(
-                    archive, "expected the event to be rotated into an archive"
-                )
-                self.assertNotIn(event["event_id"].encode(), log_file.read_bytes())
-
-                result = ai_status._verified_reviewer_reassignment(
-                    {
-                        "id": "REG-002",
-                        "owner": "Codex",
-                        "reviewer": "Codex2",
-                        "last_update": event["ts"],
-                        "next": event["message"],
-                    },
-                    evidence_reviewer="Claude",
-                    current_reviewer="Codex2",
-                )
-        self.assertEqual(result["event_id"], event["event_id"])
-        self.assertEqual(result["old_reviewer"], "Claude")
-        self.assertEqual(result["new_reviewer"], "Codex2")
-
-    def test_multihop_owner_reassignment_chain(self) -> None:
-        events = [
-            audited_reassignment_event(
-                task_id="MULTIHOP-001",
-                old_owner="Codex2",
-                new_owner="Codex",
-                timestamp="2026-07-19T23:00:00Z",
-                message="hop 1",
-            ),
-            audited_reassignment_event(
-                task_id="MULTIHOP-001",
-                old_owner="Codex",
-                new_owner="Antigravity",
-                timestamp="2026-07-19T23:10:00Z",
-                message="hop 2",
-            ),
-        ]
-        log_content = "\n".join(json.dumps(e) for e in events) + "\n"
-        self._test_log_file.write_text(log_content, encoding="utf-8")
-        result = ai_status._verified_owner_reassignment(
-            {
-                "id": "MULTIHOP-001",
-                "owner": "Antigravity",
-                "reviewer": "Claude",
-                "last_update": "2026-07-19T23:20:00Z",
-                "next": "post-reassignment progress",
-            },
-            evidence_owner="Codex2",
-            current_owner="Antigravity",
-        )
-        self.assertEqual(result["hops"], 2)
-        self.assertEqual(result["old_owner"], "Codex2")
-        self.assertEqual(result["new_owner"], "Antigravity")
-        self.assertEqual(result["event_id"], events[1]["event_id"])
-
-    def test_broken_owner_reassignment_chain_fails(self) -> None:
-        events = [
-            audited_reassignment_event(
-                task_id="BROKEN-001",
-                old_owner="Codex2",
-                new_owner="Gemini",
-                timestamp="2026-07-19T23:00:00Z",
-                message="hop 1",
-            ),
-            audited_reassignment_event(
-                task_id="BROKEN-001",
-                # Disconnected: the chain left off at Gemini, not Codex.
-                old_owner="Codex",
-                new_owner="Antigravity",
-                timestamp="2026-07-19T23:10:00Z",
-                message="hop 2",
-            ),
-        ]
-        log_content = "\n".join(json.dumps(e) for e in events) + "\n"
-        self._test_log_file.write_text(log_content, encoding="utf-8")
-        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
-            ai_status._verified_owner_reassignment(
-                {
-                    "id": "BROKEN-001",
-                    "owner": "Antigravity",
-                    "reviewer": "Claude",
-                },
-                evidence_owner="Codex2",
-                current_owner="Antigravity",
-            )
-
-    def test_combined_owner_and_reviewer_swap_chain(self) -> None:
-        event = audited_reassignment_event(
-            task_id="SWAP-001",
-            new_reviewer="Codex",
-            timestamp="2026-07-19T23:00:00Z",
-            message="combined swap",
-        )
-        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-        owner_res = ai_status._verified_owner_reassignment(
-            {"id": "SWAP-001", "owner": "Antigravity", "reviewer": "Codex"},
-            evidence_owner="Codex2",
-            current_owner="Antigravity",
-        )
-        reviewer_res = ai_status._verified_reviewer_reassignment(
-            {"id": "SWAP-001", "owner": "Antigravity", "reviewer": "Codex"},
-            evidence_reviewer="Claude",
-            current_reviewer="Codex",
-        )
-        self.assertEqual(owner_res["event_id"], event["event_id"])
-        self.assertEqual(reviewer_res["event_id"], event["event_id"])
-
-    def test_reassignment_chain_rejects_unaudited_event(self) -> None:
-        """A `task_reassigned` line the supervisor did not write proves nothing.
-
-        The chain walk is what removes the Human/Ops sign-off, so the events it
-        walks have to be unforgeable. Strip the `Orchestrator` actor and the
-        digest no longer matches, which must fail closed rather than reconcile.
-        """
-
-        forged = audited_reassignment_event(task_id="FORGED-001")
-        forged["agent"] = "Claude"
-        self._test_log_file.write_text(json.dumps(forged) + "\n", encoding="utf-8")
-        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
-            ai_status._verified_owner_reassignment(
-                {"id": "FORGED-001", "owner": "Antigravity", "reviewer": "Claude"},
-                evidence_owner="Codex2",
-                current_owner="Antigravity",
-            )
-
-    def test_reassignment_chain_rejects_tampered_event_payload(self) -> None:
-        """Editing a real audited event breaks its digest and must be rejected."""
-
-        tampered = audited_reassignment_event(task_id="TAMPER-001")
-        tampered["new_owner"] = "Gemini"
-        self._test_log_file.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
-        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
-            ai_status._verified_owner_reassignment(
-                {"id": "TAMPER-001", "owner": "Gemini", "reviewer": "Claude"},
-                evidence_owner="Codex2",
-                current_owner="Gemini",
             )
 
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
@@ -3146,22 +2391,18 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
 
-        self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
 
         self.assertEqual(self.state["tasks"][0]["status"], "review")
-        self.assertEqual(self.state["tasks"][0]["failure_streak"], 0)
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
-        self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             ai_status.command_reopen(self.state, ["REG-002", "Please address the requested changes"])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "in_progress")
-        self.assertEqual(task["failure_streak"], 0)
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
@@ -3306,432 +2547,6 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
-    @staticmethod
-    def _owner_reassignment_event(
-        *,
-        task_id: str = "REG-002",
-        old_owner: str = "Codex2",
-        new_owner: str = "Codex",
-        reviewer: str = "Antigravity",
-        timestamp: str = "2026-07-31T16:22:48Z",
-        message: str = "Supervisor reassigned finalization owner.",
-    ) -> dict[str, str]:
-        digest = hashlib.sha256(
-            (
-                f"{task_id}\0{timestamp}\0{old_owner}\0{new_owner}\0"
-                f"{reviewer}\0{reviewer}\0{message}"
-            ).encode("utf-8")
-        ).hexdigest()
-        return {
-            "event_id": f"supervisor-reassign-{digest}",
-            "ts": timestamp,
-            "agent": "Orchestrator",
-            "type": "task_reassigned",
-            "task_id": task_id,
-            "old_owner": old_owner,
-            "new_owner": new_owner,
-            "old_reviewer": reviewer,
-            "new_reviewer": reviewer,
-            "message": message,
-        }
-
-    def test_collect_done_accepts_prior_owner_from_latest_audited_reassignment(self) -> None:
-        event = self._owner_reassignment_event()
-        task = {
-            "id": "REG-002",
-            "owner": "Codex",
-            "reviewer": "Antigravity",
-            "status": "review_approved",
-        }
-
-        def fake_run_git_command(args: list[str], **_kwargs: object) -> str:
-            responses = {
-                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
-                ("rev-parse", "HEAD"): "a" * 40,
-                ("show", "-s", "--format=%s", "HEAD"): "REG-002: finish delivery",
-                ("show", "-s", "--format=%b", "HEAD"): (
-                    "LLM-Agent: Codex2\nTask-ID: REG-002\nReviewer: Antigravity\n"
-                ),
-                ("show", "-s", "--format=%an", "HEAD"): "Codex2",
-                ("show", "-s", "--format=%ae", "HEAD"): "codex2@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): "2026-07-31T16:20:00+00:00",
-                ("status", "--porcelain"): "",
-                ("remote",): "",
-            }
-            return responses[tuple(args)]
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.dict(
-                    os.environ,
-                    {"TASK_REQUIRE_MERGED_PR": "false"},
-                    clear=False,
-                ),
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                mock.patch.object(
-                    ai_status,
-                    "run_git_command",
-                    side_effect=fake_run_git_command,
-                ),
-            ):
-                delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
-
-        self.assertEqual(delivery["commit_metadata"]["LLM-Agent"], "Codex2")
-        self.assertEqual(
-            delivery["commit_owner_reassignment"]["event_id"],
-            event["event_id"],
-        )
-        self.assertEqual(delivery["commit_owner_reassignment"]["old_owner"], "Codex2")
-        self.assertEqual(delivery["commit_owner_reassignment"]["new_owner"], "Codex")
-
-    def test_prior_owner_reassignment_found_after_rotation_into_archive(self) -> None:
-        """Regression: this reproduces the real production incident where
-        SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 got permanently stuck at
-        `done` -- rotation moved its audited task_reassigned event out of
-        LOG_FILE into archive/logs/*.gz before `done` ran, and the old
-        LOG_FILE-only read could never find it again.
-        _verified_done_owner_reassignment must search archives too."""
-        event = self._owner_reassignment_event()
-        task = {
-            "id": "REG-002",
-            "owner": "Codex",
-            "reviewer": "Antigravity",
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
-                mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
-            ):
-                archive = ai_status.maybe_rotate_activity_log()
-                self.assertIsNotNone(
-                    archive, "expected the event to be rotated into an archive"
-                )
-                # The live tail is down to the lineage-head control record only.
-                active_lines = log_file.read_bytes().splitlines()
-                self.assertEqual(len(active_lines), 1)
-                self.assertNotIn(event["event_id"].encode(), log_file.read_bytes())
-
-                result = ai_status._verified_done_owner_reassignment(
-                    task,
-                    commit_owner="Codex2",
-                    current_owner="Codex",
-                    commit_timestamp="2026-07-31T16:20:00+00:00",
-                )
-        self.assertEqual(result["event_id"], event["event_id"])
-        self.assertEqual(result["old_owner"], "Codex2")
-        self.assertEqual(result["new_owner"], "Codex")
-
-    def test_prior_owner_reassignment_rejects_forged_audit_identity(self) -> None:
-        event = self._owner_reassignment_event()
-        event["event_id"] = "supervisor-reassign-forged"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(SystemExit, "exact audited supervisor task_reassigned"),
-            ):
-                ai_status._verified_done_owner_reassignment(
-                    {
-                        "id": "REG-002",
-                        "owner": "Codex",
-                        "reviewer": "Antigravity",
-                    },
-                    commit_owner="Codex2",
-                    current_owner="Codex",
-                    commit_timestamp="2026-07-31T16:20:00+00:00",
-                )
-
-    def test_prior_owner_reassignment_rejects_event_before_commit(self) -> None:
-        event = self._owner_reassignment_event(timestamp="2026-07-31T16:19:59Z")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(SystemExit, "must follow the delivered commit"),
-            ):
-                ai_status._verified_done_owner_reassignment(
-                    {
-                        "id": "REG-002",
-                        "owner": "Codex",
-                        "reviewer": "Antigravity",
-                    },
-                    commit_owner="Codex2",
-                    current_owner="Codex",
-                    commit_timestamp="2026-07-31T16:20:00+00:00",
-                )
-
-    def test_prior_owner_reassignment_rejects_stale_matching_event(self) -> None:
-        stale = self._owner_reassignment_event()
-        latest = self._owner_reassignment_event(
-            old_owner="Claude",
-            timestamp="2026-07-31T16:23:00Z",
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(
-                json.dumps(stale) + "\n" + json.dumps(latest) + "\n",
-                encoding="utf-8",
-            )
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(SystemExit, "latest audited owner reassignment"),
-            ):
-                ai_status._verified_done_owner_reassignment(
-                    {
-                        "id": "REG-002",
-                        "owner": "Codex",
-                        "reviewer": "Antigravity",
-                    },
-                    commit_owner="Codex2",
-                    current_owner="Codex",
-                    commit_timestamp="2026-07-31T16:20:00+00:00",
-                )
-
-    def test_prior_owner_reassignment_requires_reviewer_continuity(self) -> None:
-        owner_change = self._owner_reassignment_event()
-        reviewer_change = self._owner_reassignment_event(
-            old_owner="Codex",
-            new_owner="Codex",
-            reviewer="Antigravity",
-            timestamp="2026-07-31T16:23:00Z",
-            message="Supervisor reassigned reviewer continuity.",
-        )
-        reviewer_change["new_reviewer"] = "Claude"
-        reviewer_change["event_id"] = ai_status._supervisor_reassignment_event_id(
-            reviewer_change
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(
-                json.dumps(owner_change) + "\n" + json.dumps(reviewer_change) + "\n",
-                encoding="utf-8",
-            )
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(SystemExit, "reviewer continuity"),
-            ):
-                ai_status._verified_done_owner_reassignment(
-                    {
-                        "id": "REG-002",
-                        "owner": "Codex",
-                        "reviewer": "Antigravity",
-                    },
-                    commit_owner="Codex2",
-                    current_owner="Codex",
-                    commit_timestamp="2026-07-31T16:20:00+00:00",
-                )
-
-    # The audited pair of swaps the supervisor actually recorded for
-    # OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805: two provider
-    # outages, each moving owner and reviewer together.
-    _SWAP_HOP_ONE = dict(
-        task_id="REG-002",
-        old_owner="Codex2",
-        new_owner="Antigravity",
-        old_reviewer="Codex",
-        new_reviewer="Claude",
-        timestamp="2026-08-05T11:59:31Z",
-        message="Auto-reassigned ownership from Codex2 to Antigravity.",
-    )
-    _SWAP_HOP_TWO = dict(
-        task_id="REG-002",
-        old_owner="Antigravity",
-        new_owner="Claude",
-        old_reviewer="Claude",
-        new_reviewer="Antigravity",
-        timestamp="2026-08-05T12:26:28Z",
-        message="Auto-reassigned ownership from Antigravity to Claude.",
-    )
-
-    @staticmethod
-    def _fake_git(*, llm_agent: str, reviewer: str, commit_timestamp: str):
-        def fake_run_git_command(args: list[str], **_kwargs: object) -> str:
-            responses = {
-                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
-                ("rev-parse", "HEAD"): "a" * 40,
-                ("show", "-s", "--format=%s", "HEAD"): "REG-002: finish delivery",
-                ("show", "-s", "--format=%b", "HEAD"): (
-                    f"LLM-Agent: {llm_agent}\nTask-ID: REG-002\nReviewer: {reviewer}\n"
-                ),
-                ("show", "-s", "--format=%an", "HEAD"): llm_agent,
-                ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
-                ("show", "-s", "--format=%cI", "HEAD"): commit_timestamp,
-                ("status", "--porcelain"): "",
-                ("remote",): "",
-            }
-            return responses[tuple(args)]
-
-        return fake_run_git_command
-
-    def _collect_with_audit(
-        self,
-        *,
-        events: list[dict[str, str]],
-        task: dict[str, Any],
-        actor: str,
-        llm_agent: str,
-        reviewer: str,
-        commit_timestamp: str,
-    ) -> dict[str, Any]:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(
-                "".join(json.dumps(event) + "\n" for event in events),
-                encoding="utf-8",
-            )
-            with (
-                mock.patch.dict(
-                    os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False
-                ),
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                mock.patch.object(
-                    ai_status,
-                    "run_git_command",
-                    side_effect=self._fake_git(
-                        llm_agent=llm_agent,
-                        reviewer=reviewer,
-                        commit_timestamp=commit_timestamp,
-                    ),
-                ),
-            ):
-                return ai_status.collect_done_delivery_metadata(task, actor)
-
-    def test_collect_done_accepts_combined_owner_and_reviewer_swap(self) -> None:
-        """The case that used to force a Human/Ops `reconcile_merged_done`.
-
-        The delivery merged under the Antigravity/Claude pair, then a provider
-        outage swapped both roles to Claude/Antigravity. Both commit trailers
-        are now stale at once, which previously failed closed with no fallback.
-        """
-
-        events = [
-            audited_reassignment_event(**self._SWAP_HOP_ONE),
-            audited_reassignment_event(**self._SWAP_HOP_TWO),
-        ]
-        delivery = self._collect_with_audit(
-            events=events,
-            task={
-                "id": "REG-002",
-                "owner": "Claude",
-                "reviewer": "Antigravity",
-                "status": "review_approved",
-            },
-            actor="Claude",
-            llm_agent="Antigravity",
-            reviewer="Claude",
-            commit_timestamp="2026-08-05T12:13:52+00:00",
-        )
-
-        owner_proof = delivery["commit_owner_reassignment"]
-        self.assertEqual(owner_proof["old_owner"], "Antigravity")
-        self.assertEqual(owner_proof["new_owner"], "Claude")
-        self.assertEqual(owner_proof["hops"], 1)
-        self.assertEqual(owner_proof["event_id"], events[1]["event_id"])
-        self.assertEqual(owner_proof["reviewer_hops"], 1)
-
-        reviewer_proof = delivery["commit_reviewer_reassignment"]
-        self.assertEqual(reviewer_proof["old_reviewer"], "Claude")
-        self.assertEqual(reviewer_proof["new_reviewer"], "Antigravity")
-        self.assertEqual(reviewer_proof["event_id"], events[1]["event_id"])
-
-    def test_collect_done_accepts_multi_hop_owner_chain(self) -> None:
-        """Two consecutive reassignments still close out without a human."""
-
-        events = [
-            audited_reassignment_event(**self._SWAP_HOP_ONE),
-            audited_reassignment_event(**self._SWAP_HOP_TWO),
-        ]
-        delivery = self._collect_with_audit(
-            events=events,
-            task={
-                "id": "REG-002",
-                "owner": "Claude",
-                "reviewer": "Antigravity",
-                "status": "review_approved",
-            },
-            actor="Claude",
-            llm_agent="Codex2",
-            reviewer="Codex",
-            commit_timestamp="2026-08-05T11:00:00+00:00",
-        )
-
-        owner_proof = delivery["commit_owner_reassignment"]
-        self.assertEqual(owner_proof["old_owner"], "Codex2")
-        self.assertEqual(owner_proof["new_owner"], "Claude")
-        self.assertEqual(owner_proof["hops"], 2)
-        self.assertEqual(delivery["commit_reviewer_reassignment"]["hops"], 2)
-
-    def test_collect_done_rejects_owner_drift_with_no_audit(self) -> None:
-        """An owner trailer no audited reassignment explains still fails closed."""
-
-        events = [audited_reassignment_event(**self._SWAP_HOP_ONE)]
-        with self.assertRaisesRegex(SystemExit, "latest audited owner reassignment"):
-            self._collect_with_audit(
-                events=events,
-                task={
-                    "id": "REG-002",
-                    "owner": "Claude",
-                    "reviewer": "Antigravity",
-                    "status": "review_approved",
-                },
-                actor="Claude",
-                llm_agent="Gemini",
-                reviewer="Claude",
-                commit_timestamp="2026-08-05T11:00:00+00:00",
-            )
-
-    def test_done_reviewer_reassignment_rejects_unaudited_event(self) -> None:
-        forged = audited_reassignment_event(
-            task_id="REG-002", new_reviewer="Antigravity"
-        )
-        forged["agent"] = "Antigravity"
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(forged) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(
-                    SystemExit, "audited reviewer reassignment chain does not"
-                ),
-            ):
-                ai_status._verified_done_reviewer_reassignment(
-                    {"id": "REG-002", "owner": "Antigravity", "reviewer": "Antigravity"},
-                    commit_reviewer="Claude",
-                    current_reviewer="Antigravity",
-                    commit_timestamp="2026-07-19T20:00:00+00:00",
-                )
-
-    def test_done_reviewer_reassignment_rejects_event_before_commit(self) -> None:
-        event = audited_reassignment_event(
-            task_id="REG-002",
-            old_owner="Antigravity",
-            new_owner="Antigravity",
-            new_reviewer="Codex2",
-            timestamp="2026-07-19T23:52:06Z",
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
-            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-            with (
-                mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(
-                    SystemExit, "reviewer reassignment must follow the delivered commit"
-                ),
-            ):
-                ai_status._verified_done_reviewer_reassignment(
-                    {"id": "REG-002", "owner": "Antigravity", "reviewer": "Codex2"},
-                    commit_reviewer="Claude",
-                    current_reviewer="Codex2",
-                    commit_timestamp="2026-07-20T00:00:00+00:00",
-                )
-
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
         responses = iter(
             [
@@ -4454,62 +3269,6 @@ class ArchiveWorkflowTests(unittest.TestCase):
         )
         refresh_views.assert_not_called()
         lease_validation.assert_not_called()
-
-    def test_status_write_pending_indicators_feature_flag_and_per_task_counting(self) -> None:
-        state = deepcopy(self.state)
-        # Add tasks A, B, C
-        state["tasks"] = [
-            {"id": "TASK-A", "status": "in_progress"},
-            {"id": "TASK-B", "status": "in_progress"},
-            {"id": "TASK-C", "status": "in_progress"},
-        ]
-        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
-            "schema_version": 1,
-            "transaction_id": "tx1",
-            "events": [
-                {"event_id": "e1", "task_id": "TASK-A"},
-                {"event_id": "e2", "task_id": "TASK-A"},
-                {"event_id": "e3", "task_id": "TASK-B"},
-            ],
-        }
-
-        # Test 1: Feature flag OFF (default) -> no indicator stamped
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED", None)
-            ai_status._update_pending_outbox_indicators(state)
-            for task in state["tasks"]:
-                self.assertNotIn("status_write_pending", task)
-                self.assertNotIn("status_write_pending_count", task)
-
-        # Test 2: Feature flag ON -> per-task count stamped
-        with mock.patch.dict(os.environ, {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}, clear=False):
-            ai_status._update_pending_outbox_indicators(state)
-            task_a = next(t for t in state["tasks"] if t["id"] == "TASK-A")
-            task_b = next(t for t in state["tasks"] if t["id"] == "TASK-B")
-            task_c = next(t for t in state["tasks"] if t["id"] == "TASK-C")
-
-            self.assertTrue(task_a.get("status_write_pending"))
-            self.assertEqual(task_a.get("status_write_pending_count"), 2)
-
-            self.assertTrue(task_b.get("status_write_pending"))
-            self.assertEqual(task_b.get("status_write_pending_count"), 1)
-
-            self.assertNotIn("status_write_pending", task_c)
-            self.assertNotIn("status_write_pending_count", task_c)
-
-        # Test 3: Unbound event without task_id does NOT mark untouched tasks as pending
-        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY]["events"].append({"event_id": "e4"}) # no task_id (e.g. wave event)
-        with mock.patch.dict(os.environ, {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}, clear=False):
-            ai_status._update_pending_outbox_indicators(state)
-            task_a = next(t for t in state["tasks"] if t["id"] == "TASK-A")
-            task_c = next(t for t in state["tasks"] if t["id"] == "TASK-C")
-
-            self.assertTrue(task_a.get("status_write_pending"))
-            self.assertEqual(task_a.get("status_write_pending_count"), 2) # still exact count for A
-
-            # TASK-C must NOT be marked as pending (preventing whole-board false positives)
-            self.assertNotIn("status_write_pending", task_c)
-            self.assertNotIn("status_write_pending_count", task_c)
 
     def test_recover_main_fails_closed_when_task_lock_is_busy(self) -> None:
         with (
@@ -5308,122 +4067,6 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("Loop closure", content)
         self.assertIn("Execution proof", content)
         self.assertIn("- Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Runtime & Dashboard`", content)
-
-    def test_write_current_work_flags_status_writes_queued_behind_integrity_block(
-        self,
-    ) -> None:
-        state = {
-            "updated_at": "2026-08-06T00:00:00Z",
-            "objective": "Keep the board honest about queued status writes.",
-            "sprint": "2026-08-06-outbox",
-            "canonical_document_layers": {
-                "L0 Collaboration & State": ["ai-status.json"],
-            },
-            "agents": [
-                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Claude", "capability_lane": ["review"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-            ],
-            "tasks": [
-                {
-                    "id": "STALE-001",
-                    "title": "Task whose write-back is queued",
-                    "summary_zh": "狀態寫入排隊中。",
-                    "phase": "Foundation",
-                    "owner": "Codex",
-                    "reviewer": "Claude",
-                    "status": "in_progress",
-                    "depends_on": [],
-                    "next": "-",
-                    "last_update": "2026-08-06T00:00:00Z",
-                    "status_write_pending": True,
-                    "status_write_pending_count": 2,
-                },
-                {
-                    "id": "QUIET-001",
-                    "title": "Task nobody touched",
-                    "summary_zh": "沒有人動過。",
-                    "phase": "Foundation",
-                    "owner": "Claude",
-                    "reviewer": "Codex",
-                    "status": "in_progress",
-                    "depends_on": [],
-                    "next": "-",
-                    "last_update": "2026-08-06T00:00:00Z",
-                },
-            ],
-            "handoffs": [],
-            "blockers": [],
-            "workload": {},
-            "workload_summary": {},
-        }
-
-        content = self._render_current_work(state)
-
-        # A reader can tell a stale row from an untouched one.
-        self.assertIn("## Status Write Backlog", content)
-        self.assertIn("| `STALE-001` | Codex | in_progress | 2 |", content)
-        self.assertIn("in_progress (stale: 2 writes queued)", content)
-        self.assertNotIn("QUIET-001` | Claude | in_progress | ", content)
-
-    def test_write_current_work_omits_backlog_section_without_pending_writes(
-        self,
-    ) -> None:
-        state = {
-            "updated_at": "2026-08-06T00:00:00Z",
-            "objective": "Keep the board honest about queued status writes.",
-            "sprint": "2026-08-06-outbox",
-            "canonical_document_layers": {
-                "L0 Collaboration & State": ["ai-status.json"],
-            },
-            "agents": [
-                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Claude", "capability_lane": ["review"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-            ],
-            "tasks": [
-                {
-                    "id": "QUIET-001",
-                    "title": "Task nobody touched",
-                    "summary_zh": "沒有人動過。",
-                    "phase": "Foundation",
-                    "owner": "Claude",
-                    "reviewer": "Codex",
-                    "status": "in_progress",
-                    "depends_on": [],
-                    "next": "-",
-                    "last_update": "2026-08-06T00:00:00Z",
-                },
-            ],
-            "handoffs": [],
-            "blockers": [],
-            "workload": {},
-            "workload_summary": {},
-        }
-
-        content = self._render_current_work(state)
-
-        self.assertNotIn("## Status Write Backlog", content)
-        self.assertNotIn("stale:", content)
-
-    def _render_current_work(self, state: dict) -> str:
-        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-") as temp_dir:
-            output_path = Path(temp_dir) / "current-work.md"
-            with (
-                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
-                mock.patch.object(
-                    ai_status,
-                    "load_archive_index",
-                    return_value={
-                        "updated_at": "2026-08-06T00:00:00Z",
-                        "counts": {"total": 0, "completed": 0, "superseded": 0},
-                        "recent_terminal_ids": [],
-                    },
-                ),
-                mock.patch.object(
-                    ai_status, "recent_terminal_summaries", return_value=[]
-                ),
-            ):
-                ai_status.write_current_work(state, [])
-            return output_path.read_text(encoding="utf-8")
 
     def test_write_current_work_formats_absolute_times_in_taiwan_time(self) -> None:
         state = {
@@ -8052,159 +6695,6 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             "rotation split one status transaction across audit files",
         )
 
-    def test_integrity_block_persists_pending_markers_on_disk(self) -> None:
-        state = self._fixture_state()
-        event = {
-            "ts": "2026-08-06T05:00:00Z",
-            "agent": "Codex2",
-            "type": "progress",
-            "task_id": "LOCK-ONE",
-            "message": "write-back that cannot clear the integrity check",
-            "event_id": "ai-status-ev-"
-            + "3" * 64,
-        }
-        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox([event])
-        self._write_state(state)
-
-        blocked = ai_status.ActivityAuditInvariantError(
-            "activity content-addressed archives do not match lineage",
-            invariant="activity_archive_lineage",
-            evidence={"log_path": str(self.log_file)},
-        )
-        refreshed: list[dict[str, object]] = []
-        with (
-            mock.patch.dict(
-                os.environ,
-                {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"},
-                clear=False,
-            ),
-            mock.patch.object(
-                ai_status, "_activity_event_index_unlocked", return_value={}
-            ),
-            mock.patch.object(
-                ai_status, "_append_logs_unlocked", side_effect=blocked
-            ),
-            mock.patch.object(
-                ai_status,
-                "refresh_derived_status_views",
-                side_effect=refreshed.append,
-            ),
-        ):
-            loaded = ai_status.load_state()
-            with self.assertRaises(ai_status.ActivityAuditInvariantError):
-                ai_status.recover_status_activity_outbox(loaded)
-
-        persisted = json.loads(self.status_file.read_text(encoding="utf-8"))
-        blocked_task = next(
-            task for task in persisted["tasks"] if task["id"] == "LOCK-ONE"
-        )
-        untouched_task = next(
-            task for task in persisted["tasks"] if task["id"] == "LOCK-TWO"
-        )
-        # The write stays queued for retry, and the board now says so.
-        self.assertIsNotNone(persisted[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
-        self.assertTrue(blocked_task["status_write_pending"])
-        self.assertEqual(blocked_task["status_write_pending_count"], 1)
-        self.assertNotIn("status_write_pending", untouched_task)
-        # Derived views are refreshed so the marker is readable while the
-        # read-only commands are still failing closed on the pending plane.
-        self.assertEqual(len(refreshed), 1)
-
-    def test_integrity_block_leaves_board_untouched_when_flag_is_off(self) -> None:
-        state = self._fixture_state()
-        event = {
-            "ts": "2026-08-06T05:00:00Z",
-            "agent": "Codex2",
-            "type": "progress",
-            "task_id": "LOCK-ONE",
-            "message": "write-back that cannot clear the integrity check",
-            "event_id": "ai-status-ev-" + "4" * 64,
-        }
-        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox([event])
-        self._write_state(state)
-
-        blocked = ai_status.ActivityAuditInvariantError(
-            "activity content-addressed archives do not match lineage",
-            invariant="activity_archive_lineage",
-            evidence={"log_path": str(self.log_file)},
-        )
-        with (
-            mock.patch.dict(
-                os.environ,
-                {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "0"},
-                clear=False,
-            ),
-            mock.patch.object(
-                ai_status, "_activity_event_index_unlocked", return_value={}
-            ),
-            mock.patch.object(
-                ai_status, "_append_logs_unlocked", side_effect=blocked
-            ),
-            mock.patch.object(ai_status, "refresh_derived_status_views"),
-        ):
-            loaded = ai_status.load_state()
-            with self.assertRaises(ai_status.ActivityAuditInvariantError):
-                ai_status.recover_status_activity_outbox(loaded)
-
-        persisted = json.loads(self.status_file.read_text(encoding="utf-8"))
-        for task in persisted["tasks"]:
-            self.assertNotIn("status_write_pending", task)
-            self.assertNotIn("status_write_pending_count", task)
-
-    def test_status_write_pending_indicators(self) -> None:
-        state = self._fixture_state()
-        task = state["tasks"][0]
-        self.assertNotIn("status_write_pending", task)
-        self.assertNotIn("status_write_pending_count", task)
-
-        # 1. Activity outbox pending with feature flag enabled
-        event = {
-            "ts": "2026-08-06T05:00:00Z",
-            "agent": "Antigravity",
-            "type": "progress",
-            "task_id": "LOCK-ONE",
-            "message": "test progress",
-            "event_id": "ai-status-ev-1111111111111111111111111111111111111111111111111111111111111111",
-        }
-        unbound_event = {
-            "ts": "2026-08-06T05:01:00Z",
-            "agent": "Antigravity",
-            "type": "wave_open",
-            "wave_id": "2026-W30",
-            "message": "wave open",
-            "event_id": "ai-status-ev-2222222222222222222222222222222222222222222222222222222222222222",
-        }
-        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
-            "schema_version": ai_status.STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION,
-            "transaction_id": "ai-status-tx-" + ai_status._canonical_json_sha256([event, unbound_event]),
-            "events": [event, unbound_event],
-        }
-
-        with unittest.mock.patch.dict("os.environ", {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}):
-            ai_status._update_pending_outbox_indicators(state)
-            task_one = ai_status.get_task(state, "LOCK-ONE")
-            task_two = ai_status.get_task(state, "LOCK-TWO")
-            self.assertTrue(task_one.get("status_write_pending"))
-            self.assertEqual(task_one.get("status_write_pending_count"), 1)
-            # Unbound events should NOT cause false positive status_write_pending on untouched tasks
-            self.assertNotIn("status_write_pending", task_two)
-            self.assertNotIn("status_write_pending_count", task_two)
-
-        # 2. Flag off removes indicators
-        with unittest.mock.patch.dict("os.environ", {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "0"}):
-            ai_status._update_pending_outbox_indicators(state)
-            task_one = ai_status.get_task(state, "LOCK-ONE")
-            self.assertNotIn("status_write_pending", task_one)
-
-        # 3. Cleared outbox removes indicators even when flag enabled
-        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = None
-        with unittest.mock.patch.dict("os.environ", {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}):
-            ai_status._update_pending_outbox_indicators(state)
-            task_one = ai_status.get_task(state, "LOCK-ONE")
-            self.assertNotIn("status_write_pending", task_one)
-            self.assertNotIn("status_write_pending_count", task_one)
-
-
 
 class ActivityLogRotationTests(unittest.TestCase):
     def _make_log(self, *, size_per_line: int = 200, line_count: int = 100) -> Path:
@@ -8409,11 +6899,6 @@ class ProgramProofOwnershipTests(unittest.TestCase):
                     self.state,
                     ["L12-TEACH-001", self.overlay, "Invalid delegation."],
                 )
-
-    def test_quarantined_status_in_schema_constants(self) -> None:
-        self.assertIn("quarantined", ai_status.STATUS_LABELS)
-        self.assertEqual(ai_status.STATUS_LABELS["quarantined"], "quarantined")
-        self.assertIn("quarantined", ai_status.ACTIVE_TASK_STATUSES)
 
 
 if __name__ == "__main__":

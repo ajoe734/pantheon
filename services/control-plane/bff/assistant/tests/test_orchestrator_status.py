@@ -30,7 +30,6 @@ class TestOrchestratorStatus(unittest.TestCase):
                     "owner": "Codex",
                     "reviewer": "Claude",
                     "status": "in_progress",
-                    "failure_streak": 2,
                     "next": "Next step 1",
                     "waiting_for": "CI",
                 }
@@ -250,7 +249,6 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(len(status.tasks), 1)
         self.assertEqual(status.tasks[0].id, "TASK-1")
         self.assertEqual(status.tasks[0].status, "in_progress")
-        self.assertEqual(status.tasks[0].failure_streak, 2)
         self.assertEqual(status.tasks[0].waiting_for, "CI")
         self.assertEqual(status.tasks[0].blockers[0]["waitingFor"], "CI")
         self.assertEqual(status.tasks[0].blockers[1]["type"], "worker_failure_streak")

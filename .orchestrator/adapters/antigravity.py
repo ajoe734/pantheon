@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import model_rotation
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult, hysteresis_held_auth_ready
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
@@ -86,13 +86,6 @@ class AntigravityAdapter(BaseAdapter):
         allow_inbox_fallback = _allow_inbox_fallback(self.config, provider_id)
         cli = _configured_cli(self.config, provider_id)
         auth_ready = _auth_ready(self.config, provider_id)
-        if not auth_ready and hysteresis_held_auth_ready(
-            self.provider_capabilities,
-            provider_id,
-            config=self.config,
-            fallback_provider_key="antigravity",
-        ):
-            auth_ready = True
         supported = bool(cli and auth_ready)
         if cli and auth_ready:
             notes = "Uses the Antigravity CLI `agy --prompt`, local OAuth/API-key auth, and auto-approval mode."

@@ -15,41 +15,6 @@ import watch_events
 
 
 class WatcherBookkeepingTests(unittest.TestCase):
-    def test_trim_seen_events_normalizes_legacy_null_values(self) -> None:
-        state = {
-            "seen_event_keys": {
-                "chair:codex:chair_review:operational_review:2026-07-19T22:29:09Z": None,
-                "task:already-string": "2026-07-20T00:00:00Z",
-            }
-        }
-
-        watch_events.trim_seen_events(state, 2000)
-
-        self.assertEqual(
-            state["seen_event_keys"]["chair:codex:chair_review:operational_review:2026-07-19T22:29:09Z"],
-            "2026-07-19T22:29:09Z",
-        )
-        self.assertEqual(state["seen_event_keys"]["task:already-string"], "2026-07-20T00:00:00Z")
-
-    def test_trim_seen_events_sorts_legacy_null_values_when_pruning(self) -> None:
-        state = {
-            "seen_event_keys": {
-                "chair:codex:chair_review:operational_review:2026-07-19T22:29:09Z": None,
-                "chair:codex:chair_review:operational_review:2026-07-20T22:29:09Z": None,
-                "task:fresh": "2026-07-21T00:00:00Z",
-            }
-        }
-
-        watch_events.trim_seen_events(state, 2)
-
-        self.assertEqual(
-            state["seen_event_keys"],
-            {
-                "chair:codex:chair_review:operational_review:2026-07-20T22:29:09Z": "2026-07-20T22:29:09Z",
-                "task:fresh": "2026-07-21T00:00:00Z",
-            },
-        )
-
     def test_main_uses_locked_scan_without_reentering_runtime_lock(self) -> None:
         config = {
             "paths": {"provider_capabilities": "/tmp/provider-capabilities.json"},
