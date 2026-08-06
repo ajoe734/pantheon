@@ -21,6 +21,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import ai_status
 import supervisor
 import provider_permissions
 import runtime_state
@@ -10172,6 +10175,33 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
                 )
             )
 
+    def test_sup_l12_task_priority_preemption_protected(self) -> None:
+        self.assertTrue(
+            supervisor.task_priority_preemption_protected(
+                {
+                    "id": "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+                    "dispatch_model": "real-supervisor-auto-workers",
+                }
+            )
+        )
+        self.assertFalse(
+            supervisor.task_priority_preemption_protected(
+                {"id": "SUP-L12-NON-RECOVERY-001", "phase": "Standard Phase"}
+            )
+        )
+        self.assertFalse(supervisor.task_priority_preemption_protected({"id": "BFF-CONSOL-001"}))
+        self.assertFalse(
+            supervisor.task_priority_preemption_protected(
+                {
+                    "id": "NON-L12-001",
+                    "phase": "Wave 0 Phase",
+                    "preferred_lane_order": ["Claude"],
+                }
+            )
+        )
+
+
+
     def test_unslotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
         config = {
             "schema": {
@@ -12049,7 +12079,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             )
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
-        clear_streak.assert_called_once_with({}, "TASK-FAILURE")
+        clear_streak.assert_called_once_with(
+            {}, "TASK-FAILURE", retain_task_projection=True
+        )
         schedule_retry.assert_called_once_with({}, worker, "capacity exhausted")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_retry_scheduled")
 
@@ -12236,7 +12268,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
             mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
             mock.patch.object(supervisor, "worker_is_chair_review", return_value=True),
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12250,7 +12284,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "completed")
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with({}, {}, worker)
         self.assertIn("Chair review worker exited", write_activity_log.call_args.args[1]["message"])
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
 
@@ -12266,7 +12300,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
             mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
             mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12280,7 +12316,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "completed")
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with(config, {}, worker)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
         finalize_queue_event_record.assert_called_once()
 
@@ -12574,7 +12610,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
             mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
             mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12590,7 +12628,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(worker["status"], "completed")
         record_blocker.assert_not_called()
         record_streak.assert_not_called()
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with({}, {}, worker)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
 
@@ -12672,7 +12710,9 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=True),
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
-            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(
+                supervisor, "clear_task_failure_streak_after_worker_completion"
+            ) as clear_streak,
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
         ):
@@ -12690,7 +12730,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(outcome, {"changed": True, "stop": True})
         self.assertEqual(worker["status"], "completed")
         terminate_worker_pid.assert_called_once_with(1234)
-        clear_streak.assert_called_once()
+        clear_streak.assert_called_once_with({}, {}, worker)
         self.assertIn("artifacts were accepted", write_activity_log.call_args.args[1]["message"])
         finalize_queue_event_record.assert_called_once()
 
@@ -15862,6 +15902,630 @@ class FailureStreakV3Tests(unittest.TestCase):
                         {keyword.arg for keyword in call.keywords}
                     )
                 )
+
+
+class TaskFailureStreakTaskSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.status_path = self.root / "ai-status.json"
+        self.task = {
+            "id": "SUP-TASK-STREAK-001",
+            "title": "Task-row failure streak fixture",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+            "depends_on": [],
+        }
+        self.status_path.write_text(
+            json.dumps({"tasks": [self.task]}) + "\n",
+            encoding="utf-8",
+        )
+        self.config = {
+            "paths": {"status_file": str(self.status_path)},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "chair_review": {"failure_loop_reassignment_threshold": 2},
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "dependency_done_statuses": ["done"],
+                "active_worker_statuses": ["running"],
+                "max_dispatches_per_tick": 1,
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                }
+            },
+        }
+
+    def _worker(self, *, run_id: str, provider: str = "codex") -> dict:
+        return {
+            "task_id": self.task["id"],
+            "provider": provider,
+            "agent_id": provider,
+            "run_id": run_id,
+            "request_snapshot": {
+                "task_id": self.task["id"],
+                "metadata": {
+                    "logical_agent_id": provider,
+                    "task": dict(self.task),
+                },
+            },
+        }
+
+    def _task_row(self) -> dict:
+        return json.loads(self.status_path.read_text(encoding="utf-8"))["tasks"][0]
+
+    def _record_failure(self, state: dict, worker: dict) -> int:
+        count = supervisor.record_task_failure_streak(
+            state,
+            worker,
+            "worker exited before task outcome",
+            failure_kind="generic_exit",
+            reason_class="generic_exit",
+            raw_ref=f".orchestrator/failure-evidence/{worker['run_id']}.json",
+            rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+        )
+        supervisor.persist_task_failure_streak(self.config, state, worker, count)
+        return count
+
+    def test_repeated_worker_failures_increment_then_quarantine_task_row(self) -> None:
+        state: dict = {}
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, self._worker(run_id="run-1")), 1)
+            first = self._task_row()
+            self.assertEqual(first["failure_streak"], 1)
+            self.assertEqual(first["status"], "in_progress")
+
+            self.assertEqual(self._record_failure(state, self._worker(run_id="run-2")), 2)
+
+        quarantined = self._task_row()
+        self.assertEqual(quarantined["failure_streak"], 2)
+        self.assertEqual(quarantined["status"], "quarantined")
+        self.assertIn("Reopen", quarantined["next"])
+
+    def test_start_preserves_subthreshold_streak_until_next_failure_quarantines(self) -> None:
+        state: dict = {}
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(
+                self._record_failure(state, self._worker(run_id="run-before-start")),
+                1,
+            )
+
+            started_status = {
+                "tasks": [self._task_row()],
+                "handoffs": [],
+                "blockers": [],
+            }
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+                mock.patch.object(ai_status, "append_log"),
+            ):
+                ai_status.command_start(
+                    started_status,
+                    [self.task["id"], "Resume work after the first failure."],
+                )
+
+            started = started_status["tasks"][0]
+            self.assertEqual(started["status"], "in_progress")
+            self.assertEqual(started["failure_streak"], 1)
+            self.status_path.write_text(
+                json.dumps(started_status) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                self._record_failure(state, self._worker(run_id="run-after-start")),
+                2,
+            )
+
+        quarantined = self._task_row()
+        self.assertEqual(quarantined["failure_streak"], 2)
+        self.assertEqual(quarantined["status"], "quarantined")
+
+    def test_rotation_cleanup_keeps_task_counter_and_governed_reopen_unblocks_dispatch(self) -> None:
+        """A rotated retry counts as a new task failure even after bucket cleanup."""
+
+        state: dict = {}
+        first_worker = self._worker(run_id="run-rotate-1")
+        retry_worker = self._worker(run_id="run-rotate-2", provider="claude")
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, first_worker), 1)
+            supervisor.clear_task_failure_streaks_for_task(
+                state,
+                self.task["id"],
+                retain_task_projection=True,
+            )
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+            self.assertEqual(self._record_failure(state, retry_worker), 1)
+            self.assertEqual(self._task_row()["failure_streak"], 2)
+
+            # Replaying the same rotated worker does not double-count it.
+            self.assertEqual(self._record_failure(state, retry_worker), 1)
+
+        quarantined = self._task_row()
+        self.assertEqual(quarantined["status"], "quarantined")
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                quarantined,
+                "Codex",
+                {self.task["id"]: quarantined},
+            )
+        )
+
+        reopened_status = {"tasks": [quarantined]}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_reopen(
+                reopened_status,
+                [self.task["id"], "Operator acknowledged the rotated failures."],
+            )
+        self.assertEqual(quarantined["failure_streak"], 0)
+        self.status_path.write_text(
+            json.dumps(reopened_status) + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertTrue(supervisor.reconcile_task_failure_streak_resets(self.config, state))
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        self.assertEqual(
+            state["provider_guardrails"]["task_failure_streak_projection_generations"],
+            {},
+        )
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                quarantined,
+                "Codex",
+                {self.task["id"]: quarantined},
+            ),
+            (supervisor.REASON_OWNED_IN_PROGRESS, 2),
+        )
+
+    def test_rotation_at_quarantine_threshold_holds_retry_without_scheduling(self) -> None:
+        """A rotation cannot schedule a retry after it quarantines the task."""
+
+        prior_failure = self._task_row()
+        prior_failure["failure_streak"] = 1
+        self.status_path.write_text(
+            json.dumps({"tasks": [prior_failure]}) + "\n",
+            encoding="utf-8",
+        )
+        state: dict = {}
+        worker = self._worker(run_id="run-rotation-threshold")
+        worker.update({"status": "running", "retry_count": 0})
+
+        with (
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value="rate limit"),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "capacity", "label": "capacity", "transient": True},
+            ),
+            mock.patch.object(
+                supervisor,
+                "summarize_failure_reason",
+                return_value={"summary": "capacity exhausted", "kind": "capacity"},
+            ),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="raw-ref"),
+            mock.patch.object(supervisor, "worker_retry_settings", return_value={"max_attempts": 5}),
+            mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="rotated"),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.ROTATE,
+            ),
+            mock.patch.object(supervisor, "schedule_worker_retry") as schedule_retry,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            outcome = supervisor.poll_worker_failure_stage(
+                self.config,
+                state,
+                worker,
+                provider_report={},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertEqual(worker["retry_hold_kind"], supervisor.RETRY_HELD_BY_TASK_QUARANTINE)
+        schedule_retry.assert_not_called()
+        self.assertEqual(self._task_row()["status"], "quarantined")
+        self.assertEqual(self._task_row()["failure_streak"], 2)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_retry_held")
+
+    def test_queue_retry_backoff_is_held_while_task_is_quarantined(self) -> None:
+        """Queue retries honor the same task quarantine before building a worker."""
+
+        quarantined = self._task_row()
+        quarantined.update({"status": "quarantined", "failure_streak": 2})
+        self.status_path.write_text(
+            json.dumps({"tasks": [quarantined]}) + "\n",
+            encoding="utf-8",
+        )
+        event = {
+            "event_id": "evt-quarantined-retry",
+            "task_id": self.task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+            "message": "retry after backoff",
+        }
+        state = {
+            "queue": {
+                "events": {
+                    event["event_id"]: {
+                        "status": "retry_backoff",
+                        "next_retry_at": "2026-08-04T00:00:00Z",
+                        "retry_count": 1,
+                    }
+                }
+            },
+            "workers": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("quarantined queue retry must not launch a worker"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, provider_report={})
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"][event["event_id"]]
+        self.assertEqual(record["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertEqual(record["retry_hold_kind"], supervisor.RETRY_HELD_BY_TASK_QUARANTINE)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_retry_held")
+
+    def test_held_worker_retry_launches_once_after_governed_reopen(self) -> None:
+        """Only governed reopen can release a task-quarantined retry backoff."""
+
+        quarantined = self._task_row()
+        quarantined.update({"status": "quarantined", "failure_streak": 2})
+        self.status_path.write_text(
+            json.dumps({"tasks": [quarantined]}) + "\n",
+            encoding="utf-8",
+        )
+        worker = {
+            "run_id": "run-held-retry",
+            "task_id": self.task["id"],
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "retry_backoff",
+            "retry_count": 1,
+            "attempt_count": 1,
+            "next_retry_at": "2026-08-04T00:00:00Z",
+        }
+        state = {"workers": {worker["run_id"]: worker}}
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="retry",
+            task_id=self.task["id"],
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+        )
+        retry_now = datetime(2026, 8, 4, 1, 0, tzinfo=timezone.utc)
+
+        with (
+            mock.patch.object(supervisor, "request_for_worker", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("held retry must not launch before reopen"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, state, provider_report={}, now=retry_now)
+            )
+
+        self.assertEqual(worker["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertEqual(worker["retry_hold_kind"], supervisor.RETRY_HELD_BY_TASK_QUARANTINE)
+
+        reopened_status = {"tasks": [self._task_row()], "handoffs": [], "blockers": []}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_reopen(
+                reopened_status,
+                [self.task["id"], "Operator acknowledged the retry quarantine."],
+            )
+        self.status_path.write_text(
+            json.dumps(reopened_status) + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor, "request_for_worker", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-reopened", None),
+            ) as start_worker,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.retry_due_workers(self.config, state, provider_report={}, now=retry_now)
+            )
+
+        start_worker.assert_called_once()
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-reopened")
+
+    def test_poll_workers_preserves_queue_backed_retry_hold_until_reopen(self) -> None:
+        """A poll cannot supersede the queue event that governed reopen releases."""
+
+        quarantined = self._task_row()
+        quarantined.update({"status": "quarantined", "failure_streak": 2})
+        self.status_path.write_text(
+            json.dumps({"tasks": [quarantined]}) + "\n",
+            encoding="utf-8",
+        )
+        event_id = "evt-held-poll-retry"
+        hold_reason = supervisor.task_retry_quarantine_hold_reason(
+            quarantined,
+            retry_was_held=True,
+        )
+        self.assertIsNotNone(hold_reason)
+        worker = {
+            **self._worker(run_id="run-held-poll-retry"),
+            "queue_event_id": event_id,
+            "status": supervisor.RETRY_QUARANTINED_STATUS,
+            "retry_hold_kind": supervisor.RETRY_HELD_BY_TASK_QUARANTINE,
+            "retry_hold_reason": hold_reason,
+            "retry_count": 1,
+            "attempt_count": 1,
+            "next_retry_at": "2026-08-04T00:00:00Z",
+        }
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {
+                "events": {
+                    event_id: {
+                        "status": supervisor.RETRY_QUARANTINED_STATUS,
+                        "retry_hold_kind": supervisor.RETRY_HELD_BY_TASK_QUARANTINE,
+                        "retry_hold_reason": hold_reason,
+                    }
+                }
+            },
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="queue-backed retry",
+            task_id=self.task["id"],
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("held retry must not launch before reopen"),
+            ) as start_worker,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertFalse(supervisor.poll_workers(self.config, state, provider_report={}))
+
+        start_worker.assert_not_called()
+        self.assertEqual(worker["status"], supervisor.RETRY_QUARANTINED_STATUS)
+        self.assertIn(worker["run_id"], state["workers"])
+        self.assertEqual(
+            state["queue"]["events"][event_id]["status"],
+            supervisor.RETRY_QUARANTINED_STATUS,
+        )
+
+        reopened_status = {"tasks": [self._task_row()], "handoffs": [], "blockers": []}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_reopen(
+                reopened_status,
+                [self.task["id"], "Operator released the queue-backed retry hold."],
+            )
+        self.status_path.write_text(
+            json.dumps(reopened_status) + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "request_for_worker", return_value=request),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-after-reopen", None),
+            ) as start_worker,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.poll_workers(self.config, state, provider_report={}))
+            self.assertFalse(supervisor.poll_workers(self.config, state, provider_report={}))
+
+        start_worker.assert_called_once()
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-after-reopen")
+
+    def test_worker_completion_resets_task_row_failure_streak(self) -> None:
+        state: dict = {}
+        worker = self._worker(run_id="run-completed")
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, worker), 1)
+            supervisor.clear_task_failure_streak_after_worker_completion(
+                self.config,
+                state,
+                worker,
+            )
+
+        self.assertEqual(self._task_row()["failure_streak"], 0)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_worker_completion_clears_all_provider_buckets_before_rotated_retry(self) -> None:
+        """A completed task cannot retain a rotated provider's stale count."""
+
+        state: dict = {}
+        completed_worker = self._worker(run_id="run-completed-codex")
+        stale_claude_worker = self._worker(
+            run_id="run-stale-claude",
+            provider="claude",
+        )
+        retry_claude_worker = self._worker(
+            run_id="run-retry-claude",
+            provider="claude",
+        )
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            self.assertEqual(self._record_failure(state, completed_worker), 1)
+            self.assertEqual(
+                supervisor.record_task_failure_streak(
+                    state,
+                    stale_claude_worker,
+                    "stale provider failure before successful completion",
+                    failure_kind="generic_exit",
+                    reason_class="generic_exit",
+                    raw_ref=".orchestrator/failure-evidence/run-stale-claude.json",
+                    rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+                ),
+                1,
+            )
+            self.assertEqual(
+                set(state["provider_guardrails"]["task_failure_streaks"]),
+                {
+                    f"{self.task['id']}:codex",
+                    f"{self.task['id']}:claude",
+                },
+            )
+
+            supervisor.clear_task_failure_streak_after_worker_completion(
+                self.config,
+                state,
+                completed_worker,
+            )
+
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+            self.assertEqual(
+                state["provider_guardrails"]["task_failure_streak_projection_generations"],
+                {},
+            )
+            self.assertEqual(self._record_failure(state, retry_claude_worker), 1)
+
+        retried = self._task_row()
+        self.assertEqual(retried["failure_streak"], 1)
+        self.assertEqual(retried["status"], "in_progress")
+
+    def test_quarantined_task_blocks_ready_dispatch_until_explicit_reset(self) -> None:
+        state: dict = {}
+        self.assertEqual(
+            supervisor.record_task_failure_streak(
+                state,
+                self._worker(run_id="run-before-reopen-1"),
+                "first failure",
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=".orchestrator/failure-evidence/run-before-reopen-1.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
+            1,
+        )
+        self.assertEqual(
+            supervisor.record_task_failure_streak(
+                state,
+                self._worker(run_id="run-before-reopen-2"),
+                "second failure",
+                failure_kind="generic_exit",
+                reason_class="generic_exit",
+                raw_ref=".orchestrator/failure-evidence/run-before-reopen-2.json",
+                rejected_head=supervisor.FAILURE_STREAK_ABSENT_HEAD,
+            ),
+            2,
+        )
+        self.task.update({"failure_streak": 2, "status": "quarantined"})
+        self.status_path.write_text(
+            json.dumps({"tasks": [self.task]}) + "\n",
+            encoding="utf-8",
+        )
+
+        candidate = supervisor.task_execution_dispatch_candidate(
+            self.config,
+            self.task,
+            "Codex",
+            {self.task["id"]: self.task},
+        )
+
+        self.assertIsNone(candidate)
+
+        quarantined_status = {
+            "tasks": [self.task],
+            "handoffs": [],
+            "blockers": [],
+        }
+        quarantined_before = copy.deepcopy(self.task)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            for command, args in (
+                (ai_status.command_start, [self.task["id"], "Attempt bypass"]),
+                (
+                    ai_status.command_handoff,
+                    [self.task["id"], "Codex2", "Attempt bypass"],
+                ),
+                (
+                    ai_status.command_blocker,
+                    [self.task["id"], "Attempt bypass", "Codex2"],
+                ),
+            ):
+                with self.assertRaisesRegex(SystemExit, "quarantined; use reopen"):
+                    command(quarantined_status, args)
+                self.assertEqual(self.task, quarantined_before)
+
+            ai_status.command_reopen(
+                quarantined_status,
+                [self.task["id"], "Operator acknowledged the failure streak."],
+            )
+
+        self.assertEqual(self.task["failure_streak"], 0)
+        self.assertEqual(self.task["status"], "in_progress")
+        self.status_path.write_text(
+            json.dumps({"tasks": [self.task]}) + "\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(supervisor.reconcile_task_failure_streak_resets(self.config, state))
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                self.task,
+                "Codex",
+                {self.task["id"]: self.task},
+            ),
+            (supervisor.REASON_OWNED_IN_PROGRESS, 2),
+        )
 
 
 class FailureStreakActivityNormalizerV3Tests(unittest.TestCase):
@@ -19311,6 +19975,104 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         persist.assert_not_called()
         write_activity_log.assert_not_called()
 
+    def test_bound_finalize_failure_never_reassigns_delivery_owner_when_blocked(self) -> None:
+        """A bound-delivery task that later drifted to blocked (e.g. a transient
+        provider outage knocked it out of review_approved) must keep the same
+        immutable-owner protection as a task still sitting in review_approved.
+        "blocked" is not in the default eligible_statuses for this path, so this
+        also exercises a config where it has been explicitly added -- otherwise
+        the old code's absence of a blocked-status guard here was masked by the
+        unrelated eligible_statuses gate and this test would pass either way."""
+
+        config = {
+            **self.config,
+            "worker_reassignment": {
+                **self.config["worker_reassignment"],
+                "eligible_statuses": [
+                    *self.config["worker_reassignment"].get("eligible_statuses", []),
+                    "blocked",
+                ],
+                "owner_fallbacks": {
+                    **self.config["worker_reassignment"]["owner_fallbacks"],
+                    "Claude": ["Grok", "Gemini"],
+                },
+            },
+        }
+        worker = {
+            "task_id": "RUN-BOUND-BLOCKED",
+            "agent_id": "claude",
+            "retry_count": 5,
+            "run_id": "claude-run-bound-blocked",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "RUN-BOUND-BLOCKED",
+                    "status": "blocked",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "review_binding": {
+                        "pr": 4407,
+                        "head_sha": "a" * 40,
+                        "head_branch": "task/RUN-BOUND-BLOCKED",
+                        "base": "dev",
+                    },
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+                force=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_normalize_mainline_task_assignment_never_reassigns_bound_delivery_when_blocked(self) -> None:
+        """normalize_mainline_task_assignment previously only protected a
+        bound-delivery task when its reviewer was an explicit human gate AND
+        it was still in review_approved. A quota-exhaustion-style outage that
+        knocked a task with an AI reviewer back to blocked got no protection
+        at all and had its owner silently rewritten by the availability scan.
+        """
+
+        task = {
+            "id": "MAINLINE-BOUND-BLOCKED",
+            "status": "blocked",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "review_binding": {
+                "pr": 4414,
+                "head_sha": "b" * 40,
+                "head_branch": "task/MAINLINE-BOUND-BLOCKED",
+                "base": "dev",
+            },
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "plan_task_assignment_pair",
+            side_effect=AssertionError(
+                "plan_task_assignment_pair must not be consulted for a bound-delivery task"
+            ),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(self.config, task)
+
+        self.assertFalse(changed)
+        self.assertEqual(task["owner"], "Codex")
+        self.assertEqual(task["reviewer"], "Codex2")
+
 
 class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def _make_fake_proc(self, entries: dict[int, str | None]) -> Path:
@@ -20385,7 +21147,11 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 [event["event_id"] for event in outbox["events"][:1]],
                 [pending_event["event_id"]],
             )
-            terminal_event = outbox["events"][1]
+            failure_streak_event = outbox["events"][1]
+            self.assertEqual(failure_streak_event["type"], "task_failure_streak_updated")
+            terminal_event = next(
+                event for event in outbox["events"][2:] if "reason" in event
+            )
             self.assertEqual(
                 terminal_event["task_id"], "OPS-LEASE-PENDING-OUTBOX"
             )
@@ -21946,10 +22712,26 @@ class CodexCacheQuotaRoutingTests(unittest.TestCase):
                 {"providers": {}},
                 report,
             )
-        self.assertTrue(changed)
-        pause = state["provider_guardrails"]["dispatch_pauses"]["codex"]
+        # Transient failure under hysteresis threshold holds auth_ready=True, skipping dispatch pause creation
+        self.assertFalse(changed)
+
+        # Driving probe failure streak to threshold (threshold=3) flips auth_ready to False and creates pause
+        supervisor.apply_provider_probe_to_report(report, "codex", probe)
+        supervisor.apply_provider_probe_to_report(report, "codex", probe)
+        self.assertFalse(report["providers"]["codex"]["auth_ready"])
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed_at_threshold = supervisor.reconcile_fresh_provider_probe_failures(
+                self.config,
+                state,
+                {"providers": {}},
+                report,
+            )
+        self.assertTrue(changed_at_threshold)
+        pauses = state.get("provider_guardrails", {}).get("dispatch_pauses", {})
+        self.assertIn("codex", pauses)
+        pause = pauses["codex"]
         self.assertEqual(pause["pause_kind"], "capacity_retryable")
-        self.assertNotIn("requires_live_auth_probe", pause)
+        self.assertFalse(pause.get("requires_live_auth_probe", False))
 
     def test_fresh_success_clears_only_the_affected_distinct_quota_group(self) -> None:
         state = {
@@ -23660,5 +24442,518 @@ class WorkerDeliveryIdentityTests(unittest.TestCase):
         self.assertIsNone(supervisor.worker_dispatch_started_at({}))
 
 
+class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmpdir.name)
+        status_file = self.root / "ai-status.json"
+        event_queue = self.root / "event_queue.jsonl"
+        activity_log = self.root / "ai-activity-log.jsonl"
+        state_file = self.root / "state.json"
+        approval_queue = self.root / "approval-queue.json"
+        status_file.write_text("{}", encoding="utf-8")
+        event_queue.write_text("", encoding="utf-8")
+        activity_log.write_text("", encoding="utf-8")
+        state_file.write_text("{}", encoding="utf-8")
+        approval_queue.write_text("{}", encoding="utf-8")
+        self.config = {
+            "paths": {
+                "status_file": str(status_file),
+                "event_queue": str(event_queue),
+                "activity_log": str(activity_log),
+                "state_file": str(state_file),
+                "approval_queue": str(approval_queue),
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity"},
+                "claude2": {"display_name": "Claude2"},
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+                "max_tasks_per_agent_by_agent": {"Antigravity": 1},
+                "max_concurrent_workers": 2,
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_reproduce_long_finalize_lease_competing_with_eligible_l12_work(self) -> None:
+        """Acceptance 1: Reproduce long finalize lease competing with eligible L12 work."""
+        status = {
+            "tasks": [
+                {
+                    "id": "LONG-FINALIZE-001",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                },
+                {
+                    "id": "SUP-L12-PRIORITY-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                },
+            ]
+        }
+        state_with_finalize_lease = {
+            "workers": {
+                "w-finalize": {
+                    "run_id": "w-finalize",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+            "queue": {"events": {}},
+        }
+        state_control_no_lease = {
+            "workers": {},
+            "queue": {"events": {}},
+        }
+
+        # Hermetically mock scan_live_worker_pids_by_agent to return 0 live workers
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}), \
+             mock.patch.object(supervisor, "queue_delivery_event") as mock_queue:
+            # With the finalize lease active on Antigravity (max 1 task per agent), L12 cannot dispatch
+            changed = supervisor.dispatch_ready_tasks(self.config, state_with_finalize_lease)
+            self.assertFalse(changed)
+            mock_queue.assert_not_called()
+
+            # Control assertion: remove the finalize lease -> dispatch succeeds for ready tasks
+            changed_control = supervisor.dispatch_ready_tasks(self.config, state_control_no_lease)
+            self.assertTrue(changed_control)
+            mock_queue.assert_called_once()
+            self.assertEqual(mock_queue.call_args[0][1]["task_id"], "LONG-FINALIZE-001")
+
+
+    def test_distinguish_healthy_long_run_from_stuck_lease(self) -> None:
+        """Acceptance 2: Distinguish healthy long run from stuck lease."""
+        now = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
+        healthy_worker = {
+            "run_id": "w-healthy",
+            "task_id": "LONG-FINALIZE-001",
+            "agent_id": "antigravity",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_finalize_dispatch"},
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "last_work_progress_at": "2026-07-29T11:59:00Z",
+            "last_heartbeat_at": "2026-07-29T11:59:30Z",
+            "last_event_at": "2026-07-29T11:59:30Z",
+        }
+        stuck_worker = {
+            "run_id": "w-stuck",
+            "task_id": "LONG-FINALIZE-001",
+            "agent_id": "antigravity",
+            "status": "stalled",
+            "request_snapshot": {"reason": "owned_finalize_dispatch"},
+            "last_event_at": "2026-01-01T00:00:00Z",
+            "last_heartbeat_at": "2026-01-01T00:00:00Z",
+        }
+
+        # 1) Lease status description explicitly distinguishes healthy_long_finalize vs stuck_lease
+        self.assertEqual(
+            supervisor.worker_lease_status_description(self.config, healthy_worker, now),
+            "healthy_long_finalize",
+        )
+        self.assertEqual(
+            supervisor.worker_lease_status_description(self.config, stuck_worker, now),
+            "stuck_lease",
+        )
+
+        # 2) Healthy worker can renew lease, stuck worker cannot
+        self.assertTrue(supervisor.worker_lease_can_renew(self.config, healthy_worker, now))
+        self.assertFalse(supervisor.worker_lease_can_renew(self.config, stuck_worker, now))
+
+    def test_prove_l12_priority_protection(self) -> None:
+        """Acceptance 3: Prove L12 priority protection after lease completion/interruption/cleanup."""
+        status = {
+            "tasks": [
+                {
+                    "id": "OTHER-REVIEW-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-PRIORITY-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+        state_finalize_active = {
+            "workers": {
+                "w-finalize": {
+                    "run_id": "w-finalize",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+            "queue": {"events": {}},
+        }
+        state_after_cleanup = {
+            "workers": {},
+            "queue": {"events": {}},
+        }
+
+        dispatched_events: list[dict[str, Any]] = []
+
+        def fake_queue(config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched_events.append(event)
+            return True
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}), \
+             mock.patch.object(supervisor, "queue_delivery_event", side_effect=fake_queue):
+            # Step 1: While finalize lease is active, dispatch is blocked
+            changed_active = supervisor.dispatch_ready_tasks(self.config, state_finalize_active)
+            self.assertFalse(changed_active)
+            self.assertEqual(len(dispatched_events), 0)
+
+            # Step 2: Once finalize lease is cleaned up / completed, dispatch triggers and selects SUP-L12-PRIORITY-001 over OTHER-REVIEW-001
+            changed_cleaned = supervisor.dispatch_ready_tasks(self.config, state_after_cleanup)
+            self.assertTrue(changed_cleaned)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+    def test_lease_lifecycle_recovery_and_healthy_worker_preservation(self) -> None:
+        """Test lease recovery on expiry/completion/interruption/cleanup and verify healthy workers are not terminated."""
+        status = {
+            "tasks": [
+                {
+                    "id": "OTHER-REVIEW-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-PRIORITY-001",
+                    "status": "review",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+
+        # 1) Expiry lifecycle recovery
+        state_expired = {
+            "workers": {
+                "w-expired": {
+                    "run_id": "w-expired",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "lease_expires_at": "2026-01-01T00:00:00Z",
+                    "last_heartbeat_at": "2026-01-01T00:00:00Z",
+                }
+            },
+            "queue": {"events": {}},
+        }
+
+        # 2) Interruption / failure recovery
+        state_interrupted = {
+            "workers": {
+                "w-interrupted": {
+                    "run_id": "w-interrupted",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "failed",
+                }
+            },
+            "queue": {"events": {}},
+        }
+
+        # 3) Cleanup / completion recovery
+        state_completed = {
+            "workers": {
+                "w-completed": {
+                    "run_id": "w-completed",
+                    "task_id": "LONG-FINALIZE-001",
+                    "agent_id": "antigravity",
+                    "status": "completed",
+                }
+            },
+            "queue": {"events": {}},
+        }
+
+        now = datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc)
+        healthy_worker = {
+            "run_id": "w-healthy",
+            "task_id": "LONG-FINALIZE-001",
+            "agent_id": "antigravity",
+            "status": "running",
+            "request_snapshot": {"reason": "owned_finalize_dispatch"},
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "last_work_progress_at": "2026-07-29T11:59:00Z",
+            "last_heartbeat_at": "2026-07-29T11:59:30Z",
+            "last_event_at": "2026-07-29T11:59:30Z",
+            "pid": 99999,
+        }
+
+        dispatched_events: list[dict[str, Any]] = []
+
+        def fake_queue(config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched_events.append(event)
+            return True
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}), \
+             mock.patch.object(supervisor, "queue_delivery_event", side_effect=fake_queue):
+            # Verify expired worker state allows SUP-L12 priority review dispatch
+            dispatched_events.clear()
+            changed = supervisor.dispatch_ready_tasks(self.config, state_expired)
+            self.assertTrue(changed)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+            # Verify interrupted worker state allows SUP-L12 priority review dispatch
+            dispatched_events.clear()
+            changed = supervisor.dispatch_ready_tasks(self.config, state_interrupted)
+            self.assertTrue(changed)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+            # Verify completed worker state allows SUP-L12 priority review dispatch
+            dispatched_events.clear()
+            changed = supervisor.dispatch_ready_tasks(self.config, state_completed)
+            self.assertTrue(changed)
+            self.assertEqual(len(dispatched_events), 1)
+            self.assertEqual(dispatched_events[0]["task_id"], "SUP-L12-PRIORITY-001")
+
+        # Verify healthy worker outside fixture is preserved and not terminated during reconcile
+        state_healthy = {
+            "workers": {"w-healthy": healthy_worker},
+            "queue": {"events": {}},
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True), \
+             mock.patch.object(supervisor, "terminate_worker_pid") as mock_terminate:
+            res = supervisor.reconcile_runtime_on_boot(self.config, state_healthy)
+            mock_terminate.assert_not_called()
+            self.assertEqual(healthy_worker["status"], "running")
+
+    def test_summarize_runtime_null_request_snapshot_regression(self) -> None:
+        """Verify summarize_runtime does not crash when active worker request_snapshot is None or missing."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state = {
+            "workers": {
+                "w-null-snapshot": {
+                    "run_id": "w-null-snapshot",
+                    "task_id": "TEST-TASK-001",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": None,
+                    "last_heartbeat_at": now_iso,
+                }
+            },
+            "queue": {"events": {}},
+        }
+        approval_state = {"pending": []}
+        summary = supervisor.summarize_runtime(state, approval_state)
+        self.assertEqual(len(summary["active_workers"]), 1)
+        self.assertEqual(summary["active_workers"][0]["lease_status_description"], "healthy_running")
+
+
+
+    def test_refresh_provider_auth_before_dispatch_cached_probe_does_not_increment_streak(self) -> None:
+        """Verify cached probe replays in refresh_provider_auth_before_dispatch do not increment consecutive failure streak."""
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "consecutive_probe_failures": 0,
+                    "account_health": "healthy",
+                    "auth_probe": {
+                        "provider": "claude",
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        # 1st live probe timeout -> streak 1
+        live_probe = {
+            "provider": "claude",
+            "ready": False,
+            "status": "probe_timeout",
+            "checked_at": supervisor.utc_now(),
+            "source": "live",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=live_probe):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, provider_report, "claude")
+
+        claude_cap = provider_report["providers"]["claude"]
+        self.assertEqual(claude_cap["consecutive_probe_failures"], 1)
+        self.assertEqual(claude_cap["auth_ready"], True)
+
+        # 2nd cached probe replay -> streak should remain 1
+        cached_probe = {
+            "provider": "claude",
+            "ready": False,
+            "status": "probe_timeout",
+            "checked_at": supervisor.utc_now(),
+            "source": "cached",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=cached_probe):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, provider_report, "claude")
+
+        self.assertEqual(claude_cap["consecutive_probe_failures"], 1)
+        self.assertEqual(claude_cap["auth_ready"], True)
+
+    def test_reconcile_fresh_provider_probe_failures_ignores_held_hysteresis(self) -> None:
+        """Verify reconcile_fresh_provider_probe_failures does not pause providers when auth_ready is True under hysteresis."""
+        current_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "account_health": "degraded",
+                    "consecutive_probe_failures": 1,
+                    "probe_failure_kind": "capacity_retryable",
+                    "auth_probe": {
+                        "provider": "claude",
+                        "ready": False,
+                        "status": "models_cache_incompatible",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+        state = {}
+        with mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mock_pause:
+            changed = supervisor.reconcile_fresh_provider_probe_failures(self.config, state, None, current_report)
+            self.assertFalse(changed)
+            mock_pause.assert_not_called()
+
+    @staticmethod
+    def _held_provider_report(provider_key: str, streak: int) -> dict:
+        """A capability report holding auth_ready open across `streak` failed live probes."""
+        return {
+            "providers": {
+                provider_key: {
+                    "auth_ready": True,
+                    "consecutive_probe_failures": streak,
+                    "auth_probe": {
+                        "provider": provider_key,
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+    def test_claude_adapter_honours_hysteresis_held_auth_ready(self) -> None:
+        """The CLI adapter must read the report's held auth_ready, not just its own local check.
+
+        The adapter's local auth check is forced to False here, which is what a
+        transient failure under load looks like. Without hysteresis the adapter
+        re-derives can_auto_deliver=False on failure #1 and dispatch dies, which is
+        the exact incident this task exists to prevent. The hold must apply only
+        while the streak is active and still under the configured threshold.
+        """
+        from adapters import build_adapter
+        import adapters.claude_cli as claude_cli
+
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        config.setdefault("supervisor", {})["provider_probe_failure_hysteresis_threshold"] = 3
+
+        # streak 0 -> no active hold; 1,2 -> held; 3 -> threshold reached, flipped upstream.
+        for streak, expected in ((0, False), (1, True), (2, True), (3, False)):
+            with self.subTest(streak=streak):
+                report = self._held_provider_report("claude2", streak)
+                with mock.patch.object(claude_cli, "command_exists", return_value="/usr/bin/claude"), \
+                        mock.patch.object(claude_cli, "shared_claude_auth_ready", return_value=False):
+                    capability = build_adapter(
+                        "claude_cli", config=config, provider_capabilities=report
+                    ).capability("claude2")
+                self.assertIs(capability.can_auto_deliver, expected)
+
+    def test_agent_adapters_can_auto_deliver_hysteresis_debounce(self) -> None:
+        """End-to-end: a held provider must not be blocked at the can_auto_deliver dispatch gate."""
+        from adapters import build_adapter
+        import adapters.claude_cli as claude_cli
+
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        config.setdefault("supervisor", {})["provider_probe_failure_hysteresis_threshold"] = 3
+
+        def _report_at(streak: int) -> dict:
+            report = self._held_provider_report("claude2", streak)
+            with mock.patch.object(claude_cli, "command_exists", return_value="/usr/bin/claude"), \
+                    mock.patch.object(claude_cli, "shared_claude_auth_ready", return_value=False):
+                report["agent_adapters"] = {
+                    "claude2": build_adapter(
+                        "claude_cli", config=config, provider_capabilities=report
+                    ).capability("claude2").as_dict()
+                }
+            return report
+
+        held = supervisor.agent_auto_dispatch_block_reason(config, {}, "claude2", _report_at(1))
+        self.assertIsNone(held, "a single transient probe failure must not block dispatch")
+
+        exhausted = supervisor.agent_auto_dispatch_block_reason(config, {}, "claude2", _report_at(3))
+        self.assertIsNotNone(exhausted, "dispatch must block once the failure streak reaches threshold")
+
+    def test_probeless_provider_auth_ready_is_not_pinned_by_hysteresis(self) -> None:
+        """A provider with no live probe must keep its freshly computed auth_ready.
+
+        Nothing advances consecutive_probe_failures for a provider without a live
+        auth_probe, so inheriting auth_ready=True for one would pin it permanently
+        and a genuinely revoked credential could never flip back to False.
+        """
+        import provider_permissions as pp
+
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "provider_capabilities.json"
+            # Previous report: copilot was authenticated and has never been live-probed.
+            cache.write_text(
+                json.dumps({"providers": {"copilot": {"auth_ready": True}}}),
+                encoding="utf-8",
+            )
+            config.setdefault("paths", {})["provider_capabilities"] = str(cache)
+            with mock.patch.object(pp, "_copilot_auth_ready", return_value=False):
+                report = pp.provider_capabilities(config)
+
+        copilot = report.get("providers", {}).get("copilot", {})
+        self.assertIs(
+            copilot.get("auth_ready"),
+            False,
+            "revoked probe-less credential must not inherit a hysteresis hold",
+        )
+        self.assertIs(copilot.get("local_cli_worker_supported"), False)
+
+
 if __name__ == "__main__":
     unittest.main()
+

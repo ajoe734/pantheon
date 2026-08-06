@@ -930,6 +930,7 @@ def read_orchestrator_status(
             acceptance=t.get("acceptance", []),
             summary_zh=t.get("summary_zh"),
             waiting_for=t.get("waiting_for"),
+            failure_streak=t.get("failure_streak", 0),
             brief_path=brief_path,
             blockers=_task_blockers(blockers, task_id, state=state, task=t),
             github=github_status,

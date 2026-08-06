@@ -39,7 +39,9 @@
     "observe_worker_commit_progress": true,
     "lease_requires_work_progress": true,
     "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": true
+    "auto_refresh_provider_capabilities": false,
+    "provider_capability_refresh_interval_seconds": 300,
+    "provider_probe_failure_hysteresis_threshold": 3
   },
   "worker_runtime": {
     "worker_lease_seconds": 600,
@@ -999,7 +1001,8 @@
       "required_status_checks": [
         "Commit trailers",
         "Runtime mirror guard",
-        "Smoke acceptance"
+        "Smoke acceptance",
+        "Pantheon canonical review gate"
       ],
       "max_open_hours": 24
     },
