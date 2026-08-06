@@ -1,6 +1,12 @@
 # SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730 — split worker status root from git source root
 
-Owner: `Codex` · Reviewer: `Codex2` · Phase: Supervisor / Fleet dispatch unblock
+Owner: `Claude` · Reviewer: `Antigravity` · Phase: Supervisor / Fleet dispatch unblock
+
+> Ownership note: this task was delivered under owner `Codex` / reviewer
+> `Codex2` and reassigned on 2026-08-05 by the Codex-quota mass
+> reassignment. The canonical row now binds owner `Claude` and reviewer
+> `Antigravity`; this manifest revision only rebinds that pair and records
+> the owner's re-verification. No delivered code changed.
 
 This is a supervisor control-plane repair for auto-worker dispatch. It does not
 claim Pantheon or Agora product closeout by itself; it removes the blocker that
@@ -78,8 +84,37 @@ PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-pyth
 # Ran 583 tests ... OK
 ```
 
-This manifest is ready for Codex2's independent review; it does not itself
-record a review decision or approval.
+Owner re-verification after reassignment (2026-08-06), on PR #4392 head
+`31c4b4b3749492d8ef53f45aa711be8361f3516b` with `origin/dev` already merged
+forward into the task branch:
+
+```bash
+PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python \
+  -m unittest discover -s .orchestrator -p 'test_supervisor.py'
+# Ran 583 tests in 4.369s ... OK
+```
+
+## Reopen re-verification
+
+Human/Ops reopened this task on 2026-08-06 to check whether its original
+blocking condition still applies under the new owner/reviewer pair. It does
+not:
+
+- the repository-level delivery is complete and pushed on PR #4392;
+- `Commit trailers`, `Runtime mirror guard`, `Python packaging provision`,
+  and `Smoke acceptance` are all green on the current head;
+- the only failing check is `Pantheon canonical review gate`, which reports
+  `no review-proof tag (pantheon-review/approve/31c4b4b3...)` — the expected
+  state for a head no reviewer has approved yet;
+- the task was never technically blocked. It stayed at `in_progress`, and
+  the supervisor only dispatches a reviewer once a task reaches `review`,
+  so no reviewer was ever asked to look at it.
+
+Remaining work is therefore independent review by `Antigravity`, PR merge to
+`dev`, and then the live follow-up below.
+
+This manifest is ready for Antigravity's independent review; it does not
+itself record a review decision or approval.
 
 ## Live follow-up after merge
 
@@ -100,3 +135,10 @@ After restart, the acceptance gate is an activity-log proof that the next
 isolated dispatch records `workspace_source_root=/home/lupin/pantheon-ci-deploy/dev-root`
 and no longer emits `dispatch_blocked_worktree_lease` with
 `Read-only file system` for `.git/worktrees`.
+
+These three live steps are owned by `Human/Ops`, not by this task's worker
+lane: an auto worker cannot stop, restart, or repoint the live supervisor it
+is itself dispatched from. The corresponding acceptance items (`live command
+root promoted`, `live config sets worker_worktrees.source_root=...`,
+`supervisor restarted`, `first isolated worker dispatch records
+workspace_source_root`) must be executed and recorded outside this lane.
