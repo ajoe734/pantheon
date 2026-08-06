@@ -3,41 +3,79 @@
   "task_title": "Gate fleet bootstrap on exact runtime root coherence",
   "owner": "Antigravity",
   "reviewer": "Claude",
-  "timestamp": "2026-08-06T13:53:00Z",
+  "timestamp": "2026-08-06T14:12:00Z",
   "verification_results": {
-    "supervisor_process_binding": {
+    "acceptance_1_supervisor_process_binding": {
       "status": "PASSED",
-      "details": "Supervisor runner executing with exact config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json and runtime SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745."
+      "command": "ps aux | grep supervisor | grep -v grep",
+      "details": "Exactly one supervisor process running bound to /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json with runtime SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745."
     },
-    "command_root_coherence": {
+    "acceptance_2_source_and_runner_root": {
       "status": "PASSED",
-      "details": "PANTHEON_COMMAND_ROOT points to /home/lupin/pantheon-ci-deploy/dev-root, PANTHEON_STATUS_ROOT points to /home/lupin/pantheon."
+      "command": "cat /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "details": "Supervisor source root and worker runner root are bound to /home/lupin/pantheon-ci-deploy/dev-root (HEAD f90e0aae6cb5e86f18b20db9f30bc834f6115745, merged into origin/dev) and never to legacy sidecar deletes."
     },
-    "worker_worktree_source_root": {
-      "status": "PASSED",
-      "details": "Worker worktree is clean writable checkout /tmp/pantheon-worker-worktrees/pantheon/sup-l12-fleet-bootstrap-root-coherence-gate-20260801 on per-task branch task/SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801."
+    "acceptance_3_command_root_coherence": {
+      "status": "FAILED",
+      "command": "echo PANTHEON_COMMAND_ROOT=$PANTHEON_COMMAND_ROOT; git -C $PANTHEON_COMMAND_ROOT rev-parse HEAD",
+      "details": "PANTHEON_COMMAND_ROOT=/home/lupin/pantheon-ci-deploy/dev-root is not under a content-addressed command-runtimes/<40-hex> directory, although its HEAD equals f90e0aae6cb5e86f18b20db9f30bc834f6115745."
     },
-    "status_root_isolation": {
-      "status": "PASSED",
-      "details": "Status root /home/lupin/pantheon is reserved for canonical state/activity/archive files."
+    "acceptance_4_worker_worktree_source_root": {
+      "status": "FAILED",
+      "command": "cat /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json | grep -i source_root",
+      "details": "live-supervisor-mainroot-config.json lacks explicit worker_worktrees.source_root key; worker_worktrees configuration includes only enabled, root, base_ref, and reuse_existing."
     },
-    "watchdog_config_binding": {
-      "status": "PASSED",
-      "details": "Watchdog and supervisor runtime configured with absolute live config path."
+    "acceptance_5_status_root_isolation": {
+      "status": "FAILED",
+      "command": "git rev-parse --git-common-dir",
+      "details": "Canonical status root /home/lupin/pantheon IS a Git worktree source authority (owning repo for worktrees under /tmp/pantheon-worker-worktrees/pantheon/)."
     },
-    "antigravity_worker_execution": {
+    "acceptance_6_watchdog_config_binding": {
       "status": "PASSED",
-      "details": "Antigravity worker executing cleanly in auto-worker mode."
+      "command": "cat /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "details": "Watchdog uses absolute live config path /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json."
+    },
+    "acceptance_7_stale_held_token_clearance": {
+      "status": "FAILED",
+      "command": "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
+      "details": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 remains in status todo."
+    },
+    "acceptance_8_canary_workers_execution": {
+      "status": "PASSED",
+      "command": "ls -la /home/lupin/pantheon/.orchestrator/worker-runtime/status/",
+      "details": "Verified active auto-worker executions and heartbeats for Antigravity and Claude workers without missing-process reconciliation."
+    },
+    "acceptance_9_projection_checkpoint_and_lease_parity": {
+      "status": "PASSED",
+      "command": "ls /home/lupin/pantheon/.orchestrator/worker-runtime/status/",
+      "details": "No duplicate active worker leases or queue lease conflicts found."
+    },
+    "acceptance_10_config_sha_tracking": {
+      "status": "PASSED",
+      "command": "echo $PANTHEON_COMMAND_RUNTIME_SHA",
+      "details": "Runtime SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745 explicitly recorded and unchanged."
+    },
+    "acceptance_11_product_tasks_gate_enforcement": {
+      "status": "PASSED",
+      "details": "Product tasks remain unmaterialized while fleet bootstrap root coherence gate fails criteria 3, 4, 5, and 7."
+    },
+    "acceptance_12_no_manual_action_attestation": {
+      "status": "PASSED",
+      "details": "All state interactions conducted strictly through governed status scripts and background worker runner."
     }
   },
   "acceptance_checklist_status": {
-    "supervisor_single_process_live_config_bound": true,
-    "source_root_and_worker_runner_immutable_dev_ancestor": true,
-    "canonical_command_root_content_addressed_and_merged": true,
-    "worker_worktrees_source_root_clean_writable_distinct": true,
-    "status_root_isolated_for_canonical_state": true,
-    "watchdog_uses_absolute_live_config_path": true,
-    "antigravity_workers_and_claude_review_execution": true,
-    "twenty_eight_l12_product_tasks_gated": true
+    "Read back exactly one supervisor process bound to exact config": true,
+    "Prove supervisor source root and worker runner root are immutable dev ancestors": true,
+    "Prove canonical command root is content-addressed command-runtimes/<40-hex>": false,
+    "Prove worker_worktrees.source_root is clean writable distinct checkout": false,
+    "Prove status root is used only for state and never as Git worktree source authority": false,
+    "Prove watchdog restart uses exact absolute live config path": true,
+    "Clear or terminalize stale SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731": false,
+    "Run two Antigravity owner workers and one Claude review worker": true,
+    "Prove projection checkpoint parity and no duplicate leases": true,
+    "Record config SHA before and after": true,
+    "Do not materialize 28 L12 product tasks until every gate passes": true,
+    "No chatbox implementation or unreviewed config mutation": true
   }
 }
