@@ -187,6 +187,7 @@ def _recover_pending_status_outbox(
 
 def _recover_pending_archive_outbox(status_file: str, status_root: str) -> None:
     root = Path(status_root)
+    ai_status.configure_status_root_paths(root)
     ai_status.STATUS_FILE = Path(status_file)
     task_archive.STATUS_ROOT = root
     task_archive.STATUS_FILE = Path(status_file)
@@ -205,6 +206,7 @@ def _commit_terminal_archive_with_sigkill(
     point: str,
 ) -> None:
     root = Path(status_root)
+    ai_status.configure_status_root_paths(root)
     ai_status.STATUS_FILE = Path(status_file)
     task_archive.STATUS_ROOT = root
     task_archive.STATUS_FILE = Path(status_file)
@@ -4453,6 +4455,62 @@ class ArchiveWorkflowTests(unittest.TestCase):
         refresh_views.assert_not_called()
         lease_validation.assert_not_called()
 
+    def test_status_write_pending_indicators_feature_flag_and_per_task_counting(self) -> None:
+        state = deepcopy(self.state)
+        # Add tasks A, B, C
+        state["tasks"] = [
+            {"id": "TASK-A", "status": "in_progress"},
+            {"id": "TASK-B", "status": "in_progress"},
+            {"id": "TASK-C", "status": "in_progress"},
+        ]
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "tx1",
+            "events": [
+                {"event_id": "e1", "task_id": "TASK-A"},
+                {"event_id": "e2", "task_id": "TASK-A"},
+                {"event_id": "e3", "task_id": "TASK-B"},
+            ],
+        }
+
+        # Test 1: Feature flag OFF (default) -> no indicator stamped
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED", None)
+            ai_status._update_pending_outbox_indicators(state)
+            for task in state["tasks"]:
+                self.assertNotIn("status_write_pending", task)
+                self.assertNotIn("status_write_pending_count", task)
+
+        # Test 2: Feature flag ON -> per-task count stamped
+        with mock.patch.dict(os.environ, {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}, clear=False):
+            ai_status._update_pending_outbox_indicators(state)
+            task_a = next(t for t in state["tasks"] if t["id"] == "TASK-A")
+            task_b = next(t for t in state["tasks"] if t["id"] == "TASK-B")
+            task_c = next(t for t in state["tasks"] if t["id"] == "TASK-C")
+
+            self.assertTrue(task_a.get("status_write_pending"))
+            self.assertEqual(task_a.get("status_write_pending_count"), 2)
+
+            self.assertTrue(task_b.get("status_write_pending"))
+            self.assertEqual(task_b.get("status_write_pending_count"), 1)
+
+            self.assertNotIn("status_write_pending", task_c)
+            self.assertNotIn("status_write_pending_count", task_c)
+
+        # Test 3: Unbound event without task_id does NOT mark untouched tasks as pending
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY]["events"].append({"event_id": "e4"}) # no task_id (e.g. wave event)
+        with mock.patch.dict(os.environ, {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}, clear=False):
+            ai_status._update_pending_outbox_indicators(state)
+            task_a = next(t for t in state["tasks"] if t["id"] == "TASK-A")
+            task_c = next(t for t in state["tasks"] if t["id"] == "TASK-C")
+
+            self.assertTrue(task_a.get("status_write_pending"))
+            self.assertEqual(task_a.get("status_write_pending_count"), 2) # still exact count for A
+
+            # TASK-C must NOT be marked as pending (preventing whole-board false positives)
+            self.assertNotIn("status_write_pending", task_c)
+            self.assertNotIn("status_write_pending_count", task_c)
+
     def test_recover_main_fails_closed_when_task_lock_is_busy(self) -> None:
         with (
             mock.patch.object(ai_status, "validate_status_root_binding"),
@@ -5250,6 +5308,122 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("Loop closure", content)
         self.assertIn("Execution proof", content)
         self.assertIn("- Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Runtime & Dashboard`", content)
+
+    def test_write_current_work_flags_status_writes_queued_behind_integrity_block(
+        self,
+    ) -> None:
+        state = {
+            "updated_at": "2026-08-06T00:00:00Z",
+            "objective": "Keep the board honest about queued status writes.",
+            "sprint": "2026-08-06-outbox",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": ["ai-status.json"],
+            },
+            "agents": [
+                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Claude", "capability_lane": ["review"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [
+                {
+                    "id": "STALE-001",
+                    "title": "Task whose write-back is queued",
+                    "summary_zh": "狀態寫入排隊中。",
+                    "phase": "Foundation",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "next": "-",
+                    "last_update": "2026-08-06T00:00:00Z",
+                    "status_write_pending": True,
+                    "status_write_pending_count": 2,
+                },
+                {
+                    "id": "QUIET-001",
+                    "title": "Task nobody touched",
+                    "summary_zh": "沒有人動過。",
+                    "phase": "Foundation",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "next": "-",
+                    "last_update": "2026-08-06T00:00:00Z",
+                },
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+        content = self._render_current_work(state)
+
+        # A reader can tell a stale row from an untouched one.
+        self.assertIn("## Status Write Backlog", content)
+        self.assertIn("| `STALE-001` | Codex | in_progress | 2 |", content)
+        self.assertIn("in_progress (stale: 2 writes queued)", content)
+        self.assertNotIn("QUIET-001` | Claude | in_progress | ", content)
+
+    def test_write_current_work_omits_backlog_section_without_pending_writes(
+        self,
+    ) -> None:
+        state = {
+            "updated_at": "2026-08-06T00:00:00Z",
+            "objective": "Keep the board honest about queued status writes.",
+            "sprint": "2026-08-06-outbox",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": ["ai-status.json"],
+            },
+            "agents": [
+                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Claude", "capability_lane": ["review"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [
+                {
+                    "id": "QUIET-001",
+                    "title": "Task nobody touched",
+                    "summary_zh": "沒有人動過。",
+                    "phase": "Foundation",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "in_progress",
+                    "depends_on": [],
+                    "next": "-",
+                    "last_update": "2026-08-06T00:00:00Z",
+                },
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+        content = self._render_current_work(state)
+
+        self.assertNotIn("## Status Write Backlog", content)
+        self.assertNotIn("stale:", content)
+
+    def _render_current_work(self, state: dict) -> str:
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with (
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
+                mock.patch.object(
+                    ai_status,
+                    "load_archive_index",
+                    return_value={
+                        "updated_at": "2026-08-06T00:00:00Z",
+                        "counts": {"total": 0, "completed": 0, "superseded": 0},
+                        "recent_terminal_ids": [],
+                    },
+                ),
+                mock.patch.object(
+                    ai_status, "recent_terminal_summaries", return_value=[]
+                ),
+            ):
+                ai_status.write_current_work(state, [])
+            return output_path.read_text(encoding="utf-8")
 
     def test_write_current_work_formats_absolute_times_in_taiwan_time(self) -> None:
         state = {
@@ -7877,6 +8051,159 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             1,
             "rotation split one status transaction across audit files",
         )
+
+    def test_integrity_block_persists_pending_markers_on_disk(self) -> None:
+        state = self._fixture_state()
+        event = {
+            "ts": "2026-08-06T05:00:00Z",
+            "agent": "Codex2",
+            "type": "progress",
+            "task_id": "LOCK-ONE",
+            "message": "write-back that cannot clear the integrity check",
+            "event_id": "ai-status-ev-"
+            + "3" * 64,
+        }
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox([event])
+        self._write_state(state)
+
+        blocked = ai_status.ActivityAuditInvariantError(
+            "activity content-addressed archives do not match lineage",
+            invariant="activity_archive_lineage",
+            evidence={"log_path": str(self.log_file)},
+        )
+        refreshed: list[dict[str, object]] = []
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status, "_activity_event_index_unlocked", return_value={}
+            ),
+            mock.patch.object(
+                ai_status, "_append_logs_unlocked", side_effect=blocked
+            ),
+            mock.patch.object(
+                ai_status,
+                "refresh_derived_status_views",
+                side_effect=refreshed.append,
+            ),
+        ):
+            loaded = ai_status.load_state()
+            with self.assertRaises(ai_status.ActivityAuditInvariantError):
+                ai_status.recover_status_activity_outbox(loaded)
+
+        persisted = json.loads(self.status_file.read_text(encoding="utf-8"))
+        blocked_task = next(
+            task for task in persisted["tasks"] if task["id"] == "LOCK-ONE"
+        )
+        untouched_task = next(
+            task for task in persisted["tasks"] if task["id"] == "LOCK-TWO"
+        )
+        # The write stays queued for retry, and the board now says so.
+        self.assertIsNotNone(persisted[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+        self.assertTrue(blocked_task["status_write_pending"])
+        self.assertEqual(blocked_task["status_write_pending_count"], 1)
+        self.assertNotIn("status_write_pending", untouched_task)
+        # Derived views are refreshed so the marker is readable while the
+        # read-only commands are still failing closed on the pending plane.
+        self.assertEqual(len(refreshed), 1)
+
+    def test_integrity_block_leaves_board_untouched_when_flag_is_off(self) -> None:
+        state = self._fixture_state()
+        event = {
+            "ts": "2026-08-06T05:00:00Z",
+            "agent": "Codex2",
+            "type": "progress",
+            "task_id": "LOCK-ONE",
+            "message": "write-back that cannot clear the integrity check",
+            "event_id": "ai-status-ev-" + "4" * 64,
+        }
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox([event])
+        self._write_state(state)
+
+        blocked = ai_status.ActivityAuditInvariantError(
+            "activity content-addressed archives do not match lineage",
+            invariant="activity_archive_lineage",
+            evidence={"log_path": str(self.log_file)},
+        )
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "0"},
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status, "_activity_event_index_unlocked", return_value={}
+            ),
+            mock.patch.object(
+                ai_status, "_append_logs_unlocked", side_effect=blocked
+            ),
+            mock.patch.object(ai_status, "refresh_derived_status_views"),
+        ):
+            loaded = ai_status.load_state()
+            with self.assertRaises(ai_status.ActivityAuditInvariantError):
+                ai_status.recover_status_activity_outbox(loaded)
+
+        persisted = json.loads(self.status_file.read_text(encoding="utf-8"))
+        for task in persisted["tasks"]:
+            self.assertNotIn("status_write_pending", task)
+            self.assertNotIn("status_write_pending_count", task)
+
+    def test_status_write_pending_indicators(self) -> None:
+        state = self._fixture_state()
+        task = state["tasks"][0]
+        self.assertNotIn("status_write_pending", task)
+        self.assertNotIn("status_write_pending_count", task)
+
+        # 1. Activity outbox pending with feature flag enabled
+        event = {
+            "ts": "2026-08-06T05:00:00Z",
+            "agent": "Antigravity",
+            "type": "progress",
+            "task_id": "LOCK-ONE",
+            "message": "test progress",
+            "event_id": "ai-status-ev-1111111111111111111111111111111111111111111111111111111111111111",
+        }
+        unbound_event = {
+            "ts": "2026-08-06T05:01:00Z",
+            "agent": "Antigravity",
+            "type": "wave_open",
+            "wave_id": "2026-W30",
+            "message": "wave open",
+            "event_id": "ai-status-ev-2222222222222222222222222222222222222222222222222222222222222222",
+        }
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": ai_status.STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "transaction_id": "ai-status-tx-" + ai_status._canonical_json_sha256([event, unbound_event]),
+            "events": [event, unbound_event],
+        }
+
+        with unittest.mock.patch.dict("os.environ", {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}):
+            ai_status._update_pending_outbox_indicators(state)
+            task_one = ai_status.get_task(state, "LOCK-ONE")
+            task_two = ai_status.get_task(state, "LOCK-TWO")
+            self.assertTrue(task_one.get("status_write_pending"))
+            self.assertEqual(task_one.get("status_write_pending_count"), 1)
+            # Unbound events should NOT cause false positive status_write_pending on untouched tasks
+            self.assertNotIn("status_write_pending", task_two)
+            self.assertNotIn("status_write_pending_count", task_two)
+
+        # 2. Flag off removes indicators
+        with unittest.mock.patch.dict("os.environ", {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "0"}):
+            ai_status._update_pending_outbox_indicators(state)
+            task_one = ai_status.get_task(state, "LOCK-ONE")
+            self.assertNotIn("status_write_pending", task_one)
+
+        # 3. Cleared outbox removes indicators even when flag enabled
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = None
+        with unittest.mock.patch.dict("os.environ", {"PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED": "1"}):
+            ai_status._update_pending_outbox_indicators(state)
+            task_one = ai_status.get_task(state, "LOCK-ONE")
+            self.assertNotIn("status_write_pending", task_one)
+            self.assertNotIn("status_write_pending_count", task_one)
+
 
 
 class ActivityLogRotationTests(unittest.TestCase):
