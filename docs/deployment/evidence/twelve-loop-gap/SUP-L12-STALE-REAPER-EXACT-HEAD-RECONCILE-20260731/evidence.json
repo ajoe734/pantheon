@@ -259,7 +259,7 @@
     "status": "review",
     "decision": "reopen_subject_task",
     "reviewed_task_pr": "https://github.com/ajoe734/pantheon/pull/4395",
-    "reviewed_task_head_sha": "edb1698aa6626d84039243d862dfdc33a8f87770",
+    "reviewed_task_head_sha": "38a70d05a30538a760efb79a32c74895696d744b",
     "reviewed_at": "2026-08-06T12:20:00Z",
     "notes": [
       "Reviewed exact task PR #4395 head edb1698aa6626d84039243d862dfdc33a8f87770 (== origin task head == review_binding.head_sha).",
