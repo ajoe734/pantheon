@@ -37,35 +37,62 @@
     "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4564",
     "contents": "Task artifacts only: this evidence manifest plus the task brief under .orchestrator/task-briefs/. No product behaviour, gate semantics, or review authority changes.",
     "why_it_exists": "The pair was reassigned Codex/Codex2 -> Claude/Antigravity 93 minutes after PR #4533 merged, so no commit on this branch had ever been authored under the current pair and closeout could not bind.",
-    "reopen_reason": "Antigravity reopened the task on 2026-08-05 because PR #4564 had been rebased onto a dev tip that already contained merged PR #4533, so this manifest no longer appeared in the PR diff and could not be reviewed at the exact head. This revision restores the manifest to the PR diff and rebinds it to the current pair.",
-    "review_request": "Approve at the exact PR #4564 head with REVIEW_PR=4564 and REVIEW_HEAD_SHA=<exact head>. Do NOT set REVIEW_FILE while the leased command root is pinned at 4361a26ad -- see environment_defect below. The canonical task row already binds review_file to this manifest, so omitting REVIEW_FILE preserves the reviewer-bound path."
+    "reopen_history": "Antigravity reopened on 2026-08-05 because PR #4564 had been rebased onto a dev tip that already contained merged PR #4533, so this manifest no longer appeared in the PR diff and could not be reviewed at the exact head. The branch has been merged forward from origin/dev ever since, never rebased.",
+    "diff_scope_check": "git diff --name-only origin/dev...HEAD at this revision lists exactly .orchestrator/task-briefs/sup_task_failure_streak_schema_20260804.md and this manifest, confirmed 2026-08-06.",
+    "review_request": "Approve at the exact PR #4564 head with REVIEW_PR=4564 and REVIEW_HEAD_SHA=<exact head>. REVIEW_FILE is now safe to pass but unnecessary: the canonical task row already binds review_file to this manifest, and omitting it preserves that binding."
   },
   "environment_defect": {
+    "status": "resolved",
     "reported_by": "Antigravity",
     "reported_at": "2026-08-05T04:34:17Z",
     "report": "Exact-head approval carrying REVIEW_FILE was rejected because scripts/ai_status.py review_evidence_file_committed() called 'gh api repos/<slug>/contents/<path> -f ref=<sha>'. The -f flag makes gh issue a POST with a form field, so the GitHub Contents API returns 404 for every ref and command_approve fails closed.",
-    "assessment": "Accurate for the running command root, but it is a runtime lag rather than a repository defect. The fix ('gh api --method GET ...?ref=<sha>') is commit 83b6fd0351c86c36d521086139f78918d157b87d, authored under this task and already merged to origin/dev via delivery PR #4533 (merge c37be6ea4).",
-    "stale_command_root": {
+    "assessment": "Accurate for the running command root at the time, but a runtime lag rather than a repository defect. The fix ('gh api --method GET ...?ref=<sha>') is commit 83b6fd0351c86c36d521086139f78918d157b87d, authored under this task and already merged to origin/dev via delivery PR #4533 (merge c37be6ea4).",
+    "stale_command_root_at_report": {
       "path": "/home/lupin/pantheon-ci-deploy/dev-root",
       "pinned_sha": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
-      "pinned_subject": "Merge pull request #4549 from ajoe734/task/SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804",
-      "pinned_at": "2026-08-04T23:02:53+08:00",
       "commits_behind_origin_dev": 57,
       "fix_is_ancestor_of_pinned_sha": false
     },
-    "reproduction": [
-      {
-        "command": "gh api repos/ajoe734/pantheon/contents/docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json -f ref=394762d397cd882b77179da288e27e7244169788",
-        "result": "404 Not Found (buggy form still running in the leased command root)"
-      },
-      {
-        "command": "gh api --method GET 'repos/ajoe734/pantheon/contents/docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json?ref=394762d397cd882b77179da288e27e7244169788'",
-        "result": "type=file, sha=ae9426dbccba7cde396ab806c60b031be778d0d5, size=8590 (fixed form already on origin/dev)"
-      }
+    "resolution": {
+      "resolved_at": "2026-08-06",
+      "command_root_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+      "command_root_subject": "Merge pull request #4572 from ajoe734/task/SUP-CONFIG-REQUIRED-CHECKS-SYNC-20260805",
+      "check": "git -C /home/lupin/pantheon-ci-deploy/dev-root merge-base --is-ancestor 83b6fd0351c86c36d521086139f78918d157b87d HEAD -> exit 0",
+      "effect": "review_evidence_file_committed() in the leased root now issues the explicit GET, so an approval carrying REVIEW_FILE no longer fails closed for this or any other task."
+    }
+  },
+  "review_bridge_blocker": {
+    "status": "resolved",
+    "reported_by": "Antigravity",
+    "reported_at": "2026-08-05T04:44:07Z",
+    "report": "GitHub review bridge error on approve: Unprocessable Entity (HTTP 422); base branch 'dev' does not require 'Pantheon canonical review gate'.",
+    "assessment": "Both halves were real. The shared ajoe734 account authors every task PR, so event: APPROVE is rejected as a self-review; and with the gate absent from dev's required contexts _required_status_contexts() reported context_required=false, leaving bridge_review_decision() with review is None and status is None, which raised before any canonical state change. Correct fail-closed behaviour, not a defect in this task's delivery.",
+    "resolution": {
+      "resolved_by": [
+        "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805 (PR #4567, merged) restored the required context on dev",
+        "SUP-CONFIG-REQUIRED-CHECKS-SYNC-20260805 (PR #4572, merged) declared it in .orchestrator/config.json so live protection and config-as-documented no longer drift"
+      ],
+      "verified_at": "2026-08-06",
+      "verification_command": "gh api repos/ajoe734/pantheon/branches/dev/protection/required_status_checks",
+      "observed_strict": false,
+      "observed_contexts": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance",
+        "Pantheon canonical review gate"
+      ],
+      "effect": "The bridge now takes its required_commit_status path (accepted by GITHUB_REVIEW_MODES in scripts/ai_status.py) and can record a verdict on the exact head. strict=false means a BEHIND base is not itself a merge blocker; PR #4564 is MERGEABLE and BLOCKED solely on the gate context."
+    }
+  },
+  "remaining_runtime_lag": {
+    "status": "handled_in_task",
+    "what": "The leased command root f90e0aae6 is 14 commits behind origin/dev and does not contain SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805 (PR #4576): grep -n workflow_dispatch scripts/git/github_review_bridge.py finds nothing in the leased root, while origin/dev has _dispatch_canonical_review_gate_workflow().",
+    "why_it_matters": "PR #4576 established empirically that pushing the review-proof tag is necessary but not sufficient. GitHub pins the named required context to the identity that has historically posted it -- the workflow's own GITHUB_TOKEN run -- so the best-effort gh api status posted by github_review_bridge._submit_required_status() from the personal-token host process reads as success in a status listing while mergeable_state stays blocked. The workflow has to run again after the tag exists, and none of its pull_request event types fire from a bare tag push.",
+    "mitigations": [
+      "This revision merges origin/dev forward, so the PR head branch now carries the workflow_dispatch trigger and the current canonical_review_gate_ci.py. A dispatch against ref=task/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 becomes valid as soon as the command root is re-leased onto a dev tip containing PR #4576.",
+      "Until then the owner re-runs the gate at the same head after approval, which does not touch the exact-head approval binding: gh run rerun \"$(gh run list --workflow canonical-review-gate.yml --commit \"$(gh pr view 4564 --json headRefOid --jq .headRefOid)\" --json databaseId --jq '.[0].databaseId')\""
     ],
-    "resolution": "Route around the stale root instead of re-landing a fix that is already on dev or attempting a runtime cutover (refreshing the root the supervisor runs from is out of scope for an auto worker and is a Human/Ops action). command_approve only calls review_evidence_file_committed() when the REVIEW_FILE environment variable is set ('if review_file and binding:'), and command_done only when REVIEW_FILE is set and the row has no review_file ('if done_review_file and not task.get(\"review_file\")'). The canonical row already records review_file, so both approve and done omit REVIEW_FILE and the broken helper is never reached.",
-    "manifest_rule_still_satisfied": "This is a routing decision, not a relaxation of the Review Evidence Manifest Rule. The manifest is committed, present in the PR #4564 diff at the reviewed head, bound in the canonical row's review_file, and independently confirmed at that head through the Contents API in the reproduction above.",
-    "follow_up_for_human_ops": "Refresh or re-lease the supervisor command root onto a dev tip that contains 83b6fd035 so exact-head approvals carrying REVIEW_FILE work again for every task, not just this one."
+    "follow_up_for_human_ops": "Re-lease the supervisor command root onto a dev tip containing PR #4576 so the post-approval gate re-dispatch is automatic fleet-wide instead of a per-task manual re-run."
   },
   "ownership_history": {
     "original_pair": {
@@ -87,7 +114,7 @@
     "rejected_head": "9b44725423ccab64a1ae2a051405279344e718f6",
     "reviewer": "Codex2",
     "required_change": "A queue-backed retry held by task quarantine must survive the normal poll/assignment loop: it must not be superseded or complete its queue record merely because quarantined tasks are not normally assigned. The held parent must not be stale-failure reclassified, and governed reopen must release it for exactly one launch. Preserve the existing rotation/retry fence and exact-head Contents API GET regression.",
-    "evidence_requirement": "This manifest was committed in PR #4533 before independent re-review and is bound with REVIEW_FILE during exact-head approval."
+    "evidence_requirement": "This manifest was committed in PR #4533 before independent re-review and remains present in the PR #4564 diff at every reviewed head."
   },
   "acceptance": {
     "failure_projection": "Repeated distinct worker failures increment the task-row failure_streak.",
@@ -112,7 +139,7 @@
       },
       {
         "command": "cd scripts && ../.venv-pantheon/bin/python3 -c 'import ai_status; print(ai_status.review_evidence_file_committed(repository=\"ajoe734/pantheon\", head_sha=\"b5509721342745174d25ce10134be342b80c50c1\", review_file=\"docs/deployment/evidence/supervisor/SUP-TASK-FAILURE-STREAK-SCHEMA-20260804/evidence.json\"))'",
-        "result": "True; GitHub Contents API verified the committed manifest at rejected PR #4533 head b5509721342745174d25ce10134be342b80c50c1 using the explicit GET query.",
+        "result": "True; GitHub Contents API verified the committed manifest at PR #4533 head b5509721342745174d25ce10134be342b80c50c1 using the explicit GET query.",
         "run": "original delivery review, PR #4533"
       },
       {
@@ -122,21 +149,37 @@
       },
       {
         "command": "PYTHONPATH=.orchestrator .venv/bin/python -m pytest .orchestrator/test_supervisor.py -k 'TaskFailureStreakTaskSchemaTests or ReviewApprovedWorkflowTests or PollWorkersRecoveryTests' -q",
-        "result": "81 passed, 514 deselected, 4 subtests passed",
-        "run": "closeout re-verification in the task worktree, 2026-08-05, after merging origin/dev"
+        "result": "81 passed, 516 deselected, 4 subtests passed",
+        "run": "closeout re-verification in the task worktree, 2026-08-06, after merging origin/dev forward at this revision"
       },
       {
         "command": ".venv/bin/python -m pytest scripts/test_ai_status.py -k 'ReviewApprovedWorkflowTests' -q",
-        "result": "39 passed, 132 deselected",
-        "run": "closeout re-verification in the task worktree, 2026-08-05, after merging origin/dev"
+        "result": "48 passed, 138 deselected",
+        "run": "closeout re-verification in the task worktree, 2026-08-06, after merging origin/dev forward at this revision"
+      },
+      {
+        "command": "gh api repos/ajoe734/pantheon/branches/dev/protection/required_status_checks",
+        "result": "strict=false; contexts include 'Pantheon canonical review gate' -- the dispatch-14 bridge blocker is gone.",
+        "run": "closeout re-verification, 2026-08-06"
+      },
+      {
+        "command": "git -C /home/lupin/pantheon-ci-deploy/dev-root merge-base --is-ancestor 83b6fd0351c86c36d521086139f78918d157b87d HEAD",
+        "result": "exit 0 at leased root f90e0aae6 -- the dispatch-13 command-root defect is gone.",
+        "run": "closeout re-verification, 2026-08-06"
+      },
+      {
+        "command": "git diff --name-only origin/dev...HEAD",
+        "result": "Exactly the task brief and this manifest; the evidence manifest is present in the PR #4564 diff at the head offered for review.",
+        "run": "closeout re-verification, 2026-08-06"
       }
     ]
   },
   "review": {
     "decision": "pending_independent_review",
     "required_reviewer": "Antigravity",
-    "approval_protocol": "Review this committed manifest and the exact PR #4564 head, then approve with REVIEW_PR=4564 and REVIEW_HEAD_SHA=<exact head>. Omit REVIEW_FILE: the canonical row already binds this manifest path, and setting REVIEW_FILE trips the stale-command-root defect recorded under environment_defect.",
+    "approval_protocol": "Review this committed manifest and the exact PR #4564 head, then approve with REVIEW_PR=4564 and REVIEW_HEAD_SHA=<exact head>. REVIEW_FILE may be passed now that the leased root carries 83b6fd035, but omitting it preserves the canonical row's existing binding to this path.",
     "prior_review": "The canonical review bridge first rejected completion reset coverage and then the manifest lookup; the exact-head manifest regression now passes. Codex2 rejected 0d9b4ce633233bc2c426b58986deadd9c24af60d because quarantine still allowed rotation and due retry_backoff paths to dispatch, then rejected 9b44725423ccab64a1ae2a051405279344e718f6 because poll_workers superseded a queue-backed held retry before reopen. The complete retry-hold remediation was then merged as PR #4533.",
-    "scope_of_this_review": "The product deliverable is already merged and is not re-litigated here. The reviewable surface at PR #4564 head is this manifest and the task brief: whether they accurately record the merged delivery, the audited reassignment, and the closeout verification re-run."
+    "scope_of_this_review": "The product deliverable is already merged and is not re-litigated here. The reviewable surface at PR #4564 head is this manifest and the task brief: whether they accurately record the merged delivery, the audited reassignment, the two now-resolved environment blockers, the one remaining runtime lag and how it is handled, and the closeout verification re-run.",
+    "post_approval_owner_step": "After approval the owner re-runs the Canonical Review Gate workflow at the approved head (gh run rerun) so the workflow's own GITHUB_TOKEN status lands for the required context, waits for the merge, then runs done."
   }
 }
