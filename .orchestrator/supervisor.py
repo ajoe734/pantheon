@@ -9971,14 +9971,13 @@ def refresh_provider_auth_before_dispatch(
         }
     capability = existing_providers[provider_key]
     previously_ready = capability.get("auth_ready")
+    previous_failures = capability.get("consecutive_probe_failures")
     health = apply_provider_probe_to_report(provider_report, provider_key, probe, config=config)
     if health is None:
         return None
-    if capability["auth_ready"] != previously_ready:
-        # Persist auth transitions in both directions so the next dispatch gate
-        # consumes the same live pre-dispatch probe result.  Only persisting
-        # ready->not-ready left a stale not-ready capability on disk after a
-        # successful recovery probe, parking healthy lanes behind old auth data.
+    if capability["auth_ready"] != previously_ready or capability.get("consecutive_probe_failures") != previous_failures:
+        # Persist auth transitions and failure streak updates so subsequent dispatch cycles
+        # consume the persisted failure count across process ticks.
         try:
             write_provider_capabilities(config, report=provider_report)
         except Exception:  # a report write must never block or bypass dispatch gating
