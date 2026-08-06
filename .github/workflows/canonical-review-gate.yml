@@ -21,6 +21,19 @@ name: Canonical Review Gate
 # trusted internal approve path already produced is present for this exact
 # head.
 #
+# SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805: pushing the tag alone does not
+# make the required check pass. GitHub pins this named required context to
+# whichever identity has historically posted it -- here, this workflow's own
+# GITHUB_TOKEN-authenticated run (a status or check-run from this Action's
+# job satisfies it; a plain `gh api` status posted from a personal-token host
+# process, e.g. github_review_bridge.py's own best-effort status post, does
+# not, verified empirically against a live PR). The tag by itself is
+# necessary but not sufficient: this workflow also has to actually RUN again
+# after the tag exists, so its own, correctly-attributed status is what
+# lands. None of `opened`/`synchronize`/`reopened`/`ready_for_review` fire
+# from a bare tag push, so github_review_bridge.py explicitly re-dispatches
+# this workflow (workflow_dispatch, below) right after a tag lands.
+#
 # This generic github-actions status is a separate lifecycle check; it cannot
 # satisfy the dedicated external-App-pinned canonical reviewer attestation.
 
@@ -34,13 +47,23 @@ on:
     branches:
       - dev
       - master
+  workflow_dispatch:
+    inputs:
+      head_ref:
+        description: "PR head branch (task/<TASK-ID>)"
+        required: true
+        type: string
+      head_sha:
+        description: "Exact reviewed commit SHA"
+        required: true
+        type: string
 
 permissions:
   contents: read
   statuses: write
 
 concurrency:
-  group: canonical-review-gate-${{ github.event.pull_request.number }}
+  group: canonical-review-gate-${{ github.event.pull_request.number || github.event.inputs.head_sha }}
   cancel-in-progress: true
 
 jobs:
@@ -50,7 +73,10 @@ jobs:
     steps:
       # Shallow checkout of the PR head only, to run this workflow's own
       # script. No commit-history walking, no local git state -- the check
-      # itself is a single GitHub API call.
+      # itself is a single GitHub API call. On workflow_dispatch this checks
+      # out whatever ref the dispatch call targeted (github_review_bridge.py
+      # dispatches against head_ref); the head-ref/head-sha inputs below are
+      # what canonical_review_gate_ci.py actually acts on regardless.
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
@@ -61,8 +87,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.inputs.head_ref || github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 scripts/git/canonical_review_gate_ci.py \

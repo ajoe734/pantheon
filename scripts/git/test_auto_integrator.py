@@ -23,6 +23,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         auto_merge_read_fails: bool = False,
         merge_lands_synchronously: bool = True,
         landed_merged_at: str = "2026-06-12T01:01:07Z",
+        ephemeral_merge_returncode: int = 0,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -32,6 +33,11 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.disable_auto_clears_request = disable_auto_clears_request
         self.disable_auto_returncode = disable_auto_returncode
         self.auto_merge_read_fails = auto_merge_read_fails
+        # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: outcome of the
+        # disposable `git merge origin/dev` test-merge run against a behind
+        # gated PR's exact reviewed head. 0 = clean (default); non-zero
+        # models a real conflict.
+        self.ephemeral_merge_returncode = ephemeral_merge_returncode
         # SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804: models whether an actual
         # (non --auto, non --disable-auto) `gh pr merge` call lands
         # immediately -- true is the pre-merge-queue default; a caller
@@ -74,6 +80,10 @@ class FakeRunner(auto_integrator.CommandRunner):
             return completed(command)
         if command[:3] == ["git", "merge-base", "--is-ancestor"]:
             return completed(command, returncode=self.merge_base_returncode)
+        if command[:2] == ["git", "merge"] and "--abort" not in command:
+            return completed(command, returncode=self.ephemeral_merge_returncode)
+        if command[:3] == ["git", "merge", "--abort"]:
+            return completed(command)
         if command[:3] == ["git", "worktree", "add"]:
             return completed(command)
         if command[:3] == ["git", "rev-parse", "HEAD"]:

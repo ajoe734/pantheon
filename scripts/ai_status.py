@@ -18,7 +18,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from threading import local
-from typing import Any, Mapping
+from typing import Any, Generator, Mapping
 from zoneinfo import ZoneInfo
 
 try:
@@ -36,6 +36,7 @@ STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
 LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
 LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
 LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
@@ -1113,11 +1114,12 @@ STATUS_LABELS = {
     "review": "review",
     "review_approved": "review_approved",
     "blocked": "blocked",
+    "quarantined": "quarantined",
     "done": "done",
 }
 
 DEPENDENCY_DONE_STATUSES = {"done"}
-ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
+ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked", "quarantined"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 EXTERNAL_TASK_ID_TOKENS = {
     "DATASOURCE",
@@ -2086,6 +2088,9 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
+    task_clean = deepcopy(task)
+    task_clean.pop("status_write_pending", None)
+    task_clean.pop("status_write_pending_count", None)
     snapshot = {
         "version": 1,
         "task_id": task_id,
@@ -2098,7 +2103,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         or iso_now(),
         "terminal_status": "done",
         "terminal_outcome": terminal_outcome,
-        "task": deepcopy(task),
+        "task": task_clean,
         "handoffs": related_handoffs,
         "blockers": related_blockers,
     }
@@ -2415,12 +2420,17 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
     for expected in pending["snapshots"]:
         task_id = str(expected["task_id"])
         active = active_by_id.get(task_id)
-        if active is not None and _canonical_json_sha256(active) != _canonical_json_sha256(
-            expected["task"]
-        ):
-            raise RuntimeError(
-                f"active terminal task changed during archive recovery: {task_id}"
-            )
+        if active is not None:
+            active_clean = deepcopy(active)
+            active_clean.pop("status_write_pending", None)
+            active_clean.pop("status_write_pending_count", None)
+            expected_clean = deepcopy(expected["task"])
+            expected_clean.pop("status_write_pending", None)
+            expected_clean.pop("status_write_pending_count", None)
+            if _canonical_json_sha256(active_clean) != _canonical_json_sha256(expected_clean):
+                raise RuntimeError(
+                    f"active terminal task changed during archive recovery: {task_id}"
+                )
     state["tasks"] = [
         task
         for task in state.get("tasks", [])
@@ -2437,8 +2447,76 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
         if str(blocker.get("task_id") or "") not in archived_ids
     ]
     state[STATUS_ARCHIVE_OUTBOX_KEY] = None
+    _update_pending_outbox_indicators(state)
     save_state(state)
     return True
+
+
+def is_status_outbox_visibility_enabled() -> bool:
+    val = os.environ.get(STATUS_OUTBOX_VISIBILITY_ENABLED_ENV)
+    if val is not None:
+        return val.strip().lower() in ("1", "true", "yes", "on")
+    return False
+
+
+def _pending_outbox_write_counts(state: dict[str, Any]) -> dict[str, int]:
+    """Count queued writes per task id across both outbox planes.
+
+    Only writes that name a task are counted. A board-wide event (a wave
+    open/close, for example) must never make an untouched task look stale.
+    """
+
+    pending_activity = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+    pending_events = (
+        pending_activity.get("events")
+        if isinstance(pending_activity, dict)
+        else None
+    )
+    if not isinstance(pending_events, list):
+        pending_events = []
+
+    pending_archive = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
+    archive_snapshots = (
+        pending_archive.get("snapshots") if isinstance(pending_archive, dict) else None
+    )
+    if not isinstance(archive_snapshots, list):
+        archive_snapshots = []
+
+    counts: dict[str, int] = {}
+    for queued in (*pending_events, *archive_snapshots):
+        if not isinstance(queued, dict):
+            continue
+        task_id = queued.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        counts[task_id] = counts.get(task_id, 0) + 1
+    return counts
+
+
+def _update_pending_outbox_indicators(state: dict[str, Any]) -> None:
+    """Stamp per-task markers for status writes queued behind an integrity block.
+
+    The outbox already makes the write itself durable. Without these markers the
+    task row stays byte-identical to its pre-attempt state, so a stale board row
+    is indistinguishable from a task nobody touched. Flag off restores exactly
+    the incumbent shape by removing the markers.
+    """
+
+    counts = (
+        _pending_outbox_write_counts(state)
+        if is_status_outbox_visibility_enabled()
+        else {}
+    )
+    for task in state.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        pending = counts.get(str(task.get("id") or ""), 0)
+        if pending > 0:
+            task["status_write_pending"] = True
+            task["status_write_pending_count"] = pending
+        else:
+            task.pop("status_write_pending", None)
+            task.pop("status_write_pending_count", None)
 
 
 def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
@@ -2497,7 +2575,13 @@ def recover_status_activity_outbox(
                 continue
             missing.append(event)
             existing[event_id] = digest
-        _append_logs_unlocked(missing)
+        try:
+            _append_logs_unlocked(missing)
+        except ActivityAuditInvariantError:
+            _update_pending_outbox_indicators(state)
+            save_state(state)
+            refresh_derived_status_views(state)
+            raise
         final = _active_activity_event_digests_unlocked(pending_event_ids)
         if set(final) != pending_event_ids:
             final = _activity_event_index_unlocked(pending_event_ids)
@@ -2507,6 +2591,7 @@ def recover_status_activity_outbox(
         ):
             raise RuntimeError("status activity outbox append/readback mismatch")
         state[STATUS_ACTIVITY_OUTBOX_KEY] = None
+        _update_pending_outbox_indicators(state)
         save_state(state)
     return True
 
@@ -2521,6 +2606,7 @@ def commit_state_with_activity_outbox(
             "transaction_id": "ai-status-tx-" + _canonical_json_sha256(events),
             "events": deepcopy(events),
         }
+    _update_pending_outbox_indicators(state)
     save_state(state)
     if state.get(STATUS_ARCHIVE_OUTBOX_KEY) not in (None, {}, []):
         _status_archive_fault("pending_status")
@@ -3001,6 +3087,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
+        commit_timestamp = ""
         if trailer_skip_reason is None:
             for field_name in required_fields:
                 actual_value = metadata_fields.get(field_name)
@@ -3009,20 +3096,36 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                     continue
                 expected_value = expected_fields.get(field_name)
                 if expected_value and actual_value != expected_value:
-                    if field_name == "LLM-Agent":
+                    # The supervisor reassigns owner and reviewer as a pair when
+                    # a lane goes unavailable, so a merged delivery can carry
+                    # stale `LLM-Agent` and `Reviewer` trailers at once. Both are
+                    # verified against the audited reassignment chain instead of
+                    # failing closed and requiring a Human/Ops sign-off.
+                    if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
                         commit_timestamp = run_git_command(
                             ["show", "-s", "--format=%cI", "HEAD"],
                             cwd=repository_root,
                             failure_message=(
                                 "Cannot finalize task: delivered commit timestamp is "
-                                "unavailable for owner reassignment verification."
+                                "unavailable for reassignment verification."
                             ),
                         )
+                    if field_name == "LLM-Agent":
                         delivery["commit_owner_reassignment"] = (
                             _verified_done_owner_reassignment(
                                 task,
                                 commit_owner=actual_value,
                                 current_owner=actor,
+                                commit_timestamp=commit_timestamp,
+                            )
+                        )
+                        continue
+                    if field_name == "Reviewer":
+                        delivery["commit_reviewer_reassignment"] = (
+                            _verified_done_reviewer_reassignment(
+                                task,
+                                commit_reviewer=actual_value,
+                                current_reviewer=expected_value,
                                 commit_timestamp=commit_timestamp,
                             )
                         )
@@ -3186,6 +3289,12 @@ def validate_state(state: dict[str, Any]) -> None:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
             raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
+        if "failure_streak" in task and (
+            isinstance(task["failure_streak"], bool)
+            or not isinstance(task["failure_streak"], int)
+            or task["failure_streak"] < 0
+        ):
+            raise SystemExit(f"Task {task['id']} has invalid failure_streak")
 
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])
@@ -3343,6 +3452,29 @@ def task_delivery_layer(task: dict[str, Any]) -> str:
     return "primary"
 
 
+def pending_status_write_count(task: dict[str, Any]) -> int:
+    """Return how many status writes are queued behind a canonical integrity block."""
+
+    if not isinstance(task, dict) or not task.get("status_write_pending"):
+        return 0
+    count = task.get("status_write_pending_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        return 0
+    return count
+
+
+def display_task_status(task: dict[str, Any]) -> str:
+    """Render a status, flagging a row a queued write has not been able to update."""
+
+    status = task.get("status")
+    text = "" if status is None else str(status)
+    pending = pending_status_write_count(task)
+    if not pending:
+        return text
+    noun = "write" if pending == 1 else "writes"
+    return f"{text} (stale: {pending} {noun} queued)"
+
+
 def display_task_title(task: dict[str, Any]) -> str:
     title = str(task.get("title") or "")
     if task.get("task_class") != "sidecar":
@@ -3405,7 +3537,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                     phase=cell(task.get("phase") or "Unassigned"),
                     title=cell(display_task_title(task)),
                     owner=cell(task.get("owner")),
-                    status=cell(task.get("status")),
+                    status=cell(display_task_status(task)),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -3530,6 +3662,33 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     else:
         lines.append("| _(none)_ | - | - | - | - | - | - |")
 
+    pending_write_tasks = [
+        task for task in state["tasks"] if pending_status_write_count(task)
+    ]
+    if pending_write_tasks:
+        lines.extend(
+            [
+                "",
+                "## Status Write Backlog",
+                "",
+                "Canonical status writes for these tasks are durably queued behind an",
+                "integrity block. Their rows below may be stale; a stale row here is",
+                "not evidence that the task was never touched.",
+                "",
+                "| Task | Owner | Displayed Status | Queued Writes |",
+                "|---|---|---|---|",
+            ]
+        )
+        for task in pending_write_tasks:
+            lines.append(
+                "| `{id}` | {owner} | {status} | {count} |".format(
+                    id=cell(task.get("id")),
+                    owner=cell(task.get("owner")),
+                    status=cell(task.get("status")),
+                    count=pending_status_write_count(task),
+                )
+            )
+
     lines.extend(["", "## Task Board", "", "| ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |", "|---|---|---|---|---|---|---|---|---|---|"])
 
     for task in state["tasks"]:
@@ -3542,7 +3701,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                 summary=cell(task.get("summary_zh") or "-"),
                 owner=cell(task.get("owner")),
                 reviewer=cell(task.get("reviewer")),
-                status=cell(task.get("status")),
+                status=cell(display_task_status(task)),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),
@@ -5864,6 +6023,17 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     )
 
 
+def require_reopen_before_leaving_quarantine(
+    task: Mapping[str, Any], *, command: str
+) -> None:
+    """Keep task quarantine durable until the governed reopen transition."""
+
+    if task.get("status") == "quarantined":
+        raise SystemExit(
+            f"Task {task.get('id')} is quarantined; use reopen before {command}."
+        )
+
+
 def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
@@ -5875,6 +6045,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
+    require_reopen_before_leaving_quarantine(task, command="start")
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
@@ -5963,6 +6134,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             )
     timestamp = iso_now()
     task["status"] = "in_progress"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
@@ -6013,8 +6185,10 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
+    require_reopen_before_leaving_quarantine(task, command="handoff")
     timestamp = iso_now()
     task["status"] = "review"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6044,6 +6218,7 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
+    require_reopen_before_leaving_quarantine(task, command="block")
     timestamp = iso_now()
     task["status"] = "blocked"
     task["waiting_for"] = waiting_for
@@ -6094,6 +6269,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     )
     timestamp = iso_now()
     task["status"] = "review_approved"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     if verdict_ref is not None:
@@ -6156,55 +6332,217 @@ def _merged_commit(
     return commit, target_sha
 
 
+def _activity_events_across_sources(
+    log_path: Path,
+    *,
+    source: str,
+) -> Generator[dict[str, Any], None, None]:
+    """Yield activity-log event dicts across live + archived sources, oldest first.
+
+    Rotation moves the oldest lines out of the live tail into an immutable
+    gzip archive once the log exceeds LOG_ROTATE_MAX_BYTES -- under normal
+    fleet write volume that can happen within hours, not as some rare edge
+    case. A governed check that needs to find one specific historical event
+    (e.g. an audited task_reassigned row proving an owner/reviewer handoff)
+    must not assume that event is still in the live tail: it has to walk the
+    same disjoint, ordered live+archive source list
+    activity_audit_source_paths_unlocked already validates, not just LOG_FILE.
+
+    Malformed lines are not tolerated here, matching how every other reader of
+    these canonical sources behaves: a source that will not parse strictly is
+    an audit-integrity problem, and silently skipping it would let a tampered
+    line drop a reassignment hop out of the chain.
+    """
+
+    for audit_source in activity_audit_source_paths_unlocked(log_path):
+        if audit_source.suffix == ".gz":
+            with gzip.open(audit_source, "rb") as handle:
+                payload = handle.read()
+        else:
+            payload = read_regular_file_bytes(audit_source, source=source)
+        for raw_line in payload.splitlines():
+            if not raw_line.strip():
+                continue
+            event = strict_activity_json_loads(raw_line)
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("record_type") or "") == "pantheon.activity.lineage_head.v1":
+                # Rotation lineage control row, not an activity event.
+                continue
+            yield event
+
+
+def _audited_reassignment_events(
+    task_id: str,
+    *,
+    source: str,
+    unavailable_message: str,
+) -> list[tuple[datetime, dict[str, Any]]]:
+    """Return supervisor-audited `task_reassigned` events for a task, oldest first.
+
+    Only the events the supervisor itself wrote through
+    `persist_task_reassignment` qualify: they carry the `Orchestrator` actor and
+    an `event_id` that is a digest over their own payload, so a hand-appended
+    activity line cannot manufacture a reassignment hop. The narrative
+    `task_reassigned` lines `write_activity_log` emits alongside them use
+    `from_owner`/`to_owner` keys and carry no identity digest; they are skipped
+    on purpose.
+
+    The search spans the live tail *and* the rotated archives. Reading only
+    LOG_FILE made a legitimate, audited reassignment vanish the moment routine
+    rotation moved it out of the tail, which permanently stranded the task at
+    `done`.
+    """
+
+    try:
+        events = list(_activity_events_across_sources(LOG_FILE, source=source))
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise SystemExit(unavailable_message) from exc
+
+    audited: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        if (
+            event.get("type") != "task_reassigned"
+            or str(event.get("task_id") or "").strip() != task_id
+            or event.get("agent") != "Orchestrator"
+            or not event.get("old_owner")
+            or not event.get("new_owner")
+            or str(event.get("event_id") or "")
+            != _supervisor_reassignment_event_id(event)
+        ):
+            continue
+        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        if event_timestamp is None:
+            continue
+        audited.append((event_timestamp, event))
+    audited.sort(key=lambda item: item[0])
+    return audited
+
+
+def _walk_audited_role_chain(
+    audited: list[tuple[datetime, dict[str, Any]]],
+    *,
+    role: str,
+    start: str,
+    end: str,
+    failure_message: str,
+) -> list[tuple[datetime, dict[str, Any]]]:
+    """Return the audited hops that carry `role` from `start` to `end`.
+
+    Reassignment is routine and repeatable -- a provider runs out of quota and
+    the supervisor hands the lane to a fallback -- so a role can legitimately
+    move several times before closeout. The walk therefore accepts a chain of
+    any length. What it will not accept is a gap: once the chain is anchored at
+    `start`, every later audited hop for this role must continue it. An audited
+    hop that starts somewhere else means the audit no longer explains the
+    canonical row, and the caller must fail closed rather than guess.
+    """
+
+    old_key = f"old_{role}"
+    new_key = f"new_{role}"
+    changes = [
+        item
+        for item in audited
+        if canonical_agent_name(item[1].get(old_key))
+        != canonical_agent_name(item[1].get(new_key))
+    ]
+
+    chain: list[tuple[datetime, dict[str, Any]]] = []
+    cursor = ""
+    for index, (event_timestamp, event) in enumerate(changes):
+        old_value = canonical_agent_name(event.get(old_key))
+        new_value = canonical_agent_name(event.get(new_key))
+        if not chain:
+            if old_value != start:
+                # Audited history that predates the identity we start from.
+                continue
+        elif old_value != cursor:
+            raise SystemExit(failure_message)
+        if any(
+            other_index != index and other_timestamp == event_timestamp
+            for other_index, (other_timestamp, _) in enumerate(changes)
+        ):
+            raise SystemExit(
+                f"Cannot verify {role} reassignment: audited {role} reassignment "
+                "ordering is ambiguous."
+            )
+        chain.append((event_timestamp, event))
+        cursor = new_value
+
+    if not chain or cursor != end:
+        raise SystemExit(failure_message)
+    return chain
+
+
+def _verified_reassignment_chain(
+    task: dict[str, Any],
+    *,
+    role: str,  # "owner" or "reviewer"
+    evidence_agent: str,
+    current_agent: str,
+) -> dict[str, Any]:
+    """Prove an audited chain of reassignments carries `role` from the merged
+    evidence identity to the canonical one."""
+
+    task_id = str(task.get("id") or "").strip()
+    failure_message = (
+        f"Cannot reconcile task: merged evidence does not bind the canonical {role} metadata "
+        "and no exact task_reassigned audit event chain explains the drift."
+    )
+    audited = _audited_reassignment_events(
+        task_id,
+        source=f"canonical {role} reassignment evidence",
+        unavailable_message=(
+            f"Cannot reconcile task: canonical {role} differs from merged evidence and "
+            "the activity audit is unavailable."
+        ),
+    )
+    chain = _walk_audited_role_chain(
+        audited,
+        role=role,
+        start=canonical_agent_name(evidence_agent),
+        end=canonical_agent_name(current_agent),
+        failure_message=failure_message,
+    )
+
+    last_event = chain[-1][1]
+    return {
+        "event_id": str(last_event.get("event_id") or "").strip() or None,
+        "ts": str(last_event.get("ts") or "").strip(),
+        f"old_{role}": canonical_agent_name(evidence_agent),
+        f"new_{role}": canonical_agent_name(current_agent),
+        "hops": len(chain),
+        "message": str(last_event.get("message") or "").strip(),
+    }
+
+
 def _verified_reviewer_reassignment(
     task: dict[str, Any],
     *,
     evidence_reviewer: str,
     current_reviewer: str,
 ) -> dict[str, Any]:
-    """Return the exact canonical reassignment that explains reviewer drift."""
+    """Return the exact canonical reassignment chain that explains reviewer drift."""
+    return _verified_reassignment_chain(
+        task,
+        role="reviewer",
+        evidence_agent=evidence_reviewer,
+        current_agent=current_reviewer,
+    )
 
-    try:
-        payload = read_regular_file_bytes(
-            LOG_FILE,
-            source="canonical reviewer reassignment evidence",
-        )
-    except FileNotFoundError as exc:
-        raise SystemExit(
-            "Cannot reconcile task: canonical reviewer differs from merged evidence and "
-            "the activity audit is unavailable."
-        ) from exc
 
-    task_id = str(task.get("id") or "").strip()
-    owner = canonical_agent_name(task.get("owner"))
-    task_last_update = str(task.get("last_update") or "").strip()
-    task_next = str(task.get("next") or "").strip()
-    for raw_line in payload.splitlines():
-        if not raw_line.strip():
-            continue
-        event = strict_activity_json_loads(raw_line)
-        if not isinstance(event, dict):
-            continue
-        if (
-            event.get("type") == "task_reassigned"
-            and str(event.get("task_id") or "").strip() == task_id
-            and canonical_agent_name(event.get("old_owner")) == owner
-            and canonical_agent_name(event.get("new_owner")) == owner
-            and canonical_agent_name(event.get("old_reviewer")) == evidence_reviewer
-            and canonical_agent_name(event.get("new_reviewer")) == current_reviewer
-            and str(event.get("ts") or "").strip() == task_last_update
-            and str(event.get("message") or "").strip() == task_next
-        ):
-            return {
-                "event_id": str(event.get("event_id") or "").strip() or None,
-                "ts": task_last_update,
-                "old_reviewer": evidence_reviewer,
-                "new_reviewer": current_reviewer,
-                "message": task_next,
-            }
-    raise SystemExit(
-        "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
-        "and no exact task_reassigned audit event explains the drift."
+def _verified_owner_reassignment(
+    task: dict[str, Any],
+    *,
+    evidence_owner: str,
+    current_owner: str,
+) -> dict[str, Any]:
+    """Return the exact canonical reassignment chain that explains owner drift."""
+    return _verified_reassignment_chain(
+        task,
+        role="owner",
+        evidence_agent=evidence_owner,
+        current_agent=current_owner,
     )
 
 
@@ -6225,89 +6563,48 @@ def _verified_done_owner_reassignment(
     current_owner: str,
     commit_timestamp: str,
 ) -> dict[str, Any]:
-    """Prove that the latest audited supervisor reassignment explains owner drift."""
+    """Prove that audited supervisor reassignments explain owner drift at done.
 
-    try:
-        payload = read_regular_file_bytes(
-            LOG_FILE,
-            source="canonical done owner reassignment evidence",
-        )
-    except FileNotFoundError as exc:
-        raise SystemExit(
-            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
-            "audited supervisor task_reassigned event, but the activity audit is unavailable."
-        ) from exc
+    Owner reassignment is a normal, recurring event rather than an anomaly: a
+    provider hits its quota or goes unreachable and the supervisor hands the
+    lane to a fallback, often swapping the reviewer in the same event and more
+    than once before the task closes out. Demanding a single hop with a frozen
+    reviewer is what forced Human/Ops to hand-run `reconcile_merged_done` for
+    every reassigned task, so walk the whole audited chain instead. The audit
+    still has to account for the drift end to end -- this is a verification
+    path, not a waiver.
+    """
 
     task_id = str(task.get("id") or "").strip()
     reviewer = canonical_agent_name(task.get("reviewer"))
-    audited: list[tuple[datetime, dict[str, Any]]] = []
-    for raw_line in payload.splitlines():
-        if not raw_line.strip():
-            continue
-        event = strict_activity_json_loads(raw_line)
-        if not isinstance(event, dict):
-            continue
-        if (
-            event.get("type") != "task_reassigned"
-            or str(event.get("task_id") or "").strip() != task_id
-            or event.get("agent") != "Orchestrator"
-            or not event.get("old_owner")
-            or not event.get("new_owner")
-            or str(event.get("event_id") or "")
-            != _supervisor_reassignment_event_id(event)
-        ):
-            continue
-        event_timestamp = _parse_utc_timestamp(event.get("ts"))
-        if event_timestamp is None:
-            continue
-        audited.append((event_timestamp, event))
-
-    owner_changes = [
-        item
-        for item in audited
-        if canonical_agent_name(item[1].get("old_owner"))
-        != canonical_agent_name(item[1].get("new_owner"))
-    ]
-    if not owner_changes:
+    audited = _audited_reassignment_events(
+        task_id,
+        source="canonical done owner reassignment evidence",
+        unavailable_message=(
+            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
+            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+        ),
+    )
+    if not any(
+        canonical_agent_name(event.get("old_owner"))
+        != canonical_agent_name(event.get("new_owner"))
+        for _, event in audited
+    ):
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
             "audited supervisor task_reassigned event."
         )
 
-    latest_timestamp = max(item[0] for item in owner_changes)
-    latest_owner_changes = [
-        item for item in owner_changes if item[0] == latest_timestamp
-    ]
-    if len(latest_owner_changes) != 1:
-        raise SystemExit(
-            "Cannot finalize task: latest audited owner reassignment ordering is ambiguous."
-        )
-    event_timestamp, event = latest_owner_changes[0]
-    if not (
-        canonical_agent_name(event.get("old_owner")) == canonical_agent_name(commit_owner)
-        and canonical_agent_name(event.get("new_owner")) == canonical_agent_name(current_owner)
-        and canonical_agent_name(event.get("old_reviewer")) == reviewer
-        and canonical_agent_name(event.get("new_reviewer")) == reviewer
-    ):
-        raise SystemExit(
-            "Cannot finalize task: the latest audited owner reassignment does not "
-            "bind the commit owner to the current owner with reviewer continuity."
-        )
-    later_reviewer_change = next(
-        (
-            later_event
-            for later_timestamp, later_event in audited
-            if later_timestamp > event_timestamp
-            and canonical_agent_name(later_event.get("old_reviewer"))
-            != canonical_agent_name(later_event.get("new_reviewer"))
+    chain = _walk_audited_role_chain(
+        audited,
+        role="owner",
+        start=canonical_agent_name(commit_owner),
+        end=canonical_agent_name(current_owner),
+        failure_message=(
+            "Cannot finalize task: the latest audited owner reassignment chain does "
+            "not bind the commit owner to the current owner."
         ),
-        None,
     )
-    if later_reviewer_change is not None:
-        raise SystemExit(
-            "Cannot finalize task: reviewer continuity changed after the audited "
-            "owner reassignment."
-        )
 
     delivered_at = _parse_utc_timestamp(commit_timestamp)
     if delivered_at is None:
@@ -6315,18 +6612,108 @@ def _verified_done_owner_reassignment(
             "Cannot finalize task: delivered commit timestamp is unavailable for "
             "owner reassignment ordering."
         )
-    if event_timestamp < delivered_at:
+    if chain[0][0] < delivered_at:
         raise SystemExit(
             "Cannot finalize task: audited owner reassignment must follow the delivered commit."
         )
 
+    # The supervisor picks a new owner/reviewer pair in one event, so the
+    # reviewer in force when the owner chain opened must still reach the
+    # canonical reviewer through the same audit. A reviewer that drifts with no
+    # audited hop to explain it is exactly the forgery this gate exists to stop.
+    reviewer_continuity_failure = (
+        "Cannot finalize task: reviewer continuity is not explained by the audited "
+        "reassignment chain."
+    )
+    chain_opened_at, first_event = chain[0]
+    reviewer_at_chain_start = canonical_agent_name(first_event.get("old_reviewer"))
+    reviewer_chain: list[tuple[datetime, dict[str, Any]]] = []
+    if reviewer_at_chain_start != reviewer:
+        reviewer_chain = _walk_audited_role_chain(
+            audited,
+            role="reviewer",
+            start=reviewer_at_chain_start,
+            end=reviewer,
+            failure_message=reviewer_continuity_failure,
+        )
+    elif any(
+        canonical_agent_name(event.get("old_reviewer"))
+        != canonical_agent_name(event.get("new_reviewer"))
+        for event_timestamp, event in audited
+        if event_timestamp >= chain_opened_at
+    ):
+        raise SystemExit(reviewer_continuity_failure)
+
+    last_event = chain[-1][1]
     return {
-        "event_id": str(event.get("event_id")),
-        "ts": str(event.get("ts")),
-        "old_owner": canonical_agent_name(event.get("old_owner")),
-        "new_owner": canonical_agent_name(event.get("new_owner")),
+        "event_id": str(last_event.get("event_id")),
+        "ts": str(last_event.get("ts")),
+        "old_owner": canonical_agent_name(commit_owner),
+        "new_owner": canonical_agent_name(current_owner),
+        "hops": len(chain),
         "reviewer": reviewer,
-        "message": str(event.get("message") or ""),
+        "message": str(last_event.get("message") or ""),
+        "commit_timestamp": commit_timestamp,
+        **({"reviewer_hops": len(reviewer_chain)} if reviewer_chain else {}),
+    }
+
+
+def _verified_done_reviewer_reassignment(
+    task: dict[str, Any],
+    *,
+    commit_reviewer: str,
+    current_reviewer: str,
+    commit_timestamp: str,
+) -> dict[str, Any]:
+    """Prove that audited supervisor reassignments explain reviewer drift at done.
+
+    A delivered commit whose `LLM-Agent` trailer went stale almost always has a
+    stale `Reviewer` trailer too, because the supervisor reassigns the pair
+    together. Failing that trailer outright left the owner with a merged
+    delivery it could never finalize, so verify it against the same audit the
+    owner trailer uses.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    audited = _audited_reassignment_events(
+        task_id,
+        source="canonical done reviewer reassignment evidence",
+        unavailable_message=(
+            "Cannot finalize task: prior-reviewer Reviewer trailer requires an exact "
+            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+        ),
+    )
+    chain = _walk_audited_role_chain(
+        audited,
+        role="reviewer",
+        start=canonical_agent_name(commit_reviewer),
+        end=canonical_agent_name(current_reviewer),
+        failure_message=(
+            "Cannot finalize task: the audited reviewer reassignment chain does not "
+            "bind the commit reviewer to the current reviewer."
+        ),
+    )
+
+    delivered_at = _parse_utc_timestamp(commit_timestamp)
+    if delivered_at is None:
+        raise SystemExit(
+            "Cannot finalize task: delivered commit timestamp is unavailable for "
+            "reviewer reassignment ordering."
+        )
+    if chain[0][0] < delivered_at:
+        raise SystemExit(
+            "Cannot finalize task: audited reviewer reassignment must follow the delivered commit."
+        )
+
+    last_event = chain[-1][1]
+    return {
+        "event_id": str(last_event.get("event_id")),
+        "ts": str(last_event.get("ts")),
+        "old_reviewer": canonical_agent_name(commit_reviewer),
+        "new_reviewer": canonical_agent_name(current_reviewer),
+        "hops": len(chain),
+        "owner": canonical_agent_name(task.get("owner")),
+        "message": str(last_event.get("message") or ""),
         "commit_timestamp": commit_timestamp,
     }
 
@@ -6395,7 +6782,6 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     required_lines = {
         "task": rf"^# Task Brief:\s*{re.escape(task_id)}\s*$",
         "status": r"^- Status:\s*review_approved\s*$",
-        "owner": rf"^- Owner:\s*{re.escape(owner)}\s*$",
     }
     missing = [
         label
@@ -6407,6 +6793,27 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
             "Cannot reconcile task: merged evidence does not bind the canonical "
             f"{', '.join(missing)} metadata."
         )
+
+    evidence_owner_match = re.search(
+        r"^- Owner:\s*(?P<owner>.+?)\s*$",
+        evidence_text,
+        flags=re.MULTILINE,
+    )
+    evidence_owner = canonical_agent_name(
+        evidence_owner_match.group("owner") if evidence_owner_match else ""
+    )
+    if not evidence_owner:
+        raise SystemExit(
+            "Cannot reconcile task: merged evidence has invalid owner metadata."
+        )
+    owner_reassignment = None
+    if evidence_owner != owner:
+        owner_reassignment = _verified_owner_reassignment(
+            task,
+            evidence_owner=evidence_owner,
+            current_owner=owner,
+        )
+
     evidence_reviewer_match = re.search(
         r"^- Reviewer:\s*(?P<reviewer>.+?)\s*$",
         evidence_text,
@@ -6415,7 +6822,7 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     evidence_reviewer = canonical_agent_name(
         evidence_reviewer_match.group("reviewer") if evidence_reviewer_match else ""
     )
-    if not evidence_reviewer or evidence_reviewer == owner:
+    if not evidence_reviewer or evidence_reviewer == evidence_owner:
         raise SystemExit(
             "Cannot reconcile task: merged evidence has invalid independent reviewer metadata."
         )
@@ -6487,10 +6894,16 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
             "commit": evidence_commit,
             "merge_target_ref": evidence_target_ref,
             "merge_target_sha": evidence_target_sha,
-            "owner": owner,
+            "owner": evidence_owner,
+            "canonical_owner": owner,
             "reviewer": evidence_reviewer,
             "canonical_reviewer": reviewer,
             "status": "review_approved",
+            **(
+                {"owner_reassignment": owner_reassignment}
+                if owner_reassignment is not None
+                else {}
+            ),
             **(
                 {"reviewer_reassignment": reviewer_reassignment}
                 if reviewer_reassignment is not None
@@ -6788,8 +7201,9 @@ def review_evidence_file_committed(
     if not repository or not head_sha or not review_file:
         return False
     encoded_path = urllib.parse.quote(review_file, safe="/")
+    query = urllib.parse.urlencode({"ref": head_sha})
     result = run_gh_json_command(
-        ["api", f"repos/{repository}/contents/{encoded_path}", "-f", f"ref={head_sha}"]
+        ["api", "--method", "GET", f"repos/{repository}/contents/{encoded_path}?{query}"]
     )
     return isinstance(result, Mapping) and str(result.get("type") or "") == "file"
 
@@ -6937,6 +7351,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     timestamp = iso_now()
     task["status"] = "review_approved"
+    task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
