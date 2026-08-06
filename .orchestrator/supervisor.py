@@ -1864,6 +1864,7 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "enabled": bool(settings.get("enabled", False)),
         "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        "source_root": str(settings.get("source_root") or settings.get("repo_root") or "").strip(),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
@@ -1911,6 +1912,27 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     if not configured.is_absolute():
         configured = repo_root / configured
     return configured.resolve()
+
+
+def worker_worktree_source_root(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
+    """Return the writable git checkout used to create worker worktrees.
+
+    The supervisor can run split-root: canonical status, activity, and queue
+    files live in the shared status root, while the command checkout that owns
+    ``.git/worktrees`` can be somewhere else.  Worktree creation must use the
+    writable git source root; context materialization and status writes must
+    continue to use the status root.
+    """
+
+    active_settings = settings or worker_worktree_settings(config)
+    status_root = config_path(config, "status_file").parents[0]
+    configured = str(active_settings.get("source_root") or "").strip()
+    if not configured:
+        return status_root.resolve()
+    source_root = Path(os.path.expanduser(configured))
+    if not source_root.is_absolute():
+        source_root = status_root / source_root
+    return source_root.resolve()
 
 
 def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
@@ -2611,14 +2633,16 @@ def prepare_worker_workspace(
         return True, None
     if request.metadata.get("workspace_path"):
         if requires_isolated:
-            repo_root = config_path(config, "status_file").parents[0].resolve()
+            status_root = config_path(config, "status_file").parents[0].resolve()
+            source_root = worker_worktree_source_root(config, settings)
             workspace_path = Path(
                 os.path.expanduser(str(request.metadata["workspace_path"]))
             ).resolve()
-            if workspace_path == repo_root:
+            if workspace_path in {status_root, source_root}:
                 message = (
                     f"Cannot dispatch explicit retry for {workspace_task_id}: "
-                    "workspace_path resolves to the shared supervisor checkout. "
+                    "workspace_path resolves to the shared supervisor checkout "
+                    "or configured worker source checkout. "
                     "Refusing shared-checkout fallback."
                 )
                 write_activity_log(
@@ -2637,10 +2661,34 @@ def prepare_worker_workspace(
                 return False, message
         return True, None
 
-    repo_root = config_path(config, "status_file").parents[0].resolve()
+    status_root = config_path(config, "status_file").parents[0].resolve()
+    repo_root = worker_worktree_source_root(config, settings)
     branch = worker_task_branch(config, workspace_task_id)
     worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
     reused = False
+
+    if not repo_root.exists():
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"configured worker source root does not exist: {repo_root}."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "workspace_branch": branch,
+                "workspace_path": str(worktree_path),
+                "status_root": str(status_root),
+                "workspace_source_root": str(repo_root),
+                "refresh_status": "source_root_missing",
+            },
+        )
+        return False, message
 
     if settings.get("reuse_existing", True):
         existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
@@ -2663,6 +2711,8 @@ def prepare_worker_workspace(
                     "queue_event_id": queue_event_id,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                     "refresh_ok": refresh_ok,
                     "refresh_status": refresh_status,
                 },
@@ -2684,6 +2734,8 @@ def prepare_worker_workspace(
                         "message": message,
                         "workspace_branch": branch,
                         "workspace_path": str(worktree_path),
+                        "status_root": str(status_root),
+                        "workspace_source_root": str(repo_root),
                         "refresh_status": refresh_status,
                     },
                 )
@@ -2707,6 +2759,8 @@ def prepare_worker_workspace(
                     "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                 },
             )
             return False, message
@@ -2724,6 +2778,8 @@ def prepare_worker_workspace(
                     "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
                 },
             )
             return False, message
@@ -2733,7 +2789,8 @@ def prepare_worker_workspace(
             "workspace_mode": "isolated_worktree",
             "workspace_path": str(worktree_path),
             "workspace_branch": branch,
-            "status_root": str(repo_root),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
         }
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
@@ -2743,7 +2800,8 @@ def prepare_worker_workspace(
         "workspace_task_id": workspace_task_id,
         "branch": branch,
         "path": str(worktree_path),
-        "status_root": str(repo_root),
+        "status_root": str(status_root),
+        "source_root": str(repo_root),
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
@@ -2759,7 +2817,8 @@ def prepare_worker_workspace(
             "queue_event_id": queue_event_id,
             "workspace_branch": branch,
             "workspace_path": str(worktree_path),
-            "status_root": str(repo_root),
+            "status_root": str(status_root),
+            "workspace_source_root": str(repo_root),
         },
     )
     return True, None
@@ -16014,13 +16073,14 @@ def _cleanup_registered_worker_worktrees(
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
+    status_root = config_path(config, "status_file").parents[0]
+    repo_root = worker_worktree_source_root(config, worktree_settings)
     active_roots = active_worker_workspace_roots(config, state)
     live_paths = _scan_process_paths_in_root(base_root)
     max_removals = max(0, int(settings["max_removals_per_tick"]))
     archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
     if not archive_root.is_absolute():
-        archive_root = repo_root / archive_root
+        archive_root = status_root / archive_root
     merged_branches = _merged_task_branches(repo_root, list(settings["base_branches"])) if require_merged else set()
     if require_merged and not merged_branches:
         return False
@@ -16073,6 +16133,8 @@ def _cleanup_registered_worker_worktrees(
     summary: dict[str, Any] = {
         "at": utc_now(),
         "source": source,
+        "status_root": str(status_root.resolve()),
+        "workspace_source_root": str(repo_root),
         "checked": 0,
         "removed": 0,
         "skipped": 0,
@@ -16266,7 +16328,7 @@ def prune_chair_review_worktrees(config: dict[str, Any], state: dict[str, Any]) 
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
+    repo_root = worker_worktree_source_root(config, worktree_settings)
 
     max_age = settings["chair_review_max_age_seconds"]
     max_removals = max(0, settings["chair_review_max_removals_per_tick"])
@@ -17967,12 +18029,140 @@ def task_l12_dispatch_priority_rank(task: dict[str, Any], base_priority: int) ->
 L12_PROVIDER_FIRST_AGENT_NAMES = frozenset(
     {"Antigravity", "Antigravity2", "Claude", "Claude2"}
 )
+L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT = 4
 
 
 def task_is_l12_recovery_work(task: dict[str, Any] | None) -> bool:
     candidate = task or {}
     task_id = str(candidate.get("id") or "").strip().upper()
     return task_id.startswith("L12-") or task_id.startswith("SUP-L12-")
+
+
+def _canonical_task_agent_pairs(
+    config: dict[str, Any],
+    pairs: set[tuple[str, str]],
+) -> set[tuple[str, str]]:
+    canonical: set[tuple[str, str]] = set()
+    for task_id, agent_id in pairs:
+        agent_name = canonical_agent_name(config, agent_id)
+        if task_id and agent_name:
+            canonical.add((str(task_id), agent_name))
+    return canonical
+
+
+def reap_stale_l12_missing_process_failure_streaks(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_map: dict[str, dict[str, Any]] | None = None,
+    active_task_agents: set[tuple[str, str]] | None = None,
+    pending_task_agents: set[tuple[str, str]] | None = None,
+) -> bool:
+    """Drop bounded L12 process-loss loops superseded by newer task truth.
+
+    A missing process is real failure evidence until the task lifecycle moves
+    forward. Once a newer task checkpoint exists, keeping the old streak can
+    suppress the newly eligible provider-first owner and every helper claim for
+    the task even though no matching execution remains. Reap only that narrow
+    stale shape; quota, auth, fresh process loss, and live/pending executions
+    remain fail-closed.
+    """
+
+    if task_map is None:
+        try:
+            task_map = task_index_from_status(config, load_status(config))
+        except KeyError:
+            return False
+
+    settings = ready_dispatch_settings(config)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    if active_task_agents is None:
+        _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    if pending_task_agents is None:
+        try:
+            _pending_agents, pending_task_agents, _pending_keys = outstanding_delivery_indexes(config, state)
+        except KeyError:
+            pending_task_agents = set()
+
+    runtime_pairs = _canonical_task_agent_pairs(
+        config,
+        set(active_task_agents or set()) | set(pending_task_agents or set()),
+    )
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    owned_statuses = normalized_status_set(settings.get("owned_statuses"), ["in_progress", "todo"])
+    threshold = max(
+        1,
+        int(chair_review_settings(config).get("failure_loop_reassignment_threshold", 2)),
+    )
+    bucket = _task_failure_streak_bucket(state)
+    candidates: list[tuple[datetime, str, dict[str, Any], str]] = []
+
+    for key, raw_record in bucket.items():
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        if str(record.get("last_failure_kind") or "").strip().lower() != "missing_process":
+            continue
+        try:
+            if int(record.get("count", 0)) < threshold:
+                continue
+        except (TypeError, ValueError):
+            continue
+
+        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
+        task = task_map.get(task_id)
+        if not task_is_l12_recovery_work(task):
+            continue
+        task_status = str(task.get("status") or "").strip().lower()
+        if task_status in review_statuses:
+            assigned_agent = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        elif task_status in owned_statuses | finalize_statuses:
+            assigned_agent = canonical_agent_name(config, str(task.get("owner") or ""))
+        else:
+            continue
+
+        provider_id = str(record.get("provider") or str(key).rsplit(":", 1)[-1] or "").strip()
+        failed_agent = canonical_agent_name(config, provider_id)
+        if not failed_agent or failed_agent != assigned_agent:
+            continue
+        if (task_id, failed_agent) in runtime_pairs:
+            continue
+
+        failed_at = _parse_iso_utc(str(record.get("last_failure_at") or ""))
+        task_updated_at = _parse_iso_utc(str(task.get("last_update") or ""))
+        if failed_at is None or task_updated_at is None or task_updated_at <= failed_at:
+            continue
+        candidates.append((failed_at, str(key), record, failed_agent))
+
+    reaped: list[dict[str, Any]] = []
+    for _failed_at, key, record, failed_agent in sorted(candidates)[:L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT]:
+        bucket.pop(key, None)
+        reaped.append(
+            {
+                "key": key,
+                "task_id": record.get("task_id") or key.rsplit(":", 1)[0],
+                "agent": failed_agent,
+                "count": record.get("count"),
+                "last_failure_at": record.get("last_failure_at"),
+            }
+        )
+
+    if reaped and config.get("paths", {}).get("activity_log"):
+        write_activity_log(
+            config,
+            {
+                "type": "stale_l12_missing_process_streaks_reaped",
+                "message": (
+                    f"Reaped {len(reaped)} stale L12 missing_process failure streak(s) "
+                    "after newer task truth and no matching active or pending execution."
+                ),
+                "policy": "newer_task_truth_without_runtime_evidence",
+                "limit": L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT,
+                "reaped": reaped,
+            },
+        )
+    return bool(reaped)
 
 
 def l12_provider_first_candidates(
@@ -18862,6 +19052,13 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
+    changed = reap_stale_l12_missing_process_failure_streaks(
+        config,
+        state,
+        task_map=task_map,
+        active_task_agents=active_task_agents,
+        pending_task_agents=pending_task_agents,
+    ) or failure_streak_resets_reconciled
     failure_loop_task_agents = failure_loop_task_agents_for_task_map(
         config,
         state,
@@ -18871,8 +19068,6 @@ def dispatch_ready_tasks(
     )
     failure_loop_task_ids = failure_streak_threshold_task_ids(config, state)
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
-
-    changed = failure_streak_resets_reconciled
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
@@ -20063,8 +20258,24 @@ def run_once(
         github_runtime_snapshot,
     )
     if required_worker_base_refs:
-        repo_root = config_path(config, "status_file").parent
+        worktree_settings = worker_worktree_settings(config)
+        repo_root = worker_worktree_source_root(config, worktree_settings)
         for base_ref in required_worker_base_refs:
+            if not repo_root.exists():
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_worktree_base_refresh_failed",
+                        "message": (
+                            f"Worker base {base_ref} could not be refreshed before "
+                            f"runtime admission: configured worker source root does not exist: {repo_root}"
+                        ),
+                        "base_ref": base_ref,
+                        "workspace_source_root": str(repo_root),
+                        "refresh_status": "source_root_missing",
+                    },
+                )
+                continue
             fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
             if fetched:
                 prefetched_worker_base_refs.add(base_ref)
@@ -20078,6 +20289,7 @@ def run_once(
                         f"runtime admission: {fetch_error}"
                     ),
                     "base_ref": base_ref,
+                    "workspace_source_root": str(repo_root),
                 },
             )
     github_bus_changed = bool(
@@ -20507,6 +20719,14 @@ def _run_once_locked(
                 loop_started_at=loop_started_at,
             )
         changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
+        changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase(
+            "reap_stale_l12_missing_process_failure_streaks",
+            reap_stale_l12_missing_process_failure_streaks,
+            config,
+            state,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase(
             "maybe_reassign_tasks_from_failure_streaks",
             maybe_reassign_tasks_from_failure_streaks,
