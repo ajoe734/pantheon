@@ -33,15 +33,15 @@
       {
         "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"helper_claim\" -q",
         "result": "pass",
-        "details": "20 passed, 451 deselected in 2.86s",
-        "run_at": "2026-08-04T14:42:50Z",
+        "details": "21 passed, 451 deselected in 2.79s",
+        "run_at": "2026-08-06T11:37:08Z",
         "runner": "Antigravity"
       },
       {
         "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -q",
         "result": "pass",
-        "details": "471 passed, 4 subtests passed in 65.31s",
-        "run_at": "2026-08-04T14:44:00Z",
+        "details": "472 passed in test_supervisor.py",
+        "run_at": "2026-08-06T11:37:25Z",
         "runner": "Antigravity",
         "note": "Full supervisor regression — no regressions introduced"
       }

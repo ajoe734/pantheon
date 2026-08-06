@@ -12916,9 +12916,9 @@ def task_next_preferred_helper_lane(
     if not preferred_lanes:
         return None
     owner_name = canonical_agent_name(config, owner_name)
-    try:
-        start_index = preferred_lanes.index(owner_name) + 1
-    except ValueError:
+    if preferred_lanes and preferred_lanes[0] == owner_name:
+        start_index = 1
+    else:
         start_index = 0
     
     settings = ready_dispatch_settings(config)

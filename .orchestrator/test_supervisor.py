@@ -3919,6 +3919,105 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
+    def test_dispatcher_helper_claim_chooses_provider_family_fallback_when_preferred_lane_busy(self) -> None:
+        config = {
+            "paths": {
+                "activity_log": "/tmp/test_activity_log.jsonl",
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {}
+            },
+            "agents": {
+                "claude2": {
+                    "id": "claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                    "worker_slots": ["s1"],
+                },
+                "claude": {
+                    "id": "claude",
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "worker_slots": ["s2"],
+                },
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                    "worker_slots": ["s3"],
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "w1": {
+                    "agent_id": "claude2",
+                    "task_id": "L12-OBS-001",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                },
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-TEST-BUSY-PREFERRED-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Codex2",
+                    "depends_on": [],
+                    "preferred_lane_order": [
+                        "Claude2",
+                        "Claude",
+                        "Antigravity",
+                    ],
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=initial_status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude"],
+            )
+
+        self.assertTrue(changed)
+        persist.assert_called_once_with(
+            config,
+            task_id="SUP-L12-TEST-BUSY-PREFERRED-20260729",
+            new_owner="Claude",
+            new_reviewer="Claude2",
+            message="Helper-claimed by idle Claude; previous owner Claude2 becomes reviewer.",
+            handoff_to="Claude",
+            handoff_from="Claude2",
+        )
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "SUP-L12-TEST-BUSY-PREFERRED-20260729")
+        self.assertEqual(queued_event["target_agent"], "Claude")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
 
     def test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused(self) -> None:
         config = {
