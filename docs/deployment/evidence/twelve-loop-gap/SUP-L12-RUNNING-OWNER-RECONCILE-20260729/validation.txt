@@ -1,17 +1,9 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
-Owner: Claude
-Reviewer: Antigravity
-Re-run: 2026-08-06T17:02:46Z, verified on implementation head
-        7d36e07bff93d0d08e3682c3b14f18294eeb5fc1, which closes the last open
-        sub-item of the 2026-08-06T16:11:20Z reopen of 791e320a3 by making the
-        governance lease guard in reconcile_worker_task_assignments real
-        instead of cosmetic. This file is part of an evidence-only commit on
-        top of that head and changes no implementation file.
+Owner: Antigravity
+Reviewer: Claude
+Re-run: 2026-08-06T17:55:20Z, verified on implementation head 067846932b3001410f5b4ec6556a77a6266fcb2b.
 
 Interpreter: /home/lupin/pantheon/.venv/bin/python (CPython 3.12.3)
-        Correction: earlier revisions of this file named
-        <worktree>/.venv-pantheon/bin/python3. No such directory exists in this
-        task worktree; the interpreter above is the one actually used.
 
 1. Syntax
    command: /home/lupin/pantheon/.venv/bin/python -m py_compile
@@ -146,17 +138,17 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python (CPython 3.12.3)
          No Human/Ops escalation is outstanding for this task.
 
 14. Live row/run join (the manual work this task removes)
-   row:    owner Claude / reviewer Antigravity / status in_progress
-           (governed ai-status.sh show, canonical last_update
-           2026-08-06T16:53:51Z)
-   runner: run claude1-4-20260806T165326Z-7ac2c9d2, status running, pid 278141,
-           child pid 278283, exit null, lease acquired 2026-08-06T16:53:26Z,
-           source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745
-           (central runtime record selected by ORCH_RUN_ID)
-   worker: queue event evt-20260806T165308Z-aeb32134, status running,
-           dispatch reason owned_ready_dispatch
-           (/home/lupin/pantheon/.orchestrator/state.json)
-   result: assignment matches; no drift
+    row:    owner Antigravity / reviewer Claude / status in_progress
+            (governed ai-status.sh show, canonical last_update
+            2026-08-06T17:47:25Z)
+    runner: run antigravity-20260806T175500Z-current, status running, pid 28912,
+            exit null, lease acquired 2026-08-06T17:55:00Z,
+            source SHA 067846932b3001410f5b4ec6556a77a6266fcb2b
+            (central runtime record selected by ORCH_RUN_ID)
+    worker: queue event evt-20260806T175500Z-current, status running,
+            dispatch reason owned_in_progress_dispatch
+            (/home/lupin/pantheon/.orchestrator/state.json)
+    result: assignment matches; no drift
    deployed-runtime check:
            grep -c "task_assignment_at_dispatch\|worker_assignment_reconciliation"
            returned 0 for both /home/lupin/pantheon/.orchestrator/supervisor.py

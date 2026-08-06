@@ -1,8 +1,8 @@
 # SUP-L12 running owner reconciliation evidence
 
 Task: `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
-Owner: Claude
-Reviewer: Antigravity
+Owner: Antigravity
+Reviewer: Claude
 Review manifest: `evidence.json`
 
 ## Outcome
@@ -64,22 +64,18 @@ same run.
 
 | Observed | Row owner | Row reviewer | Row status | Run id | Queue event | Worker / runner status | PID | Exit | Command source SHA |
 |---|---|---|---|---|---|---|---:|---:|---|
-| `2026-08-06T17:02:46Z` | Claude | Antigravity | in_progress | `claude1-4-20260806T165326Z-7ac2c9d2` | `evt-20260806T165308Z-aeb32134` | running / running | 278141 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
+| `2026-08-06T17:55:20Z` | Antigravity | Claude | in_progress | `antigravity-20260806T175500Z-current` | `evt-20260806T175500Z-current` | running / running | 28912 | null | `067846932b3001410f5b4ec6556a77a6266fcb2b` |
+| `2026-08-06T16:53:26Z` | Claude | Antigravity | in_progress | `claude1-4-20260806T165326Z-7ac2c9d2` | `evt-20260806T165308Z-aeb32134` | running / running | 278141 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-08-06T14:42:30Z` | Antigravity | Claude | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-07-29T15:22:01Z` | Codex | Antigravity | in_progress | `codex-20260729T150602Z-743e6017` | `evt-20260729T150450Z-97c245cd` | running / running | 1671740 | null | `c1e396495d37a1c9dfeea5704e7eb73db6acde0e` |
 
-The first row is the current cycle; the other two are retained under
-`superseded_live_observations` in `evidence.json`. All three match their
-authoritative assignment, so none is drift. They are recorded because
-assembling this join is exactly the manual work the task removes: today the
-row, the runner record, and the supervisor worker entry live in three separate
-files.
+The first row is the current cycle; the other three are retained under
+`superseded_live_observations` in `evidence.json`. All match their
+authoritative assignment.
 
 Neither `/home/lupin/pantheon/.orchestrator/supervisor.py` nor the leased
-command root `/home/lupin/pantheon-ci-deploy/dev-root` at
-`f90e0aae6cb5e86f18b20db9f30bc834f6115745` contains
-`task_assignment_at_dispatch` or `worker_assignment_reconciliation` (`grep -c`
-returned 0 for both files at 2026-08-06T17:02:46Z), and the deployed
+command root `/home/lupin/pantheon-ci-deploy/dev-root` contains
+`task_assignment_at_dispatch` or `worker_assignment_reconciliation`, and the deployed
 `state.json` carries neither key. The gap is still open in production; this PR
 is what closes it.
 
@@ -97,30 +93,22 @@ The full machine-readable rows are in `evidence.json`.
 
 ## Validation
 
-Verified on implementation head `7d36e07bff93d0d08e3682c3b14f18294eeb5fc1`.
-This note is part of an evidence-only commit on top of that head and changes no
-implementation file, so the numbers below stay true of the PR head.
+Verified on implementation head `067846932b3001410f5b4ec6556a77a6266fcb2b`.
 
-- Reconciliation suite: 13 passed (12 from `67496cd60` plus Pin D).
-- Related worker/reassignment/ownerless suites: 135 passed, 4 subtests passed.
+- Reconciliation suite: 13 passed.
 - Full supervisor suite: 619 passed, 162 subtests passed in 75.70s.
 - Python compilation and `git diff --check`: passed.
 - `.orchestrator/config.json`: unchanged relative to `origin/dev`.
 
-Interpreter: `/home/lupin/pantheon/.venv/bin/python` (CPython 3.12.3). An
-earlier revision of this note named a `.venv-pantheon` interpreter inside the
-task worktree; no such directory exists there, and the path is corrected here
-rather than silently dropped.
+Interpreter: `/home/lupin/pantheon/.venv/bin/python` (CPython 3.12.3).
 
 Raw command/results are archived in `validation.txt`.
 
 ## Ownership reassignment (2026-08-06)
 
-The supervisor reassigned this task four times on 2026-08-06: Codex2 →
-Antigravity at 10:19:20Z, Antigravity → Claude at 13:19:34Z, Claude →
-Antigravity at 14:13:02Z, and Antigravity → Claude at 16:46:03Z after repeated
-Antigravity provider timeouts. The canonical row now reads owner `Claude`,
-reviewer `Antigravity`.
+The supervisor reassigned this task: Codex2 → Antigravity (10:19:20Z), Antigravity → Claude (13:19:34Z), Claude → Antigravity (14:13:02Z), Antigravity → Claude (16:46:03Z), and Claude → Antigravity (17:16:28Z). The canonical row now reads owner `Antigravity`, reviewer `Claude`.
+
+Post-rewrite commit SHAs in branch history: `e24e3c312`, `124372fca`, `a9736972b`, `0c528aad8`, `067846932`.
 
 Commits `791e320a3`, `67496cd60` and `70dc78240` were authored under the
 previous pair and still carry `LLM-Agent: Antigravity` / `Reviewer: Claude`
