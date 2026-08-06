@@ -1,0 +1,48 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-reducer-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-REDUCER-001",
+    "title": "Replace full rebuild with a bounded incremental reducer",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-REDUCER-001",
+    "evidence_cut_at": "2026-08-06T15:26:00Z"
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/incremental_materializer.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/"
+    ],
+    "not_changing": [
+      "telemetry_events canonical source schema",
+      "projection_store schema or migrations",
+      "BFF routes or read selection"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-STORE-001",
+      "LIFECYCLE-PROJ-BFF-001"
+    ]
+  },
+  "contract_proof": {
+    "reducer_bounded": "Full global rebuilds removed from the active worker path; materialization is scoped per aggregate journey",
+    "idempotency_preserved": "Exact duplicates short-circuit and conflicting event fingerprints fail closed",
+    "freshness_mode": "Only live records update live freshness; recovery, backfill, and replay retain distinct modes"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 20 passed in 4.79s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
+      "result": "pass; 119 passed, 19 skipped in 22.39s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py && git diff --check",
+      "result": "pass"
+    }
+  ]
+}

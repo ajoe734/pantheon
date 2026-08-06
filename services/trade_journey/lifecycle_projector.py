@@ -1040,7 +1040,34 @@ class LifecycleProjector:
 
         controller["last_successful_publish_at"] = now
         controller["last_successful_publish_generation"] = int(candidate["generation"])
-        journey_payload, loop_payload = self._render(candidate)
+
+        # Use incremental aggregate materialization to avoid all-history rebuilds
+        from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
+        inc_mat = IncrementalLifecycleMaterializer(candidate)
+
+        # Determine entries to process in this batch
+        batch_entries = [
+            candidate["canonical_events"][row["event_id"]]
+            for row in ordered_records
+            if row.get("event_id") in candidate.get("canonical_events", {})
+        ]
+
+        inc_mat.apply_batch(
+            batch_entries,
+            controller=controller,
+            stage_specs_fn=self._stage_specs,
+            journey_events_fn=self._journey_events,
+            loop_record_builder_fn=self._loop_records_for_entries,
+        )
+
+        journey_payload, loop_payload = inc_mat.render_full_payloads(
+            schema_version_journey=JOURNEY_STORE_SCHEMA,
+            schema_version_loop=LOOP_STORE_SCHEMA,
+            generation=int(candidate["generation"]),
+            controller=controller,
+            journey_events_fn=self._journey_events,
+        )
+
         self._publish_candidate(candidate, journey_payload, loop_payload)
         self.state = candidate
         return ProjectionResult(
@@ -1432,18 +1459,18 @@ class LifecycleProjector:
         return []
 
     @staticmethod
-    def _loop_records(
-        entries: Sequence[Mapping[str, Any]],
+    def _loop_records_for_entries(
+        entry_lists: Sequence[Sequence[Mapping[str, Any]]],
         materializer: JourneyMaterializer,
         controller: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
-        grouped: dict[str, list[Mapping[str, Any]]] = {}
-        for entry in entries:
-            grouped.setdefault(entry["identity"]["journey_id"], []).append(entry)
         records: list[dict[str, Any]] = []
-        for journey_id, lifecycle in sorted(grouped.items()):
-            lifecycle.sort(key=LifecycleProjector._entry_sort_key)
-            identity = dict(lifecycle[0]["identity"])
+        for lifecycle in entry_lists:
+            if not lifecycle:
+                continue
+            sorted_lifecycle = sorted(lifecycle, key=LifecycleProjector._entry_sort_key)
+            identity = dict(sorted_lifecycle[0]["identity"])
+            journey_id = identity["journey_id"]
             projection = materializer.get(
                 journey_id,
                 tenant_id=identity["tenant_id"],
@@ -1451,9 +1478,9 @@ class LifecycleProjector:
             )
             if projection is None:
                 continue
-            event_types = [entry["event"]["event_type"] for entry in lifecycle]
-            source_modes = sorted({str(entry["source_mode"]) for entry in lifecycle})
-            accepted_live = any(bool(entry.get("accepted_live")) for entry in lifecycle)
+            event_types = [entry["event"]["event_type"] for entry in sorted_lifecycle]
+            source_modes = sorted({str(entry["source_mode"]) for entry in sorted_lifecycle})
+            accepted_live = any(bool(entry.get("accepted_live")) for entry in sorted_lifecycle)
             status = projection.snapshot.get("status") or "open"
             records.append(
                 {
@@ -1473,7 +1500,7 @@ class LifecycleProjector:
                     "source_modes": source_modes,
                     "accepted_live": accepted_live,
                     "projection_mode": "live" if accepted_live else "+".join(source_modes),
-                    "canonical_event_count": len(lifecycle),
+                    "canonical_event_count": len(sorted_lifecycle),
                     "fill_event_count": sum(
                         event_type
                         in {"paper_fill_simulated", "fill_received", "order_partially_filled", "order_filled"}
@@ -1481,8 +1508,8 @@ class LifecycleProjector:
                     ),
                     "position_event_count": sum("position_snapshot" in event_type for event_type in event_types),
                     "reconciliation_event_count": sum(event_type.startswith("reconciliation_") for event_type in event_types),
-                    "last_canonical_event_id": lifecycle[-1]["event"]["event_id"],
-                    "last_source_offset": lifecycle[-1].get("ingested_seq"),
+                    "last_canonical_event_id": sorted_lifecycle[-1]["event"]["event_id"],
+                    "last_source_offset": sorted_lifecycle[-1].get("ingested_seq"),
                     "last_projected_at": controller.get("last_projection_success_at"),
                     "controller_id": controller.get("controller_id"),
                     "controller_generation": controller.get("generation"),
@@ -1490,6 +1517,18 @@ class LifecycleProjector:
                 }
             )
         return records
+
+    @staticmethod
+    def _loop_records(
+        entries: Sequence[Mapping[str, Any]],
+        materializer: JourneyMaterializer,
+        controller: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        grouped: dict[str, list[Mapping[str, Any]]] = {}
+        for entry in entries:
+            grouped.setdefault(entry["identity"]["journey_id"], []).append(entry)
+        entry_lists = [lifecycle for _, lifecycle in sorted(grouped.items())]
+        return LifecycleProjector._loop_records_for_entries(entry_lists, materializer, controller)
 
 
 def _stage_status(value: Any) -> str:
