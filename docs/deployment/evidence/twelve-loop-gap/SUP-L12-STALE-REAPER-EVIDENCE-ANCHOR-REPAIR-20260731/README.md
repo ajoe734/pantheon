@@ -2,77 +2,101 @@
 
 Task: `SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731`
 
+Owner: `Claude`. Reviewer: `Antigravity`. Delivery PR: #4452.
+
 This packet repairs the concrete referential-integrity defect identified by
 PR #4395. Before editing, PR #4385 still pointed at exact head
 `f5e70e86e01bde005dae5fed94b151c9bc07f389`. Its subject README and both
 machine-readable anchor fields named nonexistent commit
-`9d53a94a265c55af4c8d15c50ab3751f1440ac0f`; the actual rebased implementation
-anchor is `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`.
+`9d53a94a265c55af4c8d15c50ab3751f1440ac0f`; the actual implementation anchor is
+`9d53a94a295d71ee49aea6f4b96e47fbcfd29093`.
 
 ## Repair topology
 
-Commit `87dd23dc84552dc58f72bd58cb58b968d358b684` composes current
+Commit `87dd23dc84552dc58f72bd58cb58b968d358b684` composed the then-current
 `origin/dev@93e5b3d4ad0ad94f79bfe512ba3f67402da8d468` with the rejected PR #4385
 head. Keeping #4385 as the second parent preserves the actual implementation
-anchor in the delivered ancestry. The merge also changes the subject README
-and both subject manifest anchor fields to the same real full SHA.
+anchor in the delivered ancestry. The task branch and PR #4452 supersede #4385 as
+the governed delivery path, so the original task's stale `review_approved` row is
+never treated as authority for an unreviewed head.
 
-The new task branch and PR #4452 supersede #4385 as the governed delivery path. This
-avoids treating the original task's stale `review_approved` row as authority
-for an unreviewed head while retaining the exact implementation history that
-PR #4395 inspected.
+## Delivered change on the current base
 
-## Owner verification
+Against `origin/dev@eca6b7de6313027d4c943679a1fa8fb7d93028ba` the remaining
+delivery is documentation only:
 
-- The five focused stale missing-process failure-streak regressions passed.
-- The complete supervisor suite passed all 473 tests.
-- `evidence.json` parses and its anchor assertions pass.
-- `git diff --check origin/dev..HEAD` passes.
-- the task commit trailer range check passes.
-- `.orchestrator/config.json` has no diff from `origin/dev`.
-- the invalid SHA is not a commit; the real SHA and rejected #4385 head are
-  ancestors of the superseding branch.
+- `docs/.../SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md` — 1 line
+- `docs/.../SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json` — 2 lines
+  (`/implementation/anchor_commit` and `/delivery/anchor_commit`)
+- this packet's `README.md` and `evidence.json`
+- `.orchestrator/task-briefs/sup_l12_stale_reaper_evidence_anchor_repair_20260731.md`
 
-The full commands and results are in [`evidence.json`](evidence.json).
+No `.orchestrator/*.py` file differs from `origin/dev`. The reaper implementation
+itself reached `dev` independently, through the squash merge
+`23ae23c21` of PR #4590. Earlier revisions of this manifest listed
+`.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` as changed
+files; that is no longer true of this head and has been corrected.
+
+## Anchor verification
+
+- `9d53a94a265c55af4c8d15c50ab3751f1440ac0f` does not resolve as a commit.
+- `9d53a94a295d71ee49aea6f4b96e47fbcfd29093` resolves, is an ancestor of this
+  head, and is the commit that introduces
+  `reap_stale_l12_missing_process_failure_streaks`.
+- `f5e70e86e01bde005dae5fed94b151c9bc07f389` (rejected #4385 head) is an ancestor
+  of this head.
+- The invalid SHA no longer appears in the subject packet. It survives only in
+  this task's own prose and manifest, where it is named as the defective value.
+- `git diff --check origin/dev..HEAD` is clean, the task commit trailer range
+  check passes, and `.orchestrator/config.json` has no diff from `origin/dev`.
+
+## Test status is constrained by a dev-level regression
+
+The focused stale-reaper regressions still pass, but they cannot be run against
+`origin/dev` as-is. The same squash merge `23ae23c21` (PR #4590) that carried the
+reaper into `dev` also reverted `.orchestrator/provider_permissions.py` from 2427
+lines to 2006, deleting `provider_auth_probe_due`, which
+`.orchestrator/supervisor.py:90` still imports. On `origin/dev` and therefore on
+this branch, `import supervisor` raises `ImportError` and every supervisor test
+errors at collection.
+
+To obtain real evidence about this task's subject matter, the five focused tests
+were run in a working tree whose `provider_permissions.py` was temporarily
+restored to its pre-#4590 revision `0f52e40e9`. That restoration was a local
+diagnostic only: it was reverted, and the delivered branch contains no code
+change. On that tree the five focused stale-reaper regressions pass.
+
+The full 611-test suite is **not** green on that hybrid tree (8 failures, 18
+errors, all in provider probe, hysteresis, and codex-cache-quarantine paths).
+That is expected, because `dev`'s `supervisor.py` and `test_supervisor.py` expect
+the newer `provider_permissions.py` that #4590 removed. No green full-suite
+baseline exists on `dev` today, so this manifest does not claim one. Earlier
+revisions of this manifest claimed passing 473- and 584-test runs; those runs
+predate the regression and are retained below only as historical record.
+
+## Fleet condition, not owned by this task
+
+`23ae23c21` is a stale-base mass-deletion squash. Besides the
+`provider_permissions.py` revert it deleted
+`.github/workflows/canonical-review-gate.yml` from `dev`; that file is still
+present on `master`. Both effects are outside this task's owned layer and are not
+repaired here. They are recorded so the reviewer is not misled by the absent
+test baseline, and they need a separate Human/Ops remediation.
 
 ## Admission boundary
 
-This is owner evidence only. It does not approve PR #4452's current task head, merge
-the task PR, close the original subject task, prove live promotion, or resume
-Wave 0. Codex2 must review the exact task PR head, after which the normal
-protected merge and governed owner closeout remain mandatory.
+This is owner evidence only. It does not approve PR #4452's current head, merge
+the task PR, close the subject task, prove live promotion, or resume Wave 0.
+Antigravity must review the exact PR #4452 head produced by this evidence commit
+and bind this manifest, after which protected merge and governed owner closeout
+remain mandatory.
 
-## Current-dev revalidation
+## Superseded owner records
 
-On 2026-08-04, the open task branch was composed with the current GitHub
-`dev` head `4361a26ad9ff375ae61667ceb689b6fa28ff8058`. The resulting merge
-head `5b3b522fc75a8597de2025927170ace9aa16677f` keeps the task head
-`4a25e17074565c9854666d9cb5f0d8dd55fd19d8` in its first-parent ancestry and
-the current `dev` head as its direct second parent.
-
-The single supervisor conflict preserves the stale missing-process reaper,
-the current provider/activity failure-loop calculation, and the reserved
-pre/post worker-poll architecture. It deliberately does not restore the
-retired in-lock `poll_workers` invocation. The five focused stale-reaper tests
-and the full 584-test supervisor suite passed on this composition; no
-`.orchestrator/config.json` change was introduced.
-
-The exact review target is the PR head after this evidence revalidation commit,
-not the pre-composition or invalid historical approval SHA. The current
-assigned reviewer is Codex2; its independent exact-head decision must bind
-this manifest before protected merge and governed `done`.
-
-## Owner closeout audit
-
-The governed task row reached `review_approved`, but the immutable Antigravity
-approval event at `2026-08-01T14:41:16Z` names reviewed SHA
-`14487789314c4495e865a7d7ef1aae9c43d70650`. That object does not exist. PR
-#4452, the local task branch, and the remote task ref instead all resolve to
-`1448778931c2058fceb715ad13423e639f5c0865`, which had been the branch head
-since `2026-08-01T14:34:48Z`.
-
-The PR has no GitHub review, the canonical task row has no `review_file`, and
-the manifest had no independent decision to bind. Owner closeout therefore
-fails closed: the review status row alone does not satisfy the task's exact-head
-acceptance. Antigravity must review the then-current PR head and bind this
-committed manifest before protected merge and governed `done`.
+The `2026-08-01` closeout audit recorded that the then-immutable Antigravity
+approval event named reviewed SHA `14487789314c4495e865a7d7ef1aae9c43d70650`,
+which does not resolve, while PR #4452 and both task refs resolved to
+`1448778931c2058fceb715ad13423e639f5c0865`. That audit stands: the approval was
+never valid for a real head. Ownership has since moved from `Codex` to `Claude`
+and the reviewer named in the `2026-08-04` revalidation (`Codex2`) is superseded
+by the canonical row's reviewer, `Antigravity`.

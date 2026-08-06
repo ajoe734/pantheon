@@ -52,3 +52,12 @@ Repair the concrete nonexistent-anchor defect found by the real auto-worker exac
 - That claimed SHA does not resolve as a commit. At the review timestamp and again during closeout, PR #4452, the local branch, and the remote task ref all pointed to `1448778931c2058fceb715ad13423e639f5c0865`.
 - PR #4452 has no GitHub review, and the canonical task row has no `review_file`; the committed manifest still recorded pending review before this audit.
 - The exact-head acceptance gate therefore remains unsatisfied. No protected merge or governed `done` may occur until Antigravity reviews the then-current PR head and binds this committed manifest.
+
+## Owner handoff record (Claude, 2026-08-06)
+- Ownership moved from `Codex` to `Claude`; the reviewer remains `Antigravity`. The manifest's earlier `Codex2` reviewer claim is superseded.
+- The task branch was merged forward onto `origin/dev@eca6b7de6313027d4c943679a1fa8fb7d93028ba` with no conflicts, clearing PR #4452's `DIRTY` merge state.
+- The delivered diff is documentation only: the subject anchor repair (1 README line, 2 manifest fields), this packet, and this brief. `.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` are byte-identical to `origin/dev`, because the reaper implementation reached `dev` independently through squash `23ae23c21` (PR #4590). The manifest's stale `changed_files` claim naming those two sources was corrected.
+- Anchor, ancestry, JSON, trailer, whitespace, and config-boundary checks all pass on this head.
+- The five focused stale-reaper regressions pass, but only on a locally patched tree: squash `23ae23c21` also reverted `.orchestrator/provider_permissions.py` from 2427 lines to 2006 and deleted `provider_auth_probe_due`, which `supervisor.py:90` still imports, so `import supervisor` fails on unmodified `origin/dev`. The patch was reverted and is not delivered.
+- No green full supervisor suite baseline exists on `dev`; the manifest no longer claims one.
+- Out of scope and left unrepaired: the `provider_permissions.py` revert and the deletion of `.github/workflows/canonical-review-gate.yml` from `dev` (still present on `master`). Both are recorded in the manifest for Human/Ops.
