@@ -2610,7 +2610,7 @@ def update_worker_commit_progress(
         worker["last_work_progress_at"] = observed_at
         worker["commit_progress_count"] = int(worker.get("commit_progress_count", 0)) + 1
         if state is not None:
-            clear_task_failure_streak(state, worker=worker)
+            clear_task_failure_streak(state, worker=worker, non_terminal_only=True)
     return True, advanced
 
 
@@ -6267,6 +6267,7 @@ def clear_task_failure_streak(
     provider: str | None = None,
     worker: dict[str, Any] | None = None,
     progress_generation: int | None = None,
+    non_terminal_only: bool = False,
 ) -> None:
     if worker is not None:
         task_id = str(worker.get("task_id") or task_id or "")
@@ -6277,8 +6278,13 @@ def clear_task_failure_streak(
         return
     key = _failure_streak_key(task_id, provider_id)
     bucket = _task_failure_streak_bucket(state)
+    record = bucket.get(key)
+    if isinstance(record, dict) and non_terminal_only:
+        last_kind = str(record.get("last_failure_kind") or "").strip().lower()
+        allowed_kinds = {"generic_exit", "missing_process", "timeout", "parse_error", "exit_code", ""}
+        if last_kind not in allowed_kinds:
+            return
     if progress_generation is not None:
-        record = bucket.get(key)
         if isinstance(record, dict):
             record["last_progress_generation"] = max(
                 int(record.get("last_progress_generation", 0)),
@@ -6338,7 +6344,13 @@ def same_owner_reviewer_retry_allowed(
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {tid for tid, _aid in active_task_agents if tid}
     pending_task_ids = {tid for tid, _aid in pending_task_agents if tid}
-    if task_id in active_task_ids or task_id in pending_task_ids:
+    leases = ((state.get("worker_worktrees", {}) or {}).get("leases", {}) or {})
+    lease_task_ids = {
+        str(lease.get("task_id") or "").strip()
+        for lease in leases.values()
+        if isinstance(lease, dict) and str(lease.get("task_id") or "").strip()
+    }
+    if task_id in active_task_ids or task_id in pending_task_ids or task_id in lease_task_ids:
         return False
 
     # 4. Progress generation check: last_progress_generation < current task progress generation
@@ -6348,6 +6360,21 @@ def same_owner_reviewer_retry_allowed(
     if current_gen <= last_prog_gen:
         return False
 
+    write_activity_log(
+        config,
+        {
+            "type": "same_owner_reviewer_retry_allowed",
+            "task_id": task_id,
+            "provider": provider_id,
+            "owner": owner,
+            "reviewer": reviewer,
+            "prior_failure_count": int(record.get("count", 0)),
+            "last_failure_kind": last_kind,
+            "last_progress_generation": last_prog_gen,
+            "current_progress_generation": current_gen,
+            "message": f"Allowed same-owner reviewer retry for task {task_id} on provider {provider_id} (current gen {current_gen} > last gen {last_prog_gen}).",
+        },
+    )
     return True
 
 

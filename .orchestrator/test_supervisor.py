@@ -12920,7 +12920,7 @@ class WorkerReassignmentTests(unittest.TestCase):
             )
         )
 
-        # 5. Negative: active worker lease running
+        # 5. Negative: active worker running
         active_state = json.loads(json.dumps(state))
         active_state["workers"] = {
             "w1": {
@@ -12937,6 +12937,132 @@ class WorkerReassignmentTests(unittest.TestCase):
                     config, active_state, "RETRY-001", "Antigravity", task
                 )
             )
+
+        # 6. Negative: active worker_worktrees lease
+        lease_state = json.loads(json.dumps(state))
+        lease_state["worker_worktrees"] = {
+            "leases": {
+                "RETRY-001": {
+                    "task_id": "RETRY-001",
+                    "path": "/tmp/lease-path",
+                }
+            }
+        }
+        self.assertFalse(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, lease_state, "RETRY-001", "Antigravity", task
+            )
+        )
+
+    def test_same_owner_reviewer_retry_real_incident_shape_owner_neq_reviewer(self) -> None:
+        config = supervisor.load_config()
+        # Incident shape: owner=Antigravity, reviewer=Human/Ops
+        task = {
+            "id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
+            "owner": "Antigravity",
+            "reviewer": "Human/Ops",
+            "status": "review",
+            "last_update": "2026-08-01T01:30:00Z",
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801:antigravity": {
+                        "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
+                        "provider": "antigravity",
+                        "count": 2,
+                        "last_reason": "generic_exit",
+                        "last_failure_kind": "generic_exit",
+                        "last_progress_generation": int(datetime.fromisoformat("2026-08-01T01:00:00+00:00").timestamp()),
+                    }
+                }
+            }
+        }
+        # Gate returns False because owner != reviewer
+        self.assertFalse(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, state, task["id"], "Antigravity", task
+            )
+        )
+
+    def test_update_worker_commit_progress_preserves_auth_streak(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "PROG-001:codex": {
+                        "task_id": "PROG-001",
+                        "provider": "codex",
+                        "count": 2,
+                        "last_reason": "auth failure",
+                        "last_failure_kind": "auth",
+                    }
+                }
+            }
+        }
+        worker = {
+            "task_id": "PROG-001",
+            "provider": "codex",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/task-worktree",
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "commit_progress_count": 0,
+        }
+        with mock.patch.object(
+            supervisor,
+            "isolated_workspace_commit_sha",
+            return_value="b" * 40,
+        ):
+            state_changed, progress_advanced = supervisor.update_worker_commit_progress(
+                worker,
+                datetime.now(timezone.utc),
+                state=state,
+            )
+
+        self.assertTrue(state_changed)
+        self.assertTrue(progress_advanced)
+        # Auth streak is NOT cleared because non_terminal_only=True
+        self.assertIn("PROG-001:codex", state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_same_owner_reviewer_retry_replay_progress_generation(self) -> None:
+        config = supervisor.load_config()
+        task = {
+            "id": "RETRY-REPLAY-001",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity",
+            "status": "review",
+            "last_update": "2026-08-01T02:00:00Z",
+        }
+        gen1 = int(datetime.fromisoformat("2026-08-01T01:00:00+00:00").timestamp())
+        gen2 = int(datetime.fromisoformat("2026-08-01T02:00:00+00:00").timestamp())
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "RETRY-REPLAY-001:antigravity": {
+                        "task_id": "RETRY-REPLAY-001",
+                        "provider": "antigravity",
+                        "count": 2,
+                        "last_reason": "generic_exit",
+                        "last_failure_kind": "generic_exit",
+                        "last_progress_generation": gen1,
+                    }
+                }
+            }
+        }
+        # First check: gen2 > gen1, retry allowed
+        self.assertTrue(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, state, "RETRY-REPLAY-001", "Antigravity", task
+            )
+        )
+        # Record another failure without updating task last_update -> last_progress_generation updated to gen2
+        worker = {"task_id": "RETRY-REPLAY-001", "provider": "antigravity"}
+        supervisor.record_task_failure_streak(state, worker, "generic_exit", failure_kind="generic_exit")
+        # Re-verify: now task progress generation (gen2) <= last_progress_generation (gen2), retry denied
+        self.assertFalse(
+            supervisor.same_owner_reviewer_retry_allowed(
+                config, state, "RETRY-REPLAY-001", "Antigravity", task
+            )
+        )
 
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
