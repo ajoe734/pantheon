@@ -23909,6 +23909,134 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         self.assertIn("a" * 12, status["tasks"][0]["next"])
 
 
+class ReconcileBlockedTasksTests(unittest.TestCase):
+    """reconcile_blocked_tasks auto-reopens blocked tasks when blocking condition is resolved."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatch": {"enabled": True},
+        }
+
+    def test_reconcile_blocked_task_without_blockers_or_waiting_for(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "TASK-BLOCKED-1",
+                    "status": "blocked",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                }
+            ],
+            "blockers": [],
+            "handoffs": [],
+        }
+        state = {"workers": {}, "ready_dispatcher": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_mock,
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        persist_mock.assert_called_once()
+        self.assertEqual(persist_mock.call_args.kwargs["task_id"], "TASK-BLOCKED-1")
+        self.assertEqual(persist_mock.call_args.kwargs["new_status"], "todo")
+        self.assertEqual(persist_mock.call_args.kwargs["expected_status"], "blocked")
+
+    def test_reconcile_blocked_task_skipped_if_open_blocker_exists(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "TASK-BLOCKED-2",
+                    "status": "blocked",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                }
+            ],
+            "blockers": [
+                {
+                    "task_id": "TASK-BLOCKED-2",
+                    "status": "open",
+                    "message": "CI failing",
+                }
+            ],
+        }
+        state = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+
+    def test_reconcile_blocked_task_skipped_if_waiting_for_set(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "TASK-BLOCKED-3",
+                    "status": "blocked",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "waiting_for": "Gemini",
+                }
+            ],
+            "blockers": [],
+        }
+        state = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+
+    def test_reconcile_blocked_task_skipped_if_dependencies_not_done(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "TASK-DEP-1",
+                    "status": "in_progress",
+                    "owner": "Claude",
+                },
+                {
+                    "id": "TASK-BLOCKED-4",
+                    "status": "blocked",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "depends_on": ["TASK-DEP-1"],
+                },
+            ],
+            "blockers": [],
+        }
+        state = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+
+
 class MergedDeliveryEvidenceTests(unittest.TestCase):
     """Merged evidence is bound to one delivery head, not to a task id."""
 

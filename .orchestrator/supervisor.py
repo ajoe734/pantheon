@@ -13525,6 +13525,104 @@ def reconcile_ownerless_in_progress_tasks(
     return changed
 
 
+def reconcile_blocked_tasks(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Reconcile tasks in ``blocked`` status whose blocking condition has resolved.
+
+    If a task is marked ``blocked`` but has no open blockers or waiting_for state,
+    and its upstream dependencies are satisfied, and its assigned owner (or reviewer)
+    is available/unpaused, auto-reopen the task to ``todo`` so dispatch_ready_tasks
+    can pick it up without human intervention.
+    """
+    settings = ready_dispatch_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    if not config.get("paths", {}).get("status_file"):
+        return False
+
+    try:
+        status = load_status(config)
+    except (KeyError, RuntimeError, OSError):
+        return False
+
+    schema = config.get("schema", {}) or {}
+    tasks_path = str(schema.get("tasks_path", "tasks"))
+    task_id_field = str(schema.get("task_id_field", "id"))
+    owner_field = str(schema.get("assignee_field", "owner"))
+    reviewer_field = str(schema.get("reviewer_field", "reviewer"))
+    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+
+    tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict) and task.get(task_id_field)]
+    if not tasks:
+        return False
+    task_map = {str(task.get(task_id_field)): task for task in tasks}
+    task_resolver = task_resolver_for_config(config, task_map)
+
+    open_blocker_task_ids = {
+        str(blocker.get("task_id") or "").strip()
+        for blocker in status.get("blockers", []) or []
+        if isinstance(blocker, dict) and str(blocker.get("status") or "").strip().lower() in {"open", "pending", "active"}
+    }
+
+    counts = {"blocked_tasks_reconciled": 0}
+    changed = False
+    for task in tasks:
+        task_id = str(task.get(task_id_field) or "").strip()
+        if not task_id:
+            continue
+        if str(task.get("status") or "").strip().lower() != "blocked":
+            continue
+        if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+            continue
+        if task_id in open_blocker_task_ids:
+            continue
+        if str(task.get("waiting_for") or "").strip():
+            continue
+        if not dependencies_satisfied(task, task_resolver, dependency_done_statuses):
+            continue
+
+        owner = str(task.get(owner_field) or "").strip()
+        reviewer = str(task.get(reviewer_field) or "").strip()
+        if not owner:
+            continue
+
+        owner_paused = bool(
+            agent_auto_dispatch_block_reason(
+                config,
+                state,
+                normalize_agent_id(owner),
+            )
+        )
+        if owner_paused:
+            continue
+
+        message = "Auto-reconciled blocked task to todo because blocking condition resolved and dependencies are satisfied."
+        reassigned = persist_task_reassignment(
+            config,
+            task_id=task_id,
+            new_owner=owner,
+            new_reviewer=reviewer or owner,
+            message=message,
+            new_status="todo",
+            expected_status="blocked",
+        )
+        if reassigned:
+            counts["blocked_tasks_reconciled"] += 1
+            changed = True
+
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "blocked_tasks_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(counts)),
+    )
+    return changed
+
+
+
 def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
     """Return whether a materialized catalog contract fixes owner/reviewer.
 
@@ -20415,6 +20513,14 @@ def _run_once_locked(
             prefetched_merged_prs=ownerless_pr_snapshots,
             quiet=quiet,
         ) or changed
+        changed = _safe_phase(
+            "reconcile_blocked_tasks",
+            reconcile_blocked_tasks,
+            config,
+            state,
+            quiet=quiet,
+        ) or changed
+
         changed = _safe_phase("refresh_chair_review_state", refresh_chair_review_state, config, state, quiet=quiet) or changed
         planning_state = load_discussion_planning_state()
         changed = _safe_phase("auto_materialize_discussion_planning", auto_materialize_discussion_planning, config, planning_state, quiet=quiet) or changed
