@@ -1,54 +1,118 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
-Owner: Antigravity
-Reviewer: Claude
-Re-run: 2026-08-06, verified on implementation head
-        67496cd60ccb360af7bc6fc3e8e41dfbea207be5 (addressing both blocking
-        items from the Claude reopen of 791e320a3: worker_matches semantics
-        restored; worker_dispatch_assignment_changed added as reconciler-local
-        helper; governance lease routing added; pinning tests A and C added;
-        evidence artifacts updated to match current head).
+Owner: Claude
+Reviewer: Antigravity
+Re-run: 2026-08-06T17:02:46Z, verified on implementation head
+        7d36e07bff93d0d08e3682c3b14f18294eeb5fc1, which closes the last open
+        sub-item of the 2026-08-06T16:11:20Z reopen of 791e320a3 by making the
+        governance lease guard in reconcile_worker_task_assignments real
+        instead of cosmetic. This file is part of an evidence-only commit on
+        top of that head and changes no implementation file.
 
-Interpreter: /tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-reconcile-20260729/.venv-pantheon/bin/python3
+Interpreter: /home/lupin/pantheon/.venv/bin/python (CPython 3.12.3)
+        Correction: earlier revisions of this file named
+        <worktree>/.venv-pantheon/bin/python3. No such directory exists in this
+        task worktree; the interpreter above is the one actually used.
 
 1. Syntax
-   command: python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py
+   command: /home/lupin/pantheon/.venv/bin/python -m py_compile
+            .orchestrator/supervisor.py .orchestrator/test_supervisor.py
    result: PASS
 
-2. Full supervisor suite (repository root, native import path)
-   command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py
-   result: 618 passed, 162 subtests passed in 123.03s
+2. Full supervisor suite (native collection context)
+   command: cd .orchestrator && PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python
+            -m pytest -q test_supervisor.py
+   result: 619 passed, 162 subtests passed in 75.70s
+   note:   618 on 67496cd60 plus the one new test added in 7d36e07bf
 
-3. Focused reconciliation suite (12 tests: 10 original + 2 new pinning tests)
-   command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests
-   result: 12 passed in 3.08s
-   new tests:
+3. Focused reconciliation suite (13 tests)
+   command: PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python
+            -m pytest -q .orchestrator/test_supervisor.py
+            -k RunningWorkerOwnerReconciliationTests
+   result: 13 passed, 606 deselected in 2.09s
+   new test in this head:
+     - test_live_drift_without_canonical_authorization_is_preserved
+       (Pin D: alive drifted worker + empty governance activity tail ->
+       terminate_worker_process_generation not called, finalize_queue_event_record
+       not called, worker stays "running" with no assignment_reconciliation,
+       exactly one worker_governance_lease_preserved event with reason_code
+       governance_only_transition, report status "drift" with
+       active_drift_count 1)
+   changed tests in this head:
+     - test_live_worker_for_previous_owner_is_superseded_with_exact_evidence
+       and test_reconcile_termination_is_bound_to_captured_process_generation
+       now patch worker_governance_activity_snapshot to return the exact
+       supervisor task_reassigned event (Codex2 -> Claude2, reviewer
+       unchanged), built by the new _reassignment_event helper which
+       reproduces the supervisor-reassign-<sha256(payload)> event id that
+       _supervisor_reassignment_event_id_matches requires. The first also
+       asserts governance_reason_code == "exact_owner_reassignment" in both
+       the reconciliation evidence and the audit event.
+   tests retained from 67496cd60:
      - test_worker_matches_returns_false_for_archived_row_even_with_snapshot
-       (Pin A: absent row + dispatch snapshot -> worker_matches=False; stale
-       reap path at poll_workers ~15824 still fires and finalizes queue lease)
-     - test_worker_matches_returns_false_for_owner_when_task_advances_to_review
-       (Pin C: owner worker -> False when task becomes review, pair unchanged;
-       role-transition supersede at poll_workers ~15694 still fires)
+       (Pin A) and
+       test_worker_matches_returns_false_for_owner_when_task_advances_to_review
+       (Pin C)
 
 4. Related regression suites
-   command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::WorkerReassignmentTests .orchestrator/test_supervisor.py::PollWorkersRecoveryTests .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests
-   result: 135 passed, 4 subtests passed in 14.70s
+   command: PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python
+            -m pytest -q
+            .orchestrator/test_supervisor.py::WorkerReassignmentTests
+            .orchestrator/test_supervisor.py::PollWorkersRecoveryTests
+            .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests
+            .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests
+            .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests
+   result: 135 passed, 4 subtests passed in 15.70s
 
-5. Diff hygiene
+5. Shared-helper boundary (reopen sub-item 2a)
+   command: git diff origin/dev...HEAD -- .orchestrator/supervisor.py
+   result: PASS -- the hunk header at worker_matches_current_assignment is
+           purely additive; the function body is byte-identical to origin/dev,
+           including the dependency_done_statuses early return and the trailing
+           "return False" default. Its four other call sites are unchanged.
+
+6. Reconciler-local drift helper (reopen sub-item 2b)
+   command: grep -n "worker_dispatch_assignment_changed" .orchestrator/supervisor.py
+   result: PASS -- defined once and called only from
+           reconcile_worker_task_assignments; worker_matches_current_assignment
+           does not reference it.
+
+7. Governance lease guard (reopen sub-item 2c)
+   before: 67496cd60 called active_worker_governance_lease_decision with
+           activity_events=None. _latest_task_governance_event iterates
+           "activity_events or []", so with None the decision can never reach
+           the task_reassigned branch and always returns
+           preserve/governance_only_transition. The result was then discarded
+           via "_ = lease_decision" under the comment "captured; used in
+           evidence logging below" -- nothing below read it -- and
+           terminate_worker_process_generation ran unconditionally.
+   after:  7d36e07bf loads worker_governance_activity_snapshot(config) lazily
+           (only when a losing worker is alive), passes it as activity_events,
+           preserves the process and records
+           record_worker_governance_lease_guard when the decision is not
+           "terminate", handles a failed terminate with the same
+           authorized_transition_termination_pending_confirmation /
+           authorized_transition_process_identity_unproven reason codes as
+           poll_workers, and carries governance_reason_code and
+           source_event_id into both the assignment_reconciliation evidence
+           and the worker_assignment_reconciled audit event.
+   result: PASS -- pinned by steps 3 and 4 above.
+
+8. Diff hygiene
    command: git diff --check
    result: PASS
 
-6. Config boundary
+9. Config boundary
    command: git diff --name-only origin/dev...HEAD -- .orchestrator/config.json
    result: PASS (no paths)
 
-7. Task-scoped diff vs origin/dev
+10. Task-scoped diff vs origin/dev
    command: git diff --stat origin/dev...HEAD
    result: 6 files -- .orchestrator/supervisor.py,
            .orchestrator/test_supervisor.py,
            .orchestrator/task-briefs/sup_l12_running_owner_reconcile_20260729.md,
            and the three files of this evidence directory
 
-8. Dev merge conflict resolution
+11. Dev merge conflict resolution (earlier cycle, retained)
    conflict: .orchestrator/test_supervisor.py
    cause:    both origin/dev and this task branch appended independent test
              classes at the end of the module
@@ -56,20 +120,21 @@ Interpreter: /tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-recon
              RunningWorkerOwnerReconciliationTests followed by dev's
              LongFinalizeLeaseAndL12PriorityTests and the provider-capability
              tests; only the three conflict marker lines were removed
-   verified by: step 2 above (613 passed) on the merged tree
+   verified by: step 2 above on the merged tree
 
-9. Independent review
+12. Independent review
    result: PENDING
-   note:   The 2026-07-29 Antigravity approval bound head
+   note:   No approval has been issued for any head on this cycle. The
+           2026-07-29 Antigravity approval bound head
            665e4bdbd7a741ba2b808cee5302b764ba5ca597 and is superseded -- the
-           task head advanced past it and the canonical row was reassigned to
-           owner Claude and returned to todo. See superseded_reviews in
-           evidence.json.
+           task head advanced past it and the canonical row has since been
+           reassigned four times. See superseded_reviews in evidence.json.
 
-10. Governed status plane -- SUPERSEDED, now recovered
-   command: AI_NAME=Antigravity "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-RECONCILE-20260729
-   result: PASS -- source: active, owner Antigravity, reviewer Claude,
-           status in_progress, last_update 2026-08-06T14:13:02Z
+13. Governed status plane -- SUPERSEDED, now recovered
+   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show
+            SUP-L12-RUNNING-OWNER-RECONCILE-20260729
+   result: PASS -- source: active, owner Claude, reviewer Antigravity,
+           status in_progress, last_update 2026-08-06T16:53:51Z
    command root: /home/lupin/pantheon-ci-deploy/dev-root
    source SHA:   f90e0aae6cb5e86f18b20db9f30bc834f6115745
    note: an earlier revision of this file recorded both show and recover as
@@ -77,37 +142,38 @@ Interpreter: /tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-recon
          supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da
          sealed into archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz).
          That condition has cleared. The record is kept rather than deleted so
-         the missing start transition for the previous cycle stays explainable.
+         the missing start transition for the earlier cycle stays explainable.
          No Human/Ops escalation is outstanding for this task.
 
-11. Live row/run join (the manual work this task removes)
-   row:    owner Antigravity / reviewer Claude / status in_progress
-           (governed ai-status.sh show, 2026-08-06T14:42:30Z)
-   runner: run claude1-4-20260806T131930Z-35c86123, status running, pid 3131300,
-           child pid 3131399, exit null, source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745
+14. Live row/run join (the manual work this task removes)
+   row:    owner Claude / reviewer Antigravity / status in_progress
+           (governed ai-status.sh show, canonical last_update
+           2026-08-06T16:53:51Z)
+   runner: run claude1-4-20260806T165326Z-7ac2c9d2, status running, pid 278141,
+           child pid 278283, exit null, lease acquired 2026-08-06T16:53:26Z,
+           source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745
            (central runtime record selected by ORCH_RUN_ID)
-   worker: queue event evt-20260806T131924Z-05f82088, status running,
+   worker: queue event evt-20260806T165308Z-aeb32134, status running,
            dispatch reason owned_ready_dispatch
            (/home/lupin/pantheon/.orchestrator/state.json)
    result: assignment matches; no drift
-   note:   the deployed state.json carries no worker_assignment_reconciliation
-           key -- the deployed command runtime predates this change, so the
-           join above still has to be assembled by hand from three files
+   deployed-runtime check:
+           grep -c "task_assignment_at_dispatch\|worker_assignment_reconciliation"
+           returned 0 for both /home/lupin/pantheon/.orchestrator/supervisor.py
+           and /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py,
+           and the deployed state.json carries neither key -- so the join above
+           still has to be assembled by hand from three files
 
-12. Re-confirmation on the tree handed to review
-   command: .venv-pantheon/bin/python3 -m pytest -q
-            .orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests
-            .orchestrator/test_supervisor.py::WorkerReassignmentTests
-            .orchestrator/test_supervisor.py::PollWorkersRecoveryTests
-            .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests
-            .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests
-            .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests
-   result: 142 passed, 4 subtests passed in 17.04s
-   note:   run after the evidence refresh commit, so the implementation
-           under test is exactly what the reviewer receives
+15. Commit trailer pairing across the reassignment
+   commits 791e320a3, 67496cd60 and 70dc78240 carry LLM-Agent: Antigravity /
+   Reviewer: Claude, the pair authoritative when they were authored.
+   7d36e07bf and this evidence commit carry LLM-Agent: Claude /
+   Reviewer: Antigravity. scripts/git/check_commit_trailers.py requires the
+   presence of LLM-Agent, Task-ID and Reviewer per commit (DEFAULT_REQUIRED)
+   and does not compare them against the canonical row, so the mixed pairing
+   across the PR range is accepted.
 
 Environment note:
 Running the test module from .orchestrator/ is its native collection context
 for the intentional top-level `import supervisor`. Running it from the
-repository root works when PYTHONPATH=.orchestrator is set (step 2) or when
-provisioned via provision_python_distribution.py.
+repository root works when PYTHONPATH=.orchestrator is set.

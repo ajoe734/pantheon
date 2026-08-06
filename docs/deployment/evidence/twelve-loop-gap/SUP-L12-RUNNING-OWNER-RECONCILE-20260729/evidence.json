@@ -3,15 +3,15 @@
   "task": {
     "id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "title": "Reconcile running workers with authoritative row owners",
-    "owner": "Antigravity",
-    "reviewer": "Claude",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
     "phase": "L12 runtime/fleet guardrails",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/evidence.json",
     "status": "in_progress",
-    "status_note": "Canonical row read through the governed command root at 2026-08-06T14:13:26Z: owner Antigravity, reviewer Claude, status in_progress."
+    "status_note": "Canonical row read through the governed command root at 2026-08-06T16:54Z: owner Claude, reviewer Antigravity, status in_progress, last_update 2026-08-06T16:53:51Z. The supervisor auto-reassigned ownership from Antigravity to Claude at 2026-08-06T16:46:03Z; the commits authored before that point still carry the previous pair's LLM-Agent/Reviewer trailers, which the trailer check accepts because it validates trailer presence per commit, not agreement with the current canonical row."
   },
   "scope": {
     "owned_layer": "Supervisor task-row/worker-run assignment evidence, active assignment-drift reconciliation, duplicate active-run suppression, and optimistic stale-failure reassignment guards.",
@@ -35,46 +35,48 @@
     "config_diff": []
   },
   "implementation": {
-    "anchor_commit": "67496cd60ccb360af7bc6fc3e8e41dfbea207be5",
+    "anchor_commit": "7d36e07bff93d0d08e3682c3b14f18294eeb5fc1",
     "assignment_capture": "start_worker_for_request records task_assignment_at_dispatch beside the supervisor-issued status_command_runtime source SHA.",
     "reconciliation_phase": "reconcile_worker_task_assignments runs before the first worker poll and after the post-dispatch worker poll. The canonical task row remains authoritative.",
-    "active_drift_action": "A live or active worker whose dispatch identity no longer matches the authoritative owner/reviewer/status is terminated when necessary, marked superseded, and its queue lease is finalized exactly once.",
+    "active_drift_action": "A worker whose dispatch identity no longer matches the authoritative owner/reviewer/status is marked superseded and its queue lease is finalized exactly once. Ending a *live* process additionally requires the canonical governance lease decision to authorize it: reconciler-observed drift alone never kills a running worker.",
     "duplicate_action": "For multiple authoritative active runs on one task, the oldest matching incumbent remains and later matching runs are superseded. Delegated fallback parent/child records are not misclassified as accidental duplicates.",
     "terminal_visibility": "Recently terminal runs remain unchanged but appear in the runtime evidence join with row owner, reviewer, status, run id, queue event, PID, exit code, source SHA, and assignment-match result.",
     "stale_failure_guard": "Failure-driven reassignment supplies expected_owner and expected_reviewer to the locked canonical write. If either changed after failure observation, the write fails and stale_worker_failure_reassignment_skipped records the exact before/after rows and run evidence.",
     "health_reporting": "Runtime summaries report assignment_truth=unknown until a reconciliation report exists; verbose output prints the exact joined fields before reporting healthy or drift.",
-    "reopen_fix": "Restored worker_matches_current_assignment to original role/status semantics (dependency_done_statuses early return, return False default) so its four other call sites are not affected by dispatch snapshot presence. Added worker_dispatch_assignment_changed as a reconciler-local helper that uses the dispatch snapshot comparison; reconcile_worker_task_assignments now calls this helper instead of the shared function. Routed the alive-worker terminate decision through active_worker_governance_lease_decision to capture the governance reason code, consistent with the poll_workers path."
+    "reopen_fix": "Reopen of 791e320a3 (2026-08-06T16:11:20Z) raised three blocking sub-items. 67496cd60 closed two: worker_matches_current_assignment was restored to its original role/status semantics (dependency_done_statuses early return, return False default) so its four other call sites are unaffected by dispatch snapshot presence, and worker_dispatch_assignment_changed was added as a reconciler-local helper that exclusively uses the dispatch snapshot comparison. The third sub-item -- routing the live terminate/supersede decision through active_worker_governance_lease_decision -- was only cosmetic in 67496cd60: the call passed activity_events=None (which makes the decision unconditionally preserve/governance_only_transition), its result was discarded via `_ = lease_decision`, the accompanying comment claiming the value was used in evidence logging was false, and the process was terminated regardless. 7d36e07bf makes the guard real; see governance_lease_guard.",
+    "governance_lease_guard": "reconcile_worker_task_assignments loads worker_governance_activity_snapshot(config) lazily (only when a loser is actually alive) and passes it to active_worker_governance_lease_decision, the same guard the poll_workers supersede path uses. action != 'terminate' records one deduplicated record_worker_governance_lease_guard observation and skips the supersede; a failed terminate_worker_process_generation records the same authorized_transition_termination_pending_confirmation / authorized_transition_process_identity_unproven reason codes as poll_workers. The chosen reason_code and source_event_id are carried into both the assignment_reconciliation evidence and the worker_assignment_reconciled audit event. A preserved worker stays active and unmatched, so it is still counted in active_drift_count and the report status stays 'drift' rather than 'healthy'."
   },
   "live_observation": {
-    "observed_at": "2026-08-06T14:42:30Z",
+    "observed_at": "2026-08-06T17:02:46Z",
     "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to this worker's own central runtime run record selected by ORCH_RUN_ID, plus the supervisor state worker entry for the same run.",
     "task_row": {
       "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
       "status": "in_progress",
-      "last_update": "2026-08-06T14:13:02Z"
+      "last_update": "2026-08-06T16:53:51Z"
     },
     "worker_run": {
-      "run_id": "claude1-4-20260806T131930Z-35c86123",
-      "queue_event_id": "evt-20260806T131924Z-05f82088",
+      "run_id": "claude1-4-20260806T165326Z-7ac2c9d2",
+      "queue_event_id": "evt-20260806T165308Z-aeb32134",
       "provider": "claude1-4",
       "runner_status": "running",
       "worker_status": "running",
-      "pid": 3131300,
-      "child_pid": 3131399,
+      "pid": 278141,
+      "child_pid": 278283,
       "exit_code": null,
       "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
       "dispatch_reason": "owned_ready_dispatch",
       "agent_id": "claude1_4",
-      "logical_agent_id": "claude"
+      "logical_agent_id": "claude",
+      "lease_acquired_at": "2026-08-06T16:53:26Z"
     },
     "assignment_matches": true,
-    "deployed_runtime_note": "The live supervisor state at /home/lupin/pantheon/.orchestrator/state.json carries no worker_assignment_reconciliation key, because the deployed command runtime f90e0aae6cb5e86f18b20db9f30bc834f6115745 predates this task's change. That is the gap this task closes: today the row/run join above has to be assembled by hand from three separate files, and a fleet summary reports no assignment truth at all."
+    "deployed_runtime_note": "Re-checked at 2026-08-06T17:02:46Z. The live supervisor state at /home/lupin/pantheon/.orchestrator/state.json still carries no worker_assignment_reconciliation key, and this run's worker record carries no task_assignment_at_dispatch key, because neither /home/lupin/pantheon/.orchestrator/supervisor.py nor the leased command root /home/lupin/pantheon-ci-deploy/dev-root at f90e0aae6cb5e86f18b20db9f30bc834f6115745 contains either symbol (grep -c returned 0 for both files). That is the gap this task closes: today the row/run join above has to be assembled by hand from three separate files, and a fleet summary reports no assignment truth at all."
   },
   "reproduction_table": [
     {
-      "case": "active owner drift",
+      "case": "active owner drift, canonical reassignment present",
       "task_row": {
         "owner": "Claude2",
         "reviewer": "Antigravity",
@@ -90,7 +92,30 @@
       "pid": 4242,
       "exit_code": null,
       "source_sha": "5555555555555555555555555555555555555555",
-      "result": "superseded once; canonical row unchanged; report healthy after reconciliation"
+      "result": "superseded once; canonical row unchanged; report healthy after reconciliation",
+      "governance_evidence": "Exact supervisor task_reassigned event (agent Orchestrator, event_id supervisor-reassign-<sha256 of the exact payload>, Codex2 -> Claude2, reviewer unchanged) in the governance activity tail, timestamped after the worker's lease_acquired_at.",
+      "governance_reason_code": "exact_owner_reassignment"
+    },
+    {
+      "case": "active owner drift, no canonical reassignment evidence",
+      "task_row": {
+        "owner": "Claude2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "dispatch_row": {
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "status": "in_progress"
+      },
+      "run_id": "codex2-unauthorized-live",
+      "queue_event_id": "evt-codex2-unauthorized-live",
+      "pid": 4242,
+      "exit_code": null,
+      "source_sha": "5555555555555555555555555555555555555555",
+      "governance_evidence": "Empty governance activity tail.",
+      "governance_reason_code": "governance_only_transition",
+      "result": "process preserved (no terminate, no queue finalize, no supersede); one deduplicated worker_governance_lease_preserved event; report status drift with active_drift_count 1"
     },
     {
       "case": "recent terminal fallback failure after owner move",
@@ -158,7 +183,8 @@
       "evidence": [
         ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_worker_launch_captures_dispatch_assignment_and_source_sha",
         ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_live_worker_for_previous_owner_is_superseded_with_exact_evidence",
-        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_recent_terminal_failure_is_reported_without_rewriting_task_truth"
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_recent_terminal_failure_is_reported_without_rewriting_task_truth",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_live_drift_without_canonical_authorization_is_preserved"
       ]
     },
     {
@@ -197,7 +223,7 @@
       "statement": "No .orchestrator/config.json edit.",
       "status": "pass",
       "evidence": [
-        "git diff --name-only HEAD -- .orchestrator/config.json returned no paths at 2026-07-29T15:22:01Z"
+        "git diff --name-only origin/dev...HEAD -- .orchestrator/config.json returned no paths at 2026-08-06T17:02:46Z"
       ]
     },
     {
@@ -218,27 +244,39 @@
         ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_worker_matches_returns_false_for_archived_row_even_with_snapshot (Pin A: absent row + snapshot -> False; stale-worker reap path still fires)",
         ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_worker_matches_returns_false_for_owner_when_task_advances_to_review (Pin C: owner worker -> False when task becomes review; role-transition supersede still fires)"
       ]
+    },
+    {
+      "id": "AC8",
+      "statement": "Reconciliation obeys the same governance lease guard as the poll_workers supersede path: reconciler-observed drift alone never terminates a live worker process, and the authorizing classification is recorded.",
+      "status": "pass",
+      "evidence": [
+        ".orchestrator/supervisor.py::reconcile_worker_task_assignments (governance_activity_events -> active_worker_governance_lease_decision -> record_worker_governance_lease_guard)",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_live_drift_without_canonical_authorization_is_preserved (Pin D: empty audit tail -> preserve, no terminate, no queue finalize, report status drift)",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_live_worker_for_previous_owner_is_superseded_with_exact_evidence (exact supervisor task_reassigned event -> terminate; governance_reason_code exact_owner_reassignment recorded in both the evidence and the audit event)",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_reconcile_termination_is_bound_to_captured_process_generation (authorized termination still binds terminate_worker_process_generation)"
+      ]
     }
   ],
   "validation": {
     "status": "pass",
-    "observed_at": "2026-08-06, verified on task head 67496cd60ccb360af7bc6fc3e8e41dfbea207be5 (containing .orchestrator/supervisor.py and .orchestrator/test_supervisor.py reopen fix); evidence artifacts updated on this head.",
+    "observed_at": "2026-08-06T17:02:46Z, verified on implementation head 7d36e07bff93d0d08e3682c3b14f18294eeb5fc1 (the commit carrying .orchestrator/supervisor.py and .orchestrator/test_supervisor.py). This manifest revision is an evidence-only commit on top of that head and changes no implementation file, so every number below remains true of the PR head.",
+    "interpreter": "/home/lupin/pantheon/.venv/bin/python (CPython 3.12.3)",
     "commands": [
       {
-        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
         "result": "pass"
       },
       {
-        "command": "cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests",
-        "result": "12 passed in 3.08s (10 original + 2 new pinning tests for reopen items A and C)"
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py -k RunningWorkerOwnerReconciliationTests",
+        "result": "13 passed, 606 deselected in 2.09s (12 from 67496cd60 plus Pin D, test_live_drift_without_canonical_authorization_is_preserved)"
       },
       {
-        "command": "cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
-        "result": "135 passed, 4 subtests passed in 31.47s"
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py::WorkerReassignmentTests .orchestrator/test_supervisor.py::PollWorkersRecoveryTests .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests",
+        "result": "135 passed, 4 subtests passed in 15.70s"
       },
       {
-        "command": "cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
-        "result": "618 passed, 162 subtests passed in 123.03s"
+        "command": "cd .orchestrator && PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q test_supervisor.py",
+        "result": "619 passed, 162 subtests passed in 75.70s"
       },
       {
         "command": "git diff --check",
@@ -253,23 +291,23 @@
   },
   "review": {
     "decision": "pending",
-    "reviewer": "Claude",
+    "reviewer": "Antigravity",
     "reviewed_commit": null,
     "reviewed_at": null,
     "notes": [
-      "Awaiting a fresh independent review of commit 67496cd60 under the current owner/reviewer pair (owner Antigravity, reviewer Claude).",
-      "This commit addresses both blocking items from the previous reopen: (2) worker_matches_current_assignment restored to original semantics; worker_dispatch_assignment_changed added as reconciler-local helper; governance lease routing added; (3) evidence artifacts updated to match the current head.",
-      "The reviewer binds the exact PR #4386 head at approval time."
+      "Awaiting a fresh independent review under the current owner/reviewer pair (owner Claude, reviewer Antigravity) of implementation head 7d36e07bff93d0d08e3682c3b14f18294eeb5fc1.",
+      "All three sub-items of the 2026-08-06T16:11:20Z reopen are now closed. Sub-items 2a and 2b closed in 67496cd60; sub-item 2c (governance lease routing) was cosmetic there and is closed in 7d36e07bff93d0d08e3682c3b14f18294eeb5fc1; item 3 (evidence refresh) is this manifest revision.",
+      "No approval has been issued for any head on this cycle. The reviewer binds the exact PR #4386 head at approval time."
     ]
   },
   "delivery": {
     "pull_request": "https://github.com/ajoe734/pantheon/pull/4386",
     "task_head_commit": null,
     "merge_commit": null,
-    "note": "Head is rebound by the reviewer at approval time. Anchor commit 67496cd60 is the implementation fix for reopen items (2) and (3). Evidence-only commits follow on the same branch."
+    "note": "Head is rebound by the reviewer at approval time. 7d36e07bff93d0d08e3682c3b14f18294eeb5fc1 is the implementation head; this evidence-only revision is committed on top of it and touches no implementation file. A manifest cannot name its own commit, so no self-referential head SHA is claimed here."
   },
   "reassignment": {
-    "observed_at": "2026-08-06T10:19:20Z",
+    "observed_at": "2026-08-06T16:46:03Z",
     "history": [
       {
         "observed_at": "2026-08-06T10:19:20Z",
@@ -294,6 +332,14 @@
         "to_owner": "Antigravity",
         "to_reviewer": "Claude",
         "reason": "Supervisor auto-reassigned ownership from Claude to Antigravity."
+      },
+      {
+        "observed_at": "2026-08-06T16:46:03Z",
+        "from_owner": "Antigravity",
+        "from_reviewer": "Claude",
+        "to_owner": "Claude",
+        "to_reviewer": "Antigravity",
+        "reason": "Auto-reassigned ownership from Antigravity to Claude after repeated Antigravity terminal: Error: timeout waiting for response. Task returned to todo until Claude starts a fresh run."
       }
     ],
     "previous_cycle": {
@@ -303,17 +349,17 @@
       "task_head_commit": "43d59e78ea361985146008fbe65f6436f8c0595b"
     },
     "current_cycle": {
-      "owner": "Antigravity",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
       "status": "in_progress"
     },
-    "reason": "Supervisor auto-reassigned ownership from Claude to Antigravity at 2026-08-06T14:13:02Z. The canonical row now reads owner Antigravity, reviewer Claude, status in_progress.",
+    "reason": "Supervisor auto-reassigned ownership from Antigravity to Claude at 2026-08-06T16:46:03Z after repeated Antigravity provider timeouts. The canonical row now reads owner Claude, reviewer Antigravity, status in_progress.",
     "owner_actions_this_cycle": [
-      "Merged origin/dev forward into task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729 to clear the DIRTY merge state on PR #4386; the only conflict was in .orchestrator/test_supervisor.py, where both sides appended independent test classes and both were kept.",
-      "Re-ran the full supervisor suite plus focused reconciliation suites on the merged tree.",
-      "Rebound this manifest, README.md, validation.txt, and the task brief to the current owner/reviewer pair before requesting review.",
-      "Re-verified the full validation set on task tree bce887978 (613/162, 7, 135/4, py_compile, git diff --check, config boundary), refreshed the live row/run observation from the current owner run, and superseded the fail_closed status-plane record in place before handing off to review.",
-      "Re-confirmed the reconciliation and related regression suites (142 passed, 4 subtests) after the evidence refresh commit, and restated the head claims in this manifest, README.md and validation.txt so they stay true of whatever evidence-only commit ends up as the PR head."
+      "Re-verified the two closed reopen sub-items against the pushed head: worker_matches_current_assignment is byte-identical to origin/dev (the three-dot diff adds only new symbols after it), and reconcile_worker_task_assignments calls worker_dispatch_assignment_changed rather than the shared helper.",
+      "Found the third sub-item still open in 67496cd60 -- the active_worker_governance_lease_decision call was passed activity_events=None (always preserve/governance_only_transition), its result discarded via `_ = lease_decision` under a comment that falsely claimed it was used in evidence logging, and the live process terminated regardless.",
+      "Implemented the real guard in 7d36e07bff93d0d08e3682c3b14f18294eeb5fc1 and pushed it to PR #4386: lazy worker_governance_activity_snapshot load, preserve + record_worker_governance_lease_guard when the decision is not terminate, poll_workers-equivalent handling of a failed terminate, and governance_reason_code/source_event_id carried into the evidence and the audit event.",
+      "Updated the two alive-worker supersede tests to supply the exact supervisor task_reassigned event and assert the recorded reason code, and added Pin D (test_live_drift_without_canonical_authorization_is_preserved) for the unauthorized case.",
+      "Rebound this manifest, README.md, validation.txt and the task brief from the previous pair (owner Antigravity, reviewer Claude) to the current pair (owner Claude, reviewer Antigravity), refreshed the live row/run observation from this owner run, and corrected the interpreter path recorded in validation.txt -- the previously named .venv-pantheon does not exist in this worktree."
     ],
     "blocked_status_writes": {
       "invariant": "activity_audit_integrity",
@@ -338,6 +384,34 @@
     }
   ],
   "superseded_live_observations": [
+    {
+      "observed_at": "2026-08-06T14:42:30Z",
+      "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to this worker's own central runtime run record selected by ORCH_RUN_ID, plus the supervisor state worker entry for the same run.",
+      "task_row": {
+        "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "status": "in_progress",
+        "last_update": "2026-08-06T14:13:02Z"
+      },
+      "worker_run": {
+        "run_id": "claude1-4-20260806T131930Z-35c86123",
+        "queue_event_id": "evt-20260806T131924Z-05f82088",
+        "provider": "claude1-4",
+        "runner_status": "running",
+        "worker_status": "running",
+        "pid": 3131300,
+        "child_pid": 3131399,
+        "exit_code": null,
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "dispatch_reason": "owned_ready_dispatch",
+        "agent_id": "claude1_4",
+        "logical_agent_id": "claude"
+      },
+      "assignment_matches": true,
+      "deployed_runtime_note": "The live supervisor state at /home/lupin/pantheon/.orchestrator/state.json carries no worker_assignment_reconciliation key, because the deployed command runtime f90e0aae6cb5e86f18b20db9f30bc834f6115745 predates this task's change. That is the gap this task closes: today the row/run join above has to be assembled by hand from three separate files, and a fleet summary reports no assignment truth at all.",
+      "superseded_by": "Ownership moved from Antigravity to Claude at 2026-08-06T16:46:03Z and a new owner run was dispatched; live_observation now records that run."
+    },
     {
       "observed_at": "2026-07-29T15:22:01Z",
       "source": "Governed ai-status show plus the matching central .orchestrator/state.json worker record selected by ORCH_RUN_ID.",
