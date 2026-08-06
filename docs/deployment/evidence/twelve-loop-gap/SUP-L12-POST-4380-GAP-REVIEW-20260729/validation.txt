@@ -1,0 +1,103 @@
+SUP-L12-POST-4380-GAP-REVIEW-20260729 -- review validation transcript
+Reviewed PR: https://github.com/ajoe734/pantheon/pull/4382
+Reviewed head: ca00f813f4e6a5dfcfb2cf402ebba425a034d03e
+Read at: 2026-08-06, origin/dev = 003688bd7402d051986c07f1769285925af24e1b
+Command root: /home/lupin/pantheon-ci-deploy/dev-root @ f90e0aae6cb5e86f18b20db9f30bc834f6115745
+Status root: /home/lupin/pantheon
+
+--------------------------------------------------------------------------
+1. Digest verification (recomputed from PR-head blobs, not from a checkout)
+--------------------------------------------------------------------------
+$ H=ca00f813f4e6a5dfcfb2cf402ebba425a034d03e
+$ git show $H:docs/deployment/evidence/twelve-loop-gap/L12-POST-4380-GAP-TRIPLE-AUDIT-DISPATCH-20260729/evidence.sha256 \
+    | while read want path; do
+        got=$(git show "$H:$path" | sha256sum | awk '{print $1}')
+        [ "$want" = "$got" ] && echo "OK   $path" || echo "FAIL $path"
+      done
+
+OK   docs/deployment/evidence/twelve-loop-gap/L12-POST-4380-GAP-TRIPLE-AUDIT-DISPATCH-20260729/README.md
+OK   docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/POST_4380_THREE_PASS_GAP_AUDIT_2026-07-29T1314Z.md
+OK   docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/INDEX.md
+OK   docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/tasks.json
+
+4/4 digests match. The digest file covers every non-self file in the packet.
+
+--------------------------------------------------------------------------
+2. tasks.json JSON validity
+--------------------------------------------------------------------------
+$ git show $H:docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/tasks.json | jq empty
+tasks.json: valid JSON   (exit 0)
+
+--------------------------------------------------------------------------
+3. Whitespace / conflict-marker check against current dev
+--------------------------------------------------------------------------
+$ git diff --check origin/dev...ca00f813f4e6a5dfcfb2cf402ebba425a034d03e
+diff --check: clean   (exit 0)
+
+--------------------------------------------------------------------------
+4. Canonical review gate decision for PR #4382 (the blocking finding)
+--------------------------------------------------------------------------
+$ gh pr view 4382 --json number,state,headRefName,headRefOid,baseRefName,\
+mergeStateStatus,autoMergeRequest,reviewDecision,isDraft,url > /tmp/pr4382.json
+{
+  "autoMergeRequest": null,
+  "baseRefName": "dev",
+  "headRefName": "task/L12-POST-4380-GAP-DISPATCH-20260729",
+  "headRefOid": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+  "isDraft": false,
+  "mergeStateStatus": "BLOCKED",
+  "number": 4382,
+  "reviewDecision": "",
+  "state": "OPEN",
+  "url": "https://github.com/ajoe734/pantheon/pull/4382"
+}
+
+$ python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon \
+    --json policy L12-POST-4380-GAP-DISPATCH-20260729
+  "policy": "review_before_merge",
+  "source": "missing",
+  "owner": "",
+  "reviewer": "",
+  "status": ""
+
+$ python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon \
+    --json check L12-POST-4380-GAP-DISPATCH-20260729 --pr-json /tmp/pr4382.json
+  "allow_merge": false,
+  "allow_auto_merge": false,
+  "revoke_auto_merge": true,
+  "reason": "task_state_unavailable",
+  "detail": "canonical task state for L12-POST-4380-GAP-DISPATCH-20260729 is missing; refusing to merge"
+  "approval": { "binding_present": false, "reviewer": "", "approved_head_sha": "" }
+
+--------------------------------------------------------------------------
+5. Canonical existence probe for the PR's own task id
+--------------------------------------------------------------------------
+active row in /home/lupin/pantheon/ai-status.json            : ABSENT
+/home/lupin/pantheon/ai-task-archive/tasks/
+  L12-POST-4380-GAP-DISPATCH-20260729.json                   : ABSENT
+task-scoped events in /home/lupin/pantheon/ai-activity-log.jsonl : NONE
+  (the only string matches are this session's own permission-hook echoes,
+   all timestamped 2026-08-06T10:36Z or later)
+
+The task id on the PR head branch was never registered in canonical state.
+
+--------------------------------------------------------------------------
+6. Currency probe for every task id the packet dispatches
+--------------------------------------------------------------------------
+SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730   ARCHIVED   (Wave 0 gate already satisfied)
+L12-VERIFY-OBS-001                                  ACTIVE  review           Antigravity -> Claude2
+SUP-L12-LONG-FINALIZE-LEASE-20260729                ARCHIVED
+SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729          ARCHIVED
+SUP-L12-STALE-PR-RETIRE-20260729                    ACTIVE  in_progress      Claude      -> Antigravity
+OPS-PROMOTE-PR-CI-TRIGGER-001                       ARCHIVED
+SUP-L12-MERGED-ROW-RECONCILE-20260729               ARCHIVED
+L12-FLEET-STATUS-SYNC-001                           ARCHIVED
+L12-FE-TRUTH-001                                    ACTIVE  blocked          Antigravity -> Claude2
+L12-VERIFY-KNOW-001                                 ACTIVE  review_approved  Claude2     -> Antigravity
+L12-VERIFY-LEARN-REAL-VERIFIER-001                  MISSING  <-- never materialized
+L12-VERIFY-LEARN-001                                ARCHIVED <-- already terminal
+L12-VERIFY-RUNTIME-001                              ACTIVE  todo             Claude2     -> Antigravity
+L12-HOSTED-001                                      ACTIVE  todo             Antigravity -> Claude2
+L12-CLOSE-001                                       ACTIVE  todo             Claude2     -> Antigravity
+L12-TRUTH-001                                       ARCHIVED (packet claim confirmed correct)
+L12-POST-4380-GAP-DISPATCH-20260729                 MISSING  <-- the PR's own id
