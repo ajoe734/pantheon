@@ -35,14 +35,15 @@
     "config_diff": []
   },
   "implementation": {
-    "anchor_commit": "c076fcd81f73ce7f58f54065dbe80014e3d4c5fb",
+    "anchor_commit": "67496cd60ccb360af7bc6fc3e8e41dfbea207be5",
     "assignment_capture": "start_worker_for_request records task_assignment_at_dispatch beside the supervisor-issued status_command_runtime source SHA.",
     "reconciliation_phase": "reconcile_worker_task_assignments runs before the first worker poll and after the post-dispatch worker poll. The canonical task row remains authoritative.",
     "active_drift_action": "A live or active worker whose dispatch identity no longer matches the authoritative owner/reviewer/status is terminated when necessary, marked superseded, and its queue lease is finalized exactly once.",
     "duplicate_action": "For multiple authoritative active runs on one task, the oldest matching incumbent remains and later matching runs are superseded. Delegated fallback parent/child records are not misclassified as accidental duplicates.",
     "terminal_visibility": "Recently terminal runs remain unchanged but appear in the runtime evidence join with row owner, reviewer, status, run id, queue event, PID, exit code, source SHA, and assignment-match result.",
     "stale_failure_guard": "Failure-driven reassignment supplies expected_owner and expected_reviewer to the locked canonical write. If either changed after failure observation, the write fails and stale_worker_failure_reassignment_skipped records the exact before/after rows and run evidence.",
-    "health_reporting": "Runtime summaries report assignment_truth=unknown until a reconciliation report exists; verbose output prints the exact joined fields before reporting healthy or drift."
+    "health_reporting": "Runtime summaries report assignment_truth=unknown until a reconciliation report exists; verbose output prints the exact joined fields before reporting healthy or drift.",
+    "reopen_fix": "Restored worker_matches_current_assignment to original role/status semantics (dependency_done_statuses early return, return False default) so its four other call sites are not affected by dispatch snapshot presence. Added worker_dispatch_assignment_changed as a reconciler-local helper that uses the dispatch snapshot comparison; reconcile_worker_task_assignments now calls this helper instead of the shared function. Routed the alive-worker terminate decision through active_worker_governance_lease_decision to capture the governance reason code, consistent with the poll_workers path."
   },
   "live_observation": {
     "observed_at": "2026-08-06T14:42:30Z",
@@ -208,27 +209,36 @@
         "reproduction_table",
         "README.md"
       ]
+    },
+    {
+      "id": "AC7",
+      "statement": "Pinning tests confirm worker_matches_current_assignment preserves its original role/status semantics after the reconciler split.",
+      "status": "pass",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_worker_matches_returns_false_for_archived_row_even_with_snapshot (Pin A: absent row + snapshot -> False; stale-worker reap path still fires)",
+        ".orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests::test_worker_matches_returns_false_for_owner_when_task_advances_to_review (Pin C: owner worker -> False when task becomes review; role-transition supersede still fires)"
+      ]
     }
   ],
   "validation": {
     "status": "pass",
-    "observed_at": "2026-08-06, verified on task head b09a92999 (containing .orchestrator/supervisor.py and .orchestrator/test_supervisor.py implementation changes); refreshed on the evidence head",
+    "observed_at": "2026-08-06, verified on task head 67496cd60ccb360af7bc6fc3e8e41dfbea207be5 (containing .orchestrator/supervisor.py and .orchestrator/test_supervisor.py reopen fix); evidence artifacts updated on this head.",
     "commands": [
       {
-        "command": "python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
         "result": "pass"
       },
       {
-        "command": "PYTHONPATH=.orchestrator python -m pytest -q .orchestrator/test_supervisor.py",
-        "result": "613 passed, 162 subtests passed in 158.00s"
+        "command": "cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests",
+        "result": "12 passed in 3.08s (10 original + 2 new pinning tests for reopen items A and C)"
       },
       {
-        "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests",
-        "result": "7 passed in 2.03s"
+        "command": "cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
+        "result": "135 passed, 4 subtests passed in 31.47s"
       },
       {
-        "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
-        "result": "135 passed, 4 subtests passed in 14.70s"
+        "command": "cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_supervisor.py",
+        "result": "618 passed, 162 subtests passed in 123.03s"
       },
       {
         "command": "git diff --check",
@@ -237,10 +247,6 @@
       {
         "command": "git diff --name-only origin/dev...HEAD -- .orchestrator/config.json",
         "result": "pass (no paths)"
-      },
-      {
-        "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
-        "result": "142 passed, 4 subtests passed in 17.04s (re-confirmed after the evidence refresh)"
       }
     ],
     "raw_log": "validation.txt"
@@ -251,15 +257,16 @@
     "reviewed_commit": null,
     "reviewed_at": null,
     "notes": [
-      "Awaiting a fresh independent review of the dev-merged head under the current owner/reviewer pair (owner Antigravity, reviewer Claude).",
-      "The reviewer binds the exact PR #4386 head at approval time; this manifest cannot name its own commit."
+      "Awaiting a fresh independent review of commit 67496cd60 under the current owner/reviewer pair (owner Antigravity, reviewer Claude).",
+      "This commit addresses both blocking items from the previous reopen: (2) worker_matches_current_assignment restored to original semantics; worker_dispatch_assignment_changed added as reconciler-local helper; governance lease routing added; (3) evidence artifacts updated to match the current head.",
+      "The reviewer binds the exact PR #4386 head at approval time."
     ]
   },
   "delivery": {
     "pull_request": "https://github.com/ajoe734/pantheon/pull/4386",
     "task_head_commit": null,
     "merge_commit": null,
-    "note": "Head is rebound by the reviewer at approval time; this manifest cannot name its own commit. PR #4386 was DIRTY until the origin/dev merge at 850a8c760."
+    "note": "Head is rebound by the reviewer at approval time. Anchor commit 67496cd60 is the implementation fix for reopen items (2) and (3). Evidence-only commits follow on the same branch."
   },
   "reassignment": {
     "observed_at": "2026-08-06T10:19:20Z",

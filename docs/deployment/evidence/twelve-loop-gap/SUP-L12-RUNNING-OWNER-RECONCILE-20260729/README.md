@@ -65,14 +65,14 @@ The full machine-readable rows are in `evidence.json`.
 
 ## Validation
 
-Verified on task head `b09a92999` (containing `.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` implementation changes) and refreshed on the evidence head:
+Verified on implementation head `67496cd60ccb360af7bc6fc3e8e41dfbea207be5` (addressing
+both blocking items from the Claude reopen of `791e320a3`):
 
-- New reconciliation suite: 7 passed.
+- Reconciliation suite (12 tests — 10 original + 2 new pinning tests): 12 passed.
 - Related worker/reassignment/ownerless suites: 135 passed, 4 subtests passed.
-- Full supervisor suite: 613 passed, 162 subtests passed in 158.00s.
+- Full supervisor suite: 618 passed, 162 subtests passed in 123.03s.
 - Python compilation and `git diff --check`: passed.
 - `.orchestrator/config.json`: unchanged relative to `origin/dev`.
-- Re-confirmed after evidence refresh: reconciliation plus related suites, 142 passed, 4 subtests passed in 17.04s.
 
 Raw command/results are archived in `validation.txt`.
 
@@ -99,13 +99,24 @@ Owner actions in the current cycle:
 - re-ran the full supervisor suite and the focused reconciliation suites on
   the merged tree;
 - rebound this note, `evidence.json`, `validation.txt`, and the task brief to
-  the current owner/reviewer pair before requesting review.
+  the current owner/reviewer pair before requesting review;
+- addressed the reopen (2026-08-06T16:11:20Z): restored
+  `worker_matches_current_assignment` to its original role/status semantics
+  (including `dependency_done_statuses` early return and `return False` default)
+  so its four other call sites are unaffected by dispatch snapshot presence;
+  added `worker_dispatch_assignment_changed` as a reconciler-local helper that
+  exclusively uses the dispatch snapshot comparison; updated
+  `reconcile_worker_task_assignments` to call the new helper and route the
+  alive-worker terminate decision through `active_worker_governance_lease_decision`;
+  added pinning tests for Cases A and C identified in the reopen; updated this
+  evidence manifest, `validation.txt`, and `README.md` to reflect the current
+  implementation head `67496cd60`.
 
 ## Independent review
 
-Pending. A fresh independent review of the dev-merged head is required under
-the current owner/reviewer pair; `evidence.json` records `review.decision`
-as `pending`.
+Pending. A fresh independent review of implementation head `67496cd60` is required
+under the current owner/reviewer pair (owner `Antigravity`, reviewer `Claude`);
+`evidence.json` records `review.decision` as `pending`.
 
 ## Governed status plane (recovered)
 

@@ -1,9 +1,12 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
 Owner: Antigravity
 Reviewer: Claude
-Re-run: 2026-08-06, verified on task head b09a92999 (containing
-        .orchestrator/supervisor.py and .orchestrator/test_supervisor.py
-        implementation changes); refreshed on the evidence head.
+Re-run: 2026-08-06, verified on implementation head
+        67496cd60ccb360af7bc6fc3e8e41dfbea207be5 (addressing both blocking
+        items from the Claude reopen of 791e320a3: worker_matches semantics
+        restored; worker_dispatch_assignment_changed added as reconciler-local
+        helper; governance lease routing added; pinning tests A and C added;
+        evidence artifacts updated to match current head).
 
 Interpreter: /tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-reconcile-20260729/.venv-pantheon/bin/python3
 
@@ -13,11 +16,18 @@ Interpreter: /tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-recon
 
 2. Full supervisor suite (repository root, native import path)
    command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py
-   result: 613 passed, 162 subtests passed in 158.00s
+   result: 618 passed, 162 subtests passed in 123.03s
 
-3. New focused suite
+3. Focused reconciliation suite (12 tests: 10 original + 2 new pinning tests)
    command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests
-   result: 7 passed in 2.03s
+   result: 12 passed in 3.08s
+   new tests:
+     - test_worker_matches_returns_false_for_archived_row_even_with_snapshot
+       (Pin A: absent row + dispatch snapshot -> worker_matches=False; stale
+       reap path at poll_workers ~15824 still fires and finalizes queue lease)
+     - test_worker_matches_returns_false_for_owner_when_task_advances_to_review
+       (Pin C: owner worker -> False when task becomes review, pair unchanged;
+       role-transition supersede at poll_workers ~15694 still fires)
 
 4. Related regression suites
    command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::WorkerReassignmentTests .orchestrator/test_supervisor.py::PollWorkersRecoveryTests .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests
