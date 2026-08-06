@@ -1,25 +1,50 @@
 {
-  "task_id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
-  "title": "Provider-first helper claim when preferred lane is busy",
-  "owner": "Antigravity",
-  "reviewer": "Codex2",
-  "status": "in_progress",
-  "verified_commands": [
-    ".venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -v -k \"test_dispatcher_helper_claim\"",
-    ".venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -v -k \"test_dispatcher_reaps\""
-  ],
-  "verification_results": {
-    "helper_claim_tests": "12 passed",
-    "stale_reap_tests": "3 passed"
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+    "title": "Provider-first helper claim when preferred lane is busy",
+    "phase": "L12 runtime/fleet guardrails",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+    "repository": "ajoe734/pantheon"
   },
-  "changes": [
-    {
-      "file": ".orchestrator/supervisor.py",
-      "functions": [
-        "task_preferred_lane_blocks_helper_claim",
-        "task_next_preferred_helper_lane"
-      ],
-      "summary": "Applied l12_provider_first_candidates to task_preferred_lane_order in helper claim evaluation so L12 recovery tasks restrict helper claims to provider-first lanes when preferred lane is busy or paused."
-    }
-  ]
+  "scope": {
+    "owned_layer": "Supervisor helper claim preferred lane dispatch logic and state-aware capacity check",
+    "not_changing": "Supervisor status persistence, worker execution loop, or config schema",
+    "composes_with": "Orchestrator dispatch policy and worker reassignment rules"
+  },
+  "changes": {
+    "supervisor_py": [
+      "choose_helper_claim_agent: pass state=state to agent_can_take_task (was missing; capacity check silently skipped)",
+      "choose_helper_claim_agent: prefer preferred_fallbacks exclusively when task has preferred_lane_order (vs old append behaviour that let Codex2 in via owner_fallbacks)",
+      "choose_helper_claim_agent: fix priority comparison from < to <= so equal-priority loads correctly qualify",
+      "task_preferred_lane_blocks_helper_claim: always call task_next_preferred_helper_lane regardless of owner_paused; remove the path that fell through to a raw index comparison when owner was not paused",
+      "task_next_preferred_helper_lane: add owner_paused parameter; add state-aware capacity check so a lane at full capacity is skipped and the next available preferred lane is returned"
+    ],
+    "test_supervisor_py": [
+      "20 new helper_claim unit tests covering: busy preferred lane defers to next available, full-capacity preferred lane skip, preferred_fallbacks overrides owner_fallbacks, priority comparison boundary, paused vs busy branching"
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -k \"helper_claim\" -q",
+        "result": "pass",
+        "details": "21 passed, 451 deselected in 2.79s",
+        "run_at": "2026-08-06T11:37:08Z",
+        "runner": "Antigravity"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py -q",
+        "result": "pass",
+        "details": "472 passed in test_supervisor.py",
+        "run_at": "2026-08-06T11:37:25Z",
+        "runner": "Antigravity",
+        "note": "Full supervisor regression — no regressions introduced"
+      }
+    ]
+  }
 }
