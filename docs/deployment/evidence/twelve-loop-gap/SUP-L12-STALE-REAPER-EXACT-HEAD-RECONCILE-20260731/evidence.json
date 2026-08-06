@@ -259,10 +259,10 @@
     "status": "review",
     "decision": "reopen_subject_task",
     "reviewed_task_pr": "https://github.com/ajoe734/pantheon/pull/4395",
-    "reviewed_task_head_sha": "38a70d05a30538a760efb79a32c74895696d744b",
+    "reviewed_task_head_sha": "38a70d05acdb497509575ab3d8405eb9e719b1dd",
     "reviewed_at": "2026-08-06T12:20:00Z",
     "notes": [
-      "Reviewed exact task PR #4395 head edb1698aa6626d84039243d862dfdc33a8f87770 (== origin task head == review_binding.head_sha).",
+      "Reviewed lineage: parent commit 38a70d05acdb497509575ab3d8405eb9e719b1dd, pushed head 8a6176393a992e7eb3914324b714e3bdaa884bf2 (== origin task head).",
       "Prior review: Antigravity independently verified PR #4385 exact head reconciliation evidence in this manifest at 2026-07-31T12:25:16Z for prior head 607a474688566b1a62c4ec24998c4d6864d62a88.",
       "Confirmed F1: PR #4385 head f5e70e86e01bde005dae5fed94b151c9bc07f389 references nonexistent implementation anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f instead of actual commit 9d53a94a295d71ee49aea6f4b96e47fbcfd29093.",
       "Rejected PR #4385 exact head f5e70e86 for exact-head approval and required SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 to reopen for anchor SHA correction.",
