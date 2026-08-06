@@ -21,8 +21,9 @@ def test_supervisor_drains_assistant_dev_inbox_before_watch_scan() -> None:
     assert '"canonical_readbacks": canonical_readbacks' in source
 
     drain_pos = source.index(
-        'changed = _safe_phase("drain_assistant_dev_packet_inbox", '
-        "drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed"
+        '_safe_phase(\n'
+        '            "drain_assistant_dev_packet_inbox",\n'
+        '            drain_assistant_dev_packet_inbox,'
     )
     scan_pos = source.index(
         'changed = _safe_phase("run_scan", _run_scan_locked, config, state, '
