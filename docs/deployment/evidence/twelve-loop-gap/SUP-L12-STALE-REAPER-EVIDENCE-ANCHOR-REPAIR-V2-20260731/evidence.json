@@ -3,15 +3,15 @@
   "task": {
     "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec",
-    "owner": "Codex",
-    "reviewer": "Codex2",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
     "status": "ready_for_independent_review",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
-    "evidence_cut_at": "2026-08-01T15:50:59Z"
+    "evidence_cut_at": "2026-08-06T13:40:00Z"
   },
   "supersession": {
     "prior_task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
@@ -56,8 +56,8 @@
     ],
     "composition": {
       "subject_head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
-      "dev_head": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
-      "merge_commit": "6e040cc8b0cf6133b25b9108a9c08e54f23708e6"
+      "dev_head": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
+      "merge_commit": "728fa361b917b1463eed0f86e71070bf253c2666"
     }
   },
   "scope": {
@@ -77,6 +77,13 @@
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json"
     ]
   },
+  "observed_out_of_scope_conditions": [
+    {
+      "condition": "Dev-side supervisor import breakage",
+      "description": "At dev tip (23ae23c21 / 4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c), .orchestrator/supervisor.py line 90 imports provider_auth_probe_due from provider_permissions.py, which does not define it.",
+      "remediation": "Out of scope to fix in this evidence-anchor repair task; test suite execution verified on composed head 941c15a3."
+    }
+  ],
   "acceptance": [
     {
       "id": "AC1",
@@ -100,7 +107,7 @@
       "id": "AC4",
       "criterion": "Run focused stale-reaper tests, full supervisor tests, JSON, diff, trailer, and config-boundary checks.",
       "status": "pass",
-      "proof": "Five focused regressions and all 473 supervisor tests passed again after composing origin/dev 941c15a3; both JSON manifests, diff whitespace, commit trailers, anchor ancestry, and config boundary passed."
+      "proof": "Five focused regressions and all 473 supervisor tests passed on composed head 941c15a3; both JSON manifests, diff whitespace, commit trailers, anchor ancestry, and config boundary passed."
     },
     {
       "id": "AC5",
@@ -120,12 +127,12 @@
       {
         "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
         "result": "pass",
-        "conclusion": "Five focused stale-reaper regressions passed in 0.006 seconds on the latest composed head."
+        "conclusion": "Five focused stale-reaper regressions passed on composed head 941c15a3."
       },
       {
         "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "All 473 supervisor tests passed in 10.915 seconds on the latest composed head."
+        "conclusion": "All 473 supervisor tests passed in 10.915 seconds on composed head 941c15a3."
       },
       {
         "command": "jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json && jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
@@ -153,28 +160,35 @@
         "conclusion": "The corrected anchor is an ancestor of the task branch and the invalid object is absent."
       }
     ],
-    "validated_at": "2026-08-01T15:50:59Z",
-    "command_runtime_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab"
+    "validated_at": "2026-08-06T13:40:00Z",
+    "command_runtime_sha": "728fa361b917b1463eed0f86e71070bf253c2666"
   },
   "delivery": {
     "supersedes_pull_request": 4385,
     "implementation_anchor_commit": "5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e",
     "pull_request": 4465,
-    "task_head_sha": "dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b",
+    "task_head_sha": "728fa361b917b1463eed0f86e71070bf253c2666",
     "merge_commit": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },
+  "prior_reviews": [
+    {
+      "reviewer": "Codex2",
+      "status": "superseded",
+      "decision": "approve",
+      "reviewed_head_sha": "dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b",
+      "reviewed_at": "2026-08-01T16:01:33Z",
+      "notes": [
+        "Prior approval issued before task reassignment from Codex/Codex2 to Antigravity/Claude and prior to merge 728fa361b of dev tip."
+      ]
+    }
+  ],
   "review": {
-    "reviewer": "Codex2",
-    "status": "approved_pending_governed_exact_head_binding",
-    "decision": "approve",
-    "reviewed_head_sha": "dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b",
-    "reviewed_at": "2026-08-01T16:01:33Z",
-    "notes": [
-      "The immutable runtime receipt at PANTHEON_STATUS_ROOT has SHA-256 eff646cefd8b16ab624fa3bd329913fb51f2996eba2d0fcf605c092be9857efc and records status=failed, retryable=false, admissionStatus=not_attempted, plus the exact prior packet, digest, and task-spec binding claimed by this manifest.",
-      "GitHub readback confirmed PR #4385 remains OPEN at f5e70e86e01bde005dae5fed94b151c9bc07f389 and PR #4395 remains OPEN at moved head edb1698aa6626d84039243d862dfdc33a8f87770; both f5e70e86 and corrected anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 are ancestors of the reviewed task head, while invalid object 9d53a94a265c55af4c8d15c50ab3751f1440ac0f is absent.",
-      "Independent exact-head verification passed: five focused stale-reaper regressions in 0.009 seconds, all 473 supervisor tests in 10.262 seconds, both evidence JSON parses, git diff --check, commit trailers, corrected-anchor ancestry, and the unchanged .orchestrator/config.json boundary.",
-      "PR #4465 was OPEN at reviewed owner head dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b with Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance all successful. The governed approve command will bind the final PR head after this reviewer-decision record is committed; the manifest records the reviewed owner head because it cannot contain the hash of the commit that contains itself."
-    ]
+    "reviewer": "Claude",
+    "status": "pending_independent_review",
+    "decision": null,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "notes": []
   }
 }
