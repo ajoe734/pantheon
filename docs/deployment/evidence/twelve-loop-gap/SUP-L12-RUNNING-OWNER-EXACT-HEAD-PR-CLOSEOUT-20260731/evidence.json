@@ -1,0 +1,133 @@
+{
+  "schema_version": "supervisor_exact_head_pr_closeout.v1",
+  "task": {
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+    "title": "Move #4396 running-owner exact-head proof through governed PR/closeout",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+    "task_pr": 4550,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json",
+    "reassigned_from": {
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "reason": "2026-08-05 Codex-quota mass reassignment, then reopened by Human/Ops to re-verify whether the recorded block still applies."
+    }
+  },
+  "scope": {
+    "question": "Whether ReviewBus PR #4396 may carry current-head running-owner evidence through governed integration.",
+    "decision": "resolved_integrated_via_governed_closeout",
+    "not_a_completion_claim": "This evidence counts PR #4396 and its reconcile task complete. It explicitly does NOT count subject PR #4386 or its task row complete."
+  },
+  "reevaluation": {
+    "at": "2026-08-06T10:53:34Z",
+    "reason": "Human/Ops reopened this task because its blocked state predated the 2026-08-05 reassignment and was never re-examined (root cause tracked in SUP-BLOCKED-TASK-RECONCILIATION-20260804). Every previously recorded blocking condition was re-tested against live state.",
+    "prior_blockers": [
+      {
+        "recorded_at": "2026-08-04",
+        "blocker": "review_evidence_file_committed called `gh api -f ref=<sha>` without --method GET, so GitHub performed a POST and returned 404 for the exact-head evidence lookup.",
+        "current_state": "resolved_on_dev",
+        "detail": "scripts/ai_status.py on dev now issues `gh api --method GET repos/<repo>/contents/<path>?ref=<sha>`, covered by scripts/test_ai_status.py::test_review_evidence_file_committed_uses_exact_head_get_query. This task branch's independent fix for the same defect was therefore dropped rather than re-landed as a duplicate."
+      },
+      {
+        "recorded_at": "2026-08-04",
+        "blocker": "The dev required-status policy contained only Commit trailers, Runtime mirror guard, and Smoke acceptance; it did not require Pantheon canonical review gate, so the bridge status fallback was not policy-recognized and no governed review could be recorded.",
+        "current_state": "resolved_on_dev",
+        "detail": "dev branch protection now requires the contexts Commit trailers, Runtime mirror guard, Smoke acceptance, and Pantheon canonical review gate. The required-status review path is live again."
+      },
+      {
+        "recorded_at": "2026-08-04",
+        "blocker": "Task PR #4550 could not pass Branch CI: commit ba552fc9083cbb189945adb848f58112fa7ef92d had a 76-character subject and the trailer gate re-scans the whole origin/dev..HEAD range.",
+        "current_state": "resolved_in_this_run",
+        "detail": "The task branch was reset onto the current dev tip and the over-length commit was dropped, because a follow-up commit cannot repair a subject the range re-scan still sees."
+      }
+    ]
+  },
+  "pr_4396": {
+    "number": 4396,
+    "url": "https://github.com/ajoe734/pantheon/pull/4396",
+    "state": "MERGED",
+    "is_draft": false,
+    "base": "dev",
+    "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "expected_anchor_head": "c4346b8d53941d665acd931d32a98b3802b1e7b2",
+    "head_at_merge": "48d92e56c2c68ed8cb80cc19f2bbd88b23342906",
+    "merged_at": "2026-08-05T02:00:30Z",
+    "merge_method": "SQUASH",
+    "merge_commit": "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9",
+    "merge_commit_is_ancestor_of_dev": true,
+    "outcome": "The draft/blocked integration gap this task was opened for no longer exists: #4396 went through protected merge into dev, not around it."
+  },
+  "reconcile_task_closeout": {
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "canonical_source": "archive",
+    "archive_path": "ai-task-archive/tasks/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731.json",
+    "status": "done",
+    "owner_at_closeout": "Antigravity",
+    "reviewer_at_closeout": "Claude",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
+    "closed_at": "2026-08-05T02:04:15Z",
+    "closeout_next": "Owner finalized approved task after PR #4396 squash-merged into dev as 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9.",
+    "evidence_present_on_dev": true,
+    "note": "The reviewer-of-record changed from the Codex pair recorded in the 2026-08-04 gate denial to Antigravity/Claude before closeout, which is what cleared the original approval_reviewer_mismatch."
+  },
+  "review_gate_history": {
+    "reviewed_task": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "decision_on_2026_08_04": "deny",
+    "reason": "approval_reviewer_mismatch",
+    "detail": "An approval recorded by Antigravity did not cover canonical reviewer Codex nor the then-live head. The pending GitHub auto-merge request was revoked as the smallest safety repair (`gh pr merge 4396 --disable-auto`, readback autoMergeRequest: null).",
+    "superseded_by": "The task was re-reviewed and closed out under its final owner/reviewer pair on 2026-08-05; no merge ever occurred under the mismatched authority."
+  },
+  "subject_pr_4386": {
+    "number": 4386,
+    "url": "https://github.com/ajoe734/pantheon/pull/4386",
+    "state": "OPEN",
+    "head": "43d59e78ea361985146008fbe65f6436f8c0595b",
+    "merge_state": "DIRTY",
+    "mergeable": "CONFLICTING",
+    "auto_merge_request": null,
+    "canonical_task": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+    "canonical_task_status": "todo",
+    "canonical_task_owner": "Claude",
+    "canonical_task_reviewer": "Antigravity",
+    "countable_as_completed_support": false,
+    "reason": "The PR is still open and conflicting, its canonical row is todo rather than review_approved, and the canonical review gate context is FAILURE on its head. Protected merge and governed closeout have not occurred.",
+    "auto_integrator_dry_run": "candidate_count 0 -- the row is not review_approved, so there is nothing eligible to integrate."
+  },
+  "acceptance": [
+    {
+      "criterion": "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
+      "result": "met",
+      "detail": "The 2026-08-04 pass established that the requested anchor was an earlier task commit and not the live head, and that the stored review binding did not cover it. The only PR-state change made was revoking unsafe pending auto-merge, after the gate had already denied."
+    },
+    {
+      "criterion": "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
+      "result": "met",
+      "detail": "#4396 was non-draft and ready for review, and has since been governably integrated: squash-merged into dev on 2026-08-05 as 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9, with its reconcile task archived done. The auto-integrator dry-run now reports candidate_count 0 because the work is already integrated."
+    },
+    {
+      "criterion": "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+      "result": "not_applicable",
+      "detail": "The integrate branch of the fork was taken. No support proof is blocked on a draft PR: #4396 is merged, and #4386's remaining block is its own conflict and unreviewed head, not draft status."
+    },
+    {
+      "criterion": "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied",
+      "result": "met",
+      "detail": "#4386 is explicitly recorded as not complete: open, conflicting, canonical row todo, canonical review gate FAILURE, auto-integrator candidate_count 0."
+    }
+  ],
+  "remaining_work_outside_this_task": [
+    {
+      "owner": "Claude",
+      "task": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
+      "action": "Resolve the PR #4386 conflict against current dev, obtain a fresh exact-head review from Antigravity, and merge under protected-merge rules before any running-owner support claim is counted complete."
+    }
+  ],
+  "independent_review": {
+    "status": "pending",
+    "required_reviewer": "Antigravity",
+    "decision_scope": "Verify that (a) PR #4396 is genuinely merged into dev via protected merge and its reconcile task archived done, (b) each 2026-08-04 blocker is accurately reported as resolved on dev rather than worked around, (c) the duplicate ai_status.py fix was correctly dropped in favour of dev's, and (d) PR #4386 is correctly still not counted complete."
+  }
+}

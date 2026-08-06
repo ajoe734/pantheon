@@ -1,0 +1,103 @@
+SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 validation record
+Owner: Claude   Reviewer: Antigravity
+Initial observation: 2026-08-04 UTC
+Reopen re-verification: 2026-08-06T10:53:34Z UTC
+
+===========================================================================
+PART 1 -- Historical receipts (2026-08-04, prior owner/reviewer pair)
+===========================================================================
+
+Read-only PR evidence:
+- gh pr view 4396 --repo ajoe734/pantheon --json number,title,state,isDraft,url,baseRefName,headRefName,headRefOid,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision,statusCheckRollup,commits,files,body
+  Result: OPEN, non-draft, head ba282edd81c00e75d3c96c820922ee3bb9d7f6ac, mergeStateStatus BEHIND, Branch CI checks successful.
+- gh pr view 4386 --repo ajoe734/pantheon --json number,title,state,isDraft,url,baseRefName,headRefName,headRefOid,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision,statusCheckRollup,commits,files
+  Result: OPEN, head eedc541024bf6c9bcc57cb662e9fa55922a80b9b, mergeStateStatus DIRTY, mergeable CONFLICTING.
+- python3 scripts/git/auto_integrator.py --status-file "$PANTHEON_STATUS_ROOT/ai-status.json" --config-file "$PANTHEON_STATUS_ROOT/.orchestrator/config.json" --task-id SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --max-tasks 1 --skip-smoke --no-open-unblock --json
+  Result: blocked, approval_reviewer_mismatch; the pending auto-merge request was identified as unsafe.
+- gh pr view 4396 ... | python3 scripts/git/task_review_merge_gate.py --status-root "$PANTHEON_STATUS_ROOT" --json check SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --pr-json -
+  Result: deny, approval_reviewer_mismatch, live head ba282edd81c00e75d3c96c820922ee3bb9d7f6ac.
+
+Safety repair and readback:
+- gh pr merge 4396 --repo ajoe734/pantheon --disable-auto
+  Result: success.
+- gh pr view 4396 --repo ajoe734/pantheon --json number,state,isDraft,headRefOid,mergeStateStatus,mergeable,autoMergeRequest,statusCheckRollup
+  Result: autoMergeRequest is null; no merge occurred.
+
+===========================================================================
+PART 2 -- Reopen re-verification (2026-08-06, owner Claude)
+===========================================================================
+
+Every blocking condition recorded on 2026-08-04 was re-tested against live
+state rather than carried forward on trust.
+
+B1. Contents-API lookup defect (`-f ref=` performed a POST, returned 404)
+- git show origin/dev:scripts/ai_status.py | sed -n '7195,7210p'
+  Result: dev now builds an explicit query string and calls
+    ["api", "--method", "GET", "repos/<repo>/contents/<path>?ref=<sha>"]
+  RESOLVED ON DEV. This branch's independent fix for the same defect was
+  dropped as a duplicate rather than re-landed.
+- git show origin/dev:scripts/test_ai_status.py | grep -n review_evidence_file_committed
+  Result: dev carries test_review_evidence_file_committed_uses_exact_head_get_query
+  at line 1813, asserting exactly that call shape.
+
+B2. dev required-status policy did not include the canonical review gate
+- gh api repos/ajoe734/pantheon/branches/dev/protection
+  Result: required_status_checks.contexts =
+    ["Commit trailers", "Runtime mirror guard", "Smoke acceptance",
+     "Pantheon canonical review gate"]
+  RESOLVED. The required-status review path is policy-recognized again, so the
+  self-review HTTP 422 on the shared ajoe734 principal is no longer a block.
+
+B3. Task PR #4550 failed the Commit trailers gate
+- gh run view 30931736474 --log-failed
+  Result: "[trailers] ba552fc9083cbb189945adb848f58112fa7ef92d: subject exceeds
+  72 chars (76)", over range origin/dev..ba552fc9083cbb189945adb848f58112fa7ef92d.
+  The gate re-scans the whole PR range, so a follow-up commit cannot repair it.
+  RESOLVED IN THIS RUN: the task branch was reset onto the current dev tip
+  (003688bd7) and the over-length commit dropped. The branch is republished with
+  --force-with-lease; PR #4550 is preserved.
+
+Live PR state:
+- gh pr view 4396 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision
+  Result: MERGED, head at merge 48d92e56c2c68ed8cb80cc19f2bbd88b23342906.
+- gh pr view 4396 --repo ajoe734/pantheon --json mergeCommit,mergedAt,mergedBy
+  Result: mergeCommit 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9, mergedAt
+  2026-08-05T02:00:30Z, SQUASH.
+- git merge-base --is-ancestor 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9 origin/dev
+  Result: YES (exit 0). The merge is genuinely on dev.
+- git ls-tree -r --name-only origin/dev -- docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/
+  Result: README.md, evidence.json, validation.txt all present on dev.
+- gh pr view 4386 --repo ajoe734/pantheon --json number,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,mergeable,autoMergeRequest,reviewDecision
+  Result: OPEN, head 43d59e78ea361985146008fbe65f6436f8c0595b, mergeStateStatus
+  DIRTY, mergeable CONFLICTING, autoMergeRequest null.
+- gh pr view 4386 --repo ajoe734/pantheon --json statusCheckRollup
+  Result: Pantheon canonical review gate FAILURE; other contexts SUCCESS.
+
+Canonical task rows (read through $PANTHEON_COMMAND_ROOT, not the worktree):
+- "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731
+  Result: source archive; status done; owner Antigravity; reviewer Claude;
+  review_file .../SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json;
+  last_update 2026-08-05T02:04:15Z; next "Owner finalized approved task after PR
+  #4396 squash-merged into dev as 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9."
+- "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-RECONCILE-20260729
+  Result: source active; status todo; owner Claude; reviewer Antigravity.
+  NOT review_approved -- #4386 is not countable as complete.
+
+Auto-integrator eligibility dry-runs (read-only; no --execute):
+- python scripts/git/auto_integrator.py --status-file /home/lupin/pantheon/ai-status.json --config-file /home/lupin/pantheon/.orchestrator/config.json --task-id SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 --max-tasks 1 --skip-smoke --no-open-unblock --no-lock --json
+  Result: {"candidate_count": 0, "dry_run": true, "results": []}
+  The reconcile task is archived done; there is nothing left to integrate.
+- python scripts/git/auto_integrator.py --status-file /home/lupin/pantheon/ai-status.json --config-file /home/lupin/pantheon/.orchestrator/config.json --task-id SUP-L12-RUNNING-OWNER-RECONCILE-20260729 --max-tasks 1 --skip-smoke --no-open-unblock --no-lock --json
+  Result: {"candidate_count": 0, "dry_run": true, "results": []}
+  The #4386 row is todo, not review_approved, so it is not eligible.
+
+Artifact checks:
+- python -m json.tool docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json >/dev/null
+  Result: valid JSON.
+- git diff --check
+  Result: clean.
+
+Not run, and why:
+- No test suite was run for this revision. The branch no longer changes any
+  executable code: after dropping the duplicated ai_status.py fix, the diff
+  against dev is the task brief and this evidence directory only.
