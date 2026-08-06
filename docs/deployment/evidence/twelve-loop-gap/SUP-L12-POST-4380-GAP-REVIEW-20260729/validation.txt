@@ -101,3 +101,75 @@ L12-HOSTED-001                                      ACTIVE  todo             Ant
 L12-CLOSE-001                                       ACTIVE  todo             Claude2     -> Antigravity
 L12-TRUTH-001                                       ARCHIVED (packet claim confirmed correct)
 L12-POST-4380-GAP-DISPATCH-20260729                 MISSING  <-- the PR's own id
+
+==========================================================================
+HANDOFF REFRESH -- 2026-08-06, re-run immediately before reviewer dispatch
+Read at: origin/dev = 34e1f494a251f6c2292a6675baa0ed65fdab7bb5
+==========================================================================
+
+--------------------------------------------------------------------------
+7. Reviewed head did not move
+--------------------------------------------------------------------------
+$ gh pr view 4382 --json number,state,headRefName,headRefOid,baseRefName,mergeStateStatus,autoMergeRequest,reviewDecision,isDraft,url
+{"autoMergeRequest":null,"baseRefName":"dev","headRefName":"task/L12-POST-4380-GAP-DISPATCH-20260729",
+ "headRefOid":"ca00f813f4e6a5dfcfb2cf402ebba425a034d03e","isDraft":false,
+ "mergeStateStatus":"BLOCKED","number":4382,"reviewDecision":"","state":"OPEN",
+ "url":"https://github.com/ajoe734/pantheon/pull/4382"}
+
+Same head SHA as the one this manifest reviewed. Requirement findings 1-4 stand.
+
+--------------------------------------------------------------------------
+8. Gate still fails closed on the orphan id
+--------------------------------------------------------------------------
+$ python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon \
+    --json check L12-POST-4380-GAP-DISPATCH-20260729 --pr-json /tmp/pr4382-recheck.json
+  allow_merge          false
+  allow_auto_merge     false
+  revoke_auto_merge    true
+  reason               task_state_unavailable
+  detail               canonical task state for L12-POST-4380-GAP-DISPATCH-20260729
+                       is missing; refusing to merge
+  contract.source      missing
+  contract.policy      review_before_merge
+  contract.owner       ""      contract.reviewer  ""      contract.status  ""
+  approval.binding_present  false
+
+Requirement 5 remains unexecutable. Exit code 1, as before.
+
+--------------------------------------------------------------------------
+9. This manifest's own digests verify
+--------------------------------------------------------------------------
+$ sha256sum -c docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/evidence.sha256
+  README.md: OK
+  evidence.json: OK
+  validation.txt: OK
+(Recomputed after this refresh section was appended; see the regenerated
+ evidence.sha256 committed alongside it.)
+
+--------------------------------------------------------------------------
+10. Currency probe re-run
+--------------------------------------------------------------------------
+Governed `ai-status.sh show` was under sustained status_task_lock_busy (rc=75)
+during this refresh. Rows marked [gov] were confirmed through the governed
+command root; rows marked [mirror] were read from ai-status.json /
+ai-task-archive/tasks/*.json after eight governed attempts returned lock-busy.
+
+SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730   ARCHIVED 2026-07-31T19:21:54Z  [gov]
+L12-VERIFY-OBS-001                                  ACTIVE  review           Antigravity -> Claude2   [gov]
+SUP-L12-LONG-FINALIZE-LEASE-20260729                ARCHIVED 2026-08-04T19:45:10Z  [gov]
+SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729          ARCHIVED 2026-08-05T03:59:06Z  [gov]
+SUP-L12-STALE-PR-RETIRE-20260729                    ACTIVE  review           Claude      -> Antigravity  [gov]  <-- was in_progress
+OPS-PROMOTE-PR-CI-TRIGGER-001                       ARCHIVED 2026-07-29T13:17:01Z  [gov]
+SUP-L12-MERGED-ROW-RECONCILE-20260729               ARCHIVED 2026-08-06T01:21:15Z  [mirror]
+L12-FLEET-STATUS-SYNC-001                           ARCHIVED 2026-08-05T02:07:35Z  [mirror]
+L12-FE-TRUTH-001                                    ACTIVE  in_progress      Antigravity -> Claude2   [mirror]  <-- was blocked
+L12-VERIFY-KNOW-001                                 ACTIVE  review_approved  Claude2     -> Antigravity  [mirror]
+L12-VERIFY-LEARN-REAL-VERIFIER-001                  MISSING  <-- still never materialized
+L12-VERIFY-LEARN-001                                ARCHIVED 2026-07-31T20:15:34Z  [mirror]
+L12-VERIFY-RUNTIME-001                              ACTIVE  todo             Claude2     -> Antigravity  [mirror]
+L12-HOSTED-001                                      ACTIVE  todo             Antigravity -> Claude2   [mirror]
+L12-CLOSE-001                                       ACTIVE  todo             Claude2     -> Antigravity  [mirror]
+L12-TRUTH-001                                       ARCHIVED 2026-07-29T06:17:18Z  [mirror]
+L12-POST-4380-GAP-DISPATCH-20260729                 MISSING  <-- the PR's own id, unchanged
+
+No row was gained or lost. The blocking finding is unaffected.

@@ -129,3 +129,43 @@ inside an unmergeable PR.
 - [`evidence.json`](evidence.json) — machine-readable review manifest
 - [`validation.txt`](validation.txt) — full command transcript
 - [`evidence.sha256`](evidence.sha256) — digests for the two files above
+
+## Handoff refresh (2026-08-06, before reviewer dispatch)
+
+Re-observed immediately before handoff, because an audit that cites other PRs
+and other tasks can go stale between the audit commit and the review.
+
+**Verdict unchanged.** The two claims the verdict rests on were re-checked
+against live state and both still hold:
+
+- PR #4382 head is still `ca00f813f4e6a5dfcfb2cf402ebba425a034d03e` — the
+  reviewed head did not move, so requirement findings 1-4 stand as recorded.
+- `task_review_merge_gate.py check L12-POST-4380-GAP-DISPATCH-20260729` still
+  returns `allow_merge=false`, `reason=task_state_unavailable`, and GitHub still
+  reports `mergeStateStatus=BLOCKED`. Requirement 5 remains unexecutable.
+
+**Corrections to the currency findings:**
+
+- `origin/dev` has advanced from `003688bd7402d051986c07f1769285925af24e1b`
+  to `34e1f494a251f6c2292a6675baa0ed65fdab7bb5`. The packet's pinned base
+  `6f87a207` is now further behind, which strengthens rather than weakens the
+  "retire or re-land" recommendation.
+- `SUP-L12-MERGED-ROW-RECONCILE-20260729` archived at `2026-08-06T01:21:15Z`;
+  it was already recorded as archived and remains so.
+- `L12-FE-TRUTH-001` moved from `blocked` to `in_progress`.
+- `SUP-L12-STALE-PR-RETIRE-20260729` moved from `in_progress` to `review`.
+  This is the task chartered to retire stale PRs, so the recommended remediation
+  path for #4382 is closer to hand than when this manifest was first written.
+- No packet task id gained or lost a canonical row. In particular
+  `L12-VERIFY-LEARN-REAL-VERIFIER-001` is still `MISSING`, and so is
+  `L12-POST-4380-GAP-DISPATCH-20260729`.
+
+**Probe limitation, disclosed:** the governed
+`ai-status.sh show` command was under sustained `status_task_lock_busy`
+contention during this refresh. `SUP-L12-STALE-PR-RETIRE-20260729` and
+`L12-VERIFY-OBS-001` were confirmed through the governed command; the remaining
+rows in the table below were read from the canonical mirrors
+(`ai-status.json`, `ai-task-archive/tasks/*.json`) after eight governed attempts
+returned lock-busy. The mirror lagged the governed command by one transition on
+`SUP-L12-STALE-PR-RETIRE-20260729`, so treat mirror-sourced rows as
+"no later than" the state shown.

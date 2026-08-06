@@ -189,5 +189,49 @@
     "This manifest records that PR #4382 cannot merge; it does not retire the PR. If neither remediation option is taken, #4382 stays open and BLOCKED and becomes exactly the zombie task PR that SUP-L12-STALE-PR-RETIRE-20260729 is chartered to clean up.",
     "L12-VERIFY-LEARN-REAL-VERIFIER-001 remains unmaterialized. If the packet is retired without carrying that task forward, the learning-verifier rebuild loses its only written charter.",
     "The currency probe reflects canonical state at 2026-08-06 with origin/dev = 003688bd. Any later dev movement can change which packet rows are still live."
-  ]
+  ],
+  "handoff_refresh": {
+    "performed_at_date": "2026-08-06",
+    "reason": "An audit that cites another PR and other task rows can go stale between the audit commit and the reviewer's read. Re-observed immediately before handoff.",
+    "origin_dev_at_refresh": "34e1f494a251f6c2292a6675baa0ed65fdab7bb5",
+    "origin_dev_at_original_read": "003688bd7402d051986c07f1769285925af24e1b",
+    "verdict_unchanged": true,
+    "reviewed_head_unchanged": true,
+    "reviewed_head_at_refresh": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+    "gate_recheck": {
+      "allow_merge": false,
+      "allow_auto_merge": false,
+      "revoke_auto_merge": true,
+      "reason": "task_state_unavailable",
+      "contract_source": "missing",
+      "github_merge_state_status": "BLOCKED"
+    },
+    "currency_corrections": [
+      "origin/dev advanced from 003688bd to 34e1f494; the packet's pinned base 6f87a207 is further behind than recorded, which strengthens the retire-or-re-land recommendation.",
+      "L12-FE-TRUTH-001 moved from blocked to in_progress.",
+      "SUP-L12-STALE-PR-RETIRE-20260729 moved from in_progress to review. That task is chartered to retire stale PRs, so the recommended remediation path for #4382 is nearer than when this manifest was written.",
+      "No packet task id gained or lost a canonical row. L12-VERIFY-LEARN-REAL-VERIFIER-001 and L12-POST-4380-GAP-DISPATCH-20260729 are both still MISSING."
+    ],
+    "probe_limitation": {
+      "condition": "status_task_lock_busy (rc=75) on the governed ai-status.sh show command throughout the refresh",
+      "confirmed_through_governed_command": [
+        "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "L12-VERIFY-OBS-001",
+        "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+        "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+        "SUP-L12-STALE-PR-RETIRE-20260729",
+        "OPS-PROMOTE-PR-CI-TRIGGER-001",
+        "L12-POST-4380-GAP-DISPATCH-20260729"
+      ],
+      "read_from_canonical_mirrors": "The remaining rows were read from ai-status.json and ai-task-archive/tasks/*.json after eight governed attempts returned lock-busy.",
+      "mirror_lag_observed": "The ai-status.json mirror lagged the governed command by one transition on SUP-L12-STALE-PR-RETIRE-20260729 (mirror in_progress, governed review). Treat mirror-sourced rows as 'no later than' the state shown.",
+      "affects_verdict": false
+    },
+    "refresh_commands": [
+      "gh pr view 4382 --json number,state,headRefName,headRefOid,baseRefName,mergeStateStatus,autoMergeRequest,reviewDecision,isDraft,url",
+      "python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon --json check L12-POST-4380-GAP-DISPATCH-20260729 --pr-json /tmp/pr4382-recheck.json",
+      "sha256sum -c docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/evidence.sha256",
+      "AI_NAME=Claude \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show <each packet task id>"
+    ]
+  }
 }
