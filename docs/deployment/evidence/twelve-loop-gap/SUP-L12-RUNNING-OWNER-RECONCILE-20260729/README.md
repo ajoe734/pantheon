@@ -1,8 +1,8 @@
 # SUP-L12 running owner reconciliation evidence
 
 Task: `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
-Owner: Claude
-Reviewer: Antigravity
+Owner: Antigravity
+Reviewer: Claude
 Review manifest: `evidence.json`
 
 ## Outcome
@@ -38,7 +38,7 @@ same run.
 
 | Observed | Row owner | Row reviewer | Row status | Run id | Queue event | Worker / runner status | PID | Exit | Command source SHA |
 |---|---|---|---|---|---|---|---:|---:|---|
-| `2026-08-06T13:22:00Z` | Claude | Antigravity | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
+| `2026-08-06T14:13:26Z` | Antigravity | Claude | in_progress | `claude1-4-20260806T131930Z-35c86123` | `evt-20260806T131924Z-05f82088` | running / running | 3131300 | null | `f90e0aae6cb5e86f18b20db9f30bc834f6115745` |
 | `2026-07-29T15:22:01Z` | Codex | Antigravity | in_progress | `codex-20260729T150602Z-743e6017` | `evt-20260729T150450Z-97c245cd` | running / running | 1671740 | null | `c1e396495d37a1c9dfeea5704e7eb73db6acde0e` |
 
 Both rows match their authoritative assignment, so neither is drift. They are
@@ -65,26 +65,21 @@ The full machine-readable rows are in `evidence.json`.
 
 ## Validation
 
-Verified on task tree `bce887978`. Every commit after it on this branch
-touches only this evidence directory and the task brief, so
-`.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` are
-byte-identical at the current PR #4386 head:
+Verified on task head `b09a92999` (containing `.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py` implementation changes) and refreshed on the evidence head:
 
 - New reconciliation suite: 7 passed.
 - Related worker/reassignment/ownerless suites: 135 passed, 4 subtests passed.
-- Full supervisor suite: 613 passed, 162 subtests passed.
+- Full supervisor suite: 613 passed, 162 subtests passed in 158.00s.
 - Python compilation and `git diff --check`: passed.
 - `.orchestrator/config.json`: unchanged relative to `origin/dev`.
-- Re-confirmed after the evidence refresh, on the tree handed to review:
-  reconciliation plus related suites, 142 passed, 4 subtests passed.
+- Re-confirmed after evidence refresh: reconciliation plus related suites, 142 passed, 4 subtests passed in 17.04s.
 
 Raw command/results are archived in `validation.txt`.
 
 ## Ownership reassignment (2026-08-06)
 
-The supervisor auto-reassigned ownership from Antigravity to Claude after
-repeated Antigravity quota-terminal runs and returned the task to `todo`.
-The canonical row now reads owner `Claude`, reviewer `Antigravity`.
+The supervisor auto-reassigned ownership from Codex2 to Antigravity at 2026-08-06T10:19:20Z, and then from Antigravity to Claude at 2026-08-06T13:19:34Z before returning ownership to Antigravity at 2026-08-06T14:13:02Z.
+The canonical row now reads owner `Antigravity`, reviewer `Claude`.
 
 Because of that reassignment and because the task head advanced past the
 previously approved commit, the earlier approval no longer binds. It is kept
@@ -122,11 +117,11 @@ sealed into
 `archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz`.
 That is no longer true and the record is superseded here rather than deleted.
 
-Re-checked at `2026-08-06T13:19:34Z` against command root
+Re-checked at `2026-08-06T14:42:30Z` against command root
 `/home/lupin/pantheon-ci-deploy/dev-root` at source SHA
 `f90e0aae6cb5e86f18b20db9f30bc834f6115745`:
 `"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show` returns the canonical row
-(`source: active`, owner `Claude`, reviewer `Antigravity`, status
+(`source: active`, owner `Antigravity`, reviewer `Claude`, status
 `in_progress`). Status writes are available again, so the owner handoff for
 this cycle is recorded normally. No Human/Ops escalation is outstanding for
 this task.

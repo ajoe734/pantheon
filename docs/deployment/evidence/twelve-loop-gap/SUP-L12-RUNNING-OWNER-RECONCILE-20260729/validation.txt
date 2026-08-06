@@ -1,28 +1,26 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
-Owner: Claude
-Reviewer: Antigravity
-Re-run: 2026-08-06, verified on task tree bce887978 (task branch merged
-        forward from origin/dev at 850a8c760). Later commits on this
-        branch touch only this evidence directory and the task brief, so
+Owner: Antigravity
+Reviewer: Claude
+Re-run: 2026-08-06, verified on task head b09a92999 (containing
         .orchestrator/supervisor.py and .orchestrator/test_supervisor.py
-        are byte-identical at the current PR #4386 head.
+        implementation changes); refreshed on the evidence head.
 
-Interpreter: /home/lupin/pantheon/.venv/bin/python
+Interpreter: /tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-reconcile-20260729/.venv-pantheon/bin/python3
 
 1. Syntax
    command: python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py
    result: PASS
 
 2. Full supervisor suite (repository root, native import path)
-   command: PYTHONPATH=.orchestrator python -m pytest -q .orchestrator/test_supervisor.py
-   result: 613 passed, 162 subtests passed in 200.88s
+   command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py
+   result: 613 passed, 162 subtests passed in 158.00s
 
 3. New focused suite
-   command: cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests
-   result: 7 passed in 1.73s
+   command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests
+   result: 7 passed in 2.03s
 
 4. Related regression suites
-   command: cd .orchestrator && python -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests
+   command: .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::WorkerReassignmentTests .orchestrator/test_supervisor.py::PollWorkersRecoveryTests .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests
    result: 135 passed, 4 subtests passed in 14.70s
 
 5. Diff hygiene
@@ -59,9 +57,9 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python
            evidence.json.
 
 10. Governed status plane -- SUPERSEDED, now recovered
-   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-RECONCILE-20260729
-   result: PASS -- source: active, owner Claude, reviewer Antigravity,
-           status in_progress, last_update 2026-08-06T13:19:34Z
+   command: AI_NAME=Antigravity "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-RECONCILE-20260729
+   result: PASS -- source: active, owner Antigravity, reviewer Claude,
+           status in_progress, last_update 2026-08-06T14:13:02Z
    command root: /home/lupin/pantheon-ci-deploy/dev-root
    source SHA:   f90e0aae6cb5e86f18b20db9f30bc834f6115745
    note: an earlier revision of this file recorded both show and recover as
@@ -73,8 +71,8 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python
          No Human/Ops escalation is outstanding for this task.
 
 11. Live row/run join (the manual work this task removes)
-   row:    owner Claude / reviewer Antigravity / status in_progress
-           (governed ai-status.sh show, 2026-08-06T13:19:34Z)
+   row:    owner Antigravity / reviewer Claude / status in_progress
+           (governed ai-status.sh show, 2026-08-06T14:42:30Z)
    runner: run claude1-4-20260806T131930Z-35c86123, status running, pid 3131300,
            child pid 3131399, exit null, source SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745
            (central runtime record selected by ORCH_RUN_ID)
@@ -87,18 +85,19 @@ Interpreter: /home/lupin/pantheon/.venv/bin/python
            join above still has to be assembled by hand from three files
 
 12. Re-confirmation on the tree handed to review
-   command: cd .orchestrator && python -m pytest -q
-            test_supervisor.py::RunningWorkerOwnerReconciliationTests
-            test_supervisor.py::WorkerReassignmentTests
-            test_supervisor.py::PollWorkersRecoveryTests
-            test_supervisor.py::RuntimeLeaseReconciliationTests
-            test_supervisor.py::RunOnceSupervisorStateTests
-            test_supervisor.py::OwnerlessInProgressReconciliationTests
-   result: 142 passed, 4 subtests passed in 29.71s
+   command: .venv-pantheon/bin/python3 -m pytest -q
+            .orchestrator/test_supervisor.py::RunningWorkerOwnerReconciliationTests
+            .orchestrator/test_supervisor.py::WorkerReassignmentTests
+            .orchestrator/test_supervisor.py::PollWorkersRecoveryTests
+            .orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests
+            .orchestrator/test_supervisor.py::RunOnceSupervisorStateTests
+            .orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests
+   result: 142 passed, 4 subtests passed in 17.04s
    note:   run after the evidence refresh commit, so the implementation
            under test is exactly what the reviewer receives
 
 Environment note:
 Running the test module from .orchestrator/ is its native collection context
 for the intentional top-level `import supervisor`. Running it from the
-repository root works when PYTHONPATH=.orchestrator is set (step 2).
+repository root works when PYTHONPATH=.orchestrator is set (step 2) or when
+provisioned via provision_python_distribution.py.

@@ -3,15 +3,15 @@
   "task": {
     "id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "title": "Reconcile running workers with authoritative row owners",
-    "owner": "Claude",
-    "reviewer": "Antigravity",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
     "phase": "L12 runtime/fleet guardrails",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-RECONCILE-20260729/evidence.json",
     "status": "in_progress",
-    "status_note": "Canonical row read through the governed command root at 2026-08-06T13:19:34Z: owner Claude, reviewer Antigravity, status in_progress. The activity_audit_integrity fail_closed condition recorded in the previous revision of this manifest has since cleared; see reassignment.blocked_status_writes.resolution."
+    "status_note": "Canonical row read through the governed command root at 2026-08-06T14:13:26Z: owner Antigravity, reviewer Claude, status in_progress."
   },
   "scope": {
     "owned_layer": "Supervisor task-row/worker-run assignment evidence, active assignment-drift reconciliation, duplicate active-run suppression, and optimistic stale-failure reassignment guards.",
@@ -45,14 +45,14 @@
     "health_reporting": "Runtime summaries report assignment_truth=unknown until a reconciliation report exists; verbose output prints the exact joined fields before reporting healthy or drift."
   },
   "live_observation": {
-    "observed_at": "2026-08-06T13:22:00Z",
+    "observed_at": "2026-08-06T14:42:30Z",
     "source": "Governed ai-status.sh show through PANTHEON_COMMAND_ROOT, joined to this worker's own central runtime run record selected by ORCH_RUN_ID, plus the supervisor state worker entry for the same run.",
     "task_row": {
       "task_id": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
-      "owner": "Claude",
-      "reviewer": "Antigravity",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
       "status": "in_progress",
-      "last_update": "2026-08-06T13:19:34Z"
+      "last_update": "2026-08-06T14:13:02Z"
     },
     "worker_run": {
       "run_id": "claude1-4-20260806T131930Z-35c86123",
@@ -212,7 +212,7 @@
   ],
   "validation": {
     "status": "pass",
-    "observed_at": "2026-08-06, verified on task tree bce887978; later commits on this branch touch only this evidence directory and the task brief, so the implementation files are byte-identical at the current PR #4386 head",
+    "observed_at": "2026-08-06, verified on task head b09a92999 (containing .orchestrator/supervisor.py and .orchestrator/test_supervisor.py implementation changes); refreshed on the evidence head",
     "commands": [
       {
         "command": "python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
@@ -220,11 +220,11 @@
       },
       {
         "command": "PYTHONPATH=.orchestrator python -m pytest -q .orchestrator/test_supervisor.py",
-        "result": "613 passed, 162 subtests passed in 200.88s"
+        "result": "613 passed, 162 subtests passed in 158.00s"
       },
       {
         "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests",
-        "result": "7 passed in 1.73s"
+        "result": "7 passed in 2.03s"
       },
       {
         "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
@@ -240,18 +240,18 @@
       },
       {
         "command": "cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests",
-        "result": "142 passed, 4 subtests passed in 29.71s (re-confirmed after the evidence refresh, on the tree handed to review)"
+        "result": "142 passed, 4 subtests passed in 17.04s (re-confirmed after the evidence refresh)"
       }
     ],
     "raw_log": "validation.txt"
   },
   "review": {
     "decision": "pending",
-    "reviewer": "Antigravity",
+    "reviewer": "Claude",
     "reviewed_commit": null,
     "reviewed_at": null,
     "notes": [
-      "Awaiting a fresh independent review of the dev-merged head under the current owner/reviewer pair (owner Claude, reviewer Antigravity).",
+      "Awaiting a fresh independent review of the dev-merged head under the current owner/reviewer pair (owner Antigravity, reviewer Claude).",
       "The reviewer binds the exact PR #4386 head at approval time; this manifest cannot name its own commit."
     ]
   },
@@ -259,10 +259,36 @@
     "pull_request": "https://github.com/ajoe734/pantheon/pull/4386",
     "task_head_commit": null,
     "merge_commit": null,
-    "note": "Head is rebound by the reviewer at approval time; this manifest cannot name its own commit. PR #4386 was DIRTY until the origin/dev merge at 850a8c760. The implementation diff has been unchanged since bce887978; every later commit is evidence-only."
+    "note": "Head is rebound by the reviewer at approval time; this manifest cannot name its own commit. PR #4386 was DIRTY until the origin/dev merge at 850a8c760."
   },
   "reassignment": {
     "observed_at": "2026-08-06T10:19:20Z",
+    "history": [
+      {
+        "observed_at": "2026-08-06T10:19:20Z",
+        "from_owner": "Codex2",
+        "from_reviewer": "Codex",
+        "to_owner": "Antigravity",
+        "to_reviewer": "Claude",
+        "reason": "Supervisor auto-reassigned ownership from Codex2 to Antigravity."
+      },
+      {
+        "observed_at": "2026-08-06T13:19:34Z",
+        "from_owner": "Antigravity",
+        "from_reviewer": "Claude",
+        "to_owner": "Claude",
+        "to_reviewer": "Antigravity",
+        "reason": "Supervisor auto-reassigned ownership from Antigravity to Claude."
+      },
+      {
+        "observed_at": "2026-08-06T14:13:02Z",
+        "from_owner": "Claude",
+        "from_reviewer": "Antigravity",
+        "to_owner": "Antigravity",
+        "to_reviewer": "Claude",
+        "reason": "Supervisor auto-reassigned ownership from Claude to Antigravity."
+      }
+    ],
     "previous_cycle": {
       "owner": "Codex2",
       "reviewer": "Codex",
@@ -270,11 +296,11 @@
       "task_head_commit": "43d59e78ea361985146008fbe65f6436f8c0595b"
     },
     "current_cycle": {
-      "owner": "Claude",
-      "reviewer": "Antigravity",
-      "status": "todo"
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "in_progress"
     },
-    "reason": "Supervisor auto-reassigned ownership from Antigravity to Claude after repeated Antigravity quota-terminal runs and returned the task to todo for a fresh run. The earlier approval no longer binds: it named a superseded head and a reviewer pair that the canonical row no longer carries.",
+    "reason": "Supervisor auto-reassigned ownership from Claude to Antigravity at 2026-08-06T14:13:02Z. The canonical row now reads owner Antigravity, reviewer Claude, status in_progress.",
     "owner_actions_this_cycle": [
       "Merged origin/dev forward into task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729 to clear the DIRTY merge state on PR #4386; the only conflict was in .orchestrator/test_supervisor.py, where both sides appended independent test classes and both were kept.",
       "Re-ran the full supervisor suite plus focused reconciliation suites on the merged tree.",
