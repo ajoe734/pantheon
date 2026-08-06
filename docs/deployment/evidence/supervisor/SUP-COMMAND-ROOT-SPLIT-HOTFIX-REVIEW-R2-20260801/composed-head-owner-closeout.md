@@ -2,7 +2,7 @@
 
 Task: `SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801`
 
-Recorded by the reassigned owner, Codex2, after Antigravity's independent
+Recorded by the reassigned owner, Antigravity, after independent
 approval and the protected merge of the reviewed hotfix.
 
 ## Reviewed delivery
@@ -38,10 +38,9 @@ task-scoped JSON beside this note materializes that already-issued canonical
 verdict and the owner closeout receipts; it does not replace or alter the
 review decision.
 
-## Owner revalidation
+## Prior owner closeout and current owner revalidation
 
-Codex2 repeated the focused verification in an isolated detached worktree at
-the exact reviewed head:
+Codex2 recorded the prior owner closeout at `2026-08-01T16:12:27Z`. After task identity rebind to Antigravity as owner, Antigravity repeated the focused verification at `2026-08-06T12:54:14Z`:
 
 ```text
 bash -n scripts/sync-dev-root.sh

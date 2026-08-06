@@ -9,9 +9,9 @@
     "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
     "title": "Independently review the strict-base-composed supervisor command-root hotfix",
     "phase": "incident-hotfix-review",
-    "owner": "Codex2",
-    "owner_at_review": "Codex",
-    "reviewer": "Antigravity",
+    "owner": "Antigravity",
+    "owner_at_review": "Codex2",
+    "reviewer": "Claude",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
@@ -48,16 +48,17 @@
     "merged_at": "2026-08-01T15:46:21Z",
     "merged_to": "dev"
   },
-  "independent_review": {
+  "prior_assignment_review": {
     "status": "review_approved",
     "verdict": "APPROVED",
+    "prior_owner": "Codex2",
     "reviewer": "Antigravity",
     "reviewed_at": "2026-08-01T15:45:43Z",
     "authoritative_event_sequence": 7781,
     "authoritative_event_id": "task-state-cce78e63c55bd3cc700378dd4854e57d21c47d279633c1a97980a846c13f81b4",
     "source": "antigravity1-1-20260801T154443Z-add57a4a",
     "review_file_at_approval": null,
-    "decision_summary": "The exact PR head composes the approved implementation and current dev without conflict resolution, keeps the two-file delta, passes syntax, focused tests and diff-check, and has all exact-head GitHub checks successful."
+    "decision_summary": "The exact PR head composes the approved implementation and current dev without conflict resolution, keeps the two-file delta, passes syntax, focused tests and diff-check, and has all exact-head GitHub contexts successful."
   },
   "acceptance": {
     "exact_head_reviewed": true,
@@ -72,7 +73,8 @@
     "all_exact_head_github_contexts_successful": true,
     "live_repair_or_runtime_promotion_performed": false
   },
-  "owner_closeout_verification": {
+  "prior_owner_closeout_verification": {
+    "prior_owner": "Codex2",
     "verified_at": "2026-08-01T16:12:27Z",
     "commands": [
       "bash -n scripts/sync-dev-root.sh",
@@ -92,6 +94,20 @@
       ],
       "recreated_merge_tree": "43b28ac778c77fb983788f85e6a959151032aca7",
       "github_contexts": "11/11 successful"
+    }
+  },
+  "owner_revalidation": {
+    "owner": "Antigravity",
+    "verified_at": "2026-08-06T12:54:14Z",
+    "commands": [
+      "bash -n scripts/sync-dev-root.sh",
+      "pytest -q scripts/test_sync_dev_root.py",
+      "git diff --check 3578f993b1b02f2ba4aa579a40325943cc0674e3..83a91bc2571c20424302916ea6129f421642549d"
+    ],
+    "results": {
+      "bash_syntax": "passed",
+      "focused_pytest": "5 passed in 1.73s",
+      "diff_check": "clean"
     }
   },
   "closeout": {
