@@ -1,0 +1,17 @@
+{
+  "task_id": "SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801",
+  "status": "review",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "summary": "Rebuilt branch cleanly from origin/dev tip. Documented progress-aware failure streak recovery logic, exact test mapping, audit activity logging, test collection status, and supersession rationale.",
+  "verification": {
+    "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'",
+    "test_collection": {
+      "status": "blocked_by_dev_tip",
+      "error": "ImportError: cannot import name 'provider_auth_probe_due' from 'provider_permissions' in .orchestrator/supervisor.py line 88",
+      "reproduction": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest .orchestrator/test_supervisor.py --collect-only"
+    },
+    "branch_aligned_with_dev_tip": true,
+    "zero_net_code_deletions": true
+  }
+}
