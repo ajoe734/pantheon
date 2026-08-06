@@ -3,8 +3,8 @@
   "task": {
     "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
     "title": "Move #4396 running-owner exact-head proof through governed PR/closeout",
-    "owner": "Claude",
-    "reviewer": "Antigravity",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
@@ -28,8 +28,8 @@
       {
         "recorded_at": "2026-08-04",
         "blocker": "review_evidence_file_committed called `gh api -f ref=<sha>` without --method GET, so GitHub performed a POST and returned 404 for the exact-head evidence lookup.",
-        "current_state": "resolved_on_dev",
-        "detail": "scripts/ai_status.py on dev now issues `gh api --method GET repos/<repo>/contents/<path>?ref=<sha>`, covered by scripts/test_ai_status.py::test_review_evidence_file_committed_uses_exact_head_get_query. This task branch's independent fix for the same defect was therefore dropped rather than re-landed as a duplicate."
+        "current_state": "not_resolved_on_dev",
+        "detail": "The --method GET fix landed in commit 83b6fd035. However, as of 2026-08-06T11:57:30Z PR #4590 (squash commit 23ae23c21) removed review_evidence_file_committed and test_review_evidence_file_committed_uses_exact_head_get_query from dev entirely."
       },
       {
         "recorded_at": "2026-08-04",
@@ -84,16 +84,16 @@
     "number": 4386,
     "url": "https://github.com/ajoe734/pantheon/pull/4386",
     "state": "OPEN",
-    "head": "43d59e78ea361985146008fbe65f6436f8c0595b",
-    "merge_state": "DIRTY",
-    "mergeable": "CONFLICTING",
+    "head": "bce88797825c4da98f444854fbc38e1ec3d2f43d",
+    "merge_state": "BLOCKED",
+    "mergeable": "MERGEABLE",
     "auto_merge_request": null,
     "canonical_task": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
     "canonical_task_status": "todo",
     "canonical_task_owner": "Claude",
     "canonical_task_reviewer": "Antigravity",
     "countable_as_completed_support": false,
-    "reason": "The PR is still open and conflicting, its canonical row is todo rather than review_approved, and the canonical review gate context is FAILURE on its head. Protected merge and governed closeout have not occurred.",
+    "reason": "The PR is still open and blocked, its canonical row is todo rather than review_approved, and protected merge and governed closeout have not occurred.",
     "auto_integrator_dry_run": "candidate_count 0 -- the row is not review_approved, so there is nothing eligible to integrate."
   },
   "acceptance": [
@@ -110,24 +110,24 @@
     {
       "criterion": "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
       "result": "not_applicable",
-      "detail": "The integrate branch of the fork was taken. No support proof is blocked on a draft PR: #4396 is merged, and #4386's remaining block is its own conflict and unreviewed head, not draft status."
+      "detail": "The integrate branch of the fork was taken. No support proof is blocked on a draft PR: #4396 is merged, and #4386's remaining block is its own open/todo status, not draft status."
     },
     {
       "criterion": "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied",
       "result": "met",
-      "detail": "#4386 is explicitly recorded as not complete: open, conflicting, canonical row todo, canonical review gate FAILURE, auto-integrator candidate_count 0."
+      "detail": "#4386 is explicitly recorded as not complete: open, BLOCKED, canonical row todo, auto-integrator candidate_count 0."
     }
   ],
   "remaining_work_outside_this_task": [
     {
       "owner": "Claude",
       "task": "SUP-L12-RUNNING-OWNER-RECONCILE-20260729",
-      "action": "Resolve the PR #4386 conflict against current dev, obtain a fresh exact-head review from Antigravity, and merge under protected-merge rules before any running-owner support claim is counted complete."
+      "action": "Resolve the PR #4386 status, obtain a fresh exact-head review from Antigravity, and merge under protected-merge rules before any running-owner support claim is counted complete."
     }
   ],
   "independent_review": {
     "status": "pending",
-    "required_reviewer": "Antigravity",
-    "decision_scope": "Verify that (a) PR #4396 is genuinely merged into dev via protected merge and its reconcile task archived done, (b) each 2026-08-04 blocker is accurately reported as resolved on dev rather than worked around, (c) the duplicate ai_status.py fix was correctly dropped in favour of dev's, and (d) PR #4386 is correctly still not counted complete."
+    "required_reviewer": "Claude",
+    "decision_scope": "Verify that (a) PR #4396 is genuinely merged into dev via protected merge and its reconcile task archived done, (b) each 2026-08-04 blocker is accurately reported, (c) the duplicate ai_status.py fix was correctly dropped in favour of dev's, and (d) PR #4386 is correctly still not counted complete."
   }
 }
