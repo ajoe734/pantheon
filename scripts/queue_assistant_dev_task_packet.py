@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -11,10 +12,15 @@ from typing import Any, Mapping
 from pydantic import ValidationError
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-BFF_DIR = REPO_ROOT / "services" / "control-plane" / "bff"
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
+CODE_ROOT = Path(__file__).resolve().parent.parent
+STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or CODE_ROOT).resolve()
+
+# Import path resolution precedence: CODE_ROOT first so local script code is used,
+# followed by STATUS_ROOT so central status packages/libraries can be resolved.
+for root in (STATUS_ROOT, CODE_ROOT):
+    bff_dir = root / "services" / "control-plane" / "bff"
+    if bff_dir.exists() and str(bff_dir) not in sys.path:
+        sys.path.insert(0, str(bff_dir))
 
 from assistant.dev_bridge_inbox import queue_payload  # noqa: E402
 
@@ -52,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = _as_mapping(_read_payload(args.packet_file), label="input")
         result = queue_payload(
             payload,
-            repo_root=args.repo_root or str(REPO_ROOT),
+            repo_root=args.repo_root or str(STATUS_ROOT),
             inbox_dir=args.inbox_dir,
             source=args.source,
         )
