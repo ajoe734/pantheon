@@ -19975,6 +19975,104 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         persist.assert_not_called()
         write_activity_log.assert_not_called()
 
+    def test_bound_finalize_failure_never_reassigns_delivery_owner_when_blocked(self) -> None:
+        """A bound-delivery task that later drifted to blocked (e.g. a transient
+        provider outage knocked it out of review_approved) must keep the same
+        immutable-owner protection as a task still sitting in review_approved.
+        "blocked" is not in the default eligible_statuses for this path, so this
+        also exercises a config where it has been explicitly added -- otherwise
+        the old code's absence of a blocked-status guard here was masked by the
+        unrelated eligible_statuses gate and this test would pass either way."""
+
+        config = {
+            **self.config,
+            "worker_reassignment": {
+                **self.config["worker_reassignment"],
+                "eligible_statuses": [
+                    *self.config["worker_reassignment"].get("eligible_statuses", []),
+                    "blocked",
+                ],
+                "owner_fallbacks": {
+                    **self.config["worker_reassignment"]["owner_fallbacks"],
+                    "Claude": ["Grok", "Gemini"],
+                },
+            },
+        }
+        worker = {
+            "task_id": "RUN-BOUND-BLOCKED",
+            "agent_id": "claude",
+            "retry_count": 5,
+            "run_id": "claude-run-bound-blocked",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "RUN-BOUND-BLOCKED",
+                    "status": "blocked",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "review_binding": {
+                        "pr": 4407,
+                        "head_sha": "a" * 40,
+                        "head_branch": "task/RUN-BOUND-BLOCKED",
+                        "base": "dev",
+                    },
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                config,
+                worker,
+                "Worker process missing during supervisor boot reconciliation.",
+                terminal=True,
+                force=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_normalize_mainline_task_assignment_never_reassigns_bound_delivery_when_blocked(self) -> None:
+        """normalize_mainline_task_assignment previously only protected a
+        bound-delivery task when its reviewer was an explicit human gate AND
+        it was still in review_approved. A quota-exhaustion-style outage that
+        knocked a task with an AI reviewer back to blocked got no protection
+        at all and had its owner silently rewritten by the availability scan.
+        """
+
+        task = {
+            "id": "MAINLINE-BOUND-BLOCKED",
+            "status": "blocked",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "review_binding": {
+                "pr": 4414,
+                "head_sha": "b" * 40,
+                "head_branch": "task/MAINLINE-BOUND-BLOCKED",
+                "base": "dev",
+            },
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "plan_task_assignment_pair",
+            side_effect=AssertionError(
+                "plan_task_assignment_pair must not be consulted for a bound-delivery task"
+            ),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(self.config, task)
+
+        self.assertFalse(changed)
+        self.assertEqual(task["owner"], "Codex")
+        self.assertEqual(task["reviewer"], "Codex2")
+
 
 class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def _make_fake_proc(self, entries: dict[int, str | None]) -> Path:

@@ -16,6 +16,7 @@ import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 from unittest import mock
 import sys
 
@@ -23,6 +24,39 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
 import task_archive
+
+
+def audited_reassignment_event(
+    *,
+    task_id: str = "REG-002",
+    old_owner: str = "Codex2",
+    new_owner: str = "Antigravity",
+    old_reviewer: str = "Claude",
+    new_reviewer: str = "Claude",
+    timestamp: str = "2026-07-19T23:52:06Z",
+    message: str = "canonical owner reassignment",
+) -> dict[str, str]:
+    """Build a `task_reassigned` line shaped exactly like the supervisor writes it.
+
+    The reassignment gates only trust events carrying the `Orchestrator` actor
+    and the deterministic `event_id` digest that `persist_task_reassignment`
+    stamps, so fixtures have to be built the same way or they prove nothing.
+    """
+
+    event = {
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_reassigned",
+        "task_id": task_id,
+        "old_owner": old_owner,
+        "new_owner": new_owner,
+        "old_reviewer": old_reviewer,
+        "new_reviewer": new_reviewer,
+        "message": message,
+    }
+    event["event_id"] = ai_status._supervisor_reassignment_event_id(event)
+    return event
+
 from canonical_writer_guard import assert_isolated_legacy_write_target
 from rewrite.task_state_store import load_events, verify_projection
 
@@ -2777,23 +2811,84 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                         }
                     )
 
+    def test_validate_merged_done_evidence_accepts_owner_reassignment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="merged-done-owner-") as temp_dir:
+            base = Path(temp_dir)
+            delivery_root = base / "execute-plans"
+            delivery_sha = self._init_repo(
+                delivery_root,
+                remote="https://github.com/ajoe734/execute-plans.git",
+                files={"src/delivery.ts": "export const delivered = true;\n"},
+            )
+            evidence_root = base / "pantheon"
+            evidence_file = ".orchestrator/task-briefs/reg_002.md"
+            evidence_text = (
+                "# Task Brief: REG-002\n\n"
+                "- Status: review_approved\n"
+                "- Owner: Codex2\n"
+                "- Reviewer: Claude\n\n"
+                "Delivery repository: ajoe734/execute-plans\n"
+                f"Delivery commit: {delivery_sha}\n"
+            )
+            evidence_sha = self._init_repo(
+                evidence_root,
+                remote="https://github.com/ajoe734/pantheon.git",
+                files={evidence_file: evidence_text},
+            )
+            task = {
+                "id": "REG-002",
+                "owner": "Antigravity",
+                "reviewer": "Claude",
+                "artifacts": ["execute-plans:src/delivery.ts"],
+            }
+            config = {
+                "coordination": {
+                    "enabled": True,
+                    "repositories": {
+                        "execute_plans": {
+                            "repo": "ajoe734/execute-plans",
+                            "local_path": str(delivery_root),
+                        }
+                    },
+                }
+            }
+            env = {
+                "RECONCILE_EVIDENCE_FILE": evidence_file,
+                "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+            }
+            reassign_event = audited_reassignment_event(
+                timestamp="2026-07-20T00:00:00Z",
+                message="owner reassignment",
+            )
+            log_file = evidence_root / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(reassign_event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "ROOT", evidence_root),
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "load_config", return_value=config),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                result = ai_status.validate_merged_done_evidence(task)
+
+            self.assertTrue(result["reconciled_from_merged_evidence"])
+            self.assertEqual(result["review_evidence"]["owner"], "Codex2")
+            self.assertEqual(result["review_evidence"]["canonical_owner"], "Antigravity")
+            self.assertIn("owner_reassignment", result["review_evidence"])
+
     def test_accepts_exact_audited_reviewer_reassignment(self) -> None:
         message = (
             "Auto-reassigned REG-002 away from unavailable lane Claude; "
             "reviewer Claude -> Codex2."
         )
-        event = {
-            "event_id": "supervisor-reassign-test",
-            "ts": "2026-07-19T23:52:06Z",
-            "agent": "Orchestrator",
-            "type": "task_reassigned",
-            "task_id": "REG-002",
-            "old_owner": "Codex",
-            "new_owner": "Codex",
-            "old_reviewer": "Claude",
-            "new_reviewer": "Codex2",
-            "message": message,
-        }
+        event = audited_reassignment_event(
+            old_owner="Codex",
+            new_owner="Codex",
+            new_reviewer="Codex2",
+            message=message,
+        )
         self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
         result = ai_status._verified_reviewer_reassignment(
             {
@@ -2807,13 +2902,50 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             current_reviewer="Codex2",
         )
 
-        self.assertEqual(result["event_id"], "supervisor-reassign-test")
+        self.assertEqual(result["event_id"], event["event_id"])
         self.assertEqual(result["old_reviewer"], "Claude")
         self.assertEqual(result["new_reviewer"], "Codex2")
+
+    def test_owner_reassignment_verifies_exact_task_reassigned_audit_event(self) -> None:
+        message = "canonical owner reassignment"
+        event = audited_reassignment_event(message=message)
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        result = ai_status._verified_owner_reassignment(
+            {
+                "id": "REG-002",
+                "owner": "Antigravity",
+                "reviewer": "Claude",
+                "last_update": event["ts"],
+                "next": message,
+            },
+            evidence_owner="Codex2",
+            current_owner="Antigravity",
+        )
+
+        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["old_owner"], "Codex2")
+        self.assertEqual(result["new_owner"], "Antigravity")
+
+    def test_owner_reassignment_requires_exact_task_readback(self) -> None:
+        event = audited_reassignment_event()
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
+            ai_status._verified_owner_reassignment(
+                {
+                    "id": "REG-002",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "last_update": event["ts"],
+                    "next": "different readback",
+                },
+                evidence_owner="NonExistentOwner",
+                current_owner="Antigravity",
+            )
 
     def test_reviewer_reassignment_requires_exact_task_readback(self) -> None:
         event = {
             "event_id": "supervisor-reassign-test",
+            "agent": "Orchestrator",
             "ts": "2026-07-19T23:52:06Z",
             "type": "task_reassigned",
             "task_id": "REG-002",
@@ -2824,7 +2956,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "message": "canonical reassignment",
         }
         self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
-        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned"):
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
             ai_status._verified_reviewer_reassignment(
                 {
                     "id": "REG-002",
@@ -2833,8 +2965,171 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     "last_update": event["ts"],
                     "next": "different readback",
                 },
-                evidence_reviewer="Claude",
+                evidence_reviewer="NonExistentReviewer",
                 current_reviewer="Codex2",
+            )
+
+    def test_reviewer_reassignment_found_after_rotation_into_archive(self) -> None:
+        """Regression: the audited reassignment event can be rotated out of the
+        live tail into an immutable archive before the chain walk runs.
+        _verified_reviewer_reassignment must still find it there -- rotation
+        only moved the row, it did not invalidate it."""
+        event = audited_reassignment_event(
+            task_id="REG-002",
+            old_owner="Codex",
+            new_owner="Codex",
+            old_reviewer="Claude",
+            new_reviewer="Codex2",
+            message=(
+                "Auto-reassigned REG-002 away from unavailable lane Claude; "
+                "reviewer Claude -> Codex2."
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
+                mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
+            ):
+                archive = ai_status.maybe_rotate_activity_log()
+                self.assertIsNotNone(
+                    archive, "expected the event to be rotated into an archive"
+                )
+                self.assertNotIn(event["event_id"].encode(), log_file.read_bytes())
+
+                result = ai_status._verified_reviewer_reassignment(
+                    {
+                        "id": "REG-002",
+                        "owner": "Codex",
+                        "reviewer": "Codex2",
+                        "last_update": event["ts"],
+                        "next": event["message"],
+                    },
+                    evidence_reviewer="Claude",
+                    current_reviewer="Codex2",
+                )
+        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["old_reviewer"], "Claude")
+        self.assertEqual(result["new_reviewer"], "Codex2")
+
+    def test_multihop_owner_reassignment_chain(self) -> None:
+        events = [
+            audited_reassignment_event(
+                task_id="MULTIHOP-001",
+                old_owner="Codex2",
+                new_owner="Codex",
+                timestamp="2026-07-19T23:00:00Z",
+                message="hop 1",
+            ),
+            audited_reassignment_event(
+                task_id="MULTIHOP-001",
+                old_owner="Codex",
+                new_owner="Antigravity",
+                timestamp="2026-07-19T23:10:00Z",
+                message="hop 2",
+            ),
+        ]
+        log_content = "\n".join(json.dumps(e) for e in events) + "\n"
+        self._test_log_file.write_text(log_content, encoding="utf-8")
+        result = ai_status._verified_owner_reassignment(
+            {
+                "id": "MULTIHOP-001",
+                "owner": "Antigravity",
+                "reviewer": "Claude",
+                "last_update": "2026-07-19T23:20:00Z",
+                "next": "post-reassignment progress",
+            },
+            evidence_owner="Codex2",
+            current_owner="Antigravity",
+        )
+        self.assertEqual(result["hops"], 2)
+        self.assertEqual(result["old_owner"], "Codex2")
+        self.assertEqual(result["new_owner"], "Antigravity")
+        self.assertEqual(result["event_id"], events[1]["event_id"])
+
+    def test_broken_owner_reassignment_chain_fails(self) -> None:
+        events = [
+            audited_reassignment_event(
+                task_id="BROKEN-001",
+                old_owner="Codex2",
+                new_owner="Gemini",
+                timestamp="2026-07-19T23:00:00Z",
+                message="hop 1",
+            ),
+            audited_reassignment_event(
+                task_id="BROKEN-001",
+                # Disconnected: the chain left off at Gemini, not Codex.
+                old_owner="Codex",
+                new_owner="Antigravity",
+                timestamp="2026-07-19T23:10:00Z",
+                message="hop 2",
+            ),
+        ]
+        log_content = "\n".join(json.dumps(e) for e in events) + "\n"
+        self._test_log_file.write_text(log_content, encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
+            ai_status._verified_owner_reassignment(
+                {
+                    "id": "BROKEN-001",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                },
+                evidence_owner="Codex2",
+                current_owner="Antigravity",
+            )
+
+    def test_combined_owner_and_reviewer_swap_chain(self) -> None:
+        event = audited_reassignment_event(
+            task_id="SWAP-001",
+            new_reviewer="Codex",
+            timestamp="2026-07-19T23:00:00Z",
+            message="combined swap",
+        )
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        owner_res = ai_status._verified_owner_reassignment(
+            {"id": "SWAP-001", "owner": "Antigravity", "reviewer": "Codex"},
+            evidence_owner="Codex2",
+            current_owner="Antigravity",
+        )
+        reviewer_res = ai_status._verified_reviewer_reassignment(
+            {"id": "SWAP-001", "owner": "Antigravity", "reviewer": "Codex"},
+            evidence_reviewer="Claude",
+            current_reviewer="Codex",
+        )
+        self.assertEqual(owner_res["event_id"], event["event_id"])
+        self.assertEqual(reviewer_res["event_id"], event["event_id"])
+
+    def test_reassignment_chain_rejects_unaudited_event(self) -> None:
+        """A `task_reassigned` line the supervisor did not write proves nothing.
+
+        The chain walk is what removes the Human/Ops sign-off, so the events it
+        walks have to be unforgeable. Strip the `Orchestrator` actor and the
+        digest no longer matches, which must fail closed rather than reconcile.
+        """
+
+        forged = audited_reassignment_event(task_id="FORGED-001")
+        forged["agent"] = "Claude"
+        self._test_log_file.write_text(json.dumps(forged) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
+            ai_status._verified_owner_reassignment(
+                {"id": "FORGED-001", "owner": "Antigravity", "reviewer": "Claude"},
+                evidence_owner="Codex2",
+                current_owner="Antigravity",
+            )
+
+    def test_reassignment_chain_rejects_tampered_event_payload(self) -> None:
+        """Editing a real audited event breaks its digest and must be rejected."""
+
+        tampered = audited_reassignment_event(task_id="TAMPER-001")
+        tampered["new_owner"] = "Gemini"
+        self._test_log_file.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
+            ai_status._verified_owner_reassignment(
+                {"id": "TAMPER-001", "owner": "Gemini", "reviewer": "Claude"},
+                evidence_owner="Codex2",
+                current_owner="Gemini",
             )
 
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
@@ -3089,6 +3384,46 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["commit_owner_reassignment"]["old_owner"], "Codex2")
         self.assertEqual(delivery["commit_owner_reassignment"]["new_owner"], "Codex")
 
+    def test_prior_owner_reassignment_found_after_rotation_into_archive(self) -> None:
+        """Regression: this reproduces the real production incident where
+        SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 got permanently stuck at
+        `done` -- rotation moved its audited task_reassigned event out of
+        LOG_FILE into archive/logs/*.gz before `done` ran, and the old
+        LOG_FILE-only read could never find it again.
+        _verified_done_owner_reassignment must search archives too."""
+        event = self._owner_reassignment_event()
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Antigravity",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
+                mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
+            ):
+                archive = ai_status.maybe_rotate_activity_log()
+                self.assertIsNotNone(
+                    archive, "expected the event to be rotated into an archive"
+                )
+                # The live tail is down to the lineage-head control record only.
+                active_lines = log_file.read_bytes().splitlines()
+                self.assertEqual(len(active_lines), 1)
+                self.assertNotIn(event["event_id"].encode(), log_file.read_bytes())
+
+                result = ai_status._verified_done_owner_reassignment(
+                    task,
+                    commit_owner="Codex2",
+                    current_owner="Codex",
+                    commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["old_owner"], "Codex2")
+        self.assertEqual(result["new_owner"], "Codex")
+
     def test_prior_owner_reassignment_rejects_forged_audit_identity(self) -> None:
         event = self._owner_reassignment_event()
         event["event_id"] = "supervisor-reassign-forged"
@@ -3178,7 +3513,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(SystemExit, "reviewer continuity changed"),
+                self.assertRaisesRegex(SystemExit, "reviewer continuity"),
             ):
                 ai_status._verified_done_owner_reassignment(
                     {
@@ -3189,6 +3524,210 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     commit_owner="Codex2",
                     current_owner="Codex",
                     commit_timestamp="2026-07-31T16:20:00+00:00",
+                )
+
+    # The audited pair of swaps the supervisor actually recorded for
+    # OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805: two provider
+    # outages, each moving owner and reviewer together.
+    _SWAP_HOP_ONE = dict(
+        task_id="REG-002",
+        old_owner="Codex2",
+        new_owner="Antigravity",
+        old_reviewer="Codex",
+        new_reviewer="Claude",
+        timestamp="2026-08-05T11:59:31Z",
+        message="Auto-reassigned ownership from Codex2 to Antigravity.",
+    )
+    _SWAP_HOP_TWO = dict(
+        task_id="REG-002",
+        old_owner="Antigravity",
+        new_owner="Claude",
+        old_reviewer="Claude",
+        new_reviewer="Antigravity",
+        timestamp="2026-08-05T12:26:28Z",
+        message="Auto-reassigned ownership from Antigravity to Claude.",
+    )
+
+    @staticmethod
+    def _fake_git(*, llm_agent: str, reviewer: str, commit_timestamp: str):
+        def fake_run_git_command(args: list[str], **_kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "a" * 40,
+                ("show", "-s", "--format=%s", "HEAD"): "REG-002: finish delivery",
+                ("show", "-s", "--format=%b", "HEAD"): (
+                    f"LLM-Agent: {llm_agent}\nTask-ID: REG-002\nReviewer: {reviewer}\n"
+                ),
+                ("show", "-s", "--format=%an", "HEAD"): llm_agent,
+                ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
+                ("show", "-s", "--format=%cI", "HEAD"): commit_timestamp,
+                ("status", "--porcelain"): "",
+                ("remote",): "",
+            }
+            return responses[tuple(args)]
+
+        return fake_run_git_command
+
+    def _collect_with_audit(
+        self,
+        *,
+        events: list[dict[str, str]],
+        task: dict[str, Any],
+        actor: str,
+        llm_agent: str,
+        reviewer: str,
+        commit_timestamp: str,
+    ) -> dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(
+                "".join(json.dumps(event) + "\n" for event in events),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.dict(
+                    os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False
+                ),
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(
+                    ai_status,
+                    "run_git_command",
+                    side_effect=self._fake_git(
+                        llm_agent=llm_agent,
+                        reviewer=reviewer,
+                        commit_timestamp=commit_timestamp,
+                    ),
+                ),
+            ):
+                return ai_status.collect_done_delivery_metadata(task, actor)
+
+    def test_collect_done_accepts_combined_owner_and_reviewer_swap(self) -> None:
+        """The case that used to force a Human/Ops `reconcile_merged_done`.
+
+        The delivery merged under the Antigravity/Claude pair, then a provider
+        outage swapped both roles to Claude/Antigravity. Both commit trailers
+        are now stale at once, which previously failed closed with no fallback.
+        """
+
+        events = [
+            audited_reassignment_event(**self._SWAP_HOP_ONE),
+            audited_reassignment_event(**self._SWAP_HOP_TWO),
+        ]
+        delivery = self._collect_with_audit(
+            events=events,
+            task={
+                "id": "REG-002",
+                "owner": "Claude",
+                "reviewer": "Antigravity",
+                "status": "review_approved",
+            },
+            actor="Claude",
+            llm_agent="Antigravity",
+            reviewer="Claude",
+            commit_timestamp="2026-08-05T12:13:52+00:00",
+        )
+
+        owner_proof = delivery["commit_owner_reassignment"]
+        self.assertEqual(owner_proof["old_owner"], "Antigravity")
+        self.assertEqual(owner_proof["new_owner"], "Claude")
+        self.assertEqual(owner_proof["hops"], 1)
+        self.assertEqual(owner_proof["event_id"], events[1]["event_id"])
+        self.assertEqual(owner_proof["reviewer_hops"], 1)
+
+        reviewer_proof = delivery["commit_reviewer_reassignment"]
+        self.assertEqual(reviewer_proof["old_reviewer"], "Claude")
+        self.assertEqual(reviewer_proof["new_reviewer"], "Antigravity")
+        self.assertEqual(reviewer_proof["event_id"], events[1]["event_id"])
+
+    def test_collect_done_accepts_multi_hop_owner_chain(self) -> None:
+        """Two consecutive reassignments still close out without a human."""
+
+        events = [
+            audited_reassignment_event(**self._SWAP_HOP_ONE),
+            audited_reassignment_event(**self._SWAP_HOP_TWO),
+        ]
+        delivery = self._collect_with_audit(
+            events=events,
+            task={
+                "id": "REG-002",
+                "owner": "Claude",
+                "reviewer": "Antigravity",
+                "status": "review_approved",
+            },
+            actor="Claude",
+            llm_agent="Codex2",
+            reviewer="Codex",
+            commit_timestamp="2026-08-05T11:00:00+00:00",
+        )
+
+        owner_proof = delivery["commit_owner_reassignment"]
+        self.assertEqual(owner_proof["old_owner"], "Codex2")
+        self.assertEqual(owner_proof["new_owner"], "Claude")
+        self.assertEqual(owner_proof["hops"], 2)
+        self.assertEqual(delivery["commit_reviewer_reassignment"]["hops"], 2)
+
+    def test_collect_done_rejects_owner_drift_with_no_audit(self) -> None:
+        """An owner trailer no audited reassignment explains still fails closed."""
+
+        events = [audited_reassignment_event(**self._SWAP_HOP_ONE)]
+        with self.assertRaisesRegex(SystemExit, "latest audited owner reassignment"):
+            self._collect_with_audit(
+                events=events,
+                task={
+                    "id": "REG-002",
+                    "owner": "Claude",
+                    "reviewer": "Antigravity",
+                    "status": "review_approved",
+                },
+                actor="Claude",
+                llm_agent="Gemini",
+                reviewer="Claude",
+                commit_timestamp="2026-08-05T11:00:00+00:00",
+            )
+
+    def test_done_reviewer_reassignment_rejects_unaudited_event(self) -> None:
+        forged = audited_reassignment_event(
+            task_id="REG-002", new_reviewer="Antigravity"
+        )
+        forged["agent"] = "Antigravity"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(forged) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(
+                    SystemExit, "audited reviewer reassignment chain does not"
+                ),
+            ):
+                ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Antigravity", "reviewer": "Antigravity"},
+                    commit_reviewer="Claude",
+                    current_reviewer="Antigravity",
+                    commit_timestamp="2026-07-19T20:00:00+00:00",
+                )
+
+    def test_done_reviewer_reassignment_rejects_event_before_commit(self) -> None:
+        event = audited_reassignment_event(
+            task_id="REG-002",
+            old_owner="Antigravity",
+            new_owner="Antigravity",
+            new_reviewer="Codex2",
+            timestamp="2026-07-19T23:52:06Z",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(
+                    SystemExit, "reviewer reassignment must follow the delivered commit"
+                ),
+            ):
+                ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Antigravity", "reviewer": "Codex2"},
+                    commit_reviewer="Claude",
+                    current_reviewer="Codex2",
+                    commit_timestamp="2026-07-20T00:00:00+00:00",
                 )
 
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
