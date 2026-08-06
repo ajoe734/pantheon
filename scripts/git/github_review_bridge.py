@@ -28,18 +28,6 @@ from urllib.parse import quote
 
 
 CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
-
-# Git-native proof of a governed review decision: a tag object pushed to the
-# exact reviewed SHA. Unlike a commit *status* (opaque metadata GitHub stores
-# out-of-band) or ai-status.json (a live file that only exists on the host
-# running Pantheon), a pushed tag is part of the repository's own object
-# graph -- any clone or fetch, including a GitHub Actions runner with zero
-# access to this host, sees it via a plain `gh api` call against GitHub's Git
-# Data API. This is what makes the required check in
-# .github/workflows/canonical-review-gate.yml able to answer "was this exact
-# head approved" without ever needing to read live task state.
-# SUP-REVIEW-GATE-GIT-NATIVE-PROOF-20260804.
-REVIEW_PROOF_TAG_PREFIX = "pantheon-review"
 APPROVE = "approve"
 REOPEN = "reopen"
 DECISIONS = {APPROVE, REOPEN}
@@ -163,7 +151,6 @@ class BridgeResult:
     status_id: int | None
     status_context: str | None
     status_state: str | None
-    review_proof_ref: str | None
     pr_url: str
     recorded_at: str
     review_error: str = ""
@@ -182,7 +169,6 @@ class BridgeResult:
             "status_id": self.status_id,
             "status_context": self.status_context,
             "status_state": self.status_state,
-            "review_proof_ref": self.review_proof_ref,
             "pr_url": self.pr_url,
             "recorded_at": self.recorded_at,
         }
@@ -468,135 +454,6 @@ def _submit_required_status(
     return observed
 
 
-def review_proof_tag_name(*, decision: str, head_sha: str) -> str:
-    return f"{REVIEW_PROOF_TAG_PREFIX}/{decision}/{head_sha}"
-
-
-def _push_review_proof_tag(
-    runner: JsonRunner,
-    *,
-    repository: str,
-    binding: ReviewBinding,
-    task_id: str,
-    actor: str,
-    decision: str,
-    message: str,
-) -> dict[str, Any]:
-    """Push a git tag at the exact reviewed head recording the decision.
-
-    Idempotent: if the tag ref already exists (a retried approve/reopen on
-    the same head), it is returned as-is rather than recreated, matching
-    `_submit_required_status`'s existing-first pattern.
-    """
-
-    tag_name = review_proof_tag_name(decision=decision, head_sha=binding.head_sha)
-    ref = f"refs/tags/{tag_name}"
-    # GitHub's git-refs lookup route takes `git/refs/tags/<name>` with
-    # `refs/tags/` as literal path segments -- only the tag's own internal
-    # slashes need percent-encoding. Encoding the whole ref (including
-    # `refs/tags/` itself) 404s; verified against the live API before this
-    # landed, after the first version of this file shipped that exact bug.
-    encoded_tag_name = quote(tag_name, safe="")
-    try:
-        existing = runner.run_json(
-            ["gh", "api", f"repos/{repository}/git/refs/tags/{encoded_tag_name}"]
-        )
-    except GitHubReviewBridgeError:
-        # `gh api` exits non-zero on a 404, which is the expected outcome the
-        # first time this exact head is approved/reopened -- not a failure.
-        existing = None
-    if isinstance(existing, Mapping) and existing.get("ref") == ref:
-        return dict(existing)
-
-    tag_message = json.dumps(
-        {
-            "task_id": task_id,
-            "decision": decision,
-            "actor": actor,
-            "pr": binding.pr,
-            "head_sha": binding.head_sha,
-            "head_branch": binding.head_branch,
-            "base": binding.base,
-            "message": message,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-    created_tag = runner.run_json(
-        ["gh", "api", "--method", "POST", f"repos/{repository}/git/tags", "--input", "-"],
-        payload={
-            "tag": tag_name,
-            "message": tag_message,
-            "object": binding.head_sha,
-            "type": "commit",
-            "tagger": {
-                "name": "Pantheon Review Bridge",
-                "email": "pantheon-review-bridge@noreply.local",
-                "date": _utc_now(),
-            },
-        },
-    )
-    if not isinstance(created_tag, Mapping) or not created_tag.get("sha"):
-        raise GitHubReviewBridgeError("GitHub did not return the review-proof tag object")
-    created_ref = runner.run_json(
-        ["gh", "api", "--method", "POST", f"repos/{repository}/git/refs", "--input", "-"],
-        payload={"ref": ref, "sha": created_tag["sha"]},
-    )
-    if not isinstance(created_ref, Mapping) or created_ref.get("ref") != ref:
-        raise GitHubReviewBridgeError("GitHub did not expose the pushed review-proof tag ref")
-    return dict(created_ref)
-
-
-CANONICAL_REVIEW_GATE_WORKFLOW_FILE = "canonical-review-gate.yml"
-
-
-def _dispatch_canonical_review_gate_workflow(
-    runner: JsonRunner,
-    *,
-    repository: str,
-    binding: ReviewBinding,
-) -> None:
-    """Best-effort: wake the Canonical Review Gate workflow so it re-reads
-    the tag just pushed and posts its own, correctly-attributed status.
-
-    Pushing the review-proof tag is necessary but not sufficient. GitHub
-    pins the "Pantheon canonical review gate" required context to whichever
-    identity has historically posted it -- in practice, this workflow's own
-    GITHUB_TOKEN-authenticated run. A status this process posts from a
-    personal-token host (e.g. _submit_required_status, above) does not
-    satisfy the required check even though it looks identical in a plain
-    status listing -- verified empirically against a live PR: the status
-    shows success, but GitHub's own mergeable_state stays blocked until the
-    workflow itself runs again. None of that workflow's pull_request event
-    types fire from a bare tag push, so dispatch it explicitly here.
-    Failure to dispatch is not fatal: the tag is the durable proof, and the
-    next natural push to the PR (or a manual re-run) picks it up either way.
-    """
-
-    try:
-        runner.run_json(
-            [
-                "gh",
-                "api",
-                "--method",
-                "POST",
-                f"repos/{repository}/actions/workflows/"
-                f"{CANONICAL_REVIEW_GATE_WORKFLOW_FILE}/dispatches",
-                "--input",
-                "-",
-            ],
-            payload={
-                "ref": binding.head_branch,
-                "inputs": {
-                    "head_ref": binding.head_branch,
-                    "head_sha": binding.head_sha,
-                },
-            },
-        )
-    except GitHubReviewBridgeError:
-        pass
-
-
 def bridge_review_decision(
     *,
     repository: str,
@@ -685,14 +542,6 @@ def bridge_review_decision(
             target_url=pr_url,
         )
 
-    # Deliberately unchanged from the pre-tag contract: this still requires
-    # a GitHub review or the required commit status, exactly as before the
-    # proof tag existed. Loosening this to accept the tag alone would touch
-    # scripts/ai_status.py's GITHUB_REVIEW_MODES / evidence-matching
-    # validation, a separately audited integrity surface -- not worth
-    # widening for a case ("no required context configured" + "self-review
-    # blocked") that stops applying once the tag-based check is back in
-    # dev's required contexts.
     if review is None and status is None:
         details = [item for item in (review_error, context_error) if item]
         if CANONICAL_REVIEW_CONTEXT not in required_contexts:
@@ -704,27 +553,6 @@ def bridge_review_decision(
             "Governed task decision was not recorded as a GitHub review or "
             "a branch-policy-recognized status"
             + (f": {'; '.join(details)}" if details else "")
-        )
-
-    # Only push the git-native proof tag once at least one legacy path has
-    # confirmed the decision is real -- a call that was going to raise above
-    # should not leave a dangling "approved" tag behind on GitHub.
-    proof_ref = _push_review_proof_tag(
-        runner,
-        repository=repository,
-        binding=normalized_binding,
-        task_id=task_id,
-        actor=actor,
-        decision=decision,
-        message=message,
-    )
-    review_proof_ref = str(proof_ref.get("ref") or "") or None
-
-    if decision == APPROVE:
-        _dispatch_canonical_review_gate_workflow(
-            runner,
-            repository=repository,
-            binding=normalized_binding,
         )
 
     if review is not None and status is not None:
@@ -747,7 +575,6 @@ def bridge_review_decision(
         status_id=int(status.get("id")) if status and status.get("id") else None,
         status_context=CANONICAL_REVIEW_CONTEXT if status is not None else None,
         status_state=STATUS_STATES[decision] if status is not None else None,
-        review_proof_ref=review_proof_ref,
         pr_url=pr_url,
         recorded_at=_utc_now(),
         review_error=review_error if review is None else "",

@@ -1778,6 +1778,64 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_worker_workspace_uses_configured_source_root_for_git_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            status_root.mkdir()
+            source_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "source_root": str(source_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-SOURCE-ROOT-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-source-root",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon-status" / "ops-source-root-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        self.assertEqual(request.metadata["workspace_branch"], "task/OPS-SOURCE-ROOT-001")
+        self.assertEqual(request.metadata["status_root"], str(status_root.resolve()))
+        self.assertEqual(request.metadata["workspace_source_root"], str(source_root.resolve()))
+        lease = state["worker_worktrees"]["leases"]["OPS-SOURCE-ROOT-001"]
+        self.assertEqual(lease["path"], str(expected_path))
+        self.assertEqual(lease["status_root"], str(status_root.resolve()))
+        self.assertEqual(lease["source_root"], str(source_root.resolve()))
+        create_worktree.assert_called_once_with(source_root.resolve(), expected_path, "task/OPS-SOURCE-ROOT-001", "origin/dev")
+        self.assertEqual(write_activity_log.call_args.args[1]["workspace_source_root"], str(source_root.resolve()))
+
     def test_prepare_github_retry_allocates_isolated_worktree_outside_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -1889,6 +1947,49 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "workspace_task_id": "OPS-RETRY-001",
                     "require_isolated_worktree": True,
                     "workspace_path": str(repo_root),
+                },
+            )
+            with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-github-retry",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("shared supervisor checkout", message or "")
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["refresh_status"],
+            "shared_checkout_rejected",
+        )
+
+    def test_prepare_github_retry_rejects_source_root_checkout_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            status_root.mkdir()
+            source_root.mkdir()
+            config = {
+                **self.config,
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "source_root": str(source_root),
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-RETRY-001",
+                reason="github_retry",
+                metadata={
+                    "workspace_task_id": "OPS-RETRY-001",
+                    "require_isolated_worktree": True,
+                    "workspace_path": str(source_root),
                 },
             )
             with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
@@ -4115,6 +4216,258 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
+    def test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                    "disable_when_failure_loops": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Antigravity", "Codex2", "Codex"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        task = {
+            "id": "SUP-L12-STALE-MISSING-PROCESS-20260729",
+            "status": "todo",
+            "owner": "Claude2",
+            "reviewer": "Antigravity",
+            "depends_on": [],
+            "last_update": "2026-07-29T11:33:00Z",
+            "preferred_lane_order": ["Claude2", "Antigravity", "Codex2", "Codex"],
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    f"{task['id']}:claude2": {
+                        "task_id": task["id"],
+                        "provider": "claude2",
+                        "count": 3,
+                        "last_failure_kind": "missing_process",
+                        "last_failure_at": "2026-07-29T11:30:00Z",
+                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2", "claude2"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        persist.assert_not_called()
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                    "disable_when_failure_loops": True,
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        task = {
+            "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+            "status": "review",
+            "owner": "Antigravity",
+            "reviewer": "Claude2",
+            "depends_on": [],
+            "last_update": "2026-07-29T15:34:00Z",
+            "preferred_lane_order": ["Claude2", "Antigravity", "Codex"],
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    f"{task['id']}:claude2": {
+                        "task_id": task["id"],
+                        "provider": "claude2",
+                        "count": 2,
+                        "last_failure_kind": "missing_process",
+                        "last_failure_at": "2026-07-29T15:30:00Z",
+                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["claude2"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        persist.assert_not_called()
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["target_agent"], "Claude2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
+
+    def test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "claim_idle_work": True,
+                    "disable_when_failure_loops": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Codex"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "providers": {},
+        }
+        task_id = "SUP-L12-PROVIDER-FIRST-AFTER-STALE-STREAK-20260729"
+        initial_task = {
+            "id": task_id,
+            "status": "in_progress",
+            "owner": "Claude2",
+            "reviewer": "Antigravity",
+            "depends_on": [],
+            "last_update": "2026-07-29T11:33:00Z",
+            "preferred_lane_order": ["Claude2", "Antigravity", "Codex2", "Codex"],
+        }
+        persisted_task = {
+            **initial_task,
+            "owner": "Antigravity",
+            "reviewer": "Claude2",
+            "last_update": "2026-07-29T11:34:00Z",
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "claude2": {
+                        "provider": "claude2",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "provider unavailable",
+                    }
+                },
+                "task_failure_streaks": {
+                    f"{task_id}:claude2": {
+                        "task_id": task_id,
+                        "provider": "claude2",
+                        "count": 3,
+                        "last_failure_kind": "missing_process",
+                        "last_failure_at": "2026-07-29T11:30:00Z",
+                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
+                    }
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                side_effect=[{"tasks": [initial_task]}, {"tasks": [persisted_task]}],
+            ),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2", "antigravity"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["target_agent"], "Antigravity")
+        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
     def test_dispatcher_does_not_helper_claim_catalog_locked_task(self) -> None:
         config = {
             "schema": {
@@ -6241,6 +6594,12 @@ class DispatchStatusSyncTests(unittest.TestCase):
         """The exact origin/dev network refresh must precede admission."""
 
         call_order: list[str] = []
+        source_root = self.root / "command-root"
+        source_root.mkdir()
+        self.config["worker_worktrees"] = {
+            "enabled": True,
+            "source_root": str(source_root),
+        }
 
         @contextlib.contextmanager
         def runtime_lock(*_args: object, **_kwargs: object):
@@ -6250,7 +6609,8 @@ class DispatchStatusSyncTests(unittest.TestCase):
             finally:
                 call_order.append("lock_exit")
 
-        def fetch_base(_repo_root: Path, base_ref: str) -> tuple[bool, None]:
+        def fetch_base(repo_root: Path, base_ref: str) -> tuple[bool, None]:
+            self.assertEqual(repo_root, source_root.resolve())
             self.assertEqual(base_ref, "origin/dev")
             call_order.append("fetch_base")
             return True, None
@@ -18846,6 +19206,106 @@ class WorkerReassignmentTests(unittest.TestCase):
         supervisor.clear_task_failure_streak(state, worker=worker_two)
         self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
+    def test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks(self) -> None:
+        config = {
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            }
+        }
+        task_ids = {
+            "stale": "SUP-L12-STALE-STREAK-20260729",
+            "fresh": "SUP-L12-FRESH-STREAK-20260729",
+            "quota": "SUP-L12-QUOTA-STREAK-20260729",
+            "active": "SUP-L12-ACTIVE-STREAK-20260729",
+            "non_l12": "OPS-STALE-STREAK-20260729",
+        }
+        task_map = {
+            task_id: {
+                "id": task_id,
+                "status": "todo",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "last_update": "2026-07-29T11:33:00Z",
+            }
+            for task_id in task_ids.values()
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    f"{task_id}:claude2": {
+                        "task_id": task_id,
+                        "provider": "claude2",
+                        "count": 2,
+                        "last_failure_kind": "quota_terminal" if name == "quota" else "missing_process",
+                        "last_failure_at": (
+                            "2026-07-29T11:35:00Z"
+                            if name == "fresh"
+                            else "2026-07-29T11:30:00Z"
+                        ),
+                    }
+                    for name, task_id in task_ids.items()
+                }
+            }
+        }
+
+        changed = supervisor.reap_stale_l12_missing_process_failure_streaks(
+            config,
+            state,
+            task_map=task_map,
+            active_task_agents={(task_ids["active"], "claude2")},
+            pending_task_agents=set(),
+        )
+
+        self.assertTrue(changed)
+        streaks = state["provider_guardrails"]["task_failure_streaks"]
+        self.assertNotIn(f"{task_ids['stale']}:claude2", streaks)
+        self.assertIn(f"{task_ids['fresh']}:claude2", streaks)
+        self.assertIn(f"{task_ids['quota']}:claude2", streaks)
+        self.assertIn(f"{task_ids['active']}:claude2", streaks)
+        self.assertIn(f"{task_ids['non_l12']}:claude2", streaks)
+
+    def test_stale_l12_missing_process_reaper_is_bounded_per_cycle(self) -> None:
+        config = {
+            "agents": {
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            }
+        }
+        task_map: dict[str, dict] = {}
+        streaks: dict[str, dict] = {}
+        for index in range(supervisor.L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT + 1):
+            task_id = f"SUP-L12-BOUNDED-REAP-{index}"
+            task_map[task_id] = {
+                "id": task_id,
+                "status": "todo",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "last_update": "2026-07-29T11:33:00Z",
+            }
+            streaks[f"{task_id}:claude2"] = {
+                "task_id": task_id,
+                "provider": "claude2",
+                "count": 2,
+                "last_failure_kind": "missing_process",
+                "last_failure_at": f"2026-07-29T11:2{index}:00Z",
+            }
+        state = {"provider_guardrails": {"task_failure_streaks": streaks}}
+
+        changed = supervisor.reap_stale_l12_missing_process_failure_streaks(
+            config,
+            state,
+            task_map=task_map,
+            active_task_agents=set(),
+            pending_task_agents=set(),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            len(state["provider_guardrails"]["task_failure_streaks"]),
+            1,
+        )
+
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
             "task_id": "LP-003",
@@ -21898,6 +22358,50 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertTrue(result)
 
+    def test_prune_orphan_worktrees_uses_configured_source_root_for_git_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            base = (Path(tmpdir) / "wt").resolve()
+            wt_path = base / "task-x"
+            status_root.mkdir()
+            source_root.mkdir()
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+            merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="  task/X\n", stderr="")
+            clean_status = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "branch", "--merged"): merged_proc,
+                ("git", "-C", record_path, "status", "--porcelain"): clean_status,
+                ("git", "-C", str(source_root.resolve()), "worktree", "remove", record_path): remove_ok,
+            }
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(base),
+                    "source_root": str(source_root),
+                },
+                "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+            }
+            state: dict = {}
+            with (
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=records) as worktree_records,
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.prune_orphan_worktrees(config, state)
+
+        self.assertTrue(result)
+        worktree_records.assert_called_once_with(source_root.resolve())
+        summary = state["worker_worktree_cleanup"]["last_run"]
+        self.assertEqual(summary["status_root"], str(status_root.resolve()))
+        self.assertEqual(summary["workspace_source_root"], str(source_root.resolve()))
+
     def test_skips_dirty_worktree_when_dirty_archive_disabled(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
@@ -22094,6 +22598,46 @@ class PruneChairReviewWorktreesTests(unittest.TestCase):
         ):
             result = supervisor.prune_chair_review_worktrees(config, state)
         self.assertTrue(result)
+        log.assert_called_once()
+
+    def test_prune_chair_review_worktrees_uses_configured_source_root_for_git_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "pantheon-status"
+            source_root = Path(tmpdir) / "pantheon-source"
+            base = (Path(tmpdir) / "wt").resolve()
+            name = "chair-review-20260620-061500-claude"
+            wt_path = base / name
+            status_root.mkdir()
+            source_root.mkdir()
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            records = [{"worktree": record_path, "branch": "refs/heads/dev"}]
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "-C", str(source_root.resolve()), "worktree", "remove", "--force", record_path): remove_ok,
+            }
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(base),
+                    "source_root": str(source_root),
+                },
+                "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+            }
+            state: dict = {}
+            with (
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=records) as worktree_records,
+                mock.patch.object(supervisor, "write_activity_log") as log,
+                mock.patch.object(supervisor.time, "time", return_value=1_000_000.0),
+                mock.patch.object(Path, "stat", self._fake_stat({name: 1_000_000.0 - 10_000})),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.prune_chair_review_worktrees(config, state)
+
+        self.assertTrue(result)
+        worktree_records.assert_called_once_with(source_root.resolve())
         log.assert_called_once()
 
     def test_skips_recent_chair_review_worktree(self) -> None:

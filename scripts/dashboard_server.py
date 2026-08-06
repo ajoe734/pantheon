@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-import os
 import subprocess
 import shutil
 import sys
@@ -19,39 +18,6 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import read_activity_log_tail_bytes
-
-
-DASHBOARD_REFRESH_ACTOR_ENV = "PANTHEON_DASHBOARD_REFRESH_ACTOR"
-DASHBOARD_REFRESH_ACTOR_DEFAULT = "Human/ops"
-WORKER_CONTEXT_ENV_NAMES = (
-    "ORCH_RUN_ID",
-    "ORCH_TASK_ID",
-    "ORCH_RUNNER_STATUS_PATH",
-    "ORCH_HEARTBEAT_PATH",
-    "PANTHEON_WORKTREE_ROOT",
-    "ORCH_WORKSPACE_PATH",
-    "PANTHEON_COMMAND_ROOT",
-    "PANTHEON_COMMAND_RUNTIME_SHA",
-    "PANTHEON_COMMAND_REMOTE",
-    "PANTHEON_COMMAND_BASE_REF",
-    "PANTHEON_STATUS_COMMAND_ROOT",
-    "PANTHEON_STATUS_COMMAND_SHA",
-    "PANTHEON_STATUS_COMMAND_REMOTE",
-    "PANTHEON_STATUS_COMMAND_BASE_REF",
-    "PANTHEON_STATUS_COMMAND_WRAPPER_ROOT",
-)
-
-
-def dashboard_refresh_environment(repo_root: Path) -> dict[str, str]:
-    """Build an operator-scoped environment for dashboard projection refreshes."""
-
-    env = os.environ.copy()
-    actor = str(env.get(DASHBOARD_REFRESH_ACTOR_ENV) or "").strip()
-    env["AI_NAME"] = actor or DASHBOARD_REFRESH_ACTOR_DEFAULT
-    env["PANTHEON_STATUS_ROOT"] = str(repo_root)
-    for name in WORKER_CONTEXT_ENV_NAMES:
-        env.pop(name, None)
-    return env
 
 
 class NoCacheRequestHandler(SimpleHTTPRequestHandler):
@@ -117,7 +83,6 @@ class NoCacheRequestHandler(SimpleHTTPRequestHandler):
             result = subprocess.run(
                 ["bash", str(repo_root / "scripts" / "sync-state.sh")],
                 cwd=str(repo_root),
-                env=dashboard_refresh_environment(repo_root),
                 capture_output=True,
                 text=True,
                 check=True,
