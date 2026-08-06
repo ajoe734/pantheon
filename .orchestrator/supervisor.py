@@ -6236,8 +6236,9 @@ def record_task_failure_streak(
     reason: str,
     *,
     failure_kind: str | None = None,
+    task: dict[str, Any] | None = None,
 ) -> int:
-    task_id = str(worker.get("task_id") or "").strip()
+    task_id = str(worker.get("task_id") or (task.get("id") if task else "") or "").strip()
     provider_id = worker_failure_streak_provider_id(worker)
     if not task_id or not provider_id:
         return 0
@@ -6245,6 +6246,13 @@ def record_task_failure_streak(
     key = _failure_streak_key(task_id, provider_id)
     record = dict(bucket.get(key) or {})
     count = int(record.get("count", 0)) + 1
+    prog_gen = int(record.get("last_progress_generation", 0))
+    if task:
+        prog_gen = max(prog_gen, task_progress_generation({}, state, task))
+    elif "last_update" in worker:
+        dt = _parse_iso_utc(str(worker.get("last_update") or ""))
+        if dt:
+            prog_gen = max(prog_gen, int(dt.timestamp()))
     record.update(
         {
             "task_id": task_id,
@@ -6253,7 +6261,7 @@ def record_task_failure_streak(
             "last_reason": reason,
             "last_failure_at": utc_now(),
             "last_failure_kind": failure_kind or str(record.get("last_failure_kind") or ""),
-            "last_progress_generation": int(record.get("last_progress_generation", 0)),
+            "last_progress_generation": prog_gen,
         }
     )
     bucket[key] = record

@@ -13056,7 +13056,7 @@ class WorkerReassignmentTests(unittest.TestCase):
         )
         # Record another failure without updating task last_update -> last_progress_generation updated to gen2
         worker = {"task_id": "RETRY-REPLAY-001", "provider": "antigravity"}
-        supervisor.record_task_failure_streak(state, worker, "generic_exit", failure_kind="generic_exit")
+        supervisor.record_task_failure_streak(state, worker, "generic_exit", failure_kind="generic_exit", task=task)
         # Re-verify: now task progress generation (gen2) <= last_progress_generation (gen2), retry denied
         self.assertFalse(
             supervisor.same_owner_reviewer_retry_allowed(
