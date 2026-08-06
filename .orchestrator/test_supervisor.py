@@ -24679,6 +24679,42 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         }
 
     @staticmethod
+    def _reassignment_event(
+        *,
+        old_owner: str,
+        new_owner: str,
+        old_reviewer: str = "Antigravity",
+        new_reviewer: str = "Antigravity",
+        ts: str = "2026-07-29T11:45:00Z",
+    ) -> dict[str, object]:
+        """Build the exact supervisor reassignment event the guard accepts."""
+
+        task_id = "SUP-L12-OWNER-DRIFT"
+        message = (
+            f"Auto-reassigned ownership from {old_owner} to {new_owner} "
+            "after repeated provider failure"
+        )
+        payload = (
+            f"{task_id}\0{ts}\0{old_owner}\0{new_owner}\0"
+            f"{old_reviewer}\0{new_reviewer}\0{message}"
+        )
+        event_id = "supervisor-reassign-" + hashlib.sha256(
+            payload.encode("utf-8")
+        ).hexdigest()
+        return {
+            "event_id": event_id,
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": task_id,
+            "ts": ts,
+            "old_owner": old_owner,
+            "new_owner": new_owner,
+            "old_reviewer": old_reviewer,
+            "new_reviewer": new_reviewer,
+            "message": message,
+        }
+
+    @staticmethod
     def _task(**overrides: object) -> dict[str, object]:
         task = {
             "id": "SUP-L12-OWNER-DRIFT",
@@ -24842,6 +24878,16 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(
                 supervisor,
+                "worker_governance_activity_snapshot",
+                return_value=[
+                    self._reassignment_event(
+                        old_owner="Codex2",
+                        new_owner="Claude2",
+                    )
+                ],
+            ),
+            mock.patch.object(
+                supervisor,
                 "terminate_worker_process_generation",
                 return_value=True,
             ) as terminate_worker_process_generation,
@@ -24882,6 +24928,18 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         self.assertEqual(
             evidence["reason"],
             "authoritative_task_assignment_changed",
+        )
+        self.assertEqual(
+            evidence["governance_reason_code"],
+            "exact_owner_reassignment",
+        )
+        self.assertEqual(
+            event["governance_reason_code"],
+            "exact_owner_reassignment",
+        )
+        self.assertEqual(
+            event["source_event_id"],
+            evidence["governance_source_event_id"],
         )
         before = evidence["before"]
         self.assertEqual(before["task_row"]["owner"], "Claude2")
@@ -25153,6 +25211,16 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(
                 supervisor,
+                "worker_governance_activity_snapshot",
+                return_value=[
+                    self._reassignment_event(
+                        old_owner="Codex2",
+                        new_owner="Claude2",
+                    )
+                ],
+            ),
+            mock.patch.object(
+                supervisor,
                 "terminate_worker_process_generation",
                 return_value=True,
             ) as terminate_worker_process_generation,
@@ -25169,6 +25237,89 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
 
         self.assertTrue(changed)
         terminate_worker_process_generation.assert_called_once_with(worker)
+
+    def test_live_drift_without_canonical_authorization_is_preserved(
+        self,
+    ) -> None:
+        """Pin (D): reconciler-observed drift alone never kills a live worker.
+
+        The governance lease guard, not the reconciler's runtime observation,
+        authorizes ending a live lease. With no exact supervisor
+        ``task_reassigned`` event in the audit tail the process is preserved,
+        one deduplicated guard observation is recorded, and the row is still
+        reported as drift rather than silently healthy.
+        """
+
+        task = self._task()
+        worker = self._worker("codex2-unauthorized-live")
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "worker_governance_activity_snapshot",
+                return_value=[],
+            ) as worker_governance_activity_snapshot,
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate_worker_process_generation,
+            mock.patch.object(
+                supervisor,
+                "finalize_queue_event_record",
+            ) as finalize_queue_event_record,
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ) as write_activity_log,
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-29T12:05:00Z",
+            ),
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+            changed_again = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertTrue(changed)
+        self.assertFalse(changed_again)
+        worker_governance_activity_snapshot.assert_called()
+        terminate_worker_process_generation.assert_not_called()
+        finalize_queue_event_record.assert_not_called()
+        self.assertEqual(worker["status"], "running")
+        self.assertIsNone(worker.get("exit_code"))
+        self.assertNotIn("assignment_reconciliation", worker)
+        guard = worker["governance_lease_guard"]
+        self.assertEqual(guard["action"], "preserve")
+        self.assertEqual(guard["reason_code"], "governance_only_transition")
+        self.assertEqual(
+            [
+                call.args[1]["type"]
+                for call in write_activity_log.call_args_list
+            ],
+            ["worker_governance_lease_preserved"],
+        )
+        report = state["worker_assignment_reconciliation"]
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["active_drift_count"], 1)
+        self.assertEqual(report["rows"][0]["run_id"], "codex2-unauthorized-live")
+        self.assertFalse(report["rows"][0]["assignment_matches"])
 
     def test_locked_reassignment_rejects_changed_authoritative_owner(
         self,

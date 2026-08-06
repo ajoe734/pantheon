@@ -19194,6 +19194,13 @@ def reconcile_worker_task_assignments(
     only the oldest matching incumbent. The runtime report retains active and
     terminal joins with the exact run, queue, PID, exit code and command source
     SHA so a fleet-health summary cannot hide assignment drift.
+
+    Terminating a *live* process additionally requires the canonical governance
+    lease decision to authorize it, exactly as the poll_workers supersede path
+    does. Reconciler-observed drift alone never kills a running worker: without
+    terminal task truth or the latest exact supervisor ``task_reassigned``
+    event the process is preserved, one deduplicated guard observation is
+    recorded, and the row stays counted as drift.
     """
 
     if not config.get("paths", {}).get("status_file"):
@@ -19290,6 +19297,7 @@ def reconcile_worker_task_assignments(
                 )
 
     changed = False
+    governance_activity_events: list[dict[str, Any]] | None = None
     for run_id, (worker, reason, incumbent_run_id) in losers.items():
         if str(worker.get("status") or "") == "superseded":
             continue
@@ -19307,23 +19315,48 @@ def reconcile_worker_task_assignments(
             ),
             duplicate_active=reason == "duplicate_active_worker",
         )
+        lease_decision: dict[str, Any] | None = None
         if alive_by_run.get(run_id, False):
-            # Consult the governance lease decision to classify the reason and
-            # record it in the evidence, consistent with the poll_workers path.
-            # The reconciler has already determined that assignment drift exists
-            # (worker_dispatch_assignment_changed returned True or duplicate was
-            # detected), so we proceed to terminate regardless of whether the
-            # governance path would independently authorize it -- reconciler-
-            # confirmed drift is itself the authorization.  The governance
-            # decision is captured for the log event's reason_code only.
+            # Ending a live lease is authorized by canonical governance truth,
+            # not by the reconciler's own runtime observation. Use the same
+            # guard as the poll_workers supersede path: only terminal lifecycle
+            # truth or the latest exact supervisor task_reassigned event may
+            # preempt a running process. Every other classification preserves
+            # the process and records one deduplicated guard observation; the
+            # unreconciled row still surfaces as drift in the report below.
+            if governance_activity_events is None:
+                governance_activity_events = worker_governance_activity_snapshot(
+                    config
+                )
             lease_decision = active_worker_governance_lease_decision(
                 config,
                 worker,
                 task,
-                activity_events=None,
+                activity_events=governance_activity_events,
             )
-            _ = lease_decision  # captured; used in evidence logging below
+            if lease_decision["action"] != "terminate":
+                changed = record_worker_governance_lease_guard(
+                    config,
+                    worker,
+                    task,
+                    lease_decision,
+                ) or changed
+                continue
             if not terminate_worker_process_generation(worker):
+                changed = record_worker_governance_lease_guard(
+                    config,
+                    worker,
+                    task,
+                    {
+                        **lease_decision,
+                        "action": "preserve",
+                        "reason_code": (
+                            "authorized_transition_termination_pending_confirmation"
+                            if worker_process_generation_is_current(worker)
+                            else "authorized_transition_process_identity_unproven"
+                        ),
+                    },
+                ) or changed
                 continue
         timestamp = utc_now()
         if reason == "duplicate_active_worker":
@@ -19357,6 +19390,16 @@ def reconcile_worker_task_assignments(
             "action": "superseded",
             "reconciled_at": timestamp,
             "incumbent_run_id": incumbent_run_id,
+            "governance_reason_code": (
+                lease_decision.get("reason_code")
+                if lease_decision is not None
+                else None
+            ),
+            "governance_source_event_id": (
+                lease_decision.get("source_event_id")
+                if lease_decision is not None
+                else None
+            ),
             "before": before,
             "after": after,
         }
@@ -19377,6 +19420,16 @@ def reconcile_worker_task_assignments(
                 "worker_run_id": run_id,
                 "queue_event_id": worker.get("queue_event_id"),
                 "message": message,
+                "governance_reason_code": (
+                    lease_decision.get("reason_code")
+                    if lease_decision is not None
+                    else None
+                ),
+                "source_event_id": (
+                    lease_decision.get("source_event_id")
+                    if lease_decision is not None
+                    else None
+                ),
                 "evidence": evidence,
             },
         )
