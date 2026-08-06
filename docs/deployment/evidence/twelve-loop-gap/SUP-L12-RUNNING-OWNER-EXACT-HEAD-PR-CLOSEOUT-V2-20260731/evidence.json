@@ -1,0 +1,37 @@
+{
+  "schema_version": "task_closeout_evidence.v1",
+  "task": {
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+    "title": "Supersede Wave0X #4396 governed closeout with current-head spec",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "review_approved",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json"
+  },
+  "subject_pr": {
+    "number": 4396,
+    "title": "[ReviewBus] SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 Reconcile running-owner PR exact head before support closeout is counted",
+    "state": "MERGED",
+    "head_ref": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "head_oid": "48d92e56c2c68ed8cb80cc19f2bbd88b23342906",
+    "merge_commit": "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9",
+    "dev_ancestry_verified": true
+  },
+  "reconcile_evidence_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
+  "verification": {
+    "status": "pass",
+    "commands": [
+      {
+        "command": "gh pr view 4396 --json number,title,state,isDraft,headRefName,headRefOid,mergeStateStatus,reviews,labels",
+        "result": "state: MERGED, title: [ReviewBus] SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 Reconcile running-owner PR exact head before support closeout is counted"
+      },
+      {
+        "command": "git merge-base --is-ancestor 9cb030dc1 origin/dev",
+        "result": "pass (code 0, ANCESTOR_OF_DEV)"
+      }
+    ]
+  }
+}
