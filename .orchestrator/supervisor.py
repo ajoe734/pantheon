@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+import copy
 from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -1238,13 +1239,21 @@ def load_provider_report(config: dict[str, Any], *, refresh: bool | None = None)
     should_refresh = (
         bool(refresh)
         if refresh is not None
-        else bool(config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True))
+        else bool(config.get("supervisor", {}).get("auto_refresh_provider_capabilities", False))
     )
     if should_refresh:
         report = build_provider_capabilities(config)
         write_provider_capabilities(config, report=report)
         return report
-    return load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    if isinstance(report, dict) and isinstance(report.get("providers"), dict):
+        report = copy.deepcopy(report)
+        for _pkey, pdata in report["providers"].items():
+            if isinstance(pdata, dict):
+                auth_probe = pdata.get("auth_probe")
+                if isinstance(auth_probe, dict) and str(auth_probe.get("source") or "").strip().lower() == "live":
+                    auth_probe["source"] = "cached"
+    return report
 
 
 def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]) -> str | None:
@@ -9732,8 +9741,9 @@ def apply_provider_probe_to_report(
     provider_report: dict[str, Any],
     provider_key: str,
     probe: dict[str, Any],
+    config: dict[str, Any] | None = None,
 ) -> rewrite_provider_health.AccountHealth | None:
-    """Project one normalized provider probe into a capability report."""
+    """Project one normalized provider probe into a capability report with failure hysteresis."""
 
     providers = provider_report.setdefault("providers", {})
     if not isinstance(providers, dict):
@@ -9742,36 +9752,124 @@ def apply_provider_probe_to_report(
     if not isinstance(capability, dict):
         capability = {}
         providers[provider_key] = capability
+
+    has_existing_auth_ready = "auth_ready" in capability
+    old_can_auto_deliver = capability.get("auth_ready") is True
+    raw_ready = probe.get("ready")
+    if raw_ready is None:
+        # An unclassifiable probe carries no hysteresis decision, but it must still
+        # refresh the dashboard fields the pre-hysteresis code wrote before
+        # classify_probe returned None, or probe-less providers stop updating them.
+        capability["auth_error"] = probe.get("error")
+        capability["auth_method"] = probe.get("method")
+        capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+        capability["auth_probe"] = probe
+        return None
+    probe_ready = raw_ready is True
+
+    cfg = config or {}
+    max_consecutive_failures = int(
+        cfg.get("supervisor", {}).get("provider_probe_failure_hysteresis_threshold", 3)
+    )
+
+    probe_status = str(probe.get("status") or "").strip().lower()
+    cache_compatibility_failure = probe_status.startswith("models_cache_")
+
+    # Gate failure hysteresis on transient capacity/timeout/error failure kinds only.
+    # Terminal auth/credential revocations and quota_terminal failures MUST report
+    # effective_ready = False immediately (streak >= 1) so revoked accounts do not
+    # launch workers or bypass pre-dispatch auth gates.
+    failure_kind_raw = (
+        "capacity_retryable"
+        if cache_compatibility_failure
+        else rewrite_provider_health.classify_probe_failure_kind(
+            False,
+            status=probe.get("status"),
+        )
+    )
+    is_transient_failure = (
+        failure_kind_raw in {"capacity_retryable", "capacity"}
+        or probe_status in {"probe_timeout", "probe_error"}
+    )
+
+    if probe_ready:
+        consecutive_failures = 0
+        effective_ready = True
+    else:
+        source_raw = str(probe.get("source") or "live").strip().lower()
+        is_live_probe = source_raw == "live"
+        if is_live_probe:
+            current_streak = int(capability.get("consecutive_probe_failures", 0)) + 1
+        else:
+            current_streak = int(capability.get("consecutive_probe_failures", 0))
+        consecutive_failures = current_streak
+        # Hysteresis retains auth_ready=True on transient probe failures (timeout/error/capacity)
+        # when starting from a previously healthy/ready baseline until current_streak reaches max_consecutive_failures
+        if is_transient_failure and old_can_auto_deliver and current_streak < max_consecutive_failures:
+            effective_ready = True
+        else:
+            effective_ready = False
+
+    capability["consecutive_probe_failures"] = consecutive_failures
     capability["auth_error"] = probe.get("error")
     capability["auth_method"] = probe.get("method")
     capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
     capability["auth_probe"] = probe
-    probe_status = str(probe.get("status") or "").strip().lower()
-    cache_compatibility_failure = probe_status.startswith("models_cache_")
+
     health = (
         rewrite_provider_health.AccountHealth.DEGRADED
         if cache_compatibility_failure
         else rewrite_provider_health.classify_probe(
-            probe.get("ready"),
+            effective_ready,
             status=probe.get("status"),
         )
     )
     if health is None:
         return None
+
     failure_kind = (
         "capacity_retryable"
         if cache_compatibility_failure
         else rewrite_provider_health.classify_probe_failure_kind(
-            probe.get("ready"),
+            effective_ready,
             status=probe.get("status"),
         )
     )
-    capability["auth_ready"] = probe.get("ready") is True
+    capability["auth_ready"] = effective_ready
     capability["account_health"] = health.value
     capability["probe_failure_kind"] = failure_kind
-    ready = health is rewrite_provider_health.AccountHealth.HEALTHY
-    capability["local_cli_worker_supported"] = ready
-    capability["supports_auto_approve"] = ready
+
+    # Restore health-based capability derivation: only HEALTHY accounts support local CLI workers / auto approve.
+    # DEGRADED accounts (e.g. models_cache failure or transient capacity) MUST NOT be advertised as fully capable.
+    is_healthy = health is rewrite_provider_health.AccountHealth.HEALTHY
+    capability["local_cli_worker_supported"] = is_healthy
+    capability["supports_auto_approve"] = is_healthy
+
+    if has_existing_auth_ready and old_can_auto_deliver != effective_ready:
+        if isinstance(config, dict):
+            try:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "provider_capability_transitioned",
+                        "provider": provider_key,
+                        "old_can_auto_deliver": old_can_auto_deliver,
+                        "new_can_auto_deliver": effective_ready,
+                        "probe_status": probe.get("status"),
+                        "probe_error": probe.get("error"),
+                        "consecutive_failures": consecutive_failures,
+                        "message": (
+                            f"Provider {provider_key} capability transitioned: "
+                            f"can_auto_deliver {old_can_auto_deliver} -> {effective_ready} "
+                            f"(consecutive_failures={consecutive_failures}, error={probe.get('error')})"
+                        ),
+                    },
+                )
+            except (OSError, IOError, KeyError, TypeError, ValueError) as exc:
+                sys.stderr.write(
+                    f"[warning] Failed to write provider_capability_transitioned activity event for {provider_key}: {exc}\n"
+                )
+
     return health
 
 
@@ -9794,7 +9892,9 @@ def reconcile_fresh_provider_probe_failures(
     if not isinstance(providers, dict):
         return False
     for provider_key, current in providers.items():
-        if not isinstance(current, dict) or current.get("auth_ready") is not False:
+        if not isinstance(current, dict):
+            continue
+        if current.get("auth_ready") is not False:
             continue
         probe = current.get("auth_probe")
         if not isinstance(probe, dict) or str(probe.get("source") or "").strip().lower() != "live":
@@ -9863,8 +9963,11 @@ def refresh_provider_auth_before_dispatch(
         # into a fleet-wide dispatch outage.  The periodic report is the
         # declaration that this provider supports the owner-side gate.
         return None
+    capability = existing_providers[provider_key]
+    existing_probe = capability.get("auth_probe") if isinstance(capability.get("auth_probe"), dict) else None
+    force_probe = provider_auth_probe_due(config, provider_key, existing_probe)
     try:
-        probe = probe_provider_auth(config, provider_key, force=True)
+        probe = probe_provider_auth(config, provider_key, force=force_probe)
     except Exception as exc:  # probe failure is explicit not-ready, never a launch bypass
         probe = {
             "provider": provider_key,
@@ -9878,14 +9981,13 @@ def refresh_provider_auth_before_dispatch(
         }
     capability = existing_providers[provider_key]
     previously_ready = capability.get("auth_ready")
-    health = apply_provider_probe_to_report(provider_report, provider_key, probe)
+    previous_failures = capability.get("consecutive_probe_failures")
+    health = apply_provider_probe_to_report(provider_report, provider_key, probe, config=config)
     if health is None:
         return None
-    if capability["auth_ready"] != previously_ready:
-        # Persist auth transitions in both directions so the next dispatch gate
-        # consumes the same live pre-dispatch probe result.  Only persisting
-        # ready->not-ready left a stale not-ready capability on disk after a
-        # successful recovery probe, parking healthy lanes behind old auth data.
+    if capability["auth_ready"] != previously_ready or capability.get("consecutive_probe_failures") != previous_failures:
+        # Persist auth transitions and failure streak updates so subsequent dispatch cycles
+        # consume the persisted failure count across process ticks.
         try:
             write_provider_capabilities(config, report=provider_report)
         except Exception:  # a report write must never block or bypass dispatch gating
@@ -19718,7 +19820,19 @@ def probe_provider_reports(
         previous = load_json(config_path(config, "provider_capabilities"), default={}) or {}
     except KeyError:
         previous = {}
-    report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
+
+    refresh_interval = int(config.get("supervisor", {}).get("provider_capability_refresh_interval_seconds", 300))
+    should_tick_refresh = False
+    if refresh_interval > 0:
+        gen_at = _parse_iso_utc(str(previous.get("generated_at") or ""))
+        if gen_at is None or (datetime.now(timezone.utc) - gen_at).total_seconds() >= refresh_interval:
+            should_tick_refresh = True
+
+    if should_tick_refresh:
+        report = _safe_phase("load_provider_report_tick", load_provider_report, config, refresh=True, quiet=quiet)
+    else:
+        report = _safe_phase("load_provider_report", load_provider_report, config, refresh=False, quiet=quiet)
+
     if report is None:
         report = previous or {}
     recovery_targets = provider_recovery_probe_targets(
@@ -19804,7 +19918,7 @@ def probe_provider_reports(
             }
         if str(probe.get("source") or "").strip().lower() != "live":
             continue
-        apply_provider_probe_to_report(report, provider_key, probe)
+        apply_provider_probe_to_report(report, provider_key, probe, config=config)
         targeted = True
     if targeted:
         _safe_phase(
