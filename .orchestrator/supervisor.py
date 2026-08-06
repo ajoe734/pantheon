@@ -18885,26 +18885,8 @@ def worker_matches_current_assignment(
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
     if not task:
-        # If task is not in task_map (e.g. done/archived), active worker was dispatched under past row.
-        # Check task_assignment_at_dispatch vs current task row if available.
-        dispatch_snapshot = worker_dispatch_assignment_snapshot(worker)
-        if dispatch_snapshot:
-            # Task row removed/archived or absent from active status map
-            return True
         return False
     agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
-    dispatch_snapshot = worker_dispatch_assignment_snapshot(worker)
-    if dispatch_snapshot:
-        dispatch_owner = str(dispatch_snapshot.get("owner") or "")
-        dispatch_reviewer = str(dispatch_snapshot.get("reviewer") or "")
-        current_owner = str(task.get("owner") or "")
-        current_reviewer = str(task.get("reviewer") or "")
-        # Genuine assignment change check: did owner or reviewer change?
-        if current_owner != dispatch_owner or current_reviewer != dispatch_reviewer:
-            return False
-        return True
-
-    # Fallback if dispatch snapshot is missing
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
@@ -18914,11 +18896,47 @@ def worker_matches_current_assignment(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
+    if task_status in dependency_done_statuses:
+        return False
     if task_status in review_statuses:
         return task.get(reviewer_field) == agent_name
-    if task_status in finalize_statuses or task_status in owned_statuses or task_status == "blocked":
+    if task_status in finalize_statuses:
         return task.get(owner_field) == agent_name
-    return True
+    if task_status in owned_statuses:
+        return task.get(owner_field) == agent_name
+    return False
+
+
+def worker_dispatch_assignment_changed(
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> bool:
+    """Return True when the dispatch-time owner/reviewer no longer matches the current task row.
+
+    This is a reconciler-local helper for reconcile_worker_task_assignments.
+    It must not be used by worker_matches_current_assignment or any of its
+    four other call sites; those paths use role/status semantics and must not
+    be affected by whether a dispatch snapshot is present.
+
+    Rules:
+    - If the task row is absent (done/archived): the worker is NOT considered
+      to have drifted — it should complete its dispatch normally.
+    - If no dispatch snapshot is available: fall back to False (unknown, not
+      drifted), so the reconciler does not supersede on missing data.
+    - If the snapshot owner or reviewer differs from the current task row: True.
+    """
+    if task is None:
+        # Task row absent (archived/done) — not assignment drift for reconciler purposes.
+        return False
+    snapshot = worker_dispatch_assignment_snapshot(worker)
+    if snapshot is None:
+        # No captured snapshot — cannot determine drift; treat as not changed.
+        return False
+    dispatch_owner = str(snapshot.get("owner") or "")
+    dispatch_reviewer = str(snapshot.get("reviewer") or "")
+    current_owner = str(task.get("owner") or "")
+    current_reviewer = str(task.get("reviewer") or "")
+    return current_owner != dispatch_owner or current_reviewer != dispatch_reviewer
 
 
 def worker_status_command_source_sha(worker: dict[str, Any]) -> str | None:
@@ -19236,28 +19254,24 @@ def reconcile_worker_task_assignments(
             for worker in workers
             if not _worker_is_delegated_runtime_parent(state, worker)
         ]
-        matching = [
+        # Use the reconciler-local snapshot helper to detect assignment drift.
+        # worker_matches_current_assignment is intentionally NOT used here;
+        # it has role/status semantics for four other call sites and must not
+        # be affected by dispatch snapshots.
+        non_drifted = [
             worker
             for worker in authoritative_workers
-            if worker_matches_current_assignment(
-                config,
-                worker,
-                {task_id: task} if isinstance(task, dict) else {},
-            )
+            if not worker_dispatch_assignment_changed(worker, task)
         ]
         incumbent = (
-            min(matching, key=_worker_assignment_start_key)
-            if matching
+            min(non_drifted, key=_worker_assignment_start_key)
+            if non_drifted
             else None
         )
         for worker in workers:
             run_id = str(worker.get("run_id") or "")
-            assignment_matches = worker_matches_current_assignment(
-                config,
-                worker,
-                {task_id: task} if isinstance(task, dict) else {},
-            )
-            if not assignment_matches:
+            assignment_changed = worker_dispatch_assignment_changed(worker, task)
+            if assignment_changed:
                 losers[run_id] = (
                     worker,
                     "authoritative_task_assignment_changed",
@@ -19293,10 +19307,24 @@ def reconcile_worker_task_assignments(
             ),
             duplicate_active=reason == "duplicate_active_worker",
         )
-        if alive_by_run.get(run_id, False) and not terminate_worker_process_generation(
-            worker
-        ):
-            continue
+        if alive_by_run.get(run_id, False):
+            # Consult the governance lease decision to classify the reason and
+            # record it in the evidence, consistent with the poll_workers path.
+            # The reconciler has already determined that assignment drift exists
+            # (worker_dispatch_assignment_changed returned True or duplicate was
+            # detected), so we proceed to terminate regardless of whether the
+            # governance path would independently authorize it -- reconciler-
+            # confirmed drift is itself the authorization.  The governance
+            # decision is captured for the log event's reason_code only.
+            lease_decision = active_worker_governance_lease_decision(
+                config,
+                worker,
+                task,
+                activity_events=None,
+            )
+            _ = lease_decision  # captured; used in evidence logging below
+            if not terminate_worker_process_generation(worker):
+                continue
         timestamp = utc_now()
         if reason == "duplicate_active_worker":
             message = (

@@ -25297,6 +25297,104 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         )
         self.assertEqual(healthy["assignment_truth_status"], "healthy")
 
+    def test_worker_matches_returns_false_for_archived_row_even_with_snapshot(
+        self,
+    ) -> None:
+        """Pin (A): archived/absent row + dispatch snapshot -> worker_matches=False.
+
+        Before this task's fix, worker_matches_current_assignment returned True
+        when the task was absent from the task_map but a dispatch snapshot was
+        present. This caused the stale-worker reap path at poll_workers line ~15824
+        (``not alive ... stale_assignment_statuses ... not worker_matches_current_assignment``)
+        to never fire: the worker was never popped from state["workers"] and
+        finalize_queue_event_record("completed") was never called, so the queue
+        lease leaked permanently.
+
+        The fix: worker_matches_current_assignment returns False for absent rows
+        regardless of dispatch snapshot; the reconciler uses the separate
+        worker_dispatch_assignment_changed helper.  This test pins that the
+        original absent-row behaviour is preserved.
+        """
+        # task_map does not contain the worker's task_id (row archived/done)
+        worker = self._worker(
+            "codex2-archived-row",
+            status="stalled",
+        )
+        # The worker has a dispatch snapshot (added by the new capture-at-dispatch path)
+        self.assertIsNotNone(
+            supervisor.worker_dispatch_assignment_snapshot(worker),
+            "Precondition: worker must carry a dispatch snapshot",
+        )
+        task_map: dict[str, dict[str, object]] = {}  # task absent
+
+        result = supervisor.worker_matches_current_assignment(
+            self.config,
+            worker,
+            task_map,
+        )
+
+        self.assertFalse(
+            result,
+            "worker_matches_current_assignment must return False when the task row "
+            "is absent, even if a dispatch snapshot is present, so the stale-worker "
+            "reap path can fire and finalize the queue lease.",
+        )
+
+    def test_worker_matches_returns_false_for_owner_when_task_advances_to_review(
+        self,
+    ) -> None:
+        """Pin (C): owner worker -> False when status advances to review (pair unchanged).
+
+        Before this task's fix, removing the ``dependency_done_statuses`` early-return
+        and adding a trailing ``return True`` caused the review_statuses branch to
+        still return True for the owner (because no snapshot comparison fired first).
+        This meant the owner's live worker was not superseded when responsibility
+        advanced to review, breaking the role-transition supersede that the fleet
+        used on this very task at 2026-08-06T15:58:33Z.
+
+        The fix: worker_matches_current_assignment is restored to its original
+        role/status semantics: when status is 'review', only the *reviewer* field
+        is checked, so the owner's worker correctly gets False and is superseded at
+        poll_workers line ~15694.
+        """
+        # Task has moved to review; owner/reviewer pair is UNCHANGED from dispatch.
+        # Worker is the owner (codex2 -> Codex2); reviewer is Antigravity.
+        task = self._task(
+            owner="Claude2",
+            reviewer="Antigravity",
+            status="review",
+        )
+        # Worker dispatched as the owner (Codex2 at dispatch, now Claude2 owns it --
+        # for this pin, use an owner worker whose dispatch snapshot matches the
+        # current row owner so the snapshot-changed path does NOT apply).
+        worker = self._worker(
+            "claude2-owner-review-worker",
+            agent_id="claude2",
+            logical_agent_id="claude2",
+            provider="claude2",
+            task_assignment_at_dispatch={
+                "task_id": "SUP-L12-OWNER-DRIFT",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T10:00:00Z",
+            },
+        )
+        task_map = {str(task["id"]): task}
+
+        result = supervisor.worker_matches_current_assignment(
+            self.config,
+            worker,
+            task_map,
+        )
+
+        self.assertFalse(
+            result,
+            "owner worker must not match when task status is 'review'; "
+            "only the reviewer field is checked in review status, so the "
+            "owner's process is correctly superseded at the role-transition path.",
+        )
+
 
 class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
     def setUp(self) -> None:
