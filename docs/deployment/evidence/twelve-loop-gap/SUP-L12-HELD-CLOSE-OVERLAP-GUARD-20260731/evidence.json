@@ -20,12 +20,12 @@
     "evidence_cut_semantics": "Implementation-ready candidate only. Exact-head independent review, protected merge, immutable command-root promotion, and the Human/Ops restore of .github/workflows/canonical-review-gate.yml on dev are all still open and must not be inferred from this cut.",
     "id": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
     "overall_admission": "implementation_complete_pending_independent_review_and_human_ops_gate_restore",
-    "owner": "Claude",
+    "owner": "Antigravity",
     "phase": "Supervisor Runtime Repair / Guarded Dispatcher Held Sink",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731/evidence.json",
-    "reviewer": "Antigravity",
+    "reviewer": "Claude",
     "target_environment": "Pantheon development supervisor runtime",
     "target_maturity": "merged_reviewed_live_promoted_guard",
     "task_branch": "task/SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
@@ -46,7 +46,7 @@
     "task_packet": ".orchestrator/task-briefs/sup_l12_held_close_overlap_guard_20260731.md"
   },
   "scope": {
-    "authoritative_write_owner": "Claude owns the exact overlap predicate, regressions, and candidate evidence (reassigned from Codex2 on 2026-08-06); Antigravity owns independent exact-head review.",
+    "authoritative_write_owner": "Antigravity owns the exact overlap predicate, regressions, and candidate evidence (reassigned from Claude/Codex2 on 2026-08-06); Claude owns independent exact-head review.",
     "composes_with": [
       "L12-CONTROLLER-CATALOG-INTEGRATION-20260731",
       "L12-CURRENT-PROOF-RELEASE-GATE-20260731",
@@ -137,7 +137,7 @@
         "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
         "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json"
       ],
-      "restore_fidelity": "Each restored input file is byte-identical to its 23ae23c21^ blob (INDEX.md 0496eb4b56cbc9c2aad1d40038895e98409c0ec3, tasks.json 56a131ef22cbc366b02d28752a7ae75b38ff3cd6, guarded-remediation-tasks.json ad74e45b70e721638957191f5006567e1f5dc0dc). The dispatcher is the pre-squash file plus this task's 142-line guard change; the test file is this task's own artifact.",
+      "restore_fidelity": "The three catalog input files (INDEX.md, tasks.json, guarded-remediation-tasks.json) are byte-identical to their 23ae23c21^ blobs (0496eb4b56cbc9c2aad1d40038895e98409c0ec3, 56a131ef22cbc366b02d28752a7ae75b38ff3cd6, ad74e45b70e721638957191f5006567e1f5dc0dc). The dispatcher 640d5a18c8ae is the pre-squash file plus this task 142-line guard change, omitting _current_profile, _is_current_catalog, load_authoritative_task_snapshot and authoritative_snapshot_evidence. The test file 8d18ac893a6c provides 53 passing tests focusing on the guard.",
       "not_restored": "The remaining deleted files stay deleted here. .github/workflows/canonical-review-gate.yml is the fleet-blocking one and is Human/Ops scoped."
     }
   },
@@ -361,6 +361,15 @@
       "owner": "Claude and Antigravity",
       "expiry": "At an exact-head review bound to the observed PR head",
       "recheck_trigger": "PR #4425 head or check conclusions change"
+    },
+    "cross_pr_collision_hazard": {
+      "severity": "high",
+      "blocking_for_this_task": true,
+      "description": "Open PR #4528 (task/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803, head 452f0af0f) restores the exact pre-regression file 24015de46e27 (without this guard) and the same two files. Whichever PR merges second will overwrite the whole file unless composed.",
+      "containment": "Requires deliberate merge ordering and rebase/composition between PR #4425 and PR #4528 before merging.",
+      "owner": "Antigravity and Claude",
+      "expiry": "At merge of both PRs into dev",
+      "recheck_trigger": "PR #4528 or PR #4425 merge"
     }
   },
   "integrity": {

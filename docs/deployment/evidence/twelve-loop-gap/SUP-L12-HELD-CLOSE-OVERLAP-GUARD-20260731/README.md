@@ -30,14 +30,21 @@ files from `dev`. It is a regression, not an intentional removal:
   `--validate-only --current` failed closed with `FileNotFoundError`.
 - 154 of the 166 deleted files still exist on `origin/master`.
 
-This PR restores exactly the five files above and nothing else. Each restored
-file is byte-identical to its `23ae23c21^` blob, verified with `git hash-object`
-against `git rev-parse 23ae23c21^:<path>`. The PR diff against `dev` is eight
-files: those five, this README, `evidence.json`, and the task brief.
+This PR restores exactly the five files above and nothing else. The three catalog input files (`INDEX.md`, `tasks.json`, `guarded-remediation-tasks.json`) are byte-identical to their `23ae23c21^` blobs, verified with `git hash-object`. The restored dispatcher `scripts/dispatch_twelve_loop_gap_2026_07_26.py` (`640d5a18c8ae`) is the pre-squash file plus this task's 142-line guard change (omitting the later `626631be8` additions `_current_profile`, `_is_current_catalog`, `load_authoritative_task_snapshot`, and `authoritative_snapshot_evidence`). The restored test file `scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py` (`8d18ac893a6c`) provides 53 passing tests focusing on the guard, omitting 6 defs present at `23ae23c21^`.
 
 Two lanes' later additions to the dispatcher (`626631be8`, `f2b480942`,
 `6aec51e9c`, taking it from 2923 to 3093 lines) are **not** restored here. They
 were also lost to the same squash and are outside this task's scope.
+
+## Cross-PR Collision Hazard (PR #4528)
+
+Open PR #4528 (`task/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803`, head `452f0af0f`) restores the exact pre-regression file `24015de46e27` (without this guard) along with the same two files. Since both PRs are open against `dev`, whichever merges second will overwrite the other's file unless merge-order handling or rebase/composition is performed.
+
+## Task Actors Alignment
+
+Task actors are rebound in `evidence.json` and canonical task status:
+- **Owner**: `Antigravity`
+- **Reviewer**: `Claude`
 
 ## Still blocking merge, Human/Ops scoped
 
