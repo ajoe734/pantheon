@@ -25,6 +25,42 @@ class BoundedAggregateState:
     projection: JourneyProjection | None = None
     loop_record: dict[str, Any] | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize aggregate state for persistent controller_state.json storage."""
+        return {
+            "journey_id": self.journey_id,
+            "tenant_id": self.tenant_id,
+            "environment": self.environment,
+            "events_by_id": self.events_by_id,
+            "event_fingerprints": self.event_fingerprints,
+            "last_ingested_seq": self.last_ingested_seq,
+            "last_sequence_no": self.last_sequence_no,
+            "projection": self.projection.to_dict() if self.projection and hasattr(self.projection, "to_dict") else self.projection,
+            "loop_record": self.loop_record,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BoundedAggregateState:
+        """Restore aggregate state from persistent storage dict."""
+        proj_data = data.get("projection")
+        proj = None
+        if isinstance(proj_data, dict):
+            proj = JourneyProjection.from_dict(proj_data)
+        elif isinstance(proj_data, JourneyProjection):
+            proj = proj_data
+
+        return cls(
+            journey_id=data["journey_id"],
+            tenant_id=data.get("tenant_id", ""),
+            environment=data.get("environment", ""),
+            events_by_id=dict(data.get("events_by_id") or {}),
+            event_fingerprints=dict(data.get("event_fingerprints") or {}),
+            last_ingested_seq=int(data.get("last_ingested_seq") or 0),
+            last_sequence_no=int(data.get("last_sequence_no") or 0),
+            projection=proj,
+            loop_record=dict(data["loop_record"]) if data.get("loop_record") else None,
+        )
+
 
 class IncrementalLifecycleMaterializer:
     """Bounded materializer maintaining per-journey aggregate states.
@@ -34,13 +70,22 @@ class IncrementalLifecycleMaterializer:
 
     def __init__(self, initial_state: Mapping[str, Any] | None = None) -> None:
         self.aggregates: dict[str, BoundedAggregateState] = {}
-        self.reverse_index: dict[tuple[str, str, str, str], set[str]] = {}
         if initial_state:
             self._restore_from_state(initial_state)
 
     def _restore_from_state(self, state: Mapping[str, Any]) -> None:
+        # Load from persisted bounded aggregates if present
+        stored_aggregates = state.get("aggregates")
+        if isinstance(stored_aggregates, dict):
+            for jid, agg_dict in stored_aggregates.items():
+                if isinstance(agg_dict, dict):
+                    self.aggregates[jid] = BoundedAggregateState.from_dict(agg_dict)
+                elif isinstance(agg_dict, BoundedAggregateState):
+                    self.aggregates[jid] = agg_dict
+            return
+
+        # Fallback for legacy state format containing canonical_events
         canonical_events = state.get("canonical_events") or {}
-        # Group stored canonical events by journey_id
         for event_id, entry in canonical_events.items():
             identity = entry.get("identity") or {}
             journey_id = identity.get("journey_id")
@@ -75,16 +120,6 @@ class IncrementalLifecycleMaterializer:
         affected_journeys: set[str] = set()
         accepted = 0
         duplicates = 0
-
-        # First materialize existing state aggregates if not already materialized
-        for agg in self.aggregates.values():
-            if agg.projection is None and agg.events_by_id:
-                self._rematerialize_aggregate(
-                    agg,
-                    controller=controller,
-                    journey_events_fn=journey_events_fn,
-                    loop_record_builder_fn=loop_record_builder_fn,
-                )
 
         # Group batch entries by journey_id
         batch_by_journey: dict[str, list[Mapping[str, Any]]] = {}
@@ -162,9 +197,10 @@ class IncrementalLifecycleMaterializer:
         mat.rebuild(journey_events)
         agg.projection = mat.get(agg.journey_id, tenant_id=agg.tenant_id, environment=agg.environment)
 
-        if entries and agg.projection:
+        if entries:
             records = loop_record_builder_fn([entries], mat, controller)
-            agg.loop_record = records[0] if records else None
+            if records:
+                agg.loop_record = records[0]
 
     def render_full_payloads(
         self,
@@ -174,6 +210,7 @@ class IncrementalLifecycleMaterializer:
         generation: int,
         controller: Mapping[str, Any],
         journey_events_fn: Any,
+        loop_record_builder_fn: Any | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Render complete journey and loop payloads from all aggregate states."""
         all_journey_events: list[dict[str, Any]] = []
@@ -182,6 +219,14 @@ class IncrementalLifecycleMaterializer:
         # Sort journeys for deterministic order
         for journey_id in sorted(self.aggregates.keys()):
             agg = self.aggregates[journey_id]
+            # Ensure aggregate has loop_record if needed
+            if agg.loop_record is None and agg.events_by_id and loop_record_builder_fn:
+                self._rematerialize_aggregate(
+                    agg,
+                    controller=controller,
+                    journey_events_fn=journey_events_fn,
+                    loop_record_builder_fn=loop_record_builder_fn,
+                )
             entries = list(agg.events_by_id.values())
             entries.sort(key=lambda e: (
                 str((e.get("identity") or {}).get("journey_id") or ""),
@@ -215,3 +260,4 @@ class IncrementalLifecycleMaterializer:
             "records": all_loop_records,
         }
         return journey_payload, loop_payload
+

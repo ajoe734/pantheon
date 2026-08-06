@@ -909,10 +909,14 @@ class LifecycleProjector:
         max_seen = int(candidate.get("checkpoint", 0))
         now = self.clock()
 
+        from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
+        inc_mat = IncrementalLifecycleMaterializer(candidate)
+
         ordered_records = sorted(
             (dict(record) for record in records),
             key=lambda row: (int(row.get("ingested_seq") or 0), str(row.get("event_id") or "")),
         )
+        batch_entries: list[dict[str, Any]] = []
         for row in ordered_records:
             sequence = int(row.get("ingested_seq") or 0)
             if mode in {"live", "recovery"} and sequence <= 0:
@@ -931,17 +935,26 @@ class LifecycleProjector:
                     "payload": event,
                 }
             )
-            previous = (candidate.get("canonical_events") or {}).get(event_id)
-            if previous is not None:
-                if previous.get("fingerprint") != fingerprint:
+
+            # Check duplicate against existing materializer aggregates
+            try:
+                identity = self._identity(event) if event.get("event_type") in LIFECYCLE_EVENT_TYPES else {}
+                journey_id = identity.get("journey_id")
+            except InvalidLifecycleEvent:
+                journey_id = None
+            existing_agg = inc_mat.aggregates.get(journey_id) if journey_id else None
+            if existing_agg and event_id in existing_agg.events_by_id:
+                existing_entry = existing_agg.events_by_id[event_id]
+                if existing_entry.get("fingerprint") != fingerprint:
                     raise ConflictingLifecycleEvent(
                         f"conflicting canonical event_id: {event_id}"
                     )
                 duplicates += 1
-                if mode == "live" and previous.get("source_mode") != "live":
-                    previous["source_mode"] = "live"
-                    previous["accepted_live"] = True
+                if mode == "live" and existing_entry.get("source_mode") != "live":
+                    existing_entry["source_mode"] = "live"
+                    existing_entry["accepted_live"] = True
                 continue
+
             try:
                 self._validate_fixture_event(event)
                 identity = self._identity(event)
@@ -961,7 +974,8 @@ class LifecycleProjector:
                 )
                 candidate["quarantine"] = candidate["quarantine"][-1000:]
                 continue
-            candidate.setdefault("canonical_events", {})[event_id] = {
+
+            entry = {
                 "fingerprint": fingerprint,
                 "event": event,
                 "identity": identity,
@@ -971,6 +985,7 @@ class LifecycleProjector:
                 "source_mode": mode,
                 "accepted_live": mode == "live",
             }
+            batch_entries.append(entry)
             accepted += 1
 
         if mode in {"live", "recovery"}:
@@ -1010,9 +1025,10 @@ class LifecycleProjector:
             controller["last_live_success_at"] = now
             live_times = [
                 entry["event"]["created_at"]
-                for entry in candidate.get("canonical_events", {}).values()
+                for agg in inc_mat.aggregates.values()
+                for entry in agg.events_by_id.values()
                 if entry.get("source_mode") == "live"
-            ]
+            ] + [entry["event"]["created_at"] for entry in batch_entries if entry.get("source_mode") == "live"]
             controller["last_live_event_at"] = max(live_times) if live_times else None
         elif mode == "recovery":
             controller["last_recovery_at"] = now
@@ -1042,17 +1058,6 @@ class LifecycleProjector:
         controller["last_successful_publish_at"] = now
         controller["last_successful_publish_generation"] = int(candidate["generation"])
 
-        # Use incremental aggregate materialization to avoid all-history rebuilds
-        from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
-        inc_mat = IncrementalLifecycleMaterializer(candidate)
-
-        # Determine entries to process in this batch
-        batch_entries = [
-            candidate["canonical_events"][row["event_id"]]
-            for row in ordered_records
-            if row.get("event_id") in candidate.get("canonical_events", {})
-        ]
-
         inc_mat.apply_batch(
             batch_entries,
             controller=controller,
@@ -1060,12 +1065,18 @@ class LifecycleProjector:
             loop_record_builder_fn=self._loop_records_for_entries,
         )
 
+        # Store updated aggregates in candidate state dict
+        candidate["aggregates"] = {
+            jid: agg.to_dict() for jid, agg in inc_mat.aggregates.items()
+        }
+
         journey_payload, loop_payload = inc_mat.render_full_payloads(
             schema_version_journey=JOURNEY_STORE_SCHEMA,
             schema_version_loop=LOOP_STORE_SCHEMA,
             generation=int(candidate["generation"]),
             controller=controller,
             journey_events_fn=self._journey_events,
+            loop_record_builder_fn=self._loop_records_for_entries,
         )
 
         self._publish_candidate(candidate, journey_payload, loop_payload)
@@ -1152,6 +1163,7 @@ class LifecycleProjector:
                 generation=int(candidate["generation"]),
                 controller=controller,
                 journey_events_fn=self._journey_events,
+                loop_record_builder_fn=self._loop_records_for_entries,
             )
             self._publish_candidate(candidate, journey_payload, loop_payload)
         else:
@@ -1197,6 +1209,7 @@ class LifecycleProjector:
                 generation=int(candidate["generation"]),
                 controller=controller,
                 journey_events_fn=self._journey_events,
+                loop_record_builder_fn=self._loop_records_for_entries,
             )
             self._publish_candidate(candidate, journey_payload, loop_payload)
         else:
@@ -1320,6 +1333,10 @@ class LifecycleProjector:
 
     def _render(self, state: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         canonical_entries = list((state.get("canonical_events") or {}).values())
+        if not canonical_entries and isinstance(state.get("aggregates"), dict):
+            for agg in state["aggregates"].values():
+                events_map = agg.get("events_by_id") if isinstance(agg, dict) else getattr(agg, "events_by_id", {})
+                canonical_entries.extend(events_map.values())
         canonical_entries.sort(key=self._entry_sort_key)
         journey_events: list[dict[str, Any]] = []
         for entry in canonical_entries:

@@ -744,7 +744,7 @@ def test_incremental_materializer_duplicate_out_of_order_replay_and_equivalence(
     assert len(agg.events_by_id) == 8
 
     # Batch 2: replay exact duplicate batch
-    batch_entries = [p1.state["canonical_events"][r["payload"]["event_id"]] for r in rows]
+    batch_entries = [p1.state["aggregates"]["tj-paper-001"]["events_by_id"][r["payload"]["event_id"]] for r in rows]
     affected, accepted, duplicates = inc.apply_batch(
         batch_entries,
         controller=p1.state["controller"],
@@ -790,6 +790,63 @@ def test_incremental_materializer_duplicate_out_of_order_replay_and_equivalence(
     assert l_inc["records"] == l_full["records"]
 
 
+def test_record_poll_and_source_failure_preserve_loop_records(tmp_path):
+    projector = LifecycleProjector(
+        state_path=tmp_path / "ctrl_poll.json",
+        bundle_root=tmp_path,
+        deployment_sha="sha_poll",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    projector.project_records(lifecycle_rows(), mode="live", source_high_watermark=8)
+    initial_loop = json.loads((tmp_path / "current" / "loop_runs.json").read_text())
+    assert len(initial_loop["records"]) == 1
+
+    # 1. Semantic-change record_poll (e.g. mode change)
+    projector.record_poll(source_high_watermark=8, backlog=0, mode="recovery")
+    poll_loop = json.loads((tmp_path / "current" / "loop_runs.json").read_text())
+    assert len(poll_loop["records"]) == 1
+
+    # 2. Semantic-change record_source_failure
+    projector.record_source_failure("database connection lost", backlog=5)
+    failure_loop = json.loads((tmp_path / "current" / "loop_runs.json").read_text())
+    assert len(failure_loop["records"]) == 1
+
+
+def test_bounded_aggregate_growth_and_memory_isolation(tmp_path):
+    from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
+
+    projector = LifecycleProjector(
+        state_path=tmp_path / "ctrl_bounded.json",
+        bundle_root=tmp_path,
+        deployment_sha="sha_bounded",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    rows = lifecycle_rows()
+    projector.project_records(rows, mode="live", source_high_watermark=8)
+
+    rematerialize_calls = 0
+    orig_rematerialize = IncrementalLifecycleMaterializer._rematerialize_aggregate
+
+    def tracked_rematerialize(self, agg, *, controller, journey_events_fn, loop_record_builder_fn):
+        nonlocal rematerialize_calls
+        rematerialize_calls += 1
+        return orig_rematerialize(self, agg, controller=controller, journey_events_fn=journey_events_fn, loop_record_builder_fn=loop_record_builder_fn)
+
+    # Ingest 5 subsequent polls touching only journey 1 (replaying exact duplicates or adding events)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(IncrementalLifecycleMaterializer, "_rematerialize_aggregate", tracked_rematerialize)
+        for _ in range(5):
+            projector.project_records(rows, mode="live", source_high_watermark=8)
+
+    # With duplicate detection and bounded aggregate tracking, no affected aggregate was rematerialized
+    assert rematerialize_calls == 0
+
+    # Ensure state does not store canonical_events dict
+    assert "canonical_events" not in projector.state or not projector.state.get("canonical_events")
+    assert "aggregates" in projector.state
+    assert len(projector.state["aggregates"]) == 1
+
+
 def test_incremental_materializer_conflicting_fingerprint_fails_closed(tmp_path):
     from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
 
@@ -803,7 +860,7 @@ def test_incremental_materializer_conflicting_fingerprint_fails_closed(tmp_path)
     p.project_records(rows[:1], mode="live", source_high_watermark=1)
     inc = IncrementalLifecycleMaterializer(p.state)
 
-    conflicting_entry = json.loads(json.dumps(p.state["canonical_events"][rows[0]["payload"]["event_id"]]))
+    conflicting_entry = json.loads(json.dumps(p.state["aggregates"]["tj-paper-001"]["events_by_id"][rows[0]["payload"]["event_id"]]))
     conflicting_entry["fingerprint"] = "0000000000000000000000000000000000000000000000000000000000000000"
 
     with pytest.raises(ConflictingLifecycleEvent):
@@ -813,3 +870,5 @@ def test_incremental_materializer_conflicting_fingerprint_fails_closed(tmp_path)
             journey_events_fn=LifecycleProjector._journey_events,
             loop_record_builder_fn=LifecycleProjector._loop_records_for_entries,
         )
+
+

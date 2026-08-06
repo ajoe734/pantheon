@@ -8,13 +8,14 @@
     "status": "in_progress",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-REDUCER-001",
-    "head_sha": "045f7822de829d6d0bb6760d727f058b4710cc80",
-    "evidence_cut_at": "2026-08-06T15:59:07Z"
+    "head_sha": "51df0df6282518138d075376194965c1733374b6",
+    "evidence_cut_at": "2026-08-06T16:12:45Z"
   },
   "scope": {
     "owned": [
       "services/trade_journey/lifecycle_projector.py",
       "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/materializer.py",
       "services/trade_journey/test_lifecycle_projector.py",
       "services/trade_journey/test_canonical_paper_lifecycle_integration.py",
       "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/"
@@ -30,28 +31,31 @@
     ]
   },
   "file_checksums": {
-    "services/trade_journey/lifecycle_projector.py": "50ea3e9f6bc0feccc5768955eee75b0eee71964809c9f5a35eac66a906ca61a1",
-    "services/trade_journey/incremental_materializer.py": "ee53e1f50a0c12c343d0983aa8f403ead9684a8bade776e1e477ecddcbb30dad",
-    "services/trade_journey/test_lifecycle_projector.py": "5d57fd1e0a6a4b80eb9cc8f10c84f0ecac65741abbde60451c8a26b1af789491",
+    "services/trade_journey/lifecycle_projector.py": "1322e100c1ff3c4d0776255ae7cf8d5f0adf9657d956c93a089dc9b01d964043",
+    "services/trade_journey/incremental_materializer.py": "70d96d2e8bca61757f1086f87d1c2316461b9f3c4d4c1391096093d25a8ac9f2",
+    "services/trade_journey/materializer.py": "bd6c6e76411b452c5a6e8db16eb8b55cdd735ed7ebe9042df253184be82feb96",
+    "services/trade_journey/test_lifecycle_projector.py": "58febb2c6ff01cb6b4708cdb156de9d39166662b15b91e61b7362f44e76f4da0",
     "services/trade_journey/test_canonical_paper_lifecycle_integration.py": "e339fef9222738b55718632ce430ae29199b5f56ef4f4345ace7ad5630d04ba6"
   },
   "contract_proof": {
-    "reducer_bounded": "Full global rebuilds removed from the active worker path; materialization is scoped per aggregate journey",
+    "reducer_bounded": "Full global rebuilds and full state deepcopies removed from active worker path; memory and per-poll work bounded by batch + affected aggregates",
+    "loop_record_preserved": "loop_records preserved across record_poll and record_source_failure published read-model bundles",
     "idempotency_preserved": "Exact duplicates short-circuit and conflicting event fingerprints fail closed",
     "freshness_mode": "Only live records update live freshness; recovery, backfill, and replay retain distinct modes"
   },
   "validation": [
     {
-      "command": "python3 scripts/dev/provision_python_distribution.py && ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
-      "result": "pass; 22 passed in 4.79s"
+      "command": "python3 scripts/dev/provision_python_distribution.py && ./.venv-pantheon/bin/python3 -m pytest -v services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 24 passed in 3.95s"
     },
     {
       "command": "./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
-      "result": "pass; 121 passed, 19 skipped in 20.98s"
+      "result": "pass; 123 passed, 19 skipped in 21.62s"
     },
     {
-      "command": "./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py && git diff --check",
+      "command": "./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py services/trade_journey/materializer.py && git diff --check",
       "result": "pass"
     }
   ]
 }
+

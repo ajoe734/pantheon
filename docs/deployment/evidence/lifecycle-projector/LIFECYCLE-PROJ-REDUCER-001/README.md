@@ -7,32 +7,32 @@
 - Status: in_progress
 - Base Branch: dev
 - Task Branch: task/LIFECYCLE-PROJ-REDUCER-001
-- Head SHA: 045f7822de829d6d0bb6760d727f058b4710cc80
 
 ## Validation Commands and Results
 
 1. Python distribution provisioning and focused unit/integration tests:
    ```bash
    python3 scripts/dev/provision_python_distribution.py
-   ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py
+   ./.venv-pantheon/bin/python3 -m pytest -v services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py
    ```
-   Result: PASS (22 passed in 4.79s)
+   Result: PASS (24 passed in 3.95s)
 
 2. Full `services/trade_journey` test suite:
    ```bash
    ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey
    ```
-   Result: PASS (121 passed, 19 skipped in 20.98s)
+   Result: PASS (123 passed, 19 skipped in 21.62s)
 
 3. Syntax compile and whitespace check:
    ```bash
-   ./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py && git diff --check
+   ./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py services/trade_journey/materializer.py && git diff --check
    ```
    Result: PASS
 
 ## Code Proof Summary
 
-- Removed unused imports (`_canonical_json`, `_fingerprint`, `STAGES`, `Iterable`) from `incremental_materializer.py`.
-- Cleaned up dead function `rematerialize_all` and unused parameter `stage_specs_fn`.
-- Replaced `_render` calls in `record_poll` and `record_source_failure` with `IncrementalLifecycleMaterializer.render_full_payloads`.
-- Added explicit unit tests in `test_lifecycle_projector.py` verifying incremental batch application, exact duplicate handling, out-of-order handling, conflicting fingerprint fail-closed behavior, and 100% output equivalence against global render.
+- Resolved `loop_record` wiping bug on `record_poll` and `record_source_failure` by passing `loop_record_builder_fn` to `render_full_payloads`.
+- Removed `canonical_events` all-history state storage and `copy.deepcopy(self.state)` full state duplication in favor of aggregate-bounded state persistent dictionaries (`BoundedAggregateState.to_dict()`/`from_dict()`).
+- Added unit test `test_record_poll_and_source_failure_preserve_loop_records` verifying loop records persist across non-projection state publish paths.
+- Added unit test `test_bounded_aggregate_growth_and_memory_isolation` verifying duplicate polls trigger 0 rematerialization calls and state stays strictly aggregate-bounded.
+
