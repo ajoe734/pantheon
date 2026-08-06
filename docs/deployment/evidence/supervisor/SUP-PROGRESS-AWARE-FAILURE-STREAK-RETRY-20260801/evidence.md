@@ -3,7 +3,7 @@
 ## 1. Incident and Remediation Summary
 
 1. **Rejection & Reopen Rationale**:
-   - Reset branch to `1fef315cb`, merged `origin/dev` tip cleanly (`ab5caf7d4`), and updated evidence documentation.
+   - Branch rebuilt directly on `origin/dev` tip `ab5caf7d4` (no prior commit reset; `1fef315cb` is not an ancestor of this head).
    - PR #4385 rejection rationale provided below (Item 10).
 
 2. **Supersession Thesis (Acceptance Item 10)**:
