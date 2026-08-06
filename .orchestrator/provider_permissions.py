@@ -2273,6 +2273,20 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
         },
     }
+    existing_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    existing_providers = existing_report.get("providers", {}) if isinstance(existing_report.get("providers"), dict) else {}
+    from supervisor import apply_provider_probe_to_report
+    for pkey, pdata in report.get("providers", {}).items():
+        if isinstance(pdata, dict):
+            if pkey in existing_providers and isinstance(existing_providers[pkey], dict):
+                prev = existing_providers[pkey]
+                if "consecutive_probe_failures" in prev:
+                    pdata["consecutive_probe_failures"] = prev["consecutive_probe_failures"]
+                if "auth_ready" in prev:
+                    pdata["auth_ready"] = prev["auth_ready"]
+            auth_probe = pdata.get("auth_probe")
+            if isinstance(auth_probe, dict) and str(auth_probe.get("source") or "").strip().lower() == "live":
+                apply_provider_probe_to_report(report, pkey, auth_probe, config=config)
     return report
 
 
