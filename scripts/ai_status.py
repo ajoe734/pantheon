@@ -6919,11 +6919,16 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     task_id, message = args[0], args[1]
     actor = current_actor()
     ensure_agent(actor)
-    if actor != "Human/Ops":
-        raise SystemExit("Only Human/Ops can reconcile an already-merged task to done")
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    current_reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor != "Human/Ops" and actor != current_reviewer:
+        raise SystemExit(
+            "Only Human/Ops or the task's current reviewer "
+            f"({current_reviewer or 'unknown'}) can reconcile an already-merged "
+            "task to done"
+        )
     if str(task.get("status") or "") not in {
         "todo",
         "in_progress",
