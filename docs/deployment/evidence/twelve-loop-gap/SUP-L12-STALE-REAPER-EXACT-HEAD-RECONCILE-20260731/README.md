@@ -53,9 +53,10 @@ Every path and its classification is recorded in
 
 ## Required correction
 
-1. PR #4385 is now CLOSED. The narrow anchor correction (replacing invalid anchor `9d53a94a265c` with `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`) must be submitted as a new PR against dev or resolved via an explicit supersede.
-2. Re-run focused and full supervisor validations on the new PR head.
-3. Obtain independent review bound to the new PR number/head/base and record the decision in the reviewed evidence manifest.
-4. Only after protected merge may the underlying owner run governed closeout; root-freeze remains a separate required gate.
+1. PR #4385 was CLOSED and PR #4590 (head task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729) MERGED into `dev` at `23ae23c2185d31d2aeacafaa9b051127a6d53136` on 2026-08-06T11:57:30Z. `dev` now carries the unrepaired content: invalid anchor `9d53a94a265c55af4c8d15c50ab3751f1440ac0f` is live on `origin/dev` (README.md x1, evidence.json x2), while correct anchor `9d53a94a295d71ee49aea6f4b96e47fbcfd29093` appears 0 times.
+2. The narrow anchor correction (replacing invalid anchor `9d53a94a265c` with `9d53a94a295d71ee49aea6f4b96e47fbcfd29093`) must be submitted as a new PR against `dev` targeting the anchor defect already live on `dev`.
+3. Re-run focused and full supervisor validations on the new PR head.
+4. Obtain independent review bound to the new PR number/head/base and record the decision in the reviewed evidence manifest.
+5. Given the unrepaired content already passed protected merge and the subject task is now status=blocked (owner Antigravity, reviewer Claude) awaiting Human/Ops audit-log reconciliation for the Codex2 owner drift, `decision.protected_merge_still_required_after_repair=true` and `wave0_dependency_satisfied=false` must be restated.
 
 No `.orchestrator/config.json` change is authorized or present in this task.
