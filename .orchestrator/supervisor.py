@@ -18456,6 +18456,7 @@ def plan_helper_claim_assignment(
             owner_name=owner_name,
         ),
     )
+    fallbacks = l12_provider_first_candidates(task, fallbacks)
     if not fallbacks:
         return None
     idle_agent_name = canonical_agent_name(config, idle_agent_name)
@@ -18517,11 +18518,12 @@ def task_preferred_lane_blocks_helper_claim(
     owner_paused: bool = False,
     state: dict[str, Any] | None = None,
 ) -> bool:
-    preferred_lanes = task_preferred_lane_order(config, task)
-    if not preferred_lanes:
+    declared_lanes = task_preferred_lane_order(config, task)
+    if not declared_lanes:
         return False
     idle_agent_name = canonical_agent_name(config, idle_agent_name)
     owner_name = canonical_agent_name(config, owner_name)
+    preferred_lanes = l12_provider_first_candidates(task, declared_lanes)
     if idle_agent_name not in preferred_lanes:
         return True
     if owner_paused:
@@ -18544,7 +18546,10 @@ def task_next_preferred_helper_lane(
     owner_name: str,
     state: dict[str, Any] | None = None,
 ) -> str | None:
-    preferred_lanes = task_preferred_lane_order(config, task)
+    preferred_lanes = l12_provider_first_candidates(
+        task,
+        task_preferred_lane_order(config, task),
+    )
     if not preferred_lanes:
         return None
     owner_name = canonical_agent_name(config, owner_name)
