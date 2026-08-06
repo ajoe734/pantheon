@@ -1,38 +1,73 @@
 SUP-L12-RUNNING-OWNER-RECONCILE-20260729 validation
-Observed: 2026-07-29T15:22:01Z
+Owner: Claude
+Reviewer: Antigravity
+Re-run: 2026-08-06, after merging origin/dev into
+        task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729 (task head 850a8c760)
+
+Interpreter: /home/lupin/pantheon/.venv/bin/python
 
 1. Syntax
-   command: python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py
+   command: python -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py
    result: PASS
 
-2. New focused suite
-   command: cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests
-   result: 7 passed in 1.21s
+2. Full supervisor suite (repository root, native import path)
+   command: PYTHONPATH=.orchestrator python -m pytest -q .orchestrator/test_supervisor.py
+   result: 613 passed, 162 subtests passed in 154.04s
 
-3. Related regression suites
-   command: cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests
-   result: 113 passed, 2 subtests passed in 19.24s
+3. New focused suite
+   command: cd .orchestrator && python -m pytest -q test_supervisor.py::RunningWorkerOwnerReconciliationTests
+   result: 7 passed in 0.84s
 
-4. Full supervisor suite
-   command: cd .orchestrator && $PANTHEON_PY -m pytest -q test_supervisor.py
-   result: 464 passed, 4 subtests passed in 56.82s
+4. Related regression suites
+   command: cd .orchestrator && python -m pytest -q test_supervisor.py::WorkerReassignmentTests test_supervisor.py::PollWorkersRecoveryTests test_supervisor.py::RuntimeLeaseReconciliationTests test_supervisor.py::RunOnceSupervisorStateTests test_supervisor.py::OwnerlessInProgressReconciliationTests
+   result: 135 passed, 4 subtests passed in 15.64s
 
 5. Diff hygiene
    command: git diff --check
    result: PASS
 
 6. Config boundary
-   command: git diff --name-only HEAD -- .orchestrator/config.json
+   command: git diff --name-only origin/dev...HEAD -- .orchestrator/config.json
    result: PASS (no paths)
 
-7. Independent review
-   reviewer: Antigravity
-   approved at: 2026-07-29T15:42:35Z
-   reviewed PR/head: #4386 / 665e4bdbd7a741ba2b808cee5302b764ba5ca597
-   canonical event sequence: 5776
-   result: REVIEW_APPROVED
+7. Task-scoped diff vs origin/dev
+   command: git diff --stat origin/dev...HEAD
+   result: 6 files -- .orchestrator/supervisor.py,
+           .orchestrator/test_supervisor.py,
+           .orchestrator/task-briefs/sup_l12_running_owner_reconcile_20260729.md,
+           and the three files of this evidence directory
+
+8. Dev merge conflict resolution
+   conflict: .orchestrator/test_supervisor.py
+   cause:    both origin/dev and this task branch appended independent test
+             classes at the end of the module
+   resolution: kept both sides in full -- this branch's
+             RunningWorkerOwnerReconciliationTests followed by dev's
+             LongFinalizeLeaseAndL12PriorityTests and the provider-capability
+             tests; only the three conflict marker lines were removed
+   verified by: step 2 above (613 passed) on the merged tree
+
+9. Independent review
+   result: PENDING
+   note:   The 2026-07-29 Antigravity approval bound head
+           665e4bdbd7a741ba2b808cee5302b764ba5ca597 and is superseded -- the
+           task head advanced past it and the canonical row was reassigned to
+           owner Claude and returned to todo. See superseded_reviews in
+           evidence.json.
+
+10. Governed status plane
+   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show SUP-L12-RUNNING-OWNER-RECONCILE-20260729
+   result: fail_closed / status_recovery_pending (status_activity_outbox)
+   command: AI_NAME=Claude "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" recover
+   result: fail_closed / activity_audit_integrity -- duplicate activity
+           event_id
+           supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da
+           in archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz
+   effect: no start/handoff transition could be recorded for this cycle. The
+           gate fires before any state change, so the canonical row is
+           untouched. Human/Ops must repair and re-seal the archive.
 
 Environment note:
-Running the legacy top-level test module from the repository root cannot
-resolve its intentional top-level `import supervisor`. The validated command
-runs from `.orchestrator/`, which is the module's native collection context.
+Running the test module from .orchestrator/ is its native collection context
+for the intentional top-level `import supervisor`. Running it from the
+repository root works when PYTHONPATH=.orchestrator is set (step 2).

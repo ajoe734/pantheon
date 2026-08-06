@@ -1,7 +1,7 @@
 # SUP-L12 running owner reconciliation evidence
 
 Task: `SUP-L12-RUNNING-OWNER-RECONCILE-20260729`
-Owner: Codex
+Owner: Claude
 Reviewer: Antigravity
 Review manifest: `evidence.json`
 
@@ -56,23 +56,60 @@ The full machine-readable rows are in `evidence.json`.
 
 ## Validation
 
+Re-run on the dev-merged tree (task head `850a8c760`):
+
 - New reconciliation suite: 7 passed.
-- Related worker/reassignment/ownerless suites: 113 passed, 2 subtests passed.
-- Full supervisor suite: 464 passed, 4 subtests passed.
+- Related worker/reassignment/ownerless suites: 135 passed, 4 subtests passed.
+- Full supervisor suite: 613 passed, 162 subtests passed.
 - Python compilation and `git diff --check`: passed.
-- `.orchestrator/config.json`: unchanged.
+- `.orchestrator/config.json`: unchanged relative to `origin/dev`.
 
 Raw command/results are archived in `validation.txt`.
 
+## Ownership reassignment (2026-08-06)
+
+The supervisor auto-reassigned ownership from Antigravity to Claude after
+repeated Antigravity quota-terminal runs and returned the task to `todo`.
+The canonical row now reads owner `Claude`, reviewer `Antigravity`.
+
+Because of that reassignment and because the task head advanced past the
+previously approved commit, the earlier approval no longer binds. It is kept
+for audit under `superseded_reviews` in `evidence.json`:
+
+| Superseded approval | Reviewer | Bound head | Approved at | Canonical event |
+|---|---|---|---|---|
+| `review_approved` | Antigravity | `665e4bdbd7a741ba2b808cee5302b764ba5ca597` | 2026-07-29T15:42:35Z | 5776 |
+
+Owner actions in the current cycle:
+
+- merged `origin/dev` forward into
+  `task/SUP-L12-RUNNING-OWNER-RECONCILE-20260729` to clear the `DIRTY` merge
+  state on PR [#4386](https://github.com/ajoe734/pantheon/pull/4386); the only
+  conflict was in `.orchestrator/test_supervisor.py`, where both branches
+  appended independent test classes and both were kept;
+- re-ran the full supervisor suite and the focused reconciliation suites on
+  the merged tree;
+- rebound this note, `evidence.json`, `validation.txt`, and the task brief to
+  the current owner/reviewer pair before requesting review.
+
 ## Independent review
 
-Antigravity approved the implementation and evidence manifest at
-`2026-07-29T15:42:35Z`, bound to PR
-[#4386](https://github.com/ajoe734/pantheon/pull/4386) exact head
-`665e4bdbd7a741ba2b808cee5302b764ba5ca597`. The review verified the
-464-test supervisor result, worker owner drift reconciliation, duplicate
-active-worker suppression, and the optimistic stale-failure reassignment
-guard. The canonical approval is authoritative event sequence `5776`.
+Pending. A fresh independent review of the dev-merged head is required under
+the current owner/reviewer pair; `evidence.json` records `review.decision`
+as `pending`.
+
+## Governed status plane
+
+The governed status commands were unavailable while this revision was
+prepared. `"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show` and `recover`
+both fail closed on `activity_audit_integrity`: a duplicate activity
+`event_id`
+`supervisor-reassign-6d984db0aafd0fe690ad2e9a0877bc8aa31b03e32aafa0b652f3c58ccb5af2da`
+is sealed into
+`archive/logs/ai-activity-log.jsonl-d234b0ec08ec543209fcf989b4c6fff7fe3ebd46cf269e1ea4b17b2fc3768e2d.gz`.
+The gate fires before any state change, so the canonical row is untouched.
+Repairing and re-sealing that archive is a Human/Ops action; no auto worker
+can clear it.
 
 ## Boundaries
 

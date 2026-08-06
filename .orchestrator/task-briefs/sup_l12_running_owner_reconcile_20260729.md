@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reconcile running workers with authoritative row owners
-- Status: review_approved
-- Owner: Codex2
-- Reviewer: Codex
-- Next: Supervisor resumed SUP-L12-RUNNING-OWNER-RECONCILE-20260729 for finalize after successful dispatch.
+- Status: todo
+- Owner: Claude
+- Reviewer: Antigravity
+- Next: Auto-reassigned ownership from Antigravity to Claude after repeated Antigravity quota terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h45m59s.. Task returned to todo until Claude starts a fresh run.
 
 ## Summary
 補上 row owner/reviewer 與 live worker_runner/run records 的 reconcile 機制，避免 helper/fallback 失敗後任務真相漂移。
