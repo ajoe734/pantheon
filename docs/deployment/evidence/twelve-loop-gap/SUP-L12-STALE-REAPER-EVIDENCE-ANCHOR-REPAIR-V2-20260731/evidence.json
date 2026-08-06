@@ -3,15 +3,15 @@
   "task": {
     "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec",
-    "owner": "Antigravity",
-    "reviewer": "Claude",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
     "status": "ready_for_independent_review",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
-    "evidence_cut_at": "2026-08-06T13:40:00Z"
+    "evidence_cut_at": "2026-08-06T16:08:00Z"
   },
   "supersession": {
     "prior_task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
@@ -80,8 +80,8 @@
   "observed_out_of_scope_conditions": [
     {
       "condition": "Dev-side supervisor import breakage",
-      "description": "At dev tip (23ae23c21 / 4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c), .orchestrator/supervisor.py line 90 imports provider_auth_probe_due from provider_permissions.py, which does not define it.",
-      "remediation": "Out of scope to fix in this evidence-anchor repair task; test suite execution verified on composed head 941c15a3."
+      "description": "At dev tip (23ae23c21 / 4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c), .orchestrator/supervisor.py line 88 imports provider_auth_probe_due from provider_permissions.py, which does not define it. The same ImportError reproduces at this task branch head because 728fa361b merged that dev tip in.",
+      "remediation": "Out of scope to fix in this evidence-anchor repair task; the supervisor test suite was executed at task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e, before merging dev 728fa361b."
     }
   ],
   "acceptance": [
@@ -127,12 +127,12 @@
       {
         "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
         "result": "pass",
-        "conclusion": "Five focused stale-reaper regressions passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b)."
+        "conclusion": "Five focused stale-reaper regressions passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b); re-run independently by owner Claude on 2026-08-06 in a detached worktree at that head: Ran 5 tests, OK."
       },
       {
         "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "All 473 supervisor tests passed in 10.915 seconds on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b)."
+        "conclusion": "All 473 supervisor tests passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b); re-run independently by owner Claude on 2026-08-06 at that head with the checkout root on PYTHONPATH: Ran 473 tests in 9.422s, OK. The repository root must be importable because WorkerReassignmentTests.test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment imports scripts.ai_status."
       },
       {
         "command": "jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json && jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
@@ -158,16 +158,22 @@
         "command": "git merge-base --is-ancestor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 HEAD && ! git cat-file -e 9d53a94a265c55af4c8d15c50ab3751f1440ac0f^{commit}",
         "result": "pass",
         "conclusion": "The corrected anchor is an ancestor of the task branch and the invalid object is absent."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python3 -c 'import test_supervisor'",
+        "result": "fail",
+        "conclusion": "Expected and out of scope: at this task branch head the import fails with ImportError: cannot import name 'provider_auth_probe_due' from 'provider_permissions' at .orchestrator/supervisor.py:88, because the merged dev tip 23ae23c21 removed the symbol. This is why the suite runs above are anchored at pre-merge head 5f6e91cb."
       }
     ],
-    "validated_at": "2026-08-06T13:40:00Z",
+    "validated_at": "2026-08-06T16:08:00Z",
     "command_runtime_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745"
   },
   "delivery": {
     "supersedes_pull_request": 4385,
     "implementation_anchor_commit": "5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e",
     "pull_request": 4465,
-    "task_head_sha": "c44f0518fa49b94dc40bc153c147d5a86a280fdf",
+    "task_head_sha": "c8008bc14a750d01ecb457ec76f93f677d08c467",
+    "task_head_sha_scope": "Parent of the commit that carries this manifest revision; a manifest cannot name its own commit sha. c8008bc14a750d01ecb457ec76f93f677d08c467 is a real ancestor of the pushed PR head. The reviewable head is that child commit and must be bound at approve time from the live PR.",
     "merge_commit": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },
@@ -181,10 +187,42 @@
       "notes": [
         "Prior approval issued before task reassignment from Codex/Codex2 to Antigravity/Claude and prior to merge 728fa361b of dev tip."
       ]
+    },
+    {
+      "reviewer": "Claude",
+      "status": "superseded_by_reassignment",
+      "decision": "reopen",
+      "rounds": [
+        {
+          "head_sha": "728fa361b917b1463eed0f86e71070bf253c2666",
+          "reviewed_at": "2026-08-06T13:29:53Z",
+          "tag": "pantheon-review/reopen/728fa361b917b1463eed0f86e71070bf253c2666"
+        },
+        {
+          "head_sha": "c44f0518fa49b94dc40bc153c147d5a86a280fdf",
+          "reviewed_at": "2026-08-06T13:46:05Z",
+          "tag": "pantheon-review/reopen/c44f0518fa49b94dc40bc153c147d5a86a280fdf"
+        },
+        {
+          "head_sha": "ebb6285eb52ba0be31c856ce53ac55ac4d535d48",
+          "reviewed_at": "2026-08-06T14:13:55Z",
+          "tag": "pantheon-review/reopen/ebb6285eb52ba0be31c856ce53ac55ac4d535d48"
+        },
+        {
+          "head_sha": "b1201b89130a419e23a6ccc2a3af28d3680628c5",
+          "reviewed_at": "2026-08-06T15:02:01Z",
+          "tag": "pantheon-review/reopen/b1201b89130a419e23a6ccc2a3af28d3680628c5"
+        }
+      ],
+      "notes": [
+        "Four reopen rounds issued by Claude while Claude was the assigned reviewer and Antigravity the owner.",
+        "Round 4 (b1201b891) required replacing verification head 941c15a3 with 5f6e91cb in four places; c8008bc14 applied three of them plus README.md but left observed_out_of_scope_conditions[0].remediation naming 941c15a3. This owner round repairs that last reference.",
+        "Superseded because the supervisor reassigned the task on 2026-08-06T15:56Z: Claude became owner and Antigravity became reviewer, so none of these rounds is an independent review of the delivered head."
+      ]
     }
   ],
   "review": {
-    "reviewer": "Claude",
+    "reviewer": "Antigravity",
     "status": "pending_independent_review",
     "decision": null,
     "reviewed_head_sha": null,
