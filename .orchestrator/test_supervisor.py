@@ -24842,9 +24842,9 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(
                 supervisor,
-                "terminate_worker_pid",
+                "terminate_worker_process_generation",
                 return_value=True,
-            ) as terminate_worker_pid,
+            ) as terminate_worker_process_generation,
             mock.patch.object(
                 supervisor,
                 "finalize_queue_event_record",
@@ -24873,7 +24873,7 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         self.assertEqual(worker["runner_status"], "superseded")
         self.assertEqual(worker["exit_code"], 143)
-        terminate_worker_pid.assert_called_once_with(4242)
+        terminate_worker_process_generation.assert_called_once_with(worker)
         finalize_queue_event_record.assert_called_once()
         write_activity_log.assert_called_once()
         event = write_activity_log.call_args.args[1]
@@ -25031,6 +25031,144 @@ class RunningWorkerOwnerReconciliationTests(unittest.TestCase):
         self.assertEqual(row["exit_code"], 1)
         self.assertEqual(row["source_sha"], self.SOURCE_SHA)
         self.assertFalse(row["assignment_matches"])
+
+    def test_reconcile_preserves_owner_unchanged_worker_on_blocked_status(
+        self,
+    ) -> None:
+        """Pin (a): Worker whose owner/reviewer never changed is preserved when status is blocked."""
+        task = self._task(owner="Claude2", reviewer="Antigravity", status="blocked")
+        worker = self._worker(
+            "claude2-blocked-worker",
+            agent_id="claude2",
+            logical_agent_id="claude2",
+            provider="claude2",
+            task_assignment_at_dispatch={
+                "task_id": task["id"],
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T10:00:00Z",
+            },
+        )
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+            ) as terminate_worker_process_generation,
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ) as write_activity_log,
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertEqual(worker["status"], "running")
+        terminate_worker_process_generation.assert_not_called()
+
+    def test_reconcile_preserves_completed_path_for_done_archived_row_worker(
+        self,
+    ) -> None:
+        """Pin (b): Worker whose task row was done/archived (absent from task_map) is preserved."""
+        # task is absent from task_map (archived / completed)
+        worker = self._worker(
+            "claude2-done-archived-worker",
+            agent_id="claude2",
+            logical_agent_id="claude2",
+            provider="claude2",
+            task_assignment_at_dispatch={
+                "task_id": "ARCHIVED-TASK-001",
+                "owner": "Claude2",
+                "reviewer": "Antigravity",
+                "status": "review_approved",
+                "last_update": "2026-07-29T10:00:00Z",
+            },
+        )
+        worker["task_id"] = "ARCHIVED-TASK-001"
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": []},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+            ) as terminate_worker_process_generation,
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertEqual(worker["status"], "running")
+        terminate_worker_process_generation.assert_not_called()
+
+    def test_reconcile_termination_is_bound_to_captured_process_generation(
+        self,
+    ) -> None:
+        """Pin (c): Termination uses terminate_worker_process_generation binding to start ticks."""
+        task = self._task(owner="Claude2", reviewer="Antigravity")
+        worker = self._worker(
+            "codex2-stale-generation",
+            agent_id="codex2",
+            logical_agent_id="codex2",
+            provider="codex2",
+            pid=9999,
+            task_assignment_at_dispatch={
+                "task_id": task["id"],
+                "owner": "Codex2",
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "last_update": "2026-07-29T10:00:00Z",
+            },
+        )
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate_worker_process_generation,
+            mock.patch.object(
+                supervisor,
+                "write_activity_log",
+            ),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            changed = supervisor.reconcile_worker_task_assignments(
+                self.config,
+                state,
+            )
+
+        self.assertTrue(changed)
+        terminate_worker_process_generation.assert_called_once_with(worker)
 
     def test_locked_reassignment_rejects_changed_authoritative_owner(
         self,
