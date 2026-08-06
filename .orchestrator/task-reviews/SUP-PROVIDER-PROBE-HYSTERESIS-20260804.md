@@ -6,7 +6,7 @@
 - **Reviewer**: Claude
 - **Branch**: `task/SUP-PROVIDER-PROBE-HYSTERESIS-20260804`
 - **PR**: https://github.com/ajoe734/pantheon/pull/4581
-- **Head SHA**: `497593ac344651761f0d1fd681617259a6a260a7`
+- **Head SHA**: `124218f8cbfdb745bdb2c5c511f4f0e89703cbb9`
 
 ## Delivered Changes
 1. **Decoupled Probing & Config Defaults**: Set `auto_refresh_provider_capabilities` default to `False` in code (`supervisor.py`) and across all config files (`config.json`, `config.example.json`, `config.local.example.json`) so capability probing runs out-of-band and never executes inline in the dispatch hot path.
