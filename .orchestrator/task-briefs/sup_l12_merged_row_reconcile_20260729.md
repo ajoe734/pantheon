@@ -34,3 +34,8 @@ Reconcile merged but nonterminal L12 rows using governed evidence only.
 - Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.
 - Keep execution updates short and structured.
 - If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.
+
+## Merged Delivery (Human/Ops appended 2026-08-06)
+- Repository: ajoe734/pantheon
+- Delivery PR: #4384
+- Merged delivery commit: ec9ba70f935fcf7efa1de2287e8635c16d38f030
