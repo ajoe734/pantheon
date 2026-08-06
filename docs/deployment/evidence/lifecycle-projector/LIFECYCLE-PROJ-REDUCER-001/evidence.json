@@ -8,8 +8,8 @@
     "status": "in_progress",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-REDUCER-001",
-    "head_sha": "51df0df6282518138d075376194965c1733374b6",
-    "evidence_cut_at": "2026-08-06T16:12:45Z"
+    "head_sha": "0d3f1a73c15f2d22a97e24e01f2ccf16a52329f8",
+    "evidence_cut_at": "2026-08-06T16:13:30Z"
   },
   "scope": {
     "owned": [
