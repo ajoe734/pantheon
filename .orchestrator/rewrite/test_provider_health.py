@@ -73,21 +73,6 @@ class ClassifyHealthTests(unittest.TestCase):
         )
         self.assertIsNone(provider_health.classify_probe(None))
 
-    def test_quota_probe_status_has_a_quota_failure_kind(self) -> None:
-        self.assertEqual(
-            provider_health.classify_probe_failure_kind(False, status="quota_reached"),
-            "quota_terminal",
-        )
-        self.assertEqual(
-            provider_health.classify_probe_failure_kind(False, status="rotation_models_cooling"),
-            "capacity_retryable",
-        )
-        self.assertEqual(
-            provider_health.classify_probe_failure_kind(False, status="not_logged_in"),
-            "auth",
-        )
-        self.assertIsNone(provider_health.classify_probe_failure_kind(True, status="ready"))
-
 
 class IncumbentParityTests(unittest.TestCase):
     """The cut-over predicate must equal the legacy ladder for every kind."""

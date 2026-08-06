@@ -2,15 +2,9 @@
   // Local-only overrides for this machine.
   // Copy to `.orchestrator/config.local.json` if you want a fresh personal override file.
   "supervisor": {
-    // Set to true if you want to refresh provider capabilities on each supervisor loop
-    // (disabled by default so capability probing stays off the dispatch hot path).
-    "auto_refresh_provider_capabilities": false,
-    // How often the out-of-band background tick rebuilds the full capability
-    // report, in seconds. 0 disables the tick and pins dispatch to the cache.
-    "provider_capability_refresh_interval_seconds": 300,
-    // Consecutive live probe failures required before auth_ready flips true->false.
-    // Set to 1 to restore the incumbent single-failure flip behaviour.
-    "provider_probe_failure_hysteresis_threshold": 3
+    // Refresh provider capabilities on each supervisor loop so dashboard state updates
+    // after local auth or IAM changes.
+    "auto_refresh_provider_capabilities": true
   },
   "coordination": {
     "repositories": {

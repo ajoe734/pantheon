@@ -1,16 +1,16 @@
-# Task Brief: SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729
+# Task Brief: SUP-L12-STALE-PR-RETIRE-20260729
 
 Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
-- Title: L12 fleet runtime reliability readback
-- Status: review
-- Owner: Antigravity
-- Reviewer: Codex2
-- Next: Corrected readback removes unsupported all-time provider split, narrows command-root claims to verified current runtime metadata, sets Reviewer to Codex2, and is ready for Codex2 review.
+- Title: Retire stale L12 PRs after 1025Z gap audit
+- Status: in_progress
+- Owner: Claude
+- Reviewer: Antigravity
+- Next: Supervisor re-dispatched SUP-L12-STALE-PR-RETIRE-20260729; task remains in progress.
 
 ## Summary
-盤點 supervisor/auto-worker runtime，記錄 Antigravity/Claude2/Codex/Codex2 實際可用性與失敗循環，不改 config。
+Retire or supersede stale L12 PRs without closing active product proof.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
