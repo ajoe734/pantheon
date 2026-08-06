@@ -1,0 +1,16 @@
+{
+  "task_id": "SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801",
+  "status": "review_approved",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "summary": "Rebuilt branch cleanly from origin/dev tip (1fde75fc9). Confirmed origin/dev already carries the progress-aware failure streak recovery infrastructure (_failure_recovery_*, decide_failure_streak_recovery) via SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 (PR #4564/#4533). Documented dev tip supervisor import issue.",
+  "verification": {
+    "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_*.py'",
+    "tests_ran": 511,
+    "failures": 1,
+    "errors": 7,
+    "supervisor_import_error": "ImportError: cannot import name 'provider_auth_probe_due' from 'provider_permissions' (dev tip issue in PR #4590)",
+    "branch_aligned_with_dev_tip": true,
+    "zero_net_code_deletions": true
+  }
+}
