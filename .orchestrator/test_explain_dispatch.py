@@ -1,3 +1,5 @@
+import copy
+import json
 import os
 import sys
 import tempfile
@@ -33,6 +35,8 @@ class TestExplainDispatch(unittest.TestCase):
                 "status_file": "/tmp/mock-status.json",
                 "state_file": "/tmp/mock-state.json",
                 "activity_log": "/tmp/mock-activity.jsonl",
+                "current_work": "/tmp/mock-current-work.md",
+                "dashboard": "/tmp/mock-dashboard.html",
             },
             "agents": {
                 "codex": {
@@ -352,5 +356,102 @@ class TestExplainDispatch(unittest.TestCase):
                     load_orchestrator_state(config)
 
 
+    def test_single_probe_failure_hysteresis(self) -> None:
+        import supervisor
+        report = {"providers": {"codex": {"auth_ready": True}}}
+        single_failure = {"provider": "codex", "ready": False, "status": "timeout", "error": "probe timeout"}
+        
+        # Single failure should NOT mark auth_ready as False due to default threshold (3)
+        health = supervisor.apply_provider_probe_to_report(report, "codex", single_failure, config=self.config)
+        self.assertTrue(report["providers"]["codex"]["auth_ready"])
+        self.assertEqual(report["providers"]["codex"]["consecutive_probe_failures"], 1)
+
+        state = {"seen_event_keys": {}}
+        task = {"id": "TASK-HYST-1", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.load_provider_report", return_value=report):
+            res = explain_dispatch_for_task(self.config, state, "TASK-HYST-1", target_agent_filter="Codex")
+            self.assertFalse(res["agents"]["Codex"]["blocked"])
+
+    def test_n_consecutive_probe_failures_blocks_dispatch(self) -> None:
+        import supervisor
+        report = {"providers": {"codex": {"auth_ready": True}}}
+        failure = {"provider": "codex", "ready": False, "status": "timeout", "error": "probe timeout"}
+        
+        config = dict(self.config)
+        config["supervisor"] = {"provider_probe_failure_hysteresis_threshold": 2}
+        
+        # Probe 1: 1 failure < threshold 2
+        supervisor.apply_provider_probe_to_report(report, "codex", failure, config=config)
+        self.assertTrue(report["providers"]["codex"]["auth_ready"])
+
+        # Probe 2: 2 failures == threshold 2 -> effective_ready = False
+        activity_logs = []
+        with unittest.mock.patch("supervisor.write_activity_log", side_effect=lambda cfg, entry: activity_logs.append(entry)):
+            supervisor.apply_provider_probe_to_report(report, "codex", failure, config=config)
+
+        self.assertFalse(report["providers"]["codex"]["auth_ready"])
+        self.assertEqual(report["providers"]["codex"]["consecutive_probe_failures"], 2)
+        self.assertTrue(any(e.get("type") == "provider_capability_transitioned" for e in activity_logs))
+
+        state = {"seen_event_keys": {}}
+        task = {"id": "TASK-HYST-2", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
+        with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.load_provider_report", return_value=report):
+            res = explain_dispatch_for_task(config, state, "TASK-HYST-2", target_agent_filter="Codex")
+            self.assertTrue(res["agents"]["Codex"]["blocked"])
+
+
+    def test_provider_capabilities_hysteresis_end_to_end(self) -> None:
+        import provider_permissions
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = Path(tmpdir) / "config.json"
+            caps_file = Path(tmpdir) / "provider_capabilities.json"
+            cfg = copy.deepcopy(self.config)
+            cfg["paths"]["provider_capabilities"] = str(caps_file)
+            cfg.setdefault("supervisor", {})["provider_probe_failure_hysteresis_threshold"] = 3
+            # Initial healthy capabilities report with auth_ready=True
+            initial_report = {
+                "providers": {
+                    "claude": {
+                        "auth_ready": True,
+                        "consecutive_probe_failures": 0,
+                    }
+                }
+            }
+            caps_file.write_text(json.dumps(initial_report))
+
+            # Mock _claude_provider_report returning a fresh live timeout probe
+            timeout_probe = {"ready": False, "status": "probe_timeout", "error": "timeout", "source": "live"}
+            mock_claude_report = {
+                "auth_ready": False,
+                "auth_probe": timeout_probe,
+            }
+            with mock.patch("provider_permissions._claude_provider_report", return_value=mock_claude_report):
+                report = provider_permissions.provider_capabilities(cfg)
+                # Hysteresis must hold auth_ready=True on 1st transient failure when baseline had auth_ready=True
+                self.assertTrue(report["providers"]["claude"]["auth_ready"])
+                self.assertEqual(report["providers"]["claude"]["consecutive_probe_failures"], 1)
+
+    def test_reconcile_fresh_provider_probe_failures_skip_ready_true(self) -> None:
+        import supervisor
+        previous_report = {"providers": {"newadapter": {"auth_ready": True}}}
+        current_report = {
+            "providers": {
+                "newadapter": {
+                    "auth_ready": True,
+                    "auth_probe": {"ready": None, "status": "unsupported_probe", "source": "live", "checked_at": "2026-08-06T00:00:00Z"},
+                }
+            }
+        }
+        state = {"paused_providers": {}}
+        changed = supervisor.reconcile_fresh_provider_probe_failures(
+            self.config, state, previous_report, current_report
+        )
+        self.assertFalse(changed)
+        self.assertNotIn("newadapter", state["paused_providers"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

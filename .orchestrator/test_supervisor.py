@@ -22712,10 +22712,26 @@ class CodexCacheQuotaRoutingTests(unittest.TestCase):
                 {"providers": {}},
                 report,
             )
-        self.assertTrue(changed)
-        pause = state["provider_guardrails"]["dispatch_pauses"]["codex"]
+        # Transient failure under hysteresis threshold holds auth_ready=True, skipping dispatch pause creation
+        self.assertFalse(changed)
+
+        # Driving probe failure streak to threshold (threshold=3) flips auth_ready to False and creates pause
+        supervisor.apply_provider_probe_to_report(report, "codex", probe)
+        supervisor.apply_provider_probe_to_report(report, "codex", probe)
+        self.assertFalse(report["providers"]["codex"]["auth_ready"])
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed_at_threshold = supervisor.reconcile_fresh_provider_probe_failures(
+                self.config,
+                state,
+                {"providers": {}},
+                report,
+            )
+        self.assertTrue(changed_at_threshold)
+        pauses = state.get("provider_guardrails", {}).get("dispatch_pauses", {})
+        self.assertIn("codex", pauses)
+        pause = pauses["codex"]
         self.assertEqual(pause["pause_kind"], "capacity_retryable")
-        self.assertNotIn("requires_live_auth_probe", pause)
+        self.assertFalse(pause.get("requires_live_auth_probe", False))
 
     def test_fresh_success_clears_only_the_affected_distinct_quota_group(self) -> None:
         state = {
@@ -24759,5 +24775,185 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
 
 
 
+    def test_refresh_provider_auth_before_dispatch_cached_probe_does_not_increment_streak(self) -> None:
+        """Verify cached probe replays in refresh_provider_auth_before_dispatch do not increment consecutive failure streak."""
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "consecutive_probe_failures": 0,
+                    "account_health": "healthy",
+                    "auth_probe": {
+                        "provider": "claude",
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+        # 1st live probe timeout -> streak 1
+        live_probe = {
+            "provider": "claude",
+            "ready": False,
+            "status": "probe_timeout",
+            "checked_at": supervisor.utc_now(),
+            "source": "live",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=live_probe):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, provider_report, "claude")
+
+        claude_cap = provider_report["providers"]["claude"]
+        self.assertEqual(claude_cap["consecutive_probe_failures"], 1)
+        self.assertEqual(claude_cap["auth_ready"], True)
+
+        # 2nd cached probe replay -> streak should remain 1
+        cached_probe = {
+            "provider": "claude",
+            "ready": False,
+            "status": "probe_timeout",
+            "checked_at": supervisor.utc_now(),
+            "source": "cached",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=cached_probe):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, provider_report, "claude")
+
+        self.assertEqual(claude_cap["consecutive_probe_failures"], 1)
+        self.assertEqual(claude_cap["auth_ready"], True)
+
+    def test_reconcile_fresh_provider_probe_failures_ignores_held_hysteresis(self) -> None:
+        """Verify reconcile_fresh_provider_probe_failures does not pause providers when auth_ready is True under hysteresis."""
+        current_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "account_health": "degraded",
+                    "consecutive_probe_failures": 1,
+                    "probe_failure_kind": "capacity_retryable",
+                    "auth_probe": {
+                        "provider": "claude",
+                        "ready": False,
+                        "status": "models_cache_incompatible",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+        state = {}
+        with mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mock_pause:
+            changed = supervisor.reconcile_fresh_provider_probe_failures(self.config, state, None, current_report)
+            self.assertFalse(changed)
+            mock_pause.assert_not_called()
+
+    @staticmethod
+    def _held_provider_report(provider_key: str, streak: int) -> dict:
+        """A capability report holding auth_ready open across `streak` failed live probes."""
+        return {
+            "providers": {
+                provider_key: {
+                    "auth_ready": True,
+                    "consecutive_probe_failures": streak,
+                    "auth_probe": {
+                        "provider": provider_key,
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": supervisor.utc_now(),
+                        "source": "live",
+                    },
+                }
+            }
+        }
+
+    def test_claude_adapter_honours_hysteresis_held_auth_ready(self) -> None:
+        """The CLI adapter must read the report's held auth_ready, not just its own local check.
+
+        The adapter's local auth check is forced to False here, which is what a
+        transient failure under load looks like. Without hysteresis the adapter
+        re-derives can_auto_deliver=False on failure #1 and dispatch dies, which is
+        the exact incident this task exists to prevent. The hold must apply only
+        while the streak is active and still under the configured threshold.
+        """
+        from adapters import build_adapter
+        import adapters.claude_cli as claude_cli
+
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        config.setdefault("supervisor", {})["provider_probe_failure_hysteresis_threshold"] = 3
+
+        # streak 0 -> no active hold; 1,2 -> held; 3 -> threshold reached, flipped upstream.
+        for streak, expected in ((0, False), (1, True), (2, True), (3, False)):
+            with self.subTest(streak=streak):
+                report = self._held_provider_report("claude2", streak)
+                with mock.patch.object(claude_cli, "command_exists", return_value="/usr/bin/claude"), \
+                        mock.patch.object(claude_cli, "shared_claude_auth_ready", return_value=False):
+                    capability = build_adapter(
+                        "claude_cli", config=config, provider_capabilities=report
+                    ).capability("claude2")
+                self.assertIs(capability.can_auto_deliver, expected)
+
+    def test_agent_adapters_can_auto_deliver_hysteresis_debounce(self) -> None:
+        """End-to-end: a held provider must not be blocked at the can_auto_deliver dispatch gate."""
+        from adapters import build_adapter
+        import adapters.claude_cli as claude_cli
+
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        config.setdefault("supervisor", {})["provider_probe_failure_hysteresis_threshold"] = 3
+
+        def _report_at(streak: int) -> dict:
+            report = self._held_provider_report("claude2", streak)
+            with mock.patch.object(claude_cli, "command_exists", return_value="/usr/bin/claude"), \
+                    mock.patch.object(claude_cli, "shared_claude_auth_ready", return_value=False):
+                report["agent_adapters"] = {
+                    "claude2": build_adapter(
+                        "claude_cli", config=config, provider_capabilities=report
+                    ).capability("claude2").as_dict()
+                }
+            return report
+
+        held = supervisor.agent_auto_dispatch_block_reason(config, {}, "claude2", _report_at(1))
+        self.assertIsNone(held, "a single transient probe failure must not block dispatch")
+
+        exhausted = supervisor.agent_auto_dispatch_block_reason(config, {}, "claude2", _report_at(3))
+        self.assertIsNotNone(exhausted, "dispatch must block once the failure streak reaches threshold")
+
+    def test_probeless_provider_auth_ready_is_not_pinned_by_hysteresis(self) -> None:
+        """A provider with no live probe must keep its freshly computed auth_ready.
+
+        Nothing advances consecutive_probe_failures for a provider without a live
+        auth_probe, so inheriting auth_ready=True for one would pin it permanently
+        and a genuinely revoked credential could never flip back to False.
+        """
+        import provider_permissions as pp
+
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "provider_capabilities.json"
+            # Previous report: copilot was authenticated and has never been live-probed.
+            cache.write_text(
+                json.dumps({"providers": {"copilot": {"auth_ready": True}}}),
+                encoding="utf-8",
+            )
+            config.setdefault("paths", {})["provider_capabilities"] = str(cache)
+            with mock.patch.object(pp, "_copilot_auth_ready", return_value=False):
+                report = pp.provider_capabilities(config)
+
+        copilot = report.get("providers", {}).get("copilot", {})
+        self.assertIs(
+            copilot.get("auth_ready"),
+            False,
+            "revoked probe-less credential must not inherit a hysteresis hold",
+        )
+        self.assertIs(copilot.get("local_cli_worker_supported"), False)
+
+
 if __name__ == "__main__":
     unittest.main()
+
