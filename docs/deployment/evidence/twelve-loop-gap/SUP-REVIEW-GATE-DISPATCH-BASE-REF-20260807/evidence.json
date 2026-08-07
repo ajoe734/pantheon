@@ -1,0 +1,113 @@
+{
+  "schema_version": "pantheon.github_review_gate_dispatch_evidence.v1",
+  "task": {
+    "id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+    "title": "Dispatch canonical-review-gate workflow against base branch, not head",
+    "phase": "Supervisor Dispatch Reliability",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json",
+    "evidence_cut_at": "2026-08-07T12:22:19Z"
+  },
+  "scope": {
+    "owned_layer": "The GitHub review bridge's best-effort workflow-dispatch reference for canonical review-gate rechecks.",
+    "changed_files": [
+      "scripts/git/github_review_bridge.py",
+      "scripts/git/test_github_review_bridge.py",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json"
+    ],
+    "not_changing": [
+      ".github/workflows/canonical-review-gate.yml and its trigger definition",
+      "the review-proof tag, GitHub review, required-status, or merge-gate policy",
+      "canonical task state, supervisor runtime configuration, deployment state, or live-capital authority"
+    ],
+    "composes_with": [
+      "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805, which added the explicit recheck dispatch",
+      "the canonical-review-gate workflow on dev, which evaluates the supplied head_ref and head_sha inputs",
+      "Claude's independent exact-head review and the protected dev merge path"
+    ]
+  },
+  "root_cause_and_change": {
+    "root_cause": "The bridge dispatched canonical-review-gate.yml against binding.head_branch. GitHub validates workflow_dispatch on the target ref, so a stale task branch that predates the trigger returns HTTP 422 even while dev contains the trigger; the bridge intentionally treats dispatch failure as non-fatal because the tag is the durable proof.",
+    "change": "_dispatch_canonical_review_gate_workflow now uses binding.base as the dispatch ref and continues to pass binding.head_branch and binding.head_sha as explicit workflow inputs.",
+    "safety_property": "The workflow source is resolved from the current protected base branch while the reviewed PR identity remains the exact explicit head inputs."
+  },
+  "delivery": {
+    "base_commit": "f9cf4e8f83899aac8f2b1a215e89bf92eac086fd",
+    "implementation_commit_before_evidence": "78cae643d16d1827aeec61443e65cb39309418c3",
+    "pull_request": null,
+    "reviewed_head": null,
+    "merge_commit": null,
+    "protected_merge_complete": false,
+    "governed_closeout_complete": false
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 scripts/git/test_github_review_bridge.py",
+        "result": "pass: Ran 11 tests, OK",
+        "conclusion": "The approval dispatch regression asserts ref == binding.base (dev in the fixture) while preserving head_ref and head_sha inputs."
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "pass",
+        "conclusion": "The rebased implementation diff has no whitespace errors."
+      },
+      {
+        "command": "git merge-base --is-ancestor origin/dev HEAD",
+        "result": "pass after rebasing implementation commit onto origin/dev@f9cf4e8f83899aac8f2b1a215e89bf92eac086fd",
+        "conclusion": "The task branch is based on the current dev tip at the evidence cut."
+      }
+    ],
+    "limitations": [
+      "No live GitHub workflow dispatch was performed by this task worker; the regression test isolates the bridge payload and the task's accepted live incident is recorded in the task contract.",
+      "The dispatch remains best-effort by design; its failure does not erase the pushed review-proof tag."
+    ]
+  },
+  "review": {
+    "required_reviewer": "Claude",
+    "status": "pending_independent_exact_head_review",
+    "decision": null,
+    "approval_event_id": null,
+    "reviewed_task_pr": null,
+    "reviewed_head": null,
+    "instructions": "Review the exact PR head that includes this manifest, bind this review_file through the governed approve command, and do not approve a later head without a new exact-head review."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "The canonical-review-gate workflow dispatch targets binding.base rather than binding.head_branch.",
+      "status": "pass",
+      "evidence_refs": [
+        "root_cause_and_change.change",
+        "validation.commands[0]"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "The recheck remains bound to the reviewed PR identity through explicit head_ref and head_sha inputs.",
+      "status": "pass",
+      "evidence_refs": [
+        "root_cause_and_change.safety_property",
+        "validation.commands[0]"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "The evidence manifest is committed before independent review and names the canonical owner/reviewer pair.",
+      "status": "pending_commit_and_review",
+      "evidence_refs": [
+        "task.review_file",
+        "review"
+      ]
+    }
+  ],
+  "residual_risks": [
+    "A GitHub API failure may still prevent the best-effort rerun; the durable review-proof tag remains available for a natural PR event or manual rerun.",
+    "Any future change to workflow input semantics must be reviewed together with this bridge contract."
+  ]
+}
