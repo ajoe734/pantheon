@@ -1535,6 +1535,57 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
+    def test_approved_gated_pr_behind_dev_merges_after_a_clean_ephemeral_test(self) -> None:
+        """SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: the home-grown merge
+        queue. A gated PR's approved head is not rebased (that would move it
+        past what the reviewer saw), but staleness alone should not leave it
+        waiting forever either -- a disposable local merge of the current dev
+        tip proves the combination is conflict-free, and that is enough to
+        merge the unchanged reviewed commit for real."""
+
+        runner = self._runner(open_pr(mergeStateStatus="BEHIND"), merge_base_returncode=1)
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "merged", result.detail)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(
+            merge_commands,
+            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
+        )
+        # The ephemeral test-merge must never be pushed anywhere.
+        self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
+
+    def test_approved_gated_pr_behind_dev_blocks_on_a_real_conflict(self) -> None:
+        """A genuine conflict is not the same as staleness: rebasing to fix
+        it would move the head past what the reviewer approved, so this
+        needs the owner, not another wait cycle."""
+
+        runner = self._runner(
+            open_pr(mergeStateStatus="BEHIND"),
+            merge_base_returncode=1,
+            ephemeral_merge_returncode=1,
+        )
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("real conflict, not just staleness", result.detail)
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertIn(["git", "merge", "--abort"], runner.commands)
+
     def test_approved_gated_pr_merges_the_exact_head_without_auto(self) -> None:
         runner = self._runner(open_pr())
 
@@ -1710,7 +1761,13 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
         self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
 
-    def test_gated_pr_needing_a_rebase_is_not_force_pushed(self) -> None:
+    def test_gated_pr_behind_dev_is_queue_merged_not_force_pushed(self) -> None:
+        """SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805 superseded the old
+        "BEHIND always waits" behavior: a clean disposable merge test lets a
+        behind-but-conflict-free approved head land via the queue path. The
+        safety property this test guards -- the reviewed head is never
+        rebased or force-pushed -- still holds."""
+
         runner = self._runner(
             open_pr(mergeStateStatus="BEHIND"),
             merge_base_returncode=1,
@@ -1724,15 +1781,18 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "waiting")
-        self.assertIn("re-approves the new head", result.detail)
+        self.assertEqual(result.action, "merged", result.detail)
         self.assertIn(
             ["git", "merge-base", "--is-ancestor", "origin/dev", "b" * 40],
             runner.commands,
         )
         self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
-        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(
+            merge_commands,
+            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
+        )
 
     def test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe(self) -> None:
         """PR #4201's shape: BEHIND, unapproved, auto-merge still armed."""
@@ -1755,8 +1815,10 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
-    def test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request(self) -> None:
-        """`waiting` for a new approval must not leave the old grant armed."""
+    def test_approved_but_behind_gated_pr_still_revokes_before_queue_merging(self) -> None:
+        """A stray auto-merge grant is revoked before anything else runs,
+        whether the PR ultimately queue-merges or waits -- the revocation
+        is unconditional, not contingent on this PR's outcome."""
 
         runner = self._runner(
             open_pr(
@@ -1774,9 +1836,15 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "waiting")
+        self.assertEqual(result.action, "merged", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertEqual(
+            merge_commands,
+            [
+                ["gh", "pr", "merge", "100", "--disable-auto"],
+                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
+            ],
+        )
         self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
 
