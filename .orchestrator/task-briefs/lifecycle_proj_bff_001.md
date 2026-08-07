@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Serve Trade Journey and loop-run reads from Postgres
 - Status: todo
-- Owner: Antigravity
+- Owner: Codex
 - Reviewer: Claude
-- Next: Codex quota exhausted 2026-08-05: reassigned Codex2->Antigravity / Codex->Claude to keep fleet moving
+- Next: Helper-claimed by Codex while Claude is dispatch-paused previous owner Claude becomes reviewer.
 
 ## Summary
 Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-BFF-001.md.
