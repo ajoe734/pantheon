@@ -7087,6 +7087,27 @@ GITHUB_REVIEW_MODES = {
 }
 
 
+def approval_binding_guidance() -> str:
+    """Return the reviewer-facing exact-head binding requirement.
+
+    Keep this text next to the binding contract so command usage and the
+    unbound warning give reviewers the same actionable recovery path without
+    changing the approval decision logic.
+    """
+
+    return (
+        "For a PR-backed task, reviewer approval requires both "
+        "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<full 40-hex exact "
+        "reviewed head>. Get the head with `gh pr view <pr-number> --json "
+        "headRefOid -q .headRefOid`; REVIEW_BASE is optional "
+        f"(default {DEFAULT_APPROVAL_BASE_BRANCH!r})."
+    )
+
+
+def approve_usage() -> str:
+    return "Usage: approve <task-id> <message>\n\n" + approval_binding_guidance()
+
+
 def resolve_approval_binding(
     task: dict[str, Any],
     *,
@@ -7123,16 +7144,15 @@ def resolve_approval_binding(
         if independent and task_has_pr_review_target(task):
             raise SystemExit(
                 f"{task_id} is PR-backed but approve has no exact reviewed-head "
-                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA; internal activity "
-                "approval alone is not a GitHub review gate."
+                "binding; internal activity approval alone is not a GitHub review "
+                f"gate. {approval_binding_guidance()}"
             )
         if independent and warn_if_unbound:
             print(
                 f"warning: {task_id} is approved without a reviewed-head binding. "
                 "If this task has a PR, the review-before-merge gate will refuse to "
-                "merge it (approval_head_binding_missing). Re-approve with "
-                "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<40-hex head oid> "
-                f"(optionally REVIEW_BASE, default {DEFAULT_APPROVAL_BASE_BRANCH!r}).",
+                "merge it (approval_head_binding_missing). Re-approve with the "
+                f"required binding inputs. {approval_binding_guidance()}",
                 file=sys.stderr,
             )
         return {}
@@ -7298,7 +7318,7 @@ def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
 
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
-        raise SystemExit("Usage: approve <task-id> <message>")
+        raise SystemExit(approve_usage())
     task_id, message = args[0], args[1]
     actor = current_actor()
     ensure_agent(actor)

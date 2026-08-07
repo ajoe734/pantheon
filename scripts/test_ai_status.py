@@ -1954,13 +1954,32 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
         """Not every task has a PR, so the refusal belongs to the merge gate."""
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+        stderr = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            contextlib.redirect_stderr(stderr),
+        ):
             ai_status.command_approve(self.state, ["REG-002", "Approved."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
         self.assertNotIn("review_binding", task)
         self.assertNotIn("review_binding", self._approval_events()[0])
+        self.assertIn("REVIEW_PR=<pr-number>", stderr.getvalue())
+        self.assertIn(
+            "gh pr view <pr-number> --json headRefOid -q .headRefOid",
+            stderr.getvalue(),
+        )
+
+    def test_approve_usage_explains_pr_review_binding_inputs(self) -> None:
+        with self.assertRaises(SystemExit) as error:
+            ai_status.command_approve(self.state, [])
+
+        self.assertIn("REVIEW_PR=<pr-number>", str(error.exception))
+        self.assertIn(
+            "gh pr view <pr-number> --json headRefOid -q .headRefOid",
+            str(error.exception),
+        )
 
     def test_approve_refuses_internal_only_verdict_for_pr_backed_task(self) -> None:
         self.state["tasks"][0]["source_ref"] = {

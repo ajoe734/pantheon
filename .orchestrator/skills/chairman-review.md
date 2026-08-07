@@ -26,6 +26,15 @@ primary implementer in this role.
 - Relieve worker under-utilization by emitting `reassignment_actions` for owner changes when an idle, healthy agent (target_workload > 0, owned-todos = 0, auth_ready, recently exercised) can take over a `todo`-status task from a saturated owner.
 - Rescue blocked owner lanes by emitting `reassignment_actions` when the current owner is blocked by auth, credential, quota, or PR push failure and a healthy fallback owner can safely rerun the handoff.
 
+## Reviewer Approval Binding
+
+When a reviewer is ready to approve a PR-backed task, read
+`.orchestrator/skills/reviewer-approval-binding.md` before issuing or
+recommending `approve`. The reviewer must bind the decision to the exact PR
+head with `REVIEW_PR` and `REVIEW_HEAD_SHA`; an unbound activity approval is
+not a GitHub review gate and will be returned for re-review later. This is a
+reviewer precondition, not authority for the chairman to alter task status.
+
 ## Sidecar Decision Rule
 
 Approve sidecars when all of these are true:
