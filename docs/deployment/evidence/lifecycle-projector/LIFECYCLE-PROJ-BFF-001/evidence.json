@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-bff-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-BFF-001",
+    "title": "Serve Trade Journey and loop-run reads from Postgres",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-BFF-001",
+    "code_head_sha": "7c7b1c65ea4e9b50ca5d22a0ad3c9d6297d64ec9",
+    "head_sha_note": "This manifest is committed after the checksummed code head and intentionally does not self-reference.",
+    "review_decision": "pending_independent_review"
+  },
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-BFF-001/"
+    ],
+    "not_changing": [
+      "services/trade_journey projection writer and migrations",
+      "reader cutover or target-dev flag activation",
+      "frontend or legacy-data deletion"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-STORE-001",
+      "LIFECYCLE-PROJ-REDUCER-001",
+      "LIFECYCLE-PROJ-MIGRATE-001"
+    ]
+  },
+  "reader_contract": {
+    "flag": "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND",
+    "default": "json",
+    "selected_backend": "postgres",
+    "scope": "tenant_id and environment are mandatory for every relational read",
+    "pagination": "HMAC integrity-protected keyset cursor bound to scope, filters, sort, and cursor kind; default 50, maximum 200, query limit page_size + 1",
+    "fallback": "A selected but unavailable/misconfigured Postgres reader returns unavailable; JSON is not represented as current Postgres truth.",
+    "freshness": "Controller state is read from the scoped controller row and formal truth requires accepted_live=true, status=ready, and mode=live."
+  },
+  "file_checksums_cwd": "repository root",
+  "file_checksums": {
+    "services/control-plane/bff/main.py": "03e6f72b78182fb42ed1413fdc6bcf913edc35ac5c68ab0444a837415b711542",
+    "services/control-plane/bff/read_store.py": "248427758ebcd9b6c8e0cd988ed1d3ed00ebb65626f8a7b04d660e70cc36a581",
+    "services/control-plane/bff/trade_journeys.py": "b1b4eaeee3d7d07b5dd8094e7d07fafba657aec08f01c0bb98e397ac01a6320d",
+    "services/control-plane/bff/trade_journey_projection_store.py": "a8cce897de4e6b9e8a0ff85a984f2a6628b1d17dbfdfb2c7713a985b8f6669b1",
+    "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py": "407f7d4d552cdaa6944761638ac8190c6fdd5b0322380d641114183e7389ce83"
+  },
+  "validation": [
+    {
+      "command": "/tmp/pantheon-bff-verify/bin/python -m pytest -q services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py -k lifecycle_proj_bff",
+      "result": "pass; 3 passed"
+    },
+    {
+      "command": "/tmp/pantheon-bff-verify/bin/python -m pytest -q services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py -k loop_runs",
+      "result": "pass; 8 passed"
+    },
+    {
+      "command": "/tmp/pantheon-bff-verify/bin/python -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "result": "pass; 3 passed"
+    },
+    {
+      "command": "python3 -m py_compile services/control-plane/bff/trade_journey_projection_store.py services/control-plane/bff/trade_journeys.py services/control-plane/bff/read_store.py services/control-plane/bff/main.py && git diff --check && sha256sum -c docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-BFF-001/SHA256SUMS",
+      "result": "pass"
+    }
+  ],
+  "known_validation_constraint": {
+    "command": "/tmp/pantheon-bff-verify/bin/python -m pytest -q services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+    "result": "37 passed, 1 failed",
+    "reason": "The disposable environment installs unpinned FastAPI/Starlette versions whose APIRoute no longer satisfies the pre-existing isinstance(starlette.routing.Route) test. Route order and that test were not changed by this task."
+  }
+}
