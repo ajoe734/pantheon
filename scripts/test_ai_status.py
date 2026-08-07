@@ -2586,10 +2586,65 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("terminal_outcome", task)
         self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
 
-    def test_reconcile_merged_done_requires_human_ops(self) -> None:
+    def test_reconcile_merged_done_requires_human_ops_or_reviewer(self) -> None:
+        """The owner (Codex) is neither Human/Ops nor the current reviewer
+        (Claude) and must still be rejected -- self-service is for the
+        independent reviewer who already verified the evidence, not for the
+        owner whose own delivery is being reconciled."""
+
         self.state["tasks"][0]["status"] = "blocked"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
+                ai_status.command_reconcile_merged_done(
+                    self.state,
+                    ["REG-002", "Merged delivery reconciled"],
+                )
+
+    def test_reconcile_merged_done_allows_current_reviewer_self_service(self) -> None:
+        """Once validate_merged_done_evidence's automated chain verification
+        exists (added alongside this change), the reviewer who already
+        independently verified the evidence should not have to wait on a
+        human to press the same button -- that was the whole point of
+        automating the verification in the first place."""
+
+        self.state["tasks"][0]["status"] = "blocked"
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "commit": "a" * 40,
+        }
+        consumed_ref = {
+            "verdict_id": "pclose-reconcile-reviewer-001",
+            "consumption_record_id": "pclose-consume-reconcile-reviewer-001",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=consumed_ref,
+            ),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Reviewer self-service reconcile"],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["terminal_outcome"], "completed")
+
+    def test_reconcile_merged_done_rejects_stale_reviewer_after_drift(self) -> None:
+        """If the task's reviewer has itself since drifted away, the old
+        reviewer identity must not retain self-service access -- only the
+        *current* reviewer field is trusted, same as Human/Ops always was."""
+
+        self.state["tasks"][0]["status"] = "blocked"
+        self.state["tasks"][0]["reviewer"] = "Gemini"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
                 ai_status.command_reconcile_merged_done(
                     self.state,
                     ["REG-002", "Merged delivery reconciled"],
