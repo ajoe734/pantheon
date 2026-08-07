@@ -379,6 +379,54 @@ def test_corrected_bff_scope_avoids_nonterminal_lifecycle_overlap() -> None:
     )
 
 
+def test_held_close_sink_overlap_is_exempt_only_for_catalog_integration() -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    # Mirrors L12-CLOSE-001's real, live artifact scope: it shares exactly
+    # one file (the loop-catalog registry) with
+    # L12-CONTROLLER-CATALOG-INTEGRATION-20260731, and nothing else in the
+    # current catalog.
+    held_close_artifacts = [
+        "docs/deployment/loop-catalog.registry.json",
+        "docs/04/pantheon_twelve_loop_gap_2026-07-26",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+    ]
+    held_close = {
+        "L12-CLOSE-001": {
+            "id": "L12-CLOSE-001",
+            "status": "todo",
+            "artifacts": held_close_artifacts,
+        },
+    }
+    # The unique, release-gate-held program sink must not be misjudged as an
+    # unordered overlap against the one task it is known to overlap with
+    # (both touch docs/deployment/loop-catalog.registry.json).
+    module._current_live_overlap_guard(
+        catalog=payload,
+        tasks=tasks,
+        active_by_id=held_close,
+    )
+    # A different, non-exempt active task with the same overlapping scope as
+    # the held sink must still fail closed -- the exemption is scoped
+    # exactly to the L12-CONTROLLER-CATALOG-INTEGRATION-20260731 pairing.
+    other_overlapping_active = {
+        "SOME-OTHER-LIVE-TASK": {
+            "id": "SOME-OTHER-LIVE-TASK",
+            "status": "todo",
+            "artifacts": held_close_artifacts,
+        },
+    }
+    with pytest.raises(
+        module.DispatchError,
+        match="live nonterminal artifact overlap is not dependency-ordered",
+    ):
+        module._current_live_overlap_guard(
+            catalog=payload,
+            tasks=tasks,
+            active_by_id=other_overlapping_active,
+        )
+
+
 def test_current_catalog_rejects_duplicate_dangling_and_g1_overlap() -> None:
     duplicate = catalog()
     duplicate["tasks"][1]["id"] = duplicate["tasks"][0]["id"]

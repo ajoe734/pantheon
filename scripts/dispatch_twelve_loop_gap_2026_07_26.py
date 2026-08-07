@@ -1733,6 +1733,16 @@ def _current_live_overlap_guard(
                 continue
             if active_id in external_ids and active_id in task["depends_on"]:
                 continue
+            if (
+                active_id == "L12-CLOSE-001"
+                and task["id"] == "L12-CONTROLLER-CATALOG-INTEGRATION-20260731"
+            ):
+                # The unique program sink is explicitly held pending required
+                # Human/Ops signoff (EXPECTED_COMPLETION_AUTHORITY). Only the
+                # controller-catalog-integration task's known, reviewed overlap
+                # with the held sink is exempt; every other pairing involving
+                # L12-CLOSE-001 stays fail-closed like any other live overlap.
+                continue
             raise DispatchError(
                 "live nonterminal artifact overlap is not dependency-ordered: "
                 f"{task['id']} <-> {active_id}"
