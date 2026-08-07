@@ -12,17 +12,23 @@ import json
 import os
 import re
 import tempfile
+import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping, Optional
 
-from .dev_bridge_dispatcher import dispatch_task_packet
+from .dev_bridge_dispatcher import dispatch_task_packet, _open_regular_fence_file
 from .dev_bridge_models import BridgeDispatchRequest, DevTaskPacket
-from .dev_bridge_signer import has_seen_packet, verify_packet
+from .dev_bridge_signer import has_seen_packet, packet_digest, verify_packet
 
 
 DEFAULT_INBOX_DIR = ".orchestrator/assistant-dev-packets"
+PROCESSING_CLAIM_SCHEMA = "pantheon.assistant-dev-packet-processing-claim.v1"
+PROCESSING_RETRY_SCHEMA = "pantheon.assistant-dev-packet-retry.v1"
+PROCESSING_CLAIM_TTL_SECONDS = 300.0
+RETRY_BASE_SECONDS = 0.25
+RETRY_MAX_SECONDS = 5.0
 
 
 def _now() -> str:
@@ -121,6 +127,148 @@ def _read_json(path: Path) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def _read_optional_json(path: Path) -> Dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return _read_json(path)
+
+
+def _claim_path(inbox: Path, packet_path: Path) -> Path:
+    return inbox / "claims" / packet_path.name
+
+
+def _processing_fence_path(inbox: Path, packet_path: Path) -> Path:
+    return inbox / "claims" / f"{packet_path.name}.lock"
+
+
+def _try_acquire_processing_fence(inbox: Path, packet_path: Path) -> int | None:
+    """Keep an alive drainer authoritative even after JSON claim expiry."""
+
+    path = _processing_fence_path(inbox, packet_path)
+    descriptor = _open_regular_fence_file(
+        inbox,
+        ("claims",),
+        path.name,
+        description="Bridge inbox processing fence",
+    )
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return None
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _release_processing_fence(descriptor: int | None) -> None:
+    if descriptor is None:
+        return
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def _retry_path(inbox: Path, packet_path: Path) -> Path:
+    return inbox / "retries" / packet_path.name
+
+
+def _packet_identity(path: Path) -> tuple[DevTaskPacket, Dict[str, str]]:
+    packet = packet_from_payload(_read_json(path))
+    return packet, {
+        "packet_id": packet.packet_id,
+        "packet_digest": packet_digest(packet),
+    }
+
+
+def _identity_matches(payload: Mapping[str, Any], identity: Mapping[str, str]) -> bool:
+    return all(str(payload.get(key) or "") == value for key, value in identity.items())
+
+
+def _epoch(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _processing_claim_owned(
+    inbox: Path,
+    packet_path: Path,
+    claim_token: str,
+) -> bool:
+    claim = _read_optional_json(_claim_path(inbox, packet_path))
+    return bool(claim and str(claim.get("claim_token") or "") == claim_token)
+
+
+def _release_processing_claim(
+    inbox: Path,
+    packet_path: Path,
+    claim_token: str,
+) -> bool:
+    claim_path = _claim_path(inbox, packet_path)
+    if not _processing_claim_owned(inbox, packet_path, claim_token):
+        return False
+    claim_path.unlink(missing_ok=True)
+    return True
+
+
+def _clear_processing_metadata(
+    inbox: Path,
+    packet_path: Path,
+    claim_token: str,
+) -> None:
+    with _file_lock(inbox / ".queue.lock"):
+        if not _processing_claim_owned(inbox, packet_path, claim_token):
+            return
+        _retry_path(inbox, packet_path).unlink(missing_ok=True)
+        _release_processing_claim(inbox, packet_path, claim_token)
+
+
+def _schedule_processing_retry(
+    inbox: Path,
+    packet_path: Path,
+    claim_token: str,
+    identity: Mapping[str, str],
+) -> Dict[str, Any] | None:
+    """Persist exact-identity exponential backoff and release the short claim."""
+
+    with _file_lock(inbox / ".queue.lock"):
+        if not _processing_claim_owned(inbox, packet_path, claim_token):
+            return None
+        retry_path = _retry_path(inbox, packet_path)
+        previous = _read_optional_json(retry_path)
+        previous_attempt = (
+            int(previous.get("attempt") or 0)
+            if previous and _identity_matches(previous, identity)
+            else 0
+        )
+        attempt = previous_attempt + 1
+        exponent = min(attempt - 1, 16)
+        delay_seconds = min(
+            RETRY_MAX_SECONDS,
+            RETRY_BASE_SECONDS * (2**exponent),
+        )
+        now = datetime.now(timezone.utc)
+        retry = {
+            "schema": PROCESSING_RETRY_SCHEMA,
+            **identity,
+            "attempt": attempt,
+            "delay_seconds": delay_seconds,
+            "scheduled_at": now.isoformat().replace("+00:00", "Z"),
+            "next_attempt_at": (now + timedelta(seconds=delay_seconds))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "next_attempt_epoch": time.time() + delay_seconds,
+        }
+        _write_json_atomic(retry_path, retry)
+        _release_processing_claim(inbox, packet_path, claim_token)
+        return retry
 
 
 def _extract_packet_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -263,18 +411,80 @@ def _receipt_target_dir(inbox: Path, receipt: Mapping[str, Any]) -> Path:
     return inbox / ("failed" if receipt.get("status") in {"failed", "error"} else "processed")
 
 
-def _claim_processing_files(inbox: Path, max_items: Optional[int]) -> list[Path]:
+def _claim_processing_files(
+    inbox: Path,
+    max_items: Optional[int],
+) -> list[tuple[Path, str, int]]:
+    """Claim processing items briefly without holding a lock during dispatch."""
+
     with _file_lock(inbox / ".queue.lock"):
         processing = list(_processing_files(inbox))
-        if max_items is not None:
-            processing = processing[:max_items]
-        remaining = None if max_items is None else max(0, max_items - len(processing))
         pending = list(_pending_files(inbox))
-        if remaining is not None:
-            pending = pending[:remaining]
         for path in pending:
             processing.append(_move(path, inbox / "processing"))
-        return processing
+        claims: list[tuple[Path, str, int]] = []
+        now = time.time()
+        for path in processing:
+            if max_items is not None and len(claims) >= max_items:
+                break
+            fence = _try_acquire_processing_fence(inbox, path)
+            if fence is None:
+                continue
+            claimed = False
+            try:
+                try:
+                    _packet, identity = _packet_identity(path)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    # Invalid packet content is still claimed so the ordinary
+                    # drain error path can durably fail it instead of hot-looping.
+                    identity = {
+                        "packet_id": path.stem,
+                        "packet_digest": "invalid",
+                    }
+                retry_path = _retry_path(inbox, path)
+                try:
+                    retry = _read_optional_json(retry_path)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    retry = None
+                if retry is not None:
+                    # Unsigned retry metadata is advisory only.  A forged or stale
+                    # identity cannot suppress a valid signed packet.
+                    if _identity_matches(retry, identity):
+                        next_attempt = _epoch(retry.get("next_attempt_epoch"))
+                        if next_attempt is not None and next_attempt > now:
+                            continue
+                    else:
+                        retry_path.unlink(missing_ok=True)
+
+                claim_path = _claim_path(inbox, path)
+                try:
+                    existing = _read_optional_json(claim_path)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    existing = None
+                if existing is not None and _identity_matches(existing, identity):
+                    expires_at = _epoch(existing.get("expires_at_epoch"))
+                    if expires_at is not None and expires_at > now:
+                        continue
+
+                claim_token = os.urandom(24).hex()
+                _write_json_atomic(
+                    claim_path,
+                    {
+                        "schema": PROCESSING_CLAIM_SCHEMA,
+                        **identity,
+                        "claim_token": claim_token,
+                        "claimed_at": _now(),
+                        "claimed_at_epoch": now,
+                        "expires_at_epoch": now + PROCESSING_CLAIM_TTL_SECONDS,
+                        "owner_pid": os.getpid(),
+                    },
+                )
+                claims.append((path, claim_token, fence))
+                claimed = True
+            finally:
+                if not claimed:
+                    _release_processing_fence(fence)
+        return claims
 
 
 def drain_task_packet_inbox(
@@ -283,6 +493,7 @@ def drain_task_packet_inbox(
     inbox_dir: Optional[str] = None,
     limit: Optional[int] = None,
     dry_run: bool = False,
+    dispatch_env: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Drain queued packets through the verifier-backed governed dispatcher."""
     root = _repo_root(repo_root)
@@ -291,101 +502,115 @@ def drain_task_packet_inbox(
     processed: list[Dict[str, Any]] = []
     errors: list[Dict[str, Any]] = []
 
-    # One drain process owns processing at a time. Queue writers use a separate
-    # short-held lock and remain available while ai_status subprocesses run.
-    with _file_lock(inbox / ".drain.lock"):
-        files = list(_pending_files(inbox)) if dry_run else _claim_processing_files(inbox, max_items)
-        if dry_run and max_items is not None:
-            files = files[:max_items]
+    # Queue/claim locks protect only short local file transitions.  No inbox
+    # lock is held while the governed status subprocess or canonical readback
+    # runs.  Exact processing claims keep concurrent drainers from applying the
+    # same item, and expire so a crashed drainer is recoverable.
+    claimed_files = (
+        [(path, "", None) for path in list(_pending_files(inbox))]
+        if dry_run
+        else _claim_processing_files(inbox, max_items)
+    )
+    if dry_run and max_items is not None:
+        claimed_files = claimed_files[:max_items]
 
-        for path in files:
-            receipt_path = inbox / "receipts" / path.name
-            if not dry_run and receipt_path.exists():
-                # A crash may occur after the durable receipt but before the
-                # processing->processed rename. Finalize without redispatch.
-                try:
-                    recovered = _read_json(receipt_path)
-                    target = _finalize_processing(path, _receipt_target_dir(inbox, recovered))
-                    recovered = dict(recovered)
-                    recovered["archivedPath"] = str(target)
-                    recovered["recoveredFromReceipt"] = True
-                    if recovered.get("status") == "error":
-                        errors.append(recovered)
-                    else:
-                        processed.append(recovered)
-                except Exception as exc:
-                    errors.append(
-                        {
-                            "path": str(path),
-                            "status": "error",
-                            "error": f"receipt recovery failed: {exc}",
-                            "recoveredFromReceipt": True,
-                        }
-                    )
-                continue
-
-            receipt: Dict[str, Any] = {
-                "path": str(path),
-                "drainedAt": _now(),
-                "dryRun": dry_run,
-            }
-            try:
-                payload = _read_json(path)
-                packet = packet_from_payload(payload)
-                receipt["packetId"] = packet.packet_id
-                result = dispatch_task_packet(
-                    BridgeDispatchRequest(packet=packet, repoRoot=str(root), dryRun=dry_run)
-                )
-                receipt["result"] = result.model_dump(mode="json", by_alias=True)
-                if result.retryable and not dry_run:
-                    # Admission/replay-store durability is not terminal. Keep
-                    # the claimed processing item in place and write no receipt
-                    # so the next supervisor tick retries it automatically.
-                    receipt["status"] = "retryable"
-                    receipt["retryable"] = True
-                elif (
-                    result.replay_rejected
-                    and not dry_run
-                    and not result.errors
-                    and result.admission_record is not None
-                    and result.admission_status == "admitted_replay"
-                ):
-                    # The packet was already durably admitted by a previous
-                    # dispatch, but this processing item still needs its local
-                    # receipt/archive commit (for example after receipt fsync
-                    # failed). Preserve replay evidence while closing the
-                    # admitted inbox work as successfully processed.
-                    receipt["status"] = "processed"
-                    receipt["recoveredFromReplay"] = True
-                elif result.replay_rejected:
-                    # A seen row without an exact durable admission (including
-                    # legacy id-only rows) is not evidence of successful work.
-                    receipt["status"] = "failed" if not dry_run else "replay_rejected"
-                    receipt["nonAdmittedReplay"] = True
-                elif result.errors:
-                    receipt["status"] = "failed"
-                else:
-                    receipt["status"] = "dry_run" if dry_run else "processed"
-            except Exception as exc:
-                receipt["status"] = "error"
-                receipt["error"] = str(exc)
-
+    for path, claim_token, processing_fence in claimed_files:
+        receipt_path = inbox / "receipts" / path.name
+        existing_receipt = not dry_run and receipt_path.exists()
+        identity: Dict[str, str] | None = None
+        receipt: Dict[str, Any] = {
+            "path": str(path),
+            "drainedAt": _now(),
+            "dryRun": dry_run,
+        }
+        try:
+            packet, identity = _packet_identity(path)
+            receipt["packetId"] = packet.packet_id
+            result = dispatch_task_packet(
+                BridgeDispatchRequest(
+                    packet=packet,
+                    repoRoot=str(root),
+                    dryRun=dry_run,
+                ),
+                runtime_env=dispatch_env,
+            )
+            receipt["result"] = result.model_dump(mode="json", by_alias=True)
+            if result.retryable and not dry_run:
+                receipt["status"] = "retryable"
+                receipt["retryable"] = True
+            elif (
+                result.replay_rejected
+                and not dry_run
+                and not result.errors
+                and result.admission_record is not None
+                and result.admission_status == "admitted_replay"
+            ):
+                receipt["status"] = "processed"
+                receipt["recoveredFromReplay"] = True
+                if existing_receipt:
+                    # A receipt is never trusted on its own.  This flag means
+                    # the exact signed packet, durable admission, and canonical
+                    # active/archive readback were all revalidated first.
+                    receipt["recoveredFromReceipt"] = True
+            elif result.replay_rejected:
+                receipt["status"] = "failed" if not dry_run else "replay_rejected"
+                receipt["nonAdmittedReplay"] = True
+                if existing_receipt:
+                    receipt["invalidExistingReceipt"] = True
+            elif result.errors:
+                receipt["status"] = "failed"
+            else:
+                receipt["status"] = "dry_run" if dry_run else "processed"
+        except Exception as exc:
+            receipt["status"] = "error"
+            receipt["error"] = str(exc)
+        try:
             if dry_run:
                 (errors if receipt["status"] == "error" else processed).append(receipt)
                 continue
 
             if receipt.get("retryable") is True:
+                try:
+                    retry = _schedule_processing_retry(
+                        inbox,
+                        path,
+                        claim_token,
+                        identity or {
+                            "packet_id": path.stem,
+                            "packet_digest": "invalid",
+                        },
+                    )
+                except Exception as exc:
+                    receipt["retryPersistenceError"] = str(exc)
+                    with _file_lock(inbox / ".queue.lock"):
+                        _release_processing_claim(inbox, path, claim_token)
+                else:
+                    if retry is not None:
+                        receipt["retry"] = retry
                 errors.append(receipt)
                 continue
 
             target_dir = _receipt_target_dir(inbox, receipt)
             receipt["archivedPath"] = str(target_dir / path.name)
             try:
-                # Receipt durability is the commit point. A later move failure
-                # is recovered on the next supervisor tick without redispatch.
+                # Receipt durability is the commit point, but recovery still
+                # revalidates admission and canonical readback before trusting it.
                 _write_json_atomic(receipt_path, receipt)
             except Exception as exc:
                 receipt["persistenceError"] = str(exc)
+                try:
+                    _schedule_processing_retry(
+                        inbox,
+                        path,
+                        claim_token,
+                        identity or {
+                            "packet_id": path.stem,
+                            "packet_digest": "invalid",
+                        },
+                    )
+                except Exception:
+                    with _file_lock(inbox / ".queue.lock"):
+                        _release_processing_claim(inbox, path, claim_token)
                 errors.append(receipt)
                 continue
 
@@ -393,13 +618,20 @@ def drain_task_packet_inbox(
                 receipt["archivedPath"] = str(_finalize_processing(path, target_dir))
             except Exception as exc:
                 receipt["recoveryError"] = str(exc)
+                _clear_processing_metadata(inbox, path, claim_token)
                 errors.append(receipt)
                 continue
 
+            _clear_processing_metadata(inbox, path, claim_token)
             if receipt["status"] == "error":
                 errors.append(receipt)
             else:
                 processed.append(receipt)
+        finally:
+            # Keep the live drainer authoritative through receipt durability,
+            # archive/finalize, and claim/retry metadata cleanup.  JSON claim
+            # expiry is crash recovery metadata, not an overlap permission.
+            _release_processing_fence(processing_fence)
 
     return {
         "status": "drained",

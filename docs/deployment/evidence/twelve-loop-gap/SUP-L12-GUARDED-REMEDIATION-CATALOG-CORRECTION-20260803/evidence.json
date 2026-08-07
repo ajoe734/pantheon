@@ -1,0 +1,334 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Owner evidence cut v1.0.0 prepares the corrected guarded-remediation catalog for an independent exact-head review.",
+    "note": "This is a fail-closed owner evidence cut. It records a verified source receipt and one external test dependency; it does not assert independent approval, merge, or loop completion.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Any change to a bound artifact, receipt, validation result, or this manifest requires a new Owner evidence cut v1.0.0 or later and a fresh independent exact-head review.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-04T05:59:34Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.0.0. At canonical task-state journal sequence 9545, this replacement-PR source receipt is owned by Codex2, remains in_progress with Codex as independent reviewer, and is blocked from approval by the out-of-scope L12-SIGNOFF-001 card/header correction.",
+    "id": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
+    "overall_admission": "blocked_pending_external_l12_signoff",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime Repair / Twelve Loop Current Gap Correction",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "Pantheon development supervisor runtime",
+    "target_maturity": "contract",
+    "task_branch": "task/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803-recut",
+    "title": "Author and land a corrected successor to the 2026-07-31 guarded-remediation catalog"
+  },
+  "authorities": {
+    "actual_state": [
+      "At canonical task-state journal sequence 9545, SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 is owned by Codex2, reviewed by Codex, and remains in_progress without a review approval or merged delivery.",
+      "Current source receipt commit 6aec51e9ce8d48ab7e68d43a2587c9f5c760d737 carries the corrected catalog, dual-profile dispatcher binding, focused regression coverage, and bounded source-receipt README."
+    ],
+    "desired_state": [
+      "A corrected profile remains distinct from the retained 2026-07-31 profile and may be materialized only through the guarded dispatcher after merge and live promotion.",
+      "This task remains fail-closed until the out-of-scope L12-SIGNOFF-001 card/header correction reaches dev and the complete focused dispatcher suite passes."
+    ],
+    "task_packet": ".orchestrator/task-briefs/sup_l12_guarded_remediation_catalog_correction_20260803.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 owns the corrected catalog, dual-profile dispatcher provenance, source receipt, and owner evidence. Codex is the independent reviewer.",
+    "composes_with": [
+      "replacement PR #4539 into dev",
+      "the L12-SIGNOFF-001 owner correction on dev before the complete focused-suite recut",
+      "guarded dispatcher validate-only, dry-run, then apply materialization after review and live promotion"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docs/bff/execution-tasks/2026-08-03-l12-guarded-remediation-correction/corrected-remediation-tasks.json",
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py"
+    ],
+    "not_changing": "L12-SIGNOFF-001 task-card ownership, controller implementations, supervisor scheduling, canonical task state, deployment, and live-capital authority.",
+    "owned_layer": "Corrected remediation catalog provenance and dual-profile guarded-dispatch validation."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "bound_content_digest": "content-digest:sha256:bd694ec788f9d1c7d3dee331de8495a91379205abebadb4361f868ce7381c397",
+        "delivery_state": "current_source_receipt",
+        "note": "Current delivery receipt contains every content-digest-bound artifact. Its push Branch CI run completed all three required protection gates successfully.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+        "subject": "SUP-L12-CATALOG: bind replacement receipt"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+      "number": 4539,
+      "state": "open",
+      "url": "https://github.com/ajoe734/pantheon/pull/4539"
+    },
+    "required_checks": [
+      {
+        "completed_at": "2026-08-04T05:57:40Z",
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+        "run_id": 30882325736,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906117256",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-08-04T05:57:48Z",
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+        "run_id": 30882325736,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906117217",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-08-04T05:58:35Z",
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+        "run_id": 30882325736,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906190461",
+        "workflow": "Smoke acceptance"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --current",
+        "conclusion": "The corrected current profile is valid with 28 tasks and the replacement source-receipt provenance.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only --previous-current",
+        "conclusion": "The retained previous-current profile remains valid with 28 tasks.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+        "conclusion": "All 34 corrected-catalog dispatcher tests passed.",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py",
+        "conclusion": "65 tests passed and one test failed only because the out-of-scope L12-SIGNOFF-001 card/header still names a different owner than the catalog.",
+        "result": "blocked_external_dependency"
+      },
+      {
+        "claim_scope": "current",
+        "command": "git diff --check",
+        "conclusion": "No whitespace errors are present in the source-receipt change set.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-04T05:59:34Z",
+    "validated_base_sha": "53e5c30120e9c7894314d9e092385bc1e227c870",
+    "validated_head_sha": "content-digest:sha256:bd694ec788f9d1c7d3dee331de8495a91379205abebadb4361f868ce7381c397"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "Pantheon development supervisor runtime",
+    "public_bff_base_url": "not_applicable; no HTTP or runtime deployment changed",
+    "publish_cut": {
+      "status": "not_applicable",
+      "reason": "This task does not execute dispatcher dry-run or apply against canonical state."
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable",
+      "reason": "No canonical-root deployment or service restart was requested."
+    },
+    "identity_admission": {
+      "status": "pass",
+      "proof": "At canonical task-state journal sequence 9545, Codex2 is the owner and Codex is the distinct independent reviewer; no Human/Ops identity is claimed."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Repository-only catalog and dispatcher validation; hosted activation remains downstream of merge and live promotion."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "The corrected-catalog dispatcher tests cover idempotent replay and retain the previous-current profile contract."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Both profile validate-only commands fail closed on catalog inconsistencies; no canonical task state was mutated."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "not_applicable",
+      "proof": [
+        "This task creates no runtime request or downstream receipt."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "not_applicable",
+      "proof": [
+        "No worker runtime was restarted by this repository-only source receipt."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "The replacement branch excludes the rejected PR #4528 ancestry and does not restore out-of-scope L12-SIGNOFF-001 changes."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Only repository validation and CI receipt inspection ran; no canonical task state or service runtime was mutated."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend source or hosting changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No interactive authorization path changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "No trading, broker, allocation, or capital authority is introduced or exercised."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "The catalog keeps protected Human/Ops completion authority and this task did not impersonate that role."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant data path changed."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "At canonical task-state journal sequence 9545, owner Codex2 and reviewer Codex remain distinct and no independent approval is asserted by the owner."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "The corrected catalog is versioned, passes current-profile validation, and remains distinct from the retained previous-current profile.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands[0]",
+        "validation.commands[1]",
+        "docs/bff/execution-tasks/2026-08-03-l12-guarded-remediation-correction/corrected-remediation-tasks.json"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "The replacement source receipt is current-dev based and passed the three required Branch CI protection gates without force-pushing the rejected branch.",
+      "status": "pass",
+      "evidence_refs": [
+        "implementation_delivery.anchor_commits[0]",
+        "implementation_delivery.required_checks"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "The complete two-file dispatcher suite remains fail-closed pending the separate L12-SIGNOFF-001 task-card owner/header correction on dev.",
+      "status": "blocked_external_dependency",
+      "evidence_refs": [
+        "validation.commands[3]",
+        "residual_risks.independent_review"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "This task-scoped manifest records an independently verifiable delivery receipt, artifact content digest, and companion checksum.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.validated_head_sha",
+        "integrity.companion_checksum_path",
+        "implementation_delivery.anchor_commits[0]"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "independent_review": {
+      "blocking_for_this_task": true,
+      "containment": "Do not request approval, merge, or materialize corrected product tasks while the complete focused suite has an external failure.",
+      "description": "The owner has not requested or asserted an independent review because the complete focused suite is blocked by an external task-card correction.",
+      "expiry": "A clean rebase after L12-SIGNOFF-001 lands on dev, successful complete focused-suite run, and fresh exact-head review.",
+      "owner": "Codex",
+      "recheck_trigger": "After the L12-SIGNOFF-001 correction is present on dev and this branch has rerun the complete focused suite.",
+      "severity": "high"
+    },
+    "canonical_snapshot_age": {
+      "blocking_for_this_task": false,
+      "containment": "Re-read governed task state and recut the manifest before review whenever task state changes.",
+      "description": "The current evidence snapshot is bounded at canonical task-state journal sequence 9545 and must be recut if task ownership, review state, or external dependency state changes.",
+      "expiry": "The next canonical task-state mutation affecting this task or its dependency.",
+      "owner": "Codex2",
+      "recheck_trigger": "Before requesting independent review.",
+      "severity": "medium"
+    },
+    "delivery_receipt_intermediate_state": {
+      "blocking_for_this_task": false,
+      "containment": "Treat the receipt only as a source and CI proof; do not treat it as a merge or review decision.",
+      "description": "Receipt 6aec51e9ce8d48ab7e68d43a2587c9f5c760d737 is a verified source receipt, not a merged or independently reviewed delivery.",
+      "expiry": "The replacement PR merges or a subsequent source receipt supersedes this one.",
+      "owner": "Codex2",
+      "recheck_trigger": "On any source change, CI re-run, rebase, review decision, or merge.",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum seals this manifest, while delivery receipt 6aec51e9ce8d48ab7e68d43a2587c9f5c760d737 binds finalized source and README bytes without recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "docs/bff/execution-tasks/2026-08-03-l12-guarded-remediation-correction/corrected-remediation-tasks.json@v1.0.0": "5ab2efe3cb55673366994b759f3d52190573ca9f0fc002393da3f5449b59e45b",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/README.md@v1.0.0": "0d606abc8201b1bf166d8587563991cbf12a8c24fde1268ce5fb38bb4a79a656",
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py@v1.0.0": "784d54f9f7ac11fdfaacb11d3ed9447be5020d4082fb6f4c111140014f31d745",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py@v1.0.0": "dbdd2e0366173989da033cd1c09e5ab7fc454c4c0cb593aeb173ec73d79680bb"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_source_receipt_prepared",
+      "recorded_at": "2026-08-04T05:59:34Z",
+      "reference": "Current source receipt 6aec51e9ce8d48ab7e68d43a2587c9f5c760d737 with successful push Branch CI protection gates.",
+      "sequence": 1,
+      "sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+      "status": "blocked_external_dependency"
+    }
+  ]
+}

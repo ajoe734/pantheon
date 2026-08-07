@@ -1,0 +1,293 @@
+{
+  "schema_version": "1.0.0",
+  "record_type": "pantheon.task-evidence-manifest.v1",
+  "task": {
+    "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
+    "title": "Review post-4380 L12 gap audit dispatch PR #4382",
+    "owner": "Claude",
+    "delivery_worker_identity": "Claude",
+    "reviewer": "Antigravity",
+    "status": "review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-POST-4380-GAP-REVIEW-20260729",
+    "phase": "Twelve Loop Remediation / post-#4380 dispatch packet review",
+    "task_brief": ".orchestrator/task-briefs/sup_l12_post_4380_gap_review_20260729.md",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "The review verdict on PR #4382 and the git-native proof of why that PR cannot be merged by any reviewer action. This task reviews another lane's packet; it changes no packet file.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      ".orchestrator/supervisor.py and dispatch policy",
+      "every file under review in PR #4382",
+      "the canonical rows of any task named by the packet",
+      "any canonical status, archive, or activity file"
+    ],
+    "composes_with": [
+      "PR #4382 (branch task/L12-POST-4380-GAP-DISPATCH-20260729)",
+      "scripts/git/task_review_merge_gate.py",
+      "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      ".orchestrator/skills/task-closeout-finalization.md"
+    ],
+    "evidence_files": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/validation.txt",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/evidence.sha256"
+    ]
+  },
+  "read_at": {
+    "date": "2026-08-06",
+    "origin_dev": "003688bd7402d051986c07f1769285925af24e1b",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+    "status_root": "/home/lupin/pantheon"
+  },
+  "reviewed_subject": {
+    "pr": 4382,
+    "url": "https://github.com/ajoe734/pantheon/pull/4382",
+    "head_branch": "task/L12-POST-4380-GAP-DISPATCH-20260729",
+    "head_sha_reviewed": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+    "head_sha_named_in_brief": "7766d7042885230ae189ee6a71817ef44e334d59",
+    "head_moved_after_brief_was_written": true,
+    "head_move_detail": "The brief pins 7766d704 as the exact head at latest repair. The PR head is now ca00f813 (Codex, 2026-07-30T16:43:04Z, subject 'SUP-L12-POST-4380-GAP-REVIEW-20260729: refresh graph'). The review was therefore performed against the live head ca00f813, not the stale head in the brief.",
+    "github_state": {
+      "state": "OPEN",
+      "mergeStateStatus": "BLOCKED",
+      "autoMergeRequest": null,
+      "reviewDecision": "",
+      "isDraft": false
+    }
+  },
+  "verdict": {
+    "decision": "cannot_approve",
+    "decision_is_not": "a content rejection of the packet",
+    "one_line": "The packet content satisfies review requirements 1-4 at head ca00f813, but requirement 5 is unexecutable: PR #4382 is structurally unmergeable and no reviewer verdict of any kind can open its gate.",
+    "requires": "Human/Ops or supervisor canonical state authority"
+  },
+  "requirement_findings": [
+    {
+      "requirement": 1,
+      "text": "Packet reflects current post-#4379/#4380/#4373 facts, including PR base origin/dev = 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+      "result": "PASS as specified, with disclosed drift",
+      "detail": "Every base statement in the packet is explicitly timestamped ('Actionable dispatch base', generated_at 2026-07-30T16:40:37Z) and names 6f87a207 exactly as the brief requires. The #4379/#4380/#4373 merge commits and the L12-TRUTH-001 archive claim were re-checked and are all correct. Drift disclosed, not a false claim: origin/dev has since advanced from 6f87a207 to 003688bd, so the pinned base is seven days old."
+    },
+    {
+      "requirement": 2,
+      "text": "Does not claim all twelve loops are operational",
+      "result": "PASS",
+      "detail": "The audit states 'It does not claim the twelve loops are usable' and 'the loops remain non-operational as a full product system'. The README states 'The twelve-loop product system is still not complete'. INDEX.md carries an explicit Completion Boundary section. No file asserts operational status."
+    },
+    {
+      "requirement": 3,
+      "text": "Preserves operator rules: no .orchestrator/config.json edits, no Codex conversation subagents as fleets, Antigravity/Claude2 preferred for real supervisor/auto-worker lanes",
+      "result": "PASS at authoring time; lane preferences are now stale",
+      "detail": "All three rules are restated verbatim in the README 'Hard boundaries', in INDEX.md 'Hard Rules', and in tasks.json 'do_not_use'. The PR diff touches no config file. Stale, not wrong: the packet's owner/reviewer preference lists still name Claude2, Codex and Codex2, all retired by the 2026-08-05 Codex-quota reassignment (Codex -> Claude, Codex2 -> Antigravity), so those preferences no longer resolve to live worker lanes."
+    },
+    {
+      "requirement": 4,
+      "text": "tasks.json is valid JSON and the digest file checks out",
+      "result": "PASS",
+      "detail": "jq empty on the head blob exits 0. All four sha256 digests in evidence.sha256 were recomputed directly from the PR-head blobs and all four match. git diff --check origin/dev...ca00f813 is clean."
+    },
+    {
+      "requirement": 5,
+      "text": "If correct, approve exact PR head through the canonical review gate; otherwise reopen",
+      "result": "UNEXECUTABLE",
+      "detail": "Neither branch of this instruction can be carried out. See blocking_finding."
+    }
+  ],
+  "blocking_finding": {
+    "id": "orphan-task-pr",
+    "summary": "PR #4382's head branch is task/L12-POST-4380-GAP-DISPATCH-20260729, but no canonical task row named L12-POST-4380-GAP-DISPATCH-20260729 has ever existed.",
+    "proof": [
+      {
+        "probe": "active row in /home/lupin/pantheon/ai-status.json",
+        "result": "ABSENT"
+      },
+      {
+        "probe": "/home/lupin/pantheon/ai-task-archive/tasks/L12-POST-4380-GAP-DISPATCH-20260729.json",
+        "result": "ABSENT"
+      },
+      {
+        "probe": "task-scoped events in /home/lupin/pantheon/ai-activity-log.jsonl",
+        "result": "NONE; the only string matches are this session's own permission-hook echoes from 2026-08-06T10:36Z onward"
+      },
+      {
+        "probe": "task_review_merge_gate.py policy L12-POST-4380-GAP-DISPATCH-20260729",
+        "result": "source=missing, policy=review_before_merge, owner/reviewer/status all empty"
+      },
+      {
+        "probe": "task_review_merge_gate.py check L12-POST-4380-GAP-DISPATCH-20260729 --pr-json <live gh pr view>",
+        "result": "allow_merge=false, allow_auto_merge=false, revoke_auto_merge=true, reason=task_state_unavailable, detail='canonical task state for L12-POST-4380-GAP-DISPATCH-20260729 is missing; refusing to merge'"
+      },
+      {
+        "probe": "live GitHub state",
+        "result": "mergeStateStatus=BLOCKED, autoMergeRequest=null, reviewDecision=empty"
+      }
+    ],
+    "why_no_reviewer_can_fix_it": "task_review_merge_gate.py derives merge authority from the canonical row of the task id on the head branch, and it fails closed on a missing row by design. scripts/ai-status.sh approve binds an approval to a task row; there is no row for L12-POST-4380-GAP-DISPATCH-20260729 to approve or reopen. Approving this review task (SUP-L12-POST-4380-GAP-REVIEW-20260729) does not feed the gate for a different task id, so an approval here would be a no-op that falsely reads as progress. Reopening is equally unavailable for the same reason: reopen also targets a row.",
+    "remediation_owner": "Human/Ops or supervisor",
+    "remediation_options": [
+      "Register a canonical row for L12-POST-4380-GAP-DISPATCH-20260729 bound to PR #4382, then run a normal exact-head review cycle on the refreshed content.",
+      "Retire PR #4382 and re-land the packet under a task id that has a canonical row, per the pattern SUP-L12-STALE-PR-RETIRE-20260729 already covers.",
+      "Retire PR #4382 outright as superseded, since Waves 0/A/C are largely archived and the packet's actionable surface has shrunk to Wave D."
+    ],
+    "recommendation": "Retire or re-land rather than register. Seven days of dev movement have consumed most of the packet's actionable content; see currency_findings."
+  },
+  "currency_findings": [
+    {
+      "item": "packet base",
+      "finding": "tasks.json base_commit is 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e; origin/dev is now 003688bd7402d051986c07f1769285925af24e1b."
+    },
+    {
+      "item": "Wave 0 gate",
+      "finding": "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730 is archived. The wave-0 precondition that every other wave depends on is already satisfied, so the packet's dependency graph now gates nothing."
+    },
+    {
+      "item": "Waves A and C",
+      "finding": "SUP-L12-LONG-FINALIZE-LEASE-20260729, SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729, OPS-PROMOTE-PR-CI-TRIGGER-001, SUP-L12-MERGED-ROW-RECONCILE-20260729 and L12-FLEET-STATUS-SYNC-001 are all archived. Only L12-VERIFY-OBS-001 (review) and SUP-L12-STALE-PR-RETIRE-20260729 (in_progress) are still live."
+    },
+    {
+      "item": "Wave D central repair",
+      "finding": "L12-VERIFY-LEARN-REAL-VERIFIER-001 -- the new task this head introduced, and the sole dependency it moved L12-VERIFY-LEARN-001 onto -- has no canonical row anywhere. Meanwhile L12-VERIFY-LEARN-001 is already archived, so the dependency the packet asserts is moot.",
+      "severity": "notable",
+      "note": "This is the same defect class the packet's own Wave 0 exists to prevent: a dispatch that names tasks which were never materialized into canonical state. The packet reproduces that failure in its own graph, and PR #4382's orphan head branch is a third instance."
+    },
+    {
+      "item": "lane preferences",
+      "finding": "Owner/reviewer preference lists name Claude2, Codex and Codex2 throughout. The 2026-08-05 quota reassignment retired those lanes (Codex -> Claude, Codex2 -> Antigravity)."
+    }
+  ],
+  "prior_block_reason_assessment": {
+    "reopen_request": "Human/Ops reopened this task at 2026-08-06T10:17:40Z asking whether the recorded block still applies.",
+    "recorded_reason_before_reopen": "waiting_for=Antigravity, next='Codex quota exhausted 2026-08-05: reassigned Codex->Claude / Codex2->Antigravity'",
+    "assessment": "INACCURATE. The recorded reason was a side effect of the 2026-08-05 mass reassignment overwriting 'next'; it never described a real condition. This task was never waiting on Antigravity's availability.",
+    "actual_condition": "PR #4382 is an orphan task PR whose canonical row does not exist, so the review gate fails closed at reason=task_state_unavailable and no reviewer verdict can open it.",
+    "still_blocking": true,
+    "blocking_party": "Human/Ops or supervisor canonical state authority, not any reviewer lane"
+  },
+  "verification": {
+    "commands": [
+      "git show <head>:<digest-file> | while read want path; do git show \"<head>:$path\" | sha256sum; done   # 4/4 match",
+      "git show <head>:docs/bff/execution-tasks/2026-07-29-l12-post-4380-gap-fleet-dispatch/tasks.json | jq empty   # exit 0",
+      "git diff --check origin/dev...ca00f813f4e6a5dfcfb2cf402ebba425a034d03e   # clean",
+      "python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon --json policy L12-POST-4380-GAP-DISPATCH-20260729",
+      "python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon --json check L12-POST-4380-GAP-DISPATCH-20260729 --pr-json /tmp/pr4382.json",
+      "gh pr view 4382 --json number,state,headRefName,headRefOid,baseRefName,mergeStateStatus,autoMergeRequest,reviewDecision,isDraft,url"
+    ],
+    "transcript": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/validation.txt",
+    "digests_recomputed_from": "PR-head git blobs, so the result does not depend on any working-tree checkout"
+  },
+  "evidence_policy": {
+    "no_config_edits": true,
+    "no_codex_subagents_as_fleet_proof": true,
+    "no_packet_file_modified_by_this_review": true,
+    "gate_not_reimplemented": "The merge decision is the output of the governed scripts/git/task_review_merge_gate.py under the leased command root, not a reimplementation of its rules."
+  },
+  "residual_risk": [
+    "This manifest records that PR #4382 cannot merge; it does not retire the PR. If neither remediation option is taken, #4382 stays open and BLOCKED and becomes exactly the zombie task PR that SUP-L12-STALE-PR-RETIRE-20260729 is chartered to clean up.",
+    "L12-VERIFY-LEARN-REAL-VERIFIER-001 remains unmaterialized. If the packet is retired without carrying that task forward, the learning-verifier rebuild loses its only written charter.",
+    "The currency probe reflects canonical state at 2026-08-06 with origin/dev = 003688bd. Any later dev movement can change which packet rows are still live."
+  ],
+  "handoff_refresh": {
+    "performed_at_date": "2026-08-06",
+    "reason": "An audit that cites another PR and other task rows can go stale between the audit commit and the reviewer's read. Re-observed immediately before handoff.",
+    "origin_dev_at_refresh": "34e1f494a251f6c2292a6675baa0ed65fdab7bb5",
+    "origin_dev_at_original_read": "003688bd7402d051986c07f1769285925af24e1b",
+    "verdict_unchanged": true,
+    "reviewed_head_unchanged": true,
+    "reviewed_head_at_refresh": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+    "gate_recheck": {
+      "allow_merge": false,
+      "allow_auto_merge": false,
+      "revoke_auto_merge": true,
+      "reason": "task_state_unavailable",
+      "contract_source": "missing",
+      "github_merge_state_status": "BLOCKED"
+    },
+    "currency_corrections": [
+      "origin/dev advanced from 003688bd to 34e1f494; the packet's pinned base 6f87a207 is further behind than recorded, which strengthens the retire-or-re-land recommendation.",
+      "L12-FE-TRUTH-001 moved from blocked to in_progress.",
+      "SUP-L12-STALE-PR-RETIRE-20260729 moved from in_progress to review. That task is chartered to retire stale PRs, so the recommended remediation path for #4382 is nearer than when this manifest was written.",
+      "No packet task id gained or lost a canonical row. L12-VERIFY-LEARN-REAL-VERIFIER-001 and L12-POST-4380-GAP-DISPATCH-20260729 are both still MISSING."
+    ],
+    "probe_limitation": {
+      "condition": "status_task_lock_busy (rc=75) on the governed ai-status.sh show command throughout the refresh",
+      "confirmed_through_governed_command": [
+        "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+        "L12-VERIFY-OBS-001",
+        "SUP-L12-LONG-FINALIZE-LEASE-20260729",
+        "SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729",
+        "SUP-L12-STALE-PR-RETIRE-20260729",
+        "OPS-PROMOTE-PR-CI-TRIGGER-001",
+        "L12-POST-4380-GAP-DISPATCH-20260729"
+      ],
+      "read_from_canonical_mirrors": "The remaining rows were read from ai-status.json and ai-task-archive/tasks/*.json after eight governed attempts returned lock-busy.",
+      "mirror_lag_observed": "The ai-status.json mirror lagged the governed command by one transition on SUP-L12-STALE-PR-RETIRE-20260729 (mirror in_progress, governed review). Treat mirror-sourced rows as 'no later than' the state shown.",
+      "affects_verdict": false
+    },
+    "refresh_commands": [
+      "gh pr view 4382 --json number,state,headRefName,headRefOid,baseRefName,mergeStateStatus,autoMergeRequest,reviewDecision,isDraft,url",
+      "python scripts/git/task_review_merge_gate.py --status-root /home/lupin/pantheon --json check L12-POST-4380-GAP-DISPATCH-20260729 --pr-json /tmp/pr4382-recheck.json",
+      "sha256sum -c docs/deployment/evidence/twelve-loop-gap/SUP-L12-POST-4380-GAP-REVIEW-20260729/evidence.sha256",
+      "AI_NAME=Claude \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show <each packet task id>"
+    ]
+  },
+  "closeout_refresh": {
+    "performed_at_date": "2026-08-06",
+    "reason": "Owner closeout dispatch (owned_finalize_dispatch). The delivery PR could not land on the previously approved head, so the base was refreshed and every claim in this manifest was re-observed against the new base before asking for a second exact-head review.",
+    "origin_dev_at_closeout": "4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c",
+    "origin_dev_at_handoff_refresh": "34e1f494a251f6c2292a6675baa0ed65fdab7bb5",
+    "origin_dev_at_original_read": "003688bd7402d051986c07f1769285925af24e1b",
+    "verdict_unchanged": true,
+    "reviewed_head_unchanged": true,
+    "reviewed_head_at_closeout": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+    "delivery_pr": {
+      "pr": 4588,
+      "previously_approved_head": "93e73039bbb84603917bca824aa37d0ffc24c4b6",
+      "base_refresh_merge_commit": "fcca37ebd12a47aaf23fca447a80b162189c95f8",
+      "final_head_not_self_named": "This manifest cannot name the commit that contains it; the refreshed exact head is carried in the handoff message and must be bound by the reviewer at approve time.",
+      "pr_diff_scope_after_refresh": "4 files, all under this evidence directory; +586/-0 as captured at merge commit fcca37ebd, +818/-0 at the standing head once this closeout revision is counted; git diff --check clean"
+    },
+    "why_the_base_was_refreshed": {
+      "trigger": "scripts/git/auto_integrator.py returned status=waiting, rebase_status=rebase_required for PR #4588.",
+      "integrator_detail": "PR #4588 needs a refreshed head to land on dev; the approval of 93e73039bbb84603917bca824aa37d0ffc24c4b6 would not cover it. Owner refreshes the branch and the assigned reviewer re-approves the new head.",
+      "mechanism": "For a review_before_merge PR the integrator never force-pushes an approved head. It requires origin/dev to already be an ancestor of the approved exact head so it can smoke that immutable commit. origin/dev advanced past the approved head, so that ancestry test failed.",
+      "action_taken": "Merged origin/dev forward into the task branch. A rebase was deliberately not used, because rebasing a task branch whose delivery is an evidence manifest rewrites the commits that carry that manifest into the PR diff.",
+      "consequence": "The exact-head approval of 93e73039bb no longer binds the standing head. A second exact-head review is required; this is a base refresh, not new review content."
+    },
+    "stale_review_gate_checkrun_cleared": {
+      "symptom": "PR #4588 was mergeable but mergeStateStatus=BLOCKED while the canonical review gate commit status was already success.",
+      "cause": "A pre-approval Canonical Review Gate workflow run (31097849961, 2026-08-06T11:35:22Z) left a FAILURE CheckRun on the same head.",
+      "fix": "gh run rerun 31097849961 on the unchanged head; the rerun concluded success and PR #4588 moved BLOCKED -> CLEAN without altering the exact-head binding."
+    },
+    "reverification": {
+      "subject_pr_4382": {
+        "state": "OPEN",
+        "mergeStateStatus": "BLOCKED",
+        "headRefOid": "ca00f813f4e6a5dfcfb2cf402ebba425a034d03e",
+        "autoMergeRequest": null,
+        "reviewDecision": "",
+        "unchanged_since_review": true
+      },
+      "orphan_row_probe": {
+        "governed_show_L12-POST-4380-GAP-DISPATCH-20260729": "Unknown task",
+        "archive_file": "ABSENT",
+        "gate_check": "block policy=review_before_merge reason=task_state_unavailable; canonical task state is missing; refusing to merge"
+      },
+      "digests": "sha256sum -c evidence.sha256 -> 3/3 OK before this revision; recomputed after it",
+      "conclusion": "The blocking finding, the verdict, and requirement findings 1-5 are all unchanged at origin/dev = 4ee7fc95."
+    },
+    "environment_finding_out_of_scope": {
+      "id": "dev-lost-canonical-review-gate-workflow",
+      "severity": "fleet-wide",
+      "observed_during": "the base refresh merge, which deleted these files from this worktree because dev no longer has them",
+      "summary": "origin/dev no longer contains .github/workflows/canonical-review-gate.yml or scripts/git/canonical_review_gate_ci.py. origin/master still contains both, and that workflow is the only difference between the two branches' workflow sets.",
+      "cause": "PR #4590 (SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729: anchor owner handoff) squash-merged as 23ae23c2185d31d2aeacafaa9b051127a6d53136 at 2026-08-06T11:57:30Z with 227 files changed, +1750/-47932. A commit titled 'anchor owner handoff' deleting 166 files is the signature of a stale-base squash, not an intended removal.",
+      "impact": "The 'Pantheon canonical review gate' context is required by dev branch protection. Task branches cut from dev after 23ae23c2 carry neither the workflow nor its CI helper, so nothing produces that CheckRun for them. Approvals still post the context as a commit status through github_review_bridge.py, so gated review PRs can still be satisfied, but the CI-side gate is gone from the default branch.",
+      "not_remediated_here": "Restoring a deleted required-check workflow to dev is outside this task's scope and outside its reviewed diff. Escalated to Human/Ops in the handoff message rather than resolved locally.",
+      "affects_this_verdict": false
+    }
+  }
+}

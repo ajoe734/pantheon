@@ -31,7 +31,7 @@
     ]
   },
   "implementation": {
-    "anchor_commit": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+    "anchor_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
     "policy_function": "reap_stale_l12_missing_process_failure_streaks",
     "per_cycle_limit": 4,
     "eligibility": [
@@ -118,7 +118,7 @@
     "base_sha": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e"
   },
   "delivery": {
-    "anchor_commit": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+    "anchor_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
     "pull_request": 4385,
     "merge_commit": null,
     "deployment": "not_applicable_repository_supervisor_policy"
