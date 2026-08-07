@@ -4,7 +4,7 @@
 - Owner: Codex
 - Reviewer: Claude
 - Status: implementation complete; independent review pending
-- Code head covered by this evidence: `7c7b1c65ea4e9b50ca5d22a0ad3c9d6297d64ec9`
+- Code head covered by this evidence: `dc8c0ed390c1011f22c813b798e1c8a12c881f6d`
 
 This task adds an explicitly selected, disabled-by-default BFF Postgres reader
 for the relational projection schema delivered by `LIFECYCLE-PROJ-STORE-001`.
@@ -25,6 +25,9 @@ JSON fallback to be labelled as Postgres truth.
 - Journey and timeline pages use signed keyset cursors. The HMAC payload binds
   cursor kind, tenant, environment, sort, and normalized filters, so a token
   cannot be reused for another scope/filter/sort or edited.
+- Boolean journey filters and v5 loop status filters remain query-side filters
+  and are included in their signed cursor scope; `false` is distinct from an
+  omitted filter.
 - Journey queries select at most `page_size + 1`; BFF validation caps page size
   at 200. The query carries the tenant/environment predicates before filters
   and ordering, matching the indexes from the store task.
