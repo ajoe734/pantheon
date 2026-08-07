@@ -63466,10 +63466,12 @@ async def bff_list_loop_runs(
             requested_tenant=tenant_id,
             requested_environment=environment,
         )
+        requested_statuses = sorted({item.strip().lower() for item in (status or "").split(",") if item.strip()})
         try:
             records, next_token = projection_reader.page_loop_runs(
                 tenant_id=scoped_tenant,
                 environment=scoped_environment,
+                statuses=requested_statuses,
                 page_size=page_size,
                 page_token=page_token,
             )
@@ -63481,9 +63483,6 @@ async def bff_list_loop_runs(
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid page_token", "page_token does not match this tenant/environment scope")
         except ProjectionReadUnavailable:
             return _sem_final_list_response([], dataset="loop_runs", surface_key="loop_runs", source="missing")
-        if status:
-            requested = {s.strip().lower() for s in status.split(",") if s.strip()}
-            records = [r for r in records if str(r.get("status") or "").lower() in requested]
         formal = controller.get("accepted_live") is True and controller.get("status") == "ready" and controller.get("mode") == "live"
         response = _sem_final_list_response(records, dataset="loop_runs", surface_key="loop_runs", source="postgres_lifecycle_projection", surface={"status": "ok" if formal else "degraded", "source": "postgres_lifecycle_projection", "projection_schema_version": "pantheon.trade-journey-projection.v1", "controller": controller, "accepted_live": controller.get("accepted_live"), "projection_mode": controller.get("mode"), "truth_status": "formal" if formal else "degraded"})
         response["page_info"].update({"next_page_token": next_token, "page_size": page_size, "returned": len(records), "has_more": next_token is not None})

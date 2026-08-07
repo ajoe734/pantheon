@@ -1375,7 +1375,8 @@ def create_trade_journeys_router(
                 "q": q, "persona_id": persona_id, "strategy_id": strategy_id,
                 "decision_id": decision_id, "order_id": order_id,
                 "broker_order_id": broker_order_id, "stage": stage, "status": status,
-                "waiting_human": waiting_human, "reconciliation_state": reconciliation_state,
+                "stalled": stalled, "waiting_human": waiting_human,
+                "reconciliation_state": reconciliation_state,
                 "date_from": _normalize_bound(date_from), "date_to": _normalize_bound(date_to),
             }
             try:

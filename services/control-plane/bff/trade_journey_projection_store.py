@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from services.trade_journey.materializer import JourneyProjection, STAGES
+from services.trade_journey.materializer import JourneyProjection, STAGES, TERMINAL_STATUSES
 
 READER_BACKEND_ENV = "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"
 READER_DSN_ENV = "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"
@@ -230,6 +230,21 @@ class TradeJourneyProjectionStore:
         if filters.get("reconciliation_state"):
             clauses.append("stage_coverage -> 'reconciliation' ->> 'status' = %s")
             params.append(str(filters["reconciliation_state"]))
+        if "waiting_human" in filters:
+            waiting_stage = "EXISTS (SELECT 1 FROM jsonb_each(COALESCE(stage_coverage, '{}'::jsonb)) AS stage(stage_name, stage_state) WHERE stage.stage_state ->> 'status' = 'waiting_human')"
+            if bool(filters["waiting_human"]):
+                clauses.append(f"(status=%s OR {waiting_stage})")
+            else:
+                clauses.append(f"(status<>%s AND NOT {waiting_stage})")
+            params.append("waiting_human")
+        if "stalled" in filters:
+            terminal_placeholders = ", ".join("%s" for _ in TERMINAL_STATUSES)
+            terminal_params = tuple(sorted(TERMINAL_STATUSES))
+            if bool(filters["stalled"]):
+                clauses.append(f"(status NOT IN ({terminal_placeholders}) AND last_occurred_at < clock_timestamp() - interval '900 seconds')")
+            else:
+                clauses.append(f"(status IN ({terminal_placeholders}) OR last_occurred_at >= clock_timestamp() - interval '900 seconds')")
+            params.extend(terminal_params)
         for key, identifier_type in (("persona_id", "persona_id"), ("strategy_id", "strategy_id"), ("decision_id", "decision_id"), ("order_id", "order_id"), ("broker_order_id", "broker_order_id")):
             if filters.get(key):
                 clauses.append(f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)")
@@ -245,7 +260,9 @@ class TradeJourneyProjectionStore:
             raise ValueError("unsupported journey sort")
         if not 1 <= int(page_size) <= MAX_PAGE_SIZE:
             raise ValueError(f"page_size must be between 1 and {MAX_PAGE_SIZE}")
-        active_filters = {key: value for key, value in dict(filters or {}).items() if value not in (None, "", False)}
+        # Keep explicit false values in the signed scope: ``waiting_human=false``
+        # and ``stalled=false`` are filters, not equivalent to an omitted filter.
+        active_filters = {key: value for key, value in dict(filters or {}).items() if value is not None and value != ""}
         scope = self._cursor_scope(tenant_id=tenant_id, environment=environment, sort=sort, filters=active_filters, kind="journeys")
         base_clauses, base_params = self._journey_where(tenant_id=tenant_id, environment=environment, filters=active_filters)
         clauses, params = list(base_clauses), list(base_params)
@@ -328,12 +345,16 @@ class TradeJourneyProjectionStore:
             return None
         return {"controller_id": row.get("controller_id"), "checkpoint": int(row.get("checkpoint_seq") or 0), "source_high_watermark": int(row.get("source_high_watermark") or 0), "backlog": int(row.get("backlog_count") or 0), "generation": int(row.get("projection_revision") or 0), "deployment_sha": row.get("deployment_sha"), "mode": row.get("mode"), "status": "ready" if str(row.get("status") or "").lower() in {"ok", "ready"} else row.get("status"), "accepted_live": bool(row.get("accepted_live")), "last_poll_at": _iso(row.get("last_poll_at")) or None, "last_successful_publish_at": _iso(row.get("last_success_at")) or None, "last_live_success_at": _iso(row.get("last_live_success_at")) or None, "last_error": row.get("last_error_message") or None, "quarantine_count": int(row.get("unresolved_quarantine_count") or 0)}
 
-    def page_loop_runs(self, *, tenant_id: str, environment: str, page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> tuple[list[dict[str, Any]], Optional[str]]:
+    def page_loop_runs(self, *, tenant_id: str, environment: str, statuses: Optional[Sequence[str]] = None, page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> tuple[list[dict[str, Any]], Optional[str]]:
         self._require_scope(tenant_id, environment)
         if not 1 <= int(page_size) <= MAX_PAGE_SIZE:
             raise ValueError(f"page_size must be between 1 and {MAX_PAGE_SIZE}")
-        scope = self._cursor_scope(tenant_id=tenant_id, environment=environment, sort="updated_at_desc", filters={}, kind="loop_runs")
+        clean_statuses = sorted({str(status).strip().lower() for status in (statuses or []) if str(status).strip()})
+        scope = self._cursor_scope(tenant_id=tenant_id, environment=environment, sort="updated_at_desc", filters={"statuses": clean_statuses}, kind="loop_runs")
         clauses, params = ["tenant_id=%s", "environment=%s"], [tenant_id, environment]
+        if clean_statuses:
+            clauses.append(f"status IN ({', '.join('%s' for _ in clean_statuses)})")
+            params.extend(clean_statuses)
         if page_token:
             cursor = self.tokens.decode(page_token, expected=scope)
             after = cursor.get("after")

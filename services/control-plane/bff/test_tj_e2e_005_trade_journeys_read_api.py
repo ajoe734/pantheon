@@ -1175,6 +1175,7 @@ def test_lifecycle_proj_bff_list_uses_selected_postgres_reader() -> None:
                 "broker_order_id": None,
                 "stage": None,
                 "status": "open",
+                "stalled": None,
                 "waiting_human": None,
                 "reconciliation_state": None,
                 "date_from": None,
