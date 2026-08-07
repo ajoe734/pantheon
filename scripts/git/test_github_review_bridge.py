@@ -307,7 +307,7 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         self.assertEqual(
             runner.dispatches[0],
             {
-                "ref": "task/AUDIT-001",
+                "ref": "dev",
                 "inputs": {"head_ref": "task/AUDIT-001", "head_sha": HEAD},
             },
         )
