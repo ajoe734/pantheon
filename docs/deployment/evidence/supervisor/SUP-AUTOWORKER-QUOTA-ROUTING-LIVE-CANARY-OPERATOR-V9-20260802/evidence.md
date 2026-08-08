@@ -2,7 +2,7 @@
 
 Status: **NO-GO preflight; task blocked**
 
-Owner: Codex2  
+Owner: Codex2
 Reviewer: Human/Ops
 
 ## Result
