@@ -79,23 +79,15 @@
         "note": "First clean delivery commit on origin/dev 1209682f5; it retains the 8/03 dispatcher profile and adds only the previous-current held-close guard, regressions, handoff, and candidate evidence."
       }
     ],
-    "pull_request": {
-      "number": 4614,
-      "url": "https://github.com/ajoe734/pantheon/pull/4614",
-      "head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
-      "base": "dev"
-    },
     "required_checks": [
       {
         "workflow": "Branch CI Gate / Commit trailers",
         "event": "pull_request",
-        "head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
-        "conclusion": "pending_rebuilt_head"
+        "conclusion": "pending_rebuilt_exact_head"
       },
       {
         "workflow": "Pantheon canonical review gate",
         "event": "review_proof",
-        "head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
         "conclusion": "pending_independent_exact_head_review"
       }
     ]
