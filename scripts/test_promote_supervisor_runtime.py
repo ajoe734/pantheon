@@ -1301,6 +1301,18 @@ def _persistent_process_reader(
         owner_pid=generation.pid,
         owner_starttime_ticks=generation.starttime_ticks,
     )
+    environment = {
+        "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
+        "PANTHEON_STATUS_ROOT": str(status_root),
+    }
+    supervisor_index = next(
+        index
+        for index, argument in enumerate(argv)
+        if Path(argument).name == "supervisor.py"
+    )
+    if "-B" in argv[1:supervisor_index]:
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return InjectedRuntimeProcessReader(
         pids=(generation.pid,),
         generations={generation.pid: generation},
@@ -1313,14 +1325,7 @@ def _persistent_process_reader(
                 inode=root_stat.st_ino,
             )
         },
-        environment={
-            generation.pid: {
-                "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
-                "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
-                "PANTHEON_STATUS_ROOT": str(status_root),
-                "PYTHONDONTWRITEBYTECODE": "1",
-            }
-        },
+        environment={generation.pid: environment},
         locks=[lock, lock],
     )
 
