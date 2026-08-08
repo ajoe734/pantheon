@@ -1945,9 +1945,16 @@ def derive_supervisor_config_variant(
             "Captured live config must contain exactly one supervisor entrypoint"
         )
     command = list(raw_command)
-    command[supervisor_indexes[0]] = str(
+    supervisor_index = supervisor_indexes[0]
+    command[supervisor_index] = str(
         command_root / SUPERVISOR_ENTRYPOINT_RELATIVE
     )
+    # The runtime root is immutable and its cleanliness is revalidated during
+    # every post-launch observation.  Persist Python's no-bytecode flag in the
+    # config-owned argv so both the promotion launch and later watchdog
+    # restarts cannot create ignored __pycache__ content in that root.
+    if "-B" not in command[1:supervisor_index]:
+        command.insert(supervisor_index, "-B")
     watchdog["supervisor_command"] = command
     content = _encode_live_config(payload)
     return SupervisorConfigVariant(

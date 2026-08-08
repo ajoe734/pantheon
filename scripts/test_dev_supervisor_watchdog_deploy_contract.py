@@ -23,6 +23,10 @@ def test_dev_root_deploy_provisions_split_root_persistent_watchdog() -> None:
     assert "git clone --quiet --no-local --no-checkout" in materialize
     assert "update-ref refs/remotes/origin/dev" in materialize
     assert "--validate-command-root-only" in materialize
+    assert (
+        'python3 -B "$destination/scripts/provision_live_supervisor_config.py"'
+        in materialize
+    )
     assert 'local pid_file="${PANTHEON_SUPERVISOR_PID:' in first_install_guard
     assert 'Path("/proc").glob("[0-9]*/cmdline")' in first_install_guard
     assert 'PurePosixPath(argument).name == "supervisor.py"' in first_install_guard
@@ -31,6 +35,10 @@ def test_dev_root_deploy_provisions_split_root_persistent_watchdog() -> None:
     assert "performing first-install supervisor config provisioning with no incumbent" in function
     assert 'assert_no_live_supervisor_incumbent "${PANTHEON_STATUS_ROOT_HOST}"' in function
     assert '"${command_root}/scripts/provision_live_supervisor_config.py"' in function
+    assert (
+        'python3 -B "${command_root}/scripts/provision_live_supervisor_config.py"'
+        in function
+    )
     assert '--repo-config "${command_root}/.orchestrator/config.json"' in function
     assert '--command-root "$command_root"' in function
     assert "--status-root \"${PANTHEON_STATUS_ROOT_HOST}\"" in function

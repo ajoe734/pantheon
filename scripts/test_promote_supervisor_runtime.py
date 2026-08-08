@@ -55,6 +55,37 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+@pytest.mark.parametrize("arguments", [(), ("--promote",)])
+def test_shell_entrypoint_disables_candidate_bytecode(
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+) -> None:
+    scripts_dir = tmp_path / "candidate" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    wrapper = scripts_dir / "promote-supervisor-runtime.sh"
+    shutil.copy2(Path(__file__).with_name("promote-supervisor-runtime.sh"), wrapper)
+    wrapper.chmod(0o755)
+    (scripts_dir / "promote_supervisor_runtime.py").write_text(
+        "import sys\nprint(sys.dont_write_bytecode)\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.pop("PYTHONDONTWRITEBYTECODE", None)
+
+    result = subprocess.run(
+        [str(wrapper), *arguments],
+        cwd=scripts_dir.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+    assert not (scripts_dir / "__pycache__").exists()
+
+
 def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     status_root = repo.parent / f"{repo.name}-status-root"
     state_path = status_root / ".orchestrator" / "state.json"
@@ -2571,12 +2602,56 @@ def test_config_variants_are_derived_from_one_capture_without_external_write(
     assert str(rollback_root / ".orchestrator" / "supervisor.py") in (
         rollback_variant.supervisor_argv
     )
+    candidate_entrypoint = candidate_variant.supervisor_argv.index(
+        str(candidate / ".orchestrator" / "supervisor.py")
+    )
+    rollback_entrypoint = rollback_variant.supervisor_argv.index(
+        str(rollback_root / ".orchestrator" / "supervisor.py")
+    )
+    assert candidate_variant.supervisor_argv[candidate_entrypoint - 1] == "-B"
+    assert rollback_variant.supervisor_argv[rollback_entrypoint - 1] == "-B"
     assert candidate_variant.sha256 == hashlib.sha256(
         candidate_variant.content
     ).hexdigest()
     assert rollback_variant.sha256 == hashlib.sha256(
         rollback_variant.content
     ).hexdigest()
+
+
+def test_config_variant_keeps_existing_no_bytecode_flag_idempotent(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+    payload = json.loads(identity.config_bytes)
+    command = payload["watchdog"]["supervisor_command"]
+    entrypoint_index = next(
+        index
+        for index, argument in enumerate(command)
+        if Path(argument).name == "supervisor.py"
+    )
+    command.insert(entrypoint_index, "-B")
+    config_bytes = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+    identity = replace(
+        identity,
+        config_bytes=config_bytes,
+        config_byte_length=len(config_bytes),
+        config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+    )
+
+    variant = promotion.derive_supervisor_config_variant(
+        identity,
+        command_root=identity.candidate_root,
+    )
+
+    assert variant.supervisor_argv.count("-B") == 1
 
 
 def _config_install_fixture(

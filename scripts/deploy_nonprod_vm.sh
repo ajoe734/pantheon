@@ -2022,7 +2022,7 @@ PY
     rm -rf -- "$temporary_parent"
   fi
 
-  python3 "$destination/scripts/provision_live_supervisor_config.py" \
+  python3 -B "$destination/scripts/provision_live_supervisor_config.py" \
     --command-root "$destination" \
     --validate-command-root-only >/dev/null \
     || error "immutable supervisor command runtime validation failed: ${destination}"
@@ -2112,7 +2112,7 @@ provision_dev_supervisor_watchdog() {
   if [[ ! -e "$live_config" ]]; then
     info "performing first-install supervisor config provisioning with no incumbent"
     assert_no_live_supervisor_incumbent "${PANTHEON_STATUS_ROOT_HOST}"
-    python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
+    python3 -B "${command_root}/scripts/provision_live_supervisor_config.py" \
       --repo-config "${command_root}/.orchestrator/config.json" \
       --live-config "$live_config" \
       --command-root "$command_root" \
@@ -2123,7 +2123,7 @@ provision_dev_supervisor_watchdog() {
     configured_root="$(configured_supervisor_command_root "$live_config")"
     if [[ "$configured_root" == "$command_root" ]]; then
       info "supervisor command runtime already current; provisioning is a config no-op"
-      python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
+      python3 -B "${command_root}/scripts/provision_live_supervisor_config.py" \
         --repo-config "${command_root}/.orchestrator/config.json" \
         --live-config "$live_config" \
         --command-root "$command_root" \
