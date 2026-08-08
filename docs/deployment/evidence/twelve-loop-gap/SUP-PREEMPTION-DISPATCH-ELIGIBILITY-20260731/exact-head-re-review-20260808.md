@@ -1,7 +1,9 @@
 # PR #4399 exact-head re-review — changes required
 
-Task: `SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731`  
-Review target: `a924a6f3c0c54982d7efe145750cc99c57bc7f2e`  
+Task: `SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731`
+
+Review target: `a924a6f3c0c54982d7efe145750cc99c57bc7f2e`
+
 Decision: **changes required**
 
 The shared lifecycle helper, dependency eligibility, unchanged-event cooldown,
