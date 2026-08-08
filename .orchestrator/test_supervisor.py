@@ -2197,6 +2197,84 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
             self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
 
+    def test_prepare_worker_workspace_generates_missing_brief_only_in_isolated_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            status_path = repo_root / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-BRIEF-002",
+                                "title": "Materialize isolated context",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Codex2",
+                                "summary_zh": "Keep generated context out of the command checkout.",
+                                "next": "Continue in the isolated task worktree.",
+                            }
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(repo_root / "activity-log.jsonl"),
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            relative_brief = ".orchestrator/task-briefs/ops_brief_002.md"
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-BRIEF-002",
+                reason="owned_in_progress_dispatch",
+                context_files=[relative_brief],
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-brief-generated",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+            self.assertFalse((repo_root / relative_brief).exists())
+            generated_brief = Path(request.metadata["workspace_path"]) / relative_brief
+            rendered = generated_brief.read_text(encoding="utf-8")
+            self.assertIn("# Task Brief: OPS-BRIEF-002", rendered)
+            self.assertIn("- Title: Materialize isolated context", rendered)
+            self.assertIn("- Owner: Codex", rendered)
+            self.assertIn("- Reviewer: Codex2", rendered)
+            self.assertEqual(
+                request.metadata["materialized_context_files"],
+                [relative_brief],
+            )
+
     def test_prepare_worker_workspace_blocks_dirty_reused_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
