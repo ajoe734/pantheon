@@ -24,20 +24,48 @@ def parse_args() -> argparse.Namespace:
         description="Fail when staged paths include generated runtime artifacts that should never be committed.",
     )
     parser.add_argument("paths", nargs="*", help="Paths to check. If omitted, read newline-delimited paths from stdin.")
+    parser.add_argument(
+        "--diff-name-status",
+        action="store_true",
+        help="Treat input as git diff --name-status records instead of plain paths.",
+    )
+    parser.add_argument(
+        "--allow-deleted-path",
+        action="append",
+        default=[],
+        help="With --diff-name-status, allow a pure deletion for this exact path.",
+    )
     return parser.parse_args()
 
 
 def load_paths(args: argparse.Namespace) -> list[str]:
-    if args.paths:
-        return [path for path in args.paths if path]
-    return [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
+    entries = args.paths or [line for line in sys.stdin.read().splitlines() if line]
+    if not args.diff_name_status:
+        return [path for path in entries if path]
+
+    allowed_deleted_paths = set(args.allow_deleted_path)
+    paths: list[str] = []
+    for entry in entries:
+        fields = entry.split("\t")
+        status, *changed_paths = fields
+        if not status or not changed_paths:
+            raise ValueError(f"invalid git diff --name-status record: {entry!r}")
+        if status == "D" and len(changed_paths) == 1 and changed_paths[0] in allowed_deleted_paths:
+            continue
+        paths.extend(changed_paths)
+    return paths
 
 
 def main() -> int:
     args = parse_args()
+    try:
+        paths = load_paths(args)
+    except ValueError as error:
+        print(f"pre-commit: {error}", file=sys.stderr)
+        return 2
     violations = [
         path
-        for path in load_paths(args)
+        for path in paths
         if release_hardening.is_generated_ephemeral(path)
         or any(pattern.search(path) for pattern in BLOCKED_RUNTIME_PATTERNS)
     ]

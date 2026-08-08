@@ -24117,6 +24117,181 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         self.assertIn("a" * 12, status["tasks"][0]["next"])
 
 
+class ReconcileBlockedTasksTests(unittest.TestCase):
+    """Structured blocked-task reconciliation is opt-in and rate-limited."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "github_bus": {"repo": "ajoe734/pantheon"},
+            "blocked_task_reconciliation": {
+                "enabled": True,
+                "shadow_only": False,
+                "interval_seconds": 300,
+                "max_tasks_per_run": 8,
+            },
+        }
+
+    @staticmethod
+    def _github_blocker(task_id: str, *, pr_number: int = 4582) -> dict[str, object]:
+        return {
+            "task_id": task_id,
+            "status": "open",
+            "check_kind": "github_pr_ci",
+            "pr_number": pr_number,
+        }
+
+    @staticmethod
+    def _blocked_task(task_id: str) -> dict[str, object]:
+        return {
+            "id": task_id,
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "waiting_for": "Claude",
+            "failure_streak": 3,
+        }
+
+    def test_github_pr_ci_blocker_reopens_only_after_ci_flips_green(self) -> None:
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-1")],
+            "blockers": [self._github_blocker("TASK-BLOCKED-1")],
+            "handoffs": [],
+        }
+        state: dict[str, object] = {"workers": {}}
+        ci_is_green = False
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_mock,
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(
+                supervisor,
+                "github_pr_ci_blocker_resolved",
+                side_effect=lambda *_args, **_kwargs: ci_is_green,
+            ),
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                side_effect=["2026-08-07T00:00:00Z", "2026-08-07T00:06:00Z"],
+            ),
+        ):
+            self.assertFalse(supervisor.reconcile_blocked_tasks(self.config, state))
+            ci_is_green = True
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        persist_mock.assert_called_once()
+        self.assertEqual(persist_mock.call_args.kwargs["task_id"], "TASK-BLOCKED-1")
+        self.assertEqual(persist_mock.call_args.kwargs["new_status"], "in_progress")
+        self.assertTrue(persist_mock.call_args.kwargs["resolve_open_blockers"])
+        self.assertTrue(persist_mock.call_args.kwargs["resolve_open_handoffs"])
+        self.assertTrue(persist_mock.call_args.kwargs["reset_failure_streak"])
+        self.assertEqual(persist_mock.call_args.kwargs["expected_status"], "blocked")
+
+    def test_task_dependency_blocker_reopens_when_required_status_is_reached(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "TASK-DEP-1", "status": "done", "owner": "Claude"},
+                self._blocked_task("TASK-BLOCKED-2"),
+            ],
+            "blockers": [
+                {
+                    "task_id": "TASK-BLOCKED-2",
+                    "status": "open",
+                    "check_kind": "task_dependency",
+                    "check_params": {
+                        "task_id": "TASK-DEP-1",
+                        "required_status": "done",
+                    },
+                }
+            ],
+        }
+        state: dict[str, object] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_mock,
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:00Z"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist_mock.call_args.kwargs["task_id"], "TASK-BLOCKED-2")
+
+    def test_check_kind_less_legacy_blocker_is_never_auto_touched(self) -> None:
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-3")],
+            "blockers": [{"task_id": "TASK-BLOCKED-3", "status": "open", "message": "Human judgement"}],
+        }
+        state: dict[str, object] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+            mock.patch.object(supervisor, "github_pr_ci_blocker_resolved") as ci_probe,
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:00Z"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+        ci_probe.assert_not_called()
+
+    def test_interval_skips_external_probe_on_the_hot_dispatch_cadence(self) -> None:
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-4")],
+            "blockers": [self._github_blocker("TASK-BLOCKED-4")],
+        }
+        state: dict[str, object] = {
+            "workers": {},
+            "blocked_task_reconciliation": {"last_run_at": "2026-08-07T00:00:00Z"},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+            mock.patch.object(supervisor, "github_pr_ci_blocker_resolved") as ci_probe,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:30Z"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+        ci_probe.assert_not_called()
+
+    def test_shadow_mode_reports_a_resolved_blocker_without_reopening(self) -> None:
+        self.config["blocked_task_reconciliation"]["shadow_only"] = True
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-SHADOW")],
+            "blockers": [self._github_blocker("TASK-BLOCKED-SHADOW")],
+        }
+        state: dict[str, object] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+            mock.patch.object(supervisor, "github_pr_ci_blocker_resolved", return_value=True),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:00Z"),
+        ):
+            self.assertFalse(supervisor.reconcile_blocked_tasks(self.config, state))
+
+        persist_mock.assert_not_called()
+        self.assertEqual(
+            state["blocked_task_reconciliation"]["last_counts"]["blocked_tasks_shadow_resolved"],
+            1,
+        )
+
+
 class MergedDeliveryEvidenceTests(unittest.TestCase):
     """Merged evidence is bound to one delivery head, not to a task id."""
 
