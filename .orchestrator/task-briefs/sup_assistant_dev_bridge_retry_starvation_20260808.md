@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prevent bridge retry starvation of signed task packets
-- Status: todo
-- Owner: Codex2
-- Reviewer: Codex
-- Next: Helper-claimed by idle Codex2 previous owner Codex becomes reviewer.
+- Status: in_progress
+- Owner: Codex
+- Reviewer: Codex2
+- Next: Helper-claimed by Codex while Codex2 is dispatch-paused previous owner Codex2 becomes reviewer.
 
 ## Summary
 修復 assistant dev bridge 的 retry starvation：目前四個舊 packet 因 ai_status assign 2 秒 timeout 反覆佔滿 drain limit，使新簽署 packet 卡在 processing 而沒有 canonical receipt。只修 retry 公平性與 bounded admission；保留簽章、fence、replay 與 canonical lock fail-closed，不直接改 live state。

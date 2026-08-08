@@ -3,12 +3,14 @@
   "task": {
     "id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
     "title": "Prevent bridge retry starvation of signed task packets",
-    "owner": "Codex2",
-    "reviewer": "Codex",
+    "owner": "Codex",
+    "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
     "implementation_commit": "329fc4c0d8eb86ad26d65fa2f7c6bb7a997b554d",
+    "implementation_author": "Codex2",
+    "ownership_transition": "Supervisor reassigned the in-progress task to Codex on 2026-08-08 while Codex2 became the independent reviewer; Codex revalidated the existing implementation before review.",
     "review_status": "review_pending"
   },
   "scope": {
@@ -59,30 +61,34 @@
     {
       "id": "AC4",
       "status": "pending_review",
-      "statement": "The committed exact head requires independent Codex review before the governed PR merge and owner closeout."
+      "statement": "The committed exact head requires independent Codex2 review before the governed PR merge and owner closeout."
     }
   ],
   "validation": {
-    "runtime": "Temporary isolated virtualenv with pytest 9.1.1 and pydantic 2.13.4.",
+    "runtime": "Checkout-scoped .venv-pantheon provisioned by scripts/dev/provision_python_distribution.py from the main Pantheon dependency environment.",
     "focused_inbox": {
-      "command": "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
-      "result": "4 passed in 5.72s"
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "result": "4 passed in 1.73s"
     },
     "bridge_reliability": {
-      "command": "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
-      "result": "45 passed in 16.21s"
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "result": "45 passed in 16.19s"
     },
     "syntax_and_scope": {
       "commands": [
-        "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m py_compile services/control-plane/bff/assistant/dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
-        "git diff --check origin/dev...HEAD"
+        ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/assistant/dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+        "git diff --check"
       ],
       "result": "pass"
     },
     "broader_assistant_suite": {
-      "command": "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m pytest -q services/control-plane/bff/assistant/tests",
-      "result": "1 failed, 174 passed",
-      "non_task_failure": "services/control-plane/bff/assistant/tests/test_orchestrator_status.py::TestOrchestratorStatus::test_read_orchestrator_status_missing_files walks from its temporary directory to the pre-existing /tmp/ai-status.json and reads project=pantheon instead of unknown. Neither that test nor orchestrator_status.py is in this task diff."
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/assistant/tests",
+      "result": "1 failed, 174 passed in 33.61s",
+      "non_task_failure": "services/control-plane/bff/assistant/tests/test_orchestrator_status.py::TestOrchestratorStatus::test_read_orchestrator_status_missing_files walks from its temporary directory to the pre-existing /tmp/ai-status.json and reads project=pantheon instead of unknown. Neither that test nor orchestrator_status.py is in this task diff.",
+      "isolation_confirmation": {
+        "command": "TMPDIR=/var/tmp .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_orchestrator_status.py::TestOrchestratorStatus::test_read_orchestrator_status_missing_files",
+        "result": "1 passed in 0.40s"
+      }
     }
   },
   "delivery": {
@@ -91,6 +97,7 @@
   },
   "review": {
     "status": "pending",
+    "required_reviewer": "Codex2",
     "required_manifest_path": "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808/evidence.json"
   }
 }
