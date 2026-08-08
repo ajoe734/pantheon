@@ -10,7 +10,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
     "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
-    "evidence_cut_at": "2026-08-08T22:58:00Z"
+    "evidence_cut_at": "2026-08-08T23:02:00Z"
   },
   "scope": {
     "owned_layer": "Authorized immutable supervisor-runtime promotion attempt, transaction outcome capture, fail-closed verification, and canonical source-only follow-up dispatch.",
@@ -118,6 +118,39 @@
       "candidate-local runtime state files are intentionally absent before launch"
     ]
   },
+  "subsequent_external_runtime_observation": {
+    "observed_at": "2026-08-08T23:00:30Z",
+    "relationship_to_task_transaction": "occurred after the task transaction aborted; candidate_pid and launch boundary in that transaction remain null",
+    "pid": 3816018,
+    "started_at": "2026-08-08T22:58:23Z",
+    "alive": true,
+    "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "cwd_head_commit": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+    "argv": [
+      "/usr/bin/python3.12",
+      "-u",
+      "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py",
+      "--config",
+      "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "--verbose"
+    ],
+    "observed_governed_environment": {
+      "PANTHEON_STATUS_ROOT": "/home/lupin/pantheon",
+      "PANTHEON_COMMAND_ROOT": null,
+      "PANTHEON_COMMAND_RUNTIME_SHA": null,
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "tracked_drift_after_start": [
+      ".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md"
+    ],
+    "acceptance": {
+      "immutable_sha_named_cwd": "fail",
+      "python_B_argv": "fail",
+      "command_root_env": "fail",
+      "command_runtime_sha_env": "fail",
+      "classification": "alive mutable runtime; not an accepted governed V10 promotion or recovery"
+    }
+  },
   "config_drift_requiring_transaction": {
     "paths": [
       "ready_dispatcher.target_workload",
@@ -146,7 +179,21 @@
     "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
     "owner": "Codex2",
     "reviewer": "Codex",
-    "dispatch_status": "pending_signed_bridge_queue_and_supervisor_receipt"
+    "dispatch_status": "processed_and_authoritatively_materialized",
+    "queued_at": "2026-08-08T22:59:49Z",
+    "drained_at": "2026-08-08T23:01:24Z",
+    "receipt_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255.json",
+    "processed_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/processed/sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255.json",
+    "packet_digest": "6da251453041fbb8019c431a5bbdc5e2924e0adc0a4bb7b16b705af7641b53fd",
+    "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255--6da251453041fbb8.json",
+    "materialization_readback": {
+      "status": "verified",
+      "store_mode": "authoritative",
+      "event_count": 13359,
+      "expected_state_sha256": "fa33819d168ef89c3878f4a4061c819fd299bd728ecc6c58331491f632264f3e",
+      "projected_state_sha256": "fa33819d168ef89c3878f4a4061c819fd299bd728ecc6c58331491f632264f3e",
+      "task_spec_hash": "1deaeb0e9a319156a433587811f71f91ade8f93c67acb8370ea72162214f3729"
+    }
   },
   "verification": [
     {
@@ -168,6 +215,16 @@
       "command": "candidate discover-only plus git status --short --ignored and bytecode find",
       "result": "immutable identity passed for 5877b644; working tree and bytecode path lists empty",
       "conclusion": "candidate_identity_and_bytecode_cleanliness_pass"
+    },
+    {
+      "command": "signed queue helper followed by supervisor-owned assistant dev bridge drain",
+      "result": "receipt processed at 23:01:24Z; authoritative expected/projected state hashes match; follow-up task materialized",
+      "conclusion": "source_only_followup_dispatch_pass"
+    },
+    {
+      "command": "post-abort /proc allowlisted identity inspection for PID 3816018",
+      "result": "alive at mutable dev-root@5877b644 with python3.12 -u, no -B, no command-root/runtime-SHA env, and fresh generated task-brief drift",
+      "conclusion": "runtime_alive_but_governed_rollout_acceptance_fail"
     }
   ],
   "rollout_and_rollback": {
