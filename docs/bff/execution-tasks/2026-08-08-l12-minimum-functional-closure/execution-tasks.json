@@ -11,6 +11,34 @@
     "live-capital activation",
     "orchestrator config edits"
   ],
+  "active_legacy_reconciliation": {
+    "snapshot_status": {
+      "L12-HOSTED-001": "todo",
+      "L12-CLOSE-001": "todo"
+    },
+    "canonical_supersede_before_materialization": [
+      {
+        "old_id": "L12-HOSTED-001",
+        "replacement_id": "L12-MIN-HOSTED-20260808"
+      },
+      {
+        "old_id": "L12-CLOSE-001",
+        "replacement_id": "L12-MIN-CLOSE-20260808"
+      }
+    ],
+    "materialization_gate": "L12-MIN-INTEGRATE-20260808 must remain unmaterialized until both canonical supersede transitions are visible in task state.",
+    "preserve_active_inputs": [
+      "L12-VERIFY-KNOW-001",
+      "L12-VERIFY-RUNTIME-001",
+      "L12-VERIFY-OBS-001",
+      "LIFECYCLE-PROJ-BFF-001",
+      "LIFECYCLE-PROJ-MIGRATE-001",
+      "LIFECYCLE-PROJ-CAPACITY-001",
+      "LIFECYCLE-PROJ-CUTOVER-001",
+      "LIFECYCLE-PROJ-RETIRE-001"
+    ],
+    "state_transition_method": "governed canonical task command only; no JSON or orchestrator config edits"
+  },
   "dispatch_packets": {
     "packet_a": {
       "task_count": 15,

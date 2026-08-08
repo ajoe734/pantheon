@@ -18,6 +18,34 @@
     "Existing lifecycle-projector tasks remain dependency-ordered inputs wherever BFF scopes overlap.",
     "Any later old-profile apply must fail closed against the active successor scopes rather than create parallel workers."
   ],
+  "active_legacy_dag_reconciliation": {
+    "error_in_original_classification": "L12-HOSTED-001 and L12-CLOSE-001 were active todo rows and must not be described as historical.",
+    "canonical_supersede": [
+      {
+        "old_id": "L12-HOSTED-001",
+        "status_at_snapshot": "todo",
+        "replacement_id": "L12-MIN-HOSTED-20260808",
+        "reason": "The minimum hosted successor replaces the broader legacy hosted gate without editing the legacy task source or branch."
+      },
+      {
+        "old_id": "L12-CLOSE-001",
+        "status_at_snapshot": "todo",
+        "replacement_id": "L12-MIN-CLOSE-20260808",
+        "reason": "The guarded catalog scope blocks minimum shared integration and the legacy close acceptance includes work outside the operator-approved minimum functional milestone."
+      }
+    ],
+    "preserve": [
+      "L12-VERIFY-KNOW-001",
+      "L12-VERIFY-RUNTIME-001",
+      "L12-VERIFY-OBS-001",
+      "LIFECYCLE-PROJ-BFF-001",
+      "LIFECYCLE-PROJ-MIGRATE-001",
+      "LIFECYCLE-PROJ-CAPACITY-001",
+      "LIFECYCLE-PROJ-CUTOVER-001",
+      "LIFECYCLE-PROJ-RETIRE-001"
+    ],
+    "ordering": "Canonical-supersede the two active legacy closeout rows, then materialize L12-MIN-INTEGRATE-20260808; lifecycle overlaps remain dependency-ordered."
+  },
   "mappings": [
     {"old_id": "L12-CONTROLLER-TEACH-20260731", "disposition": "superseded", "new_id": "L12-MIN-TEACH-20260808"},
     {"old_id": "L12-CONTROLLER-AGORA-20260731", "disposition": "superseded_scope_corrected", "new_id": "L12-MIN-AGORA-20260808"},

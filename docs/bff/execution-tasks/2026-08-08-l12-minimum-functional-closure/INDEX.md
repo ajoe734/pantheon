@@ -57,6 +57,21 @@ hardening are explicitly deferred.
 only minimum-function dispatch source. It must not edit
 `.orchestrator/config.json`, canonical state JSON, or the old catalog.
 
+The admission operator must also reconcile two active rows from the older
+twelve-loop closeout chain before shared integration is materialized:
+
+- canonical-supersede active `L12-HOSTED-001` with replacement
+  `L12-MIN-HOSTED-20260808`;
+- canonical-supersede active `L12-CLOSE-001` with replacement
+  `L12-MIN-CLOSE-20260808`; and
+- perform both transitions through the governed task command, never by editing
+  task state JSON. The old close row owns a guarded
+  `docs/deployment/loop-catalog.registry.json` scope, so
+  `L12-MIN-INTEGRATE-20260808` must not materialize before this transition.
+
+Existing `L12-VERIFY-*` work and the lifecycle-projector DAG are preserved.
+They are inputs or ordered dependencies, not duplicate implementation tasks.
+
 ### M1 - twelve loop owners
 
 Twelve independent tasks repair or complete the actual happy path. Existing
@@ -113,9 +128,15 @@ it from the minimum-function critical path.
 - The old Learning-only verifier is superseded by the twelve-loop verifier.
 - Existing canonical lifecycle-projector tasks remain dependencies where file
   scopes overlap; they are not duplicated.
-- Existing `L12-HOSTED-001` and `L12-CLOSE-001` remain historical rows. The
-  minimum program writes to distinct evidence roots and does not modify those
-  tasks or their branches.
+- Existing `L12-HOSTED-001` and `L12-CLOSE-001` are active `todo` rows, not
+  historical rows. Their older acceptance scope is broader than this minimum
+  functional milestone and `L12-CLOSE-001` guards the shared catalog path.
+  They are canonical-superseded by the minimum hosted/close successors before
+  shared integration admission; their source documents and branches are not
+  edited.
+- Existing `L12-VERIFY-KNOW-001`, `L12-VERIFY-RUNTIME-001`, and
+  `L12-VERIFY-OBS-001` remain intact. Their results may be consumed, but they
+  do not replace the one-invocation minimum twelve-loop verifier.
 
 ## Validation
 
