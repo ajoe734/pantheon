@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-08T04:25:26Z",
+    "evidence_cut_at": "2026-08-08T04:28:22Z",
     "evidence_cut_semantics": "Dev-based conflict-resolution candidate only. The evidence is not an approval, merge, deployment, or product-task materialization receipt.",
     "id": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
     "overall_admission": "implementation_complete_pending_independent_exact_head_review",
@@ -70,23 +70,32 @@
         "delivery_state": "preserved_task_handoff_anchor",
         "hosted_cut_inclusion": false,
         "note": "The handoff anchor remains on the retired conflicted branch; this candidate is rebuilt from origin/dev 1209682f5."
+      },
+      {
+        "sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
+        "subject": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731: compose guard",
+        "delivery_state": "dev_based_candidate",
+        "hosted_cut_inclusion": false,
+        "note": "First clean delivery commit on origin/dev 1209682f5; it retains the 8/03 dispatcher profile and adds only the previous-current held-close guard, regressions, handoff, and candidate evidence."
       }
     ],
     "pull_request": {
       "number": 4614,
       "url": "https://github.com/ajoe734/pantheon/pull/4614",
-      "head_sha": "to be updated after the rebuilt branch is committed and pushed",
+      "head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
       "base": "dev"
     },
     "required_checks": [
       {
         "workflow": "Branch CI Gate / Commit trailers",
         "event": "pull_request",
+        "head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
         "conclusion": "pending_rebuilt_head"
       },
       {
         "workflow": "Pantheon canonical review gate",
         "event": "review_proof",
+        "head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7",
         "conclusion": "pending_independent_exact_head_review"
       }
     ]
@@ -119,9 +128,9 @@
         "conclusion": "pass_local"
       }
     ],
-    "validated_at": "2026-08-08T04:25:26Z",
-    "validated_base_sha": "1209682f5",
-    "validated_head_sha": "dev-based candidate awaiting delivery commit"
+    "validated_at": "2026-08-08T04:28:22Z",
+    "validated_base_sha": "1209682f5c0865884b6fdbef156407b667e2692b",
+    "validated_head_sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7"
   },
   "deployment": {
     "applicable": true,
@@ -287,12 +296,12 @@
   "record_log": [
     {
       "sequence": 1,
-      "recorded_at": "2026-08-08T04:25:26Z",
+      "recorded_at": "2026-08-08T04:28:22Z",
       "kind": "dev_based_conflict_resolution_candidate",
       "status": "ready_for_independent_exact_head_review_after_push",
       "actor": "Codex",
       "reference": "PR #4614; origin/dev 1209682f5",
-      "sha": "to be updated by the delivery evidence commit"
+      "sha": "0d140b5f2ca38c064157588cd02b6dc1c23d14a7"
     }
   ]
 }
