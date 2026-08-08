@@ -1,0 +1,132 @@
+{
+  "schema_version": "pantheon.supervisor-blocked-task-reconciliation-evidence.v1",
+  "task": {
+    "id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+    "title": "Add structured, checkable blockers and a generic blocked-task reconciliation pass",
+    "phase": "Supervisor Dispatch Reliability",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+    "pull_request": 4582,
+    "review_file": "docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json",
+    "depends_on": [
+      "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+    ]
+  },
+  "status": "review_ready",
+  "scope": {
+    "owned": [
+      "optional machine-checkable blocker fields in the governed status command",
+      "periodic, bounded reconciliation for explicitly structured blockers",
+      "fail-closed GitHub required-context and canonical dependency checks",
+      "the existing reopen-equivalent transition, including blocker and handoff resolution",
+      "focused behavior and cadence coverage"
+    ],
+    "not_changing": [
+      "poll_workers",
+      "process_queue",
+      "reconcile_queue_records",
+      "legacy prose-only blockers or any auto-clear heuristic for them",
+      "live feature enablement, deployment, broker, or capital behavior"
+    ],
+    "composes_with": [
+      "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+      "existing governed reopen/reassignment persistence",
+      "Antigravity's exact-head independent review and canonical review gate"
+    ]
+  },
+  "design": {
+    "opt_in_contract": {
+      "github_pr_ci": {
+        "fields": [
+          "check_kind=github_pr_ci",
+          "pr_number"
+        ],
+        "resolved_when": "the PR's configured required contexts are all represented as SUCCESS in statusCheckRollup"
+      },
+      "task_dependency": {
+        "fields": [
+          "check_kind=task_dependency",
+          "check_params.task_id",
+          "check_params.required_status"
+        ],
+        "resolved_when": "the referenced canonical task status equals required_status"
+      },
+      "legacy": "An omitted check_kind remains a human-judgment blocker and is never auto-touched."
+    },
+    "safety": {
+      "feature_default": {
+        "enabled": false,
+        "shadow_only": true
+      },
+      "cadence": "The reconciler has its own configured interval (default 300 seconds, clamped to at least 60) and runs before runtime admission, outside the normal locked dispatch tick.",
+      "github_failure_posture": "Missing gh, timeout, failed command, malformed response, unknown branch protection, missing required context, and non-success all fail closed.",
+      "transition": "Only a fully resolved opt-in blocker set calls the existing persist_task_reassignment path with expected_status=blocked, resolving open blockers/handoffs and resetting failure_streak; shadow_only records the observation without mutation."
+    }
+  },
+  "acceptance": {
+    "structured_blocker_command": {
+      "status": "pass",
+      "evidence": "command_blocker accepts github_pr_ci <pr-number> and task_dependency <task-id> [required-status] while preserving the legacy three-argument form."
+    },
+    "github_ci_reconciliation": {
+      "status": "pass",
+      "evidence": "Focused test proves the task remains blocked until CI is green, then invokes the guarded reopen-equivalent transition."
+    },
+    "dependency_reconciliation": {
+      "status": "pass",
+      "evidence": "Focused test proves a task_dependency blocker resolves only at its configured canonical status."
+    },
+    "legacy_blocker_preservation": {
+      "status": "pass",
+      "evidence": "Supervisor and status-command tests prove a blocker without check_kind is not probed or reopened."
+    },
+    "hot_tick_isolation": {
+      "status": "pass",
+      "evidence": "Focused test proves the interval prevents external probing at the normal dispatch cadence."
+    },
+    "shadow_cutover": {
+      "status": "pass",
+      "evidence": "Focused test proves shadow_only reports a resolved blocker without reopening; configuration remains disabled and shadow-only by default."
+    },
+    "excluded_dispatch_paths": {
+      "status": "pass",
+      "evidence": "The task diff does not modify poll_workers, process_queue, or reconcile_queue_records."
+    }
+  },
+  "verification": [
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && PYTHONPATH=.orchestrator:scripts \"$PANTHEON_PY\" -m unittest -v test_supervisor.ReconcileBlockedTasksTests test_ai_status.ReviewApprovedWorkflowTests.test_blocker_without_check_kind_remains_a_legacy_human_gate test_ai_status.ReviewApprovedWorkflowTests.test_blocker_records_structured_pr_ci_and_dependency_checks",
+      "result": "7 passed"
+    },
+    {
+      "command": "\"$PANTHEON_PY\" -m py_compile .orchestrator/supervisor.py scripts/ai_status.py && jq empty .orchestrator/config.json && git diff --check origin/pr-4582..HEAD",
+      "result": "passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator \"$PANTHEON_PY\" -m rewrite.shadow --config .orchestrator/config.json --board ai-status.json --quiet",
+      "result": "max_parallel, account_limit, failure_pause, dispatch_reason, and flag-off outbox shadow comparisons reported zero mismatches"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/pr-4582..HEAD --skip-merge",
+      "result": "passed before this evidence-only commit; the evidence commit is separately subject to the same PR CI gate"
+    }
+  ],
+  "review": {
+    "status": "pending",
+    "decision": "pending",
+    "reviewer": "Antigravity",
+    "reviewed_head": null,
+    "note": "No approval is pre-claimed. Antigravity must independently review the exact pushed PR head and bind this already-committed manifest through REVIEW_FILE during the governed approve command."
+  },
+  "safety": {
+    "force_push": false,
+    "direct_push_to_dev_or_master": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "hosted_deployment": false,
+    "real_capital_or_broker_action": false
+  }
+}

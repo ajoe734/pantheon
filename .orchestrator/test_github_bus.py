@@ -885,6 +885,88 @@ class GitHubBusCommandTests(unittest.TestCase):
         run_gh.assert_not_called()
 
 
+class PrReconciliationCandidateTests(unittest.TestCase):
+    """SUP-REVIEW-PIPELINE-INTEGRITY-20260804: PR-upsert eligibility must be
+    a reconciled invariant (branch+diff exists) rather than a one-shot side
+    effect of `status == "review"` at scan time, or a task that leaves
+    review before a PR is opened is permanently PR-less."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+
+    def test_review_status_task_is_always_a_candidate(self) -> None:
+        status = {"tasks": [{"id": "SUP-A", "status": "review"}]}
+        bus_state = {"tasks": {}}
+        candidates = github_bus._pr_reconciliation_candidates(self.config, bus_state, status)
+        self.assertEqual([task["id"] for task in candidates], ["SUP-A"])
+
+    def test_non_review_task_with_remote_branch_and_no_pr_is_reconsidered(self) -> None:
+        status = {"tasks": [{"id": "SUP-B", "status": "review_approved"}]}
+        bus_state = {"tasks": {}}
+        with mock.patch.object(github_bus, "remote_branch_head_sha", return_value="deadbeef"):
+            candidates = github_bus._pr_reconciliation_candidates(self.config, bus_state, status)
+        self.assertEqual([task["id"] for task in candidates], ["SUP-B"])
+
+    def test_non_review_task_without_remote_branch_is_not_a_candidate(self) -> None:
+        status = {"tasks": [{"id": "SUP-C", "status": "todo"}]}
+        bus_state = {"tasks": {}}
+        with mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None):
+            candidates = github_bus._pr_reconciliation_candidates(self.config, bus_state, status)
+        self.assertEqual(candidates, [])
+
+    def test_task_with_already_resolved_pr_evidence_is_not_reprobed(self) -> None:
+        status = {"tasks": [{"id": "SUP-D", "status": "blocked"}]}
+        bus_state = {
+            "tasks": {
+                "SUP-D": {"review_pr": {"evidence_kind": "open_task_pr", "number": 42}},
+            }
+        }
+        with mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha:
+            candidates = github_bus._pr_reconciliation_candidates(self.config, bus_state, status)
+        remote_branch_head_sha.assert_not_called()
+        self.assertEqual(candidates, [])
+
+    def test_terminal_status_tasks_are_never_candidates(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "SUP-E", "status": "done"},
+                {"id": "SUP-F", "status": "archived"},
+                {"id": "SUP-G", "status": "superseded"},
+            ]
+        }
+        bus_state = {"tasks": {}}
+        with mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha:
+            candidates = github_bus._pr_reconciliation_candidates(self.config, bus_state, status)
+        remote_branch_head_sha.assert_not_called()
+        self.assertEqual(candidates, [])
+
+    def test_sync_outbound_reaches_upsert_for_non_review_reconciled_task(self) -> None:
+        # Regression for the exact 2026-08-04 failure mode: a task that left
+        # `"review"` before a PR was ever opened (crashed closeout worker,
+        # reassignment, etc.) must still get a PR once it has a branch+diff.
+        config = dict(self.config)
+        config["github_bus"] = {"repo": "ajoe734/pantheon"}
+        status = {"tasks": [{"id": "SUP-H", "status": "in_progress"}]}
+        bus_state = {"tasks": {}}
+        runtime_state = {}
+
+        with (
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="cafef00d"),
+            mock.patch.object(github_bus, "upsert_review_pr", return_value=True) as upsert_review_pr,
+            mock.patch.object(github_bus, "upsert_ops_issue", return_value=False),
+        ):
+            changed = github_bus.sync_outbound(config, bus_state, status, runtime_state, "ajoe734/pantheon")
+
+        self.assertTrue(changed)
+        upsert_review_pr.assert_called_once()
+        self.assertEqual(upsert_review_pr.call_args.args[-1]["id"], "SUP-H")
+
+
 class GitHubBusProcessTests(unittest.TestCase):
     def test_run_gh_process_kills_process_group_on_timeout(self) -> None:
         class FakePopen:

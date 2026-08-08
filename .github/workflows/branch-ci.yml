@@ -169,12 +169,15 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           if [[ -n "$BASE_SHA" && "$BASE_SHA" != "0000000000000000000000000000000000000000" ]]; then
-            CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)
+            CHANGED=$(git diff --name-status "$BASE_SHA" "$HEAD_SHA" || true)
           else
-            CHANGED=$(git diff --name-only "$HEAD_SHA~1" "$HEAD_SHA" 2>/dev/null || true)
+            CHANGED=$(git diff --name-status "$HEAD_SHA~1" "$HEAD_SHA" 2>/dev/null || true)
           fi
           if [[ -z "$CHANGED" ]]; then exit 0; fi
-          echo "$CHANGED" | xargs python3 scripts/check_staged_generated_files.py
+          printf '%s\n' "$CHANGED" | python3 scripts/check_staged_generated_files.py \
+            --diff-name-status \
+            --allow-deleted-path dashboard-bundle.json \
+            --allow-deleted-path docs-site/dashboard-bundle.json
       - name: Reject embedded frontend mirror
         run: |
           if [[ -n "$(git ls-files execute-plans)" ]]; then
