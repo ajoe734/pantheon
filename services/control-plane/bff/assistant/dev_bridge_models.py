@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Sixteen tasks keep the worst-case governed assign + per-task authoritative
 # readback budget below the 300-second compatibility claim TTL even when every
-# subprocess consumes the five-second hard timeout.  The OS packet fence in the
+# subprocess consumes the ten-second hard timeout.  The OS packet fence in the
 # dispatcher remains the concurrency authority; this bound also prevents one
 # signed packet from monopolising a supervisor tick indefinitely.
 MAX_TASKS_PER_PACKET = 16
