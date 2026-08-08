@@ -44,7 +44,6 @@ from common import (
     canonical_task_state_lock_file,
     config_path,
     display_name_for,
-    execution_context_files,
     load_config,
     load_json,
     load_jsonl,
@@ -96,7 +95,11 @@ from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
-from watch_events import queue_delivery_event, _run_scan_locked, trim_seen_events
+from watch_events import (
+    queue_delivery_event as _queue_delivery_event_with_runtime_context,
+    _run_scan_locked,
+    trim_seen_events,
+)
 
 # SUPERVISOR-REWRITE cutover modules (parallel package, pure — no supervisor
 # import, so this is not circular). These are the phase-1/phase-3 clean
@@ -1767,6 +1770,44 @@ def select_dispatch_agent_id(
     return None
 
 
+def worker_execution_context_files(task_id: str | None) -> list[str]:
+    """Describe worker context without writing into the command checkout.
+
+    The common context helper materializes a generated task brief beside the
+    supervisor source.  That is appropriate for an interactive source
+    checkout, but a mutable bootstrap incumbent must keep its tracked source
+    tree byte-clean until promotion captures it.  Isolated worker preparation
+    already copies a status-root brief when one exists and otherwise renders
+    the brief inside the task worktree, so queue construction only needs the
+    stable repository-relative destination here.
+    """
+
+    files = ["AI_COLLABORATION_GUIDE.md"]
+    normalized_task_id = normalize_agent_id(task_id or "")
+    if normalized_task_id:
+        files.append(
+            f".orchestrator/task-briefs/{normalized_task_id}.md"
+        )
+    for relative_path in (
+        ".orchestrator/skills/worker-anchor-commit.md",
+        ".orchestrator/skills/task-closeout-finalization.md",
+    ):
+        if (THIS_DIR.parent / relative_path).is_file():
+            files.append(relative_path)
+    files.append("ai-status.json")
+    return files
+
+
+def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    """Queue one event without regenerating task briefs in the command root."""
+
+    if not event.get("context_files"):
+        event["context_files"] = worker_execution_context_files(
+            event.get("task_id")
+        )
+    return _queue_delivery_event_with_runtime_context(config, event)
+
+
 def build_request(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -1800,7 +1841,7 @@ def build_request(
         metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     context_files = event.get("context_files")
     if context_files is None:
-        context_files = execution_context_files(config, event.get("task_id"))
+        context_files = worker_execution_context_files(event.get("task_id"))
     return DeliveryRequest(
         agent_id=agent["id"],
         provider=agent.get("provider", agent["id"]),

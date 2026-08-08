@@ -9861,7 +9861,7 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             ],
         )
 
-    def test_process_queue_builds_full_task_brief_outside_runtime_admission(self) -> None:
+    def test_process_queue_references_task_brief_without_rewriting_command_root(self) -> None:
         task_id = "OPS-TASK-BRIEF-LOCK-ORDER-TEST"
         dependency_id = "OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY"
         task = {
@@ -9928,7 +9928,9 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             "providers": {"codex": {"delivery_mode": "codex"}},
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        brief_path = self.root / "task-brief.md"
+        brief_path = self.root / ".orchestrator" / "task-briefs" / "ops_task_brief_lock_order_test.md"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text("tracked command-root brief\n", encoding="utf-8")
         lock_trace_path = self.root / "lock-trace.jsonl"
         captured_requests: list[supervisor.DeliveryRequest] = []
         real_build_request = supervisor.build_request
@@ -9975,23 +9977,18 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(len(captured_requests), 1)
-        self.assertIn(str(brief_path), captured_requests[0].context_files)
+        self.assertIn(
+            ".orchestrator/task-briefs/ops_task_brief_lock_order_test.md",
+            captured_requests[0].context_files,
+        )
         self.assertNotEqual(
             captured_requests[0].context_files,
             ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
         )
-        self.assertTrue(brief_path.is_file())
-        rendered = brief_path.read_text(encoding="utf-8")
-        self.assertIn("# Task Brief: OPS-TASK-BRIEF-LOCK-ORDER-TEST", rendered)
-        self.assertIn("- Status: todo", rendered)
-        self.assertIn("- Owner: Codex", rendered)
-        self.assertIn("- Reviewer: Codex2", rendered)
-        self.assertIn("- Next: Use the complete task-scoped context", rendered)
-        self.assertIn(
-            "- OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY: done · Archived dependency",
-            rendered,
+        self.assertEqual(
+            brief_path.read_text(encoding="utf-8"),
+            "tracked command-root brief\n",
         )
-        self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
         common_activity_log.assert_not_called()
         lock_trace = [
             line.split(":", 3)[:2]
@@ -10014,6 +10011,32 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         )
         self.assertLess(prior_runtime_release, task_acquire)
         self.assertLess(task_acquire, next_runtime_acquire)
+
+    def test_queue_delivery_event_seeds_non_materializing_worker_context(self) -> None:
+        event = {
+            "task_id": "OPS-BRIEF-QUEUE-001",
+            "target_agent": "Codex",
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "_queue_delivery_event_with_runtime_context",
+            return_value=True,
+        ) as queue_event:
+            queued = supervisor.queue_delivery_event(self.config, event)
+
+        self.assertTrue(queued)
+        self.assertEqual(
+            event["context_files"],
+            [
+                "AI_COLLABORATION_GUIDE.md",
+                ".orchestrator/task-briefs/ops_brief_queue_001.md",
+                ".orchestrator/skills/worker-anchor-commit.md",
+                ".orchestrator/skills/task-closeout-finalization.md",
+                "ai-status.json",
+            ],
+        )
+        queue_event.assert_called_once_with(self.config, event)
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
         original_events = [
