@@ -1,0 +1,152 @@
+{
+  "schema_version": "pantheon.supervisor.governed_runtime_rollout_verify.v1",
+  "task": {
+    "id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+    "title": "Run governed V10 supervisor runtime promotion and verify recovery",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "review_pending_fail_closed_outcome",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+    "evidence_cut_at": "2026-08-08T13:45:52Z"
+  },
+  "scope": {
+    "owned_layer": "Authorized immutable supervisor-runtime promotion attempt, transaction outcome capture, fail-closed recovery verification, and source-only follow-up dispatch.",
+    "not_changing": [
+      "supervisor scheduling or fleet-routing policy",
+      "the incumbent process outside the transactional promotion operator",
+      "live supervisor configuration outside the transaction",
+      "candidate filesystem contents or Git metadata",
+      "frontend, BFF, trading, broker, paper, canary, or capital behaviour"
+    ],
+    "composes_with": [
+      "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "the existing sync-dev-root and promote-supervisor-runtime transaction",
+      "the source-only candidate Git identity follow-up requested below"
+    ]
+  },
+  "governed_execution": {
+    "command": "$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_root_head_before": "de8635aa958593ca332395baba1880aacf096952",
+    "origin_dev_before": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+    "candidate_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/619acd04184e8d3fc3aef322d160e7c9106670ad",
+    "candidate_commit": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+    "sync_exit_code": 1,
+    "sync_observations": [
+      "The active supervisor root was /home/lupin/pantheon-ci-deploy/dev-root at de8635aa958593ca332395baba1880aacf096952 and was six commits behind origin/dev.",
+      "sync-dev-root protected the mutable active root: it fetched origin/dev but did not stash, reset, or checkout that running root.",
+      "The repository/live ready-dispatcher settings differed, so promotion was required rather than a no-op.",
+      "sync-dev-root materialized the SHA-named candidate and requested --promote --bootstrap-mutable-incumbent through the candidate operator.",
+      "The promotion operator returned aborted; sync-dev-root did not signal the incumbent directly."
+    ]
+  },
+  "transaction_evidence": {
+    "path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T134307753860Z-3911075.json",
+    "sha256": "1c252fb6a3691ac47a92e2a770782b503372b4825bb1f71031828efe8e92fe0e",
+    "recorded_at": "2026-08-08T13:43:18.003075Z",
+    "kind": "supervisor_runtime_promotion_transaction",
+    "state": "aborted",
+    "outcome": "aborted",
+    "exit_code": 1,
+    "bootstrap_mutable_incumbent": true,
+    "original_failure": "ValueError: Candidate Git directory is a symlink or has the wrong type: [Errno 20] Not a directory: '.git'",
+    "candidate_identity_captured": false,
+    "incumbent_identity_captured": false,
+    "mutable_incumbent_snapshot_captured": false,
+    "config_transaction": null,
+    "rollback_failure": null,
+    "candidate_child_absence_proven": null,
+    "rollback_child_absence_proven": null
+  },
+  "post_abort_read_only_discovery": {
+    "command": "/home/lupin/pantheon-ci-deploy/command-runtimes/619acd04184e8d3fc3aef322d160e7c9106670ad/scripts/promote-supervisor-runtime.sh --repo /home/lupin/pantheon-ci-deploy/command-runtimes/619acd04184e8d3fc3aef322d160e7c9106670ad --json",
+    "mode": "discover-only (wrapper default; no --promote)",
+    "candidate_identity": {
+      "head_commit": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+      "accepted_dev_commit": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+      "tracked_tree_identity": "33dbb7f25df0c9153e1417151cc712d923d53640",
+      "remote_url": "https://github.com/ajoe734/pantheon.git",
+      "git_directory_type": "directory",
+      "candidate_runtime_identity_immutable": true,
+      "bytecode_paths_after_discovery": []
+    },
+    "promotion_eligibility": false,
+    "incumbent_identity_result": "Captured live config does not bind the exact canonical supervisor entrypoint",
+    "launch_contract_result": "Candidate/process identity is unavailable",
+    "interpretation": "The later read-only handle capture accepted the candidate's real Git directory.  The transaction-time ENOTDIR is therefore unresolved and must be reproduced and repaired in source; this evidence does not assert a filesystem change or weaken the immutable Git-directory guard."
+  },
+  "incumbent_after_abort": {
+    "pid": 2525140,
+    "alive": true,
+    "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "argv": [
+      "/usr/bin/python3.12",
+      "-u",
+      "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py",
+      "--config",
+      "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "--verbose"
+    ],
+    "observed_governed_environment": {
+      "PANTHEON_STATUS_ROOT": "/home/lupin/pantheon",
+      "PANTHEON_COMMAND_ROOT": null,
+      "PANTHEON_COMMAND_RUNTIME_SHA": null,
+      "PYTHONDONTWRITEBYTECODE": null
+    },
+    "live_config_sha256_after_abort": "904830b6ff1487f0a3d665be13446c55c8ab20d775ae37d9a0107647270eafa9",
+    "unchanged_claim_basis": "The durable transaction record stopped before incumbent capture and reports config_transaction null; no candidate launch, rollback, or direct signal was attempted by this worker."
+  },
+  "acceptance_disposition": {
+    "immutable_candidate_from_merged_dev": "candidate was materialized and later read-only identity capture passed",
+    "candidate_bytecode_clean_after_discovery": "pass",
+    "candidate_launch_with_python_B_and_PYTHONDONTWRITEBYTECODE": "not_run; transaction aborted before launch",
+    "status_child_no_pycache": "not_run; candidate was never launched",
+    "three_fresh_recovery_loops": "not_run; candidate was never launched",
+    "authoritative_shadow_catchup_queue_worker_parity_and_provider_baseline": "not_run; candidate was never launched",
+    "rollback_identity": "not_applicable; no incumbent/config transaction began",
+    "live_runtime_promotion": "not_accepted"
+  },
+  "required_source_only_followup": {
+    "proposed_task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+    "title": "Diagnose and repair transaction-time immutable candidate Git identity rejection",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "repository": "pantheon",
+    "merge_target": "dev",
+    "declared_scope": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/sync-dev-root.sh",
+      "scripts/test_promote_supervisor_runtime.py",
+      "scripts/test_sync_dev_root.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808/"
+    ],
+    "constraints": [
+      "source-only task: no live config edit, signal, process stop, manual checkout, candidate deletion, or runtime promotion",
+      "reproduce the transaction-time Candidate Git directory ENOTDIR with immutable candidate fixtures or establish a bounded race explanation",
+      "preserve the deny-by-default real-directory, no-symlink, no-gitfile guard",
+      "add focused regression coverage and a pre-review evidence manifest",
+      "a later rollout must be a separately authorized governed transaction"
+    ],
+    "dispatch_status": "pending_canonical_bridge_receipt"
+  },
+  "verification": [
+    {
+      "command": "$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT",
+      "result": "exit 1; governed transaction aborted before mutation",
+      "conclusion": "fail_closed_pass"
+    },
+    {
+      "command": "candidate promote-supervisor-runtime.sh --repo candidate --json (without --promote)",
+      "result": "candidate immutable Git identity passed; legacy incumbent launch identity remained ineligible; bytecode scan was empty",
+      "conclusion": "read_only_evidence_pass"
+    },
+    {
+      "command": "readlink /proc/2525140/cwd; cmdline and allowlisted environment inspection",
+      "result": "legacy dev-root incumbent remains alive and lacks promoted command-root/runtime-SHA/PYTHONDONTWRITEBYTECODE bindings",
+      "conclusion": "incumbent_unchanged_observed"
+    }
+  ]
+}
