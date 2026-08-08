@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Independently review scheduler eligibility and grace exact head for live rescue
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Codex exact-head re-review found that provider local-CLI readiness blocks dispatch but not priority preemption at a924a6f3; preserve the finding, sync current dev evidence, and hand the task-scoped rejection packet to Codex2.
+- Next: Codex2 must independently verify the blocking provider-readiness counterexample in exact-head-re-review-20260808.json. PR #4399 exact head a924a6f3 must not be re-approved; the archived source task needs a new corrective follow-up rather than in-place reopen.
 
 ## Summary
 Emergency independent review lane for the already implemented #4399 scheduler architecture fix. Human/Ops hands this review-only task to Antigravity so the true supervisor launches the reviewer without waiting on the closeout task that the old scheduler itself keeps killing.
