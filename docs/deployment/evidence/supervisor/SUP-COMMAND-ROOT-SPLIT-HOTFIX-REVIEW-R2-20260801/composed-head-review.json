@@ -1,0 +1,117 @@
+{
+  "schema_version": "supervisor_incident_hotfix_exact_head_review.v1",
+  "schema_status": {
+    "status": "task_scoped",
+    "product_level_required": false,
+    "note": "Exact-head review and owner-closeout receipt for a supervisor command-root hotfix. It claims no live restart, runtime promotion, deployment, or capital authority."
+  },
+  "task": {
+    "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+    "title": "Independently review the strict-base-composed supervisor command-root hotfix",
+    "phase": "incident-hotfix-review",
+    "owner": "Antigravity",
+    "owner_at_review": "Codex2",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/composed-head-review.json"
+  },
+  "scope": {
+    "owned_layer": "Independent exact-head verdict and durable closeout record for PR #4451 after its merge-only update to the strict dev base.",
+    "not_changing": "No hotfix implementation, supervisor scheduling, fleet policy, live dev-root, running process, runtime projection state, or promotion decision.",
+    "implementation_paths_reviewed": [
+      "scripts/sync-dev-root.sh",
+      "scripts/test_sync_dev_root.py"
+    ],
+    "records_written": [
+      ".orchestrator/task-briefs/sup_command_root_split_hotfix_composed_head_review_20260801.md",
+      "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/composed-head-review.json",
+      "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/composed-head-owner-closeout.md"
+    ]
+  },
+  "dependency_review": {
+    "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801",
+    "reviewed_implementation_head": "671a15e7dbf4ba278482fa7764a07d3972ae7237",
+    "evidence_branch_head": "ea43d735c827225187464ba4ab545a25a0327589",
+    "evidence_pr": 4461,
+    "note": "The dependency evidence approved the implementation head before strict-base composition. This manifest does not rewrite that historical verdict."
+  },
+  "composed_head": {
+    "pull_request": 4451,
+    "url": "https://github.com/ajoe734/pantheon/pull/4451",
+    "exact_head": "83a91bc2571c20424302916ea6129f421642549d",
+    "implementation_parent": "671a15e7dbf4ba278482fa7764a07d3972ae7237",
+    "dev_parent": "3578f993b1b02f2ba4aa579a40325943cc0674e3",
+    "tree": "43b28ac778c77fb983788f85e6a959151032aca7",
+    "merge_commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+    "merged_at": "2026-08-01T15:46:21Z",
+    "merged_to": "dev"
+  },
+  "prior_assignment_review": {
+    "status": "review_approved",
+    "verdict": "APPROVED",
+    "prior_owner": "Codex2",
+    "reviewer": "Antigravity",
+    "reviewed_at": "2026-08-01T15:45:43Z",
+    "authoritative_event_sequence": 7781,
+    "authoritative_event_id": "task-state-cce78e63c55bd3cc700378dd4854e57d21c47d279633c1a97980a846c13f81b4",
+    "source": "antigravity1-1-20260801T154443Z-add57a4a",
+    "review_file_at_approval": null,
+    "decision_summary": "The exact PR head composes the approved implementation and current dev without conflict resolution, keeps the two-file delta, passes syntax, focused tests and diff-check, and has all exact-head GitHub contexts successful."
+  },
+  "acceptance": {
+    "exact_head_reviewed": true,
+    "implementation_parent_matches": true,
+    "dev_parent_matches": true,
+    "reproduced_merge_tree_matches": true,
+    "conflict_resolution_or_new_implementation": false,
+    "delta_is_exactly_two_paths": true,
+    "pid_bound_intent_recorded_before_sigterm": true,
+    "root_mismatch_triggers_restart": true,
+    "matching_root_unchanged_is_noop": true,
+    "all_exact_head_github_contexts_successful": true,
+    "live_repair_or_runtime_promotion_performed": false
+  },
+  "prior_owner_closeout_verification": {
+    "prior_owner": "Codex2",
+    "verified_at": "2026-08-01T16:12:27Z",
+    "commands": [
+      "bash -n scripts/sync-dev-root.sh",
+      "/home/lupin/pantheon-ci-deploy/dev-root/.venv-pantheon/bin/python3 -m pytest -q scripts/test_sync_dev_root.py",
+      "git diff --check 3578f993b1b02f2ba4aa579a40325943cc0674e3..83a91bc2571c20424302916ea6129f421642549d",
+      "git diff --name-only 3578f993b1b02f2ba4aa579a40325943cc0674e3..83a91bc2571c20424302916ea6129f421642549d",
+      "git merge-tree --write-tree 671a15e7dbf4ba278482fa7764a07d3972ae7237 3578f993b1b02f2ba4aa579a40325943cc0674e3",
+      "gh pr checks 4451 --repo ajoe734/pantheon"
+    ],
+    "results": {
+      "bash_syntax": "passed",
+      "focused_pytest": "5 passed in 1.57s",
+      "diff_check": "clean",
+      "delta_paths": [
+        "scripts/sync-dev-root.sh",
+        "scripts/test_sync_dev_root.py"
+      ],
+      "recreated_merge_tree": "43b28ac778c77fb983788f85e6a959151032aca7",
+      "github_contexts": "11/11 successful"
+    }
+  },
+  "owner_revalidation": {
+    "owner": "Antigravity",
+    "verified_at": "2026-08-06T12:54:14Z",
+    "commands": [
+      "bash -n scripts/sync-dev-root.sh",
+      "pytest -q scripts/test_sync_dev_root.py",
+      "git diff --check 3578f993b1b02f2ba4aa579a40325943cc0674e3..83a91bc2571c20424302916ea6129f421642549d"
+    ],
+    "results": {
+      "bash_syntax": "passed",
+      "focused_pytest": "5 passed in 1.73s",
+      "diff_check": "clean"
+    }
+  },
+  "closeout": {
+    "decision": "ready_for_task_record_publication",
+    "note": "PR #4451 is merged and the approved hotfix is on origin/dev. This record publishes the exact-head verdict; it does not perform or authorize a live runtime promotion."
+  }
+}

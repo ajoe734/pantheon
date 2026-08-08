@@ -4,6 +4,81 @@ These rules apply to Codex work in this repository. They are Codex's own
 responsibility. Do not treat CI, hooks, reviewers, or the user as the first line
 of enforcement for this workflow.
 
+## Chatbox Work Classification And Dispatch Authority
+
+Every Codex IDE/chatbox turn must classify the requested work before making any
+repository or runtime mutation. There are two execution lanes.
+
+### Direct Component Repair Lane
+
+A chatbox may implement a repair directly only when all of the following are
+true:
+
+- the operator explicitly authorizes that chatbox to implement the repair;
+- the work is bounded to one clearly identified component or failure;
+- the change does not redesign cross-component architecture, supervisor
+  scheduling, fleet policy, task-state governance, or deployment authority;
+- the chatbox uses a clean task branch or worktree and completes the normal
+  commit, PR, checks, review, and merge flow; and
+- the chatbox does not expand the repair into adjacent systems without new
+  operator direction.
+
+A request such as a specifically authorized dashboard failure repair may use
+this lane. Direct repair permission for one component does not grant permission
+to modify the supervisor, auto-worker routing, canonical task state, or another
+component.
+
+### Integration And Coordination Lane
+
+System-wide inspection, development-progress synthesis, cross-component
+integration, multi-task gap closure, supervisor or fleet evolution, release
+coordination, and architecture planning are coordination work. A chatbox
+handling this lane must not implement the resulting product or control-plane
+changes itself.
+
+The chatbox must instead:
+
+1. inspect current state read-only and deduplicate against active tasks,
+   archives, open PRs, branches, and worktrees;
+2. write a concrete work plan with objective, current evidence, gaps,
+   dependency order, declared file scopes, out-of-scope boundaries,
+   acceptance criteria, validation, merge order, rollout, and rollback;
+3. split the plan into governed task packets with task ID, owner capability,
+   independent reviewer capability, dependencies, expected branch/worktree,
+   merge target, and required artifacts;
+4. queue those packets through the governed assistant dev bridge or canonical
+   task command, never by hand-editing queue or state JSON;
+5. wait for a supervisor receipt and canonical task materialization before
+   claiming that implementation is underway; and
+6. monitor supervisor, auto-worker, PR, check, merge, and deployment evidence,
+   reporting blockers without taking over implementation.
+
+For this lane, Codex extension subagents may perform read-only exploration,
+test analysis, plan review, or summarization. They must not apply patches,
+commit, push, open implementation PRs, modify live runtime, or act as a parallel
+implementation fleet. Code-writing work belongs to supervisor-dispatched
+auto-workers.
+
+### Single Dispatch Authority
+
+The Pantheon supervisor is the only routine implementation dispatcher.
+Chatboxes must not create a parallel scheduling path, invent unregistered task
+IDs, implement first and register later, or both queue and implement the same
+scope. They must not directly patch `/home/lupin/pantheon-ci-deploy/dev-root`,
+force live rescue refs, edit canonical runtime state, or start/stop services as
+part of ordinary coordination work.
+
+The existing Live Repair Rule below is the only exception for an urgent runtime
+incident. A live rescue must remain minimal and temporary; permanent source or
+configuration changes still require a governed task worktree and the full
+repository delivery flow.
+
+Configured agent identities, including `Codex` and `Codex2`, remain distinct.
+Account relationships, quota grouping, and reviewer eligibility must follow
+current configuration and task-scoped live authentication or quota evidence.
+Do not infer identity equivalence, capacity equivalence, or reviewer
+ineligibility from configured agent names alone.
+
 ## Completion Definition For Repo Changes
 
 When Codex modifies repository files, the work is not complete until Codex has

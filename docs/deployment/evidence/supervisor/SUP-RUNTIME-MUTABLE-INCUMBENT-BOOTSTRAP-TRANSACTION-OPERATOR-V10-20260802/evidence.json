@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+    "owner": "Codex2",
+    "reviewer": "Human/Ops",
+    "phase": "Supervisor runtime promotion / atomic config bootstrap V10",
+    "status": "review_pending",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802/evidence.json"
+  },
+  "outcome": {
+    "decision": "source_ready_for_independent_review",
+    "live_transition_attempted": false,
+    "live_config_modified": false,
+    "incumbent_signalled": false,
+    "candidate_launched": false,
+    "rollback_launched": false,
+    "source_anchor": "3b38a78e6b0a0bf7d4c870e100aa1935d0072657",
+    "source_branch": "task/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+    "merge_target": "dev"
+  },
+  "no_go_input": {
+    "pull_request": 4522,
+    "decision": "no_go_preflight",
+    "incumbent_pid": 3538768,
+    "incumbent_starttime_ticks": 3631742,
+    "incumbent_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "incumbent_commit": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+    "candidate_commit": "0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+    "live_config_inode": 2098443,
+    "live_config_byte_length": 39742,
+    "live_config_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+    "failed_invariant": "incumbent_supervisor_process_identity_immutable",
+    "failure": "Captured live config does not bind the exact canonical supervisor entrypoint"
+  },
+  "implemented_contract": {
+    "explicit_opt_in": "--promote --bootstrap-mutable-incumbent",
+    "default_discover_read_only": true,
+    "normal_promote_requires_immutable_incumbent": true,
+    "mutable_capture": [
+      "PID and starttime ticks",
+      "full argv and executable",
+      "cwd path device and inode",
+      "Git HEAD and tree",
+      "accepted origin/dev tip",
+      "structurally validated remote",
+      "live config path device inode bytes byte length and SHA-256",
+      "governed source path device inode mode byte length and SHA-256",
+      "singleton supervisor lock owner generation",
+      "allowlisted command/status environment"
+    ],
+    "rollback_materialization": {
+      "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/<captured-incumbent-commit>",
+      "fresh_destination_required": true,
+      "accepted_commit_and_tree_revalidated": true,
+      "remote_revalidated": true,
+      "directory_fsync_required": true
+    },
+    "config_transaction": {
+      "candidate_and_rollback_commands_derived_from_one_capture": true,
+      "external_config_unchanged_during_prepare": true,
+      "predecessor_bytes_cas_checked": true,
+      "temporary_file_fsync_required": true,
+      "atomic_replace_required": true,
+      "replacement_readback_required": true,
+      "directory_fsync_required": true,
+      "unknown_replacement_prohibits_launch": true
+    },
+    "lock_order": [
+      "supervisor-runtime-promotion.lock",
+      "runtime-admission.lock"
+    ],
+    "swap_order": [
+      "capture and revalidate exact incumbent/config/state",
+      "record PID-bound intentional restart",
+      "TERM exact incumbent generation",
+      "prove incumbent generation stopped",
+      "atomically install and fsync candidate config",
+      "launch and capture candidate generation while runtime admission remains held",
+      "release runtime admission and require three fresh loops"
+    ],
+    "rollback_order": [
+      "reacquire runtime admission while promotion lock remains held",
+      "prohibit rollback when an unknown candidate child remains live",
+      "record rollback intent and stop exact bad generation",
+      "atomically install and fsync immutable rollback config",
+      "launch only the captured rollback generation",
+      "require three fresh loops and baseline parity"
+    ]
+  },
+  "negative_matrix": "docs/deployment/evidence/supervisor/SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802/failure-matrix.json",
+  "validation": [
+    {
+      "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py scripts/test_sync_dev_root.py .orchestrator/test_supervisor_watchdog.py scripts/test_dev_supervisor_watchdog_deploy_contract.py",
+      "result": "295 passed"
+    },
+    {
+      "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py .orchestrator/test_supervisor.py",
+      "result": "744 passed, 189 subtests passed"
+    },
+    {
+      "command": "python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
+      "result": "passed"
+    },
+    {
+      "command": "bash -n scripts/promote-supervisor-runtime.sh",
+      "result": "passed"
+    },
+    {
+      "command": "scripts/promote-supervisor-runtime.sh --help | rg -- '--discover-only|--promote|--bootstrap-mutable-incumbent|--evidence-path'",
+      "result": "all four options present"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "non_task_baseline": {
+    "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_ROOT .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py scripts/test_sync_dev_root.py scripts/test_status_command_runtime_pin.py .orchestrator/test_supervisor_watchdog.py scripts/test_dev_supervisor_watchdog_deploy_contract.py",
+    "result": "300 passed, 14 subtests passed, 2 failed",
+    "failures": [
+      "StatusCommandRuntimePinTests.test_active_lease_allows_mutation_and_preserves_worktree",
+      "StatusCommandRuntimePinTests.test_concurrent_worktree_writers_keep_final_state_and_event_ids"
+    ],
+    "reason": "Both pre-existing fixtures omit the exact process generation now required by ai_status.py. scripts/ai_status.py and scripts/test_status_command_runtime_pin.py are byte-unchanged by this task."
+  },
+  "governance_preservation": {
+    "canonical_task_state_modified_by_source": false,
+    "active_lease_or_queue_policy_changed": false,
+    "provider_readiness_policy_changed": false,
+    "codex_and_codex2_identity_or_quota_group_changed": false,
+    "global_mutual_review_rule_added": false,
+    "explicit_human_ops_reviewer_preserved": true
+  },
+  "review": {
+    "decision": "not_requested_yet",
+    "reviewer": "Human/Ops",
+    "required": "Review the final exact PR head and this manifest after required checks are green; no live rollout is part of this source review."
+  },
+  "rollout": {
+    "this_task": "source merge only",
+    "next": "Redispatch the blocked V9 canary, select a new accepted candidate containing this merge, and run the explicit mutable bootstrap transaction with live rollback proof."
+  },
+  "rollback": {
+    "source": "Revert the reviewed task PR before any V9 live canary uses the new flag.",
+    "live": "Not applicable to this source-only task; the later V9 transaction must use the immutable rollback root materialized from its exact captured incumbent."
+  }
+}

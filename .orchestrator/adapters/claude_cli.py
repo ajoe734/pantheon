@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 
-from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
+from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult, hysteresis_held_auth_ready
 from adapters.claude_code import ClaudeCodeAdapter
 from common import (
     agent_config_for,
@@ -85,6 +85,13 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         provider_id = _provider_key(self.config, agent_id=agent_id)
         cli = _configured_claude_cli(self.config, provider_id)
         auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id), refresh_if_needed=False)
+        if not auth_ready and hysteresis_held_auth_ready(
+            self.provider_capabilities,
+            provider_id,
+            config=self.config,
+            fallback_provider_key="claude",
+        ):
+            auth_ready = True
         if cli and auth_ready:
             return DeliveryCapability(
                 adapter=self.name,

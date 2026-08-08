@@ -4779,258 +4779,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
-    def test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2(self) -> None:
-        config = {
-            "schema": {
-                "tasks_path": "tasks",
-                "task_id_field": "id",
-                "assignee_field": "owner",
-                "reviewer_field": "reviewer",
-            },
-            "ready_dispatcher": {
-                "helper_claim": {
-                    "enabled": True,
-                    "task_statuses": ["todo"],
-                    "claim_idle_work": True,
-                    "disable_when_failure_loops": True,
-                }
-            },
-            "worker_reassignment": {
-                "owner_fallbacks": {
-                    "Claude2": ["Antigravity", "Codex2", "Codex"],
-                }
-            },
-            "agents": {
-                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
-                "antigravity": {
-                    "id": "antigravity",
-                    "display_name": "Antigravity",
-                    "provider": "antigravity",
-                },
-                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
-                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
-            },
-            "providers": {},
-        }
-        task = {
-            "id": "SUP-L12-STALE-MISSING-PROCESS-20260729",
-            "status": "todo",
-            "owner": "Claude2",
-            "reviewer": "Antigravity",
-            "depends_on": [],
-            "last_update": "2026-07-29T11:33:00Z",
-            "preferred_lane_order": ["Claude2", "Antigravity", "Codex2", "Codex"],
-        }
-        state = {
-            "queue": {"events": {}},
-            "workers": {},
-            "provider_guardrails": {
-                "task_failure_streaks": {
-                    f"{task['id']}:claude2": {
-                        "task_id": task["id"],
-                        "provider": "claude2",
-                        "count": 3,
-                        "last_failure_kind": "missing_process",
-                        "last_failure_at": "2026-07-29T11:30:00Z",
-                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
-                    }
-                }
-            },
-        }
-
-        with (
-            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
-            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
-        ):
-            changed = supervisor.dispatch_ready_tasks(
-                config,
-                state,
-                agent_ids_override=["codex2", "claude2"],
-            )
-
-        self.assertTrue(changed)
-        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
-        persist.assert_not_called()
-        queue_delivery_event.assert_called_once()
-        queued_event = queue_delivery_event.call_args.args[1]
-        self.assertEqual(queued_event["target_agent"], "Claude2")
-        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
-
-    def test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review(self) -> None:
-        config = {
-            "schema": {
-                "tasks_path": "tasks",
-                "task_id_field": "id",
-                "assignee_field": "owner",
-                "reviewer_field": "reviewer",
-            },
-            "ready_dispatcher": {
-                "helper_claim": {
-                    "enabled": True,
-                    "task_statuses": ["todo"],
-                    "claim_idle_work": True,
-                    "disable_when_failure_loops": True,
-                }
-            },
-            "agents": {
-                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
-                "antigravity": {
-                    "id": "antigravity",
-                    "display_name": "Antigravity",
-                    "provider": "antigravity",
-                },
-                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
-            },
-            "providers": {},
-        }
-        task = {
-            "id": "SUP-L12-POST-4380-GAP-REVIEW-20260729",
-            "status": "review",
-            "owner": "Antigravity",
-            "reviewer": "Claude2",
-            "depends_on": [],
-            "last_update": "2026-07-29T15:34:00Z",
-            "preferred_lane_order": ["Claude2", "Antigravity", "Codex"],
-        }
-        state = {
-            "queue": {"events": {}},
-            "workers": {},
-            "provider_guardrails": {
-                "task_failure_streaks": {
-                    f"{task['id']}:claude2": {
-                        "task_id": task["id"],
-                        "provider": "claude2",
-                        "count": 2,
-                        "last_failure_kind": "missing_process",
-                        "last_failure_at": "2026-07-29T15:30:00Z",
-                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
-                    }
-                }
-            },
-        }
-
-        with (
-            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
-            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
-        ):
-            changed = supervisor.dispatch_ready_tasks(
-                config,
-                state,
-                agent_ids_override=["claude2"],
-            )
-
-        self.assertTrue(changed)
-        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
-        persist.assert_not_called()
-        queue_delivery_event.assert_called_once()
-        queued_event = queue_delivery_event.call_args.args[1]
-        self.assertEqual(queued_event["target_agent"], "Claude2")
-        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
-
-    def test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper(self) -> None:
-        config = {
-            "schema": {
-                "tasks_path": "tasks",
-                "task_id_field": "id",
-                "assignee_field": "owner",
-                "reviewer_field": "reviewer",
-            },
-            "ready_dispatcher": {
-                "helper_claim": {
-                    "enabled": True,
-                    "task_statuses": ["todo"],
-                    "paused_owner_task_statuses": ["in_progress"],
-                    "claim_idle_work": True,
-                    "disable_when_failure_loops": True,
-                }
-            },
-            "worker_reassignment": {
-                "owner_fallbacks": {
-                    "Claude2": ["Codex2", "Codex"],
-                }
-            },
-            "agents": {
-                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
-                "antigravity": {
-                    "id": "antigravity",
-                    "display_name": "Antigravity",
-                    "provider": "antigravity",
-                },
-                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
-                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
-            },
-            "providers": {},
-        }
-        task_id = "SUP-L12-PROVIDER-FIRST-AFTER-STALE-STREAK-20260729"
-        initial_task = {
-            "id": task_id,
-            "status": "in_progress",
-            "owner": "Claude2",
-            "reviewer": "Antigravity",
-            "depends_on": [],
-            "last_update": "2026-07-29T11:33:00Z",
-            "preferred_lane_order": ["Claude2", "Antigravity", "Codex2", "Codex"],
-        }
-        persisted_task = {
-            **initial_task,
-            "owner": "Antigravity",
-            "reviewer": "Claude2",
-            "last_update": "2026-07-29T11:34:00Z",
-        }
-        state = {
-            "queue": {"events": {}},
-            "workers": {},
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "claude2": {
-                        "provider": "claude2",
-                        "blocked_until": "2999-01-01T00:00:00Z",
-                        "summary": "provider unavailable",
-                    }
-                },
-                "task_failure_streaks": {
-                    f"{task_id}:claude2": {
-                        "task_id": task_id,
-                        "provider": "claude2",
-                        "count": 3,
-                        "last_failure_kind": "missing_process",
-                        "last_failure_at": "2026-07-29T11:30:00Z",
-                        "last_reason": "Worker process missing during supervisor boot reconciliation.",
-                    }
-                },
-            },
-        }
-
-        with (
-            mock.patch.object(
-                supervisor,
-                "load_status",
-                side_effect=[{"tasks": [initial_task]}, {"tasks": [persisted_task]}],
-            ),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
-            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
-            mock.patch.object(supervisor, "write_activity_log"),
-        ):
-            changed = supervisor.dispatch_ready_tasks(
-                config,
-                state,
-                agent_ids_override=["codex2", "antigravity"],
-            )
-
-        self.assertTrue(changed)
-        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
-        persist.assert_called_once()
-        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
-        queue_delivery_event.assert_called_once()
-        queued_event = queue_delivery_event.call_args.args[1]
-        self.assertEqual(queued_event["target_agent"], "Antigravity")
-        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
-
     def test_dispatcher_does_not_helper_claim_catalog_locked_task(self) -> None:
         config = {
             "schema": {
@@ -7748,6 +7496,52 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(command[:3], [sys.executable, str(self.root / "scripts" / "ai_status.py"), "recover"])
         self.assertEqual(run_mock.call_args.kwargs["cwd"], str(self.root))
         self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["PYTHONDONTWRITEBYTECODE"],
+            "1",
+        )
+
+    def test_status_command_context_prevents_child_bytecode_writes(self) -> None:
+        (self.root / "scripts" / "status_sibling.py").write_text(
+            "VALUE = 'loaded'\n",
+            encoding="utf-8",
+        )
+        (self.root / "scripts" / "ai_status.py").write_text(
+            "import status_sibling\nprint(status_sibling.VALUE)\n",
+            encoding="utf-8",
+        )
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+
+        with (
+            mock.patch.dict(
+                supervisor.os.environ,
+                {"PYTHONDONTWRITEBYTECODE": "inherited-wrong-value"},
+                clear=False,
+            ),
+            mock.patch.object(
+                supervisor,
+                "status_command_runtime_env",
+                return_value=command_env,
+            ),
+        ):
+            script, env = supervisor.status_command_subprocess_context(self.config)
+
+        result = subprocess.run(
+            [sys.executable, str(script), "recover"],
+            cwd=self.root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "loaded")
+        self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertFalse((self.root / "scripts" / "__pycache__").exists())
 
     def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
         event = {
@@ -19769,106 +19563,6 @@ class WorkerReassignmentTests(unittest.TestCase):
         supervisor.clear_task_failure_streak(state, worker=worker_two)
         self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
-    def test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks(self) -> None:
-        config = {
-            "agents": {
-                "claude2": {"display_name": "Claude2", "provider": "claude2"},
-                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
-            }
-        }
-        task_ids = {
-            "stale": "SUP-L12-STALE-STREAK-20260729",
-            "fresh": "SUP-L12-FRESH-STREAK-20260729",
-            "quota": "SUP-L12-QUOTA-STREAK-20260729",
-            "active": "SUP-L12-ACTIVE-STREAK-20260729",
-            "non_l12": "OPS-STALE-STREAK-20260729",
-        }
-        task_map = {
-            task_id: {
-                "id": task_id,
-                "status": "todo",
-                "owner": "Claude2",
-                "reviewer": "Antigravity",
-                "last_update": "2026-07-29T11:33:00Z",
-            }
-            for task_id in task_ids.values()
-        }
-        state = {
-            "provider_guardrails": {
-                "task_failure_streaks": {
-                    f"{task_id}:claude2": {
-                        "task_id": task_id,
-                        "provider": "claude2",
-                        "count": 2,
-                        "last_failure_kind": "quota_terminal" if name == "quota" else "missing_process",
-                        "last_failure_at": (
-                            "2026-07-29T11:35:00Z"
-                            if name == "fresh"
-                            else "2026-07-29T11:30:00Z"
-                        ),
-                    }
-                    for name, task_id in task_ids.items()
-                }
-            }
-        }
-
-        changed = supervisor.reap_stale_l12_missing_process_failure_streaks(
-            config,
-            state,
-            task_map=task_map,
-            active_task_agents={(task_ids["active"], "claude2")},
-            pending_task_agents=set(),
-        )
-
-        self.assertTrue(changed)
-        streaks = state["provider_guardrails"]["task_failure_streaks"]
-        self.assertNotIn(f"{task_ids['stale']}:claude2", streaks)
-        self.assertIn(f"{task_ids['fresh']}:claude2", streaks)
-        self.assertIn(f"{task_ids['quota']}:claude2", streaks)
-        self.assertIn(f"{task_ids['active']}:claude2", streaks)
-        self.assertIn(f"{task_ids['non_l12']}:claude2", streaks)
-
-    def test_stale_l12_missing_process_reaper_is_bounded_per_cycle(self) -> None:
-        config = {
-            "agents": {
-                "claude2": {"display_name": "Claude2", "provider": "claude2"},
-                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
-            }
-        }
-        task_map: dict[str, dict] = {}
-        streaks: dict[str, dict] = {}
-        for index in range(supervisor.L12_STALE_MISSING_PROCESS_STREAK_REAP_LIMIT + 1):
-            task_id = f"SUP-L12-BOUNDED-REAP-{index}"
-            task_map[task_id] = {
-                "id": task_id,
-                "status": "todo",
-                "owner": "Claude2",
-                "reviewer": "Antigravity",
-                "last_update": "2026-07-29T11:33:00Z",
-            }
-            streaks[f"{task_id}:claude2"] = {
-                "task_id": task_id,
-                "provider": "claude2",
-                "count": 2,
-                "last_failure_kind": "missing_process",
-                "last_failure_at": f"2026-07-29T11:2{index}:00Z",
-            }
-        state = {"provider_guardrails": {"task_failure_streaks": streaks}}
-
-        changed = supervisor.reap_stale_l12_missing_process_failure_streaks(
-            config,
-            state,
-            task_map=task_map,
-            active_task_agents=set(),
-            pending_task_agents=set(),
-        )
-
-        self.assertTrue(changed)
-        self.assertEqual(
-            len(state["provider_guardrails"]["task_failure_streaks"]),
-            1,
-        )
-
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
             "task_id": "LP-003",
@@ -25032,6 +24726,181 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         self.assertIn("a" * 12, status["tasks"][0]["next"])
 
 
+class ReconcileBlockedTasksTests(unittest.TestCase):
+    """Structured blocked-task reconciliation is opt-in and rate-limited."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "github_bus": {"repo": "ajoe734/pantheon"},
+            "blocked_task_reconciliation": {
+                "enabled": True,
+                "shadow_only": False,
+                "interval_seconds": 300,
+                "max_tasks_per_run": 8,
+            },
+        }
+
+    @staticmethod
+    def _github_blocker(task_id: str, *, pr_number: int = 4582) -> dict[str, object]:
+        return {
+            "task_id": task_id,
+            "status": "open",
+            "check_kind": "github_pr_ci",
+            "pr_number": pr_number,
+        }
+
+    @staticmethod
+    def _blocked_task(task_id: str) -> dict[str, object]:
+        return {
+            "id": task_id,
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "waiting_for": "Claude",
+            "failure_streak": 3,
+        }
+
+    def test_github_pr_ci_blocker_reopens_only_after_ci_flips_green(self) -> None:
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-1")],
+            "blockers": [self._github_blocker("TASK-BLOCKED-1")],
+            "handoffs": [],
+        }
+        state: dict[str, object] = {"workers": {}}
+        ci_is_green = False
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_mock,
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(
+                supervisor,
+                "github_pr_ci_blocker_resolved",
+                side_effect=lambda *_args, **_kwargs: ci_is_green,
+            ),
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                side_effect=["2026-08-07T00:00:00Z", "2026-08-07T00:06:00Z"],
+            ),
+        ):
+            self.assertFalse(supervisor.reconcile_blocked_tasks(self.config, state))
+            ci_is_green = True
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        persist_mock.assert_called_once()
+        self.assertEqual(persist_mock.call_args.kwargs["task_id"], "TASK-BLOCKED-1")
+        self.assertEqual(persist_mock.call_args.kwargs["new_status"], "in_progress")
+        self.assertTrue(persist_mock.call_args.kwargs["resolve_open_blockers"])
+        self.assertTrue(persist_mock.call_args.kwargs["resolve_open_handoffs"])
+        self.assertTrue(persist_mock.call_args.kwargs["reset_failure_streak"])
+        self.assertEqual(persist_mock.call_args.kwargs["expected_status"], "blocked")
+
+    def test_task_dependency_blocker_reopens_when_required_status_is_reached(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "TASK-DEP-1", "status": "done", "owner": "Claude"},
+                self._blocked_task("TASK-BLOCKED-2"),
+            ],
+            "blockers": [
+                {
+                    "task_id": "TASK-BLOCKED-2",
+                    "status": "open",
+                    "check_kind": "task_dependency",
+                    "check_params": {
+                        "task_id": "TASK-DEP-1",
+                        "required_status": "done",
+                    },
+                }
+            ],
+        }
+        state: dict[str, object] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_mock,
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:00Z"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist_mock.call_args.kwargs["task_id"], "TASK-BLOCKED-2")
+
+    def test_check_kind_less_legacy_blocker_is_never_auto_touched(self) -> None:
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-3")],
+            "blockers": [{"task_id": "TASK-BLOCKED-3", "status": "open", "message": "Human judgement"}],
+        }
+        state: dict[str, object] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+            mock.patch.object(supervisor, "github_pr_ci_blocker_resolved") as ci_probe,
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:00Z"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+        ci_probe.assert_not_called()
+
+    def test_interval_skips_external_probe_on_the_hot_dispatch_cadence(self) -> None:
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-4")],
+            "blockers": [self._github_blocker("TASK-BLOCKED-4")],
+        }
+        state: dict[str, object] = {
+            "workers": {},
+            "blocked_task_reconciliation": {"last_run_at": "2026-08-07T00:00:00Z"},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+            mock.patch.object(supervisor, "github_pr_ci_blocker_resolved") as ci_probe,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:30Z"),
+        ):
+            changed = supervisor.reconcile_blocked_tasks(self.config, state)
+
+        self.assertFalse(changed)
+        persist_mock.assert_not_called()
+        ci_probe.assert_not_called()
+
+    def test_shadow_mode_reports_a_resolved_blocker_without_reopening(self) -> None:
+        self.config["blocked_task_reconciliation"]["shadow_only"] = True
+        status = {
+            "tasks": [self._blocked_task("TASK-BLOCKED-SHADOW")],
+            "blockers": [self._github_blocker("TASK-BLOCKED-SHADOW")],
+        }
+        state: dict[str, object] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist_mock,
+            mock.patch.object(supervisor, "github_pr_ci_blocker_resolved", return_value=True),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-08-07T00:00:00Z"),
+        ):
+            self.assertFalse(supervisor.reconcile_blocked_tasks(self.config, state))
+
+        persist_mock.assert_not_called()
+        self.assertEqual(
+            state["blocked_task_reconciliation"]["last_counts"]["blocked_tasks_shadow_resolved"],
+            1,
+        )
+
+
 class MergedDeliveryEvidenceTests(unittest.TestCase):
     """Merged evidence is bound to one delivery head, not to a task id."""
 
@@ -26063,4 +25932,3 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

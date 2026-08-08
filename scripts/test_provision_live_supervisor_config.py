@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+import provision_live_supervisor_config as provision
 
 from provision_live_supervisor_config import (
     apply_coordination_policy,
@@ -19,8 +25,93 @@ from provision_live_supervisor_config import (
     ensure_approval_queue_marker,
     main,
     validate_approval_queue_marker,
+    validated_immutable_command_root,
     write_json_atomic,
 )
+
+
+def _git(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def test_cli_imports_candidate_modules_without_writing_bytecode(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "candidate" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    for name in (
+        "provision_live_supervisor_config.py",
+        "promote_supervisor_runtime.py",
+        "supervisor_runtime_health.py",
+    ):
+        shutil.copy2(Path(__file__).with_name(name), scripts_dir / name)
+
+    environment = os.environ.copy()
+    environment.pop("PYTHONDONTWRITEBYTECODE", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(scripts_dir / "provision_live_supervisor_config.py"),
+            "--help",
+        ],
+        cwd=scripts_dir.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (scripts_dir / "__pycache__").exists()
+
+
+def _immutable_runtime_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, Path, str, str]:
+    remote = tmp_path / "accepted.git"
+    seed = tmp_path / "seed"
+    parent = tmp_path / "command-runtimes"
+    remote.mkdir()
+    seed.mkdir()
+    parent.mkdir()
+    _git(remote, "init", "--bare")
+    _git(seed, "init", "-b", "dev")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    _git(seed, "config", "user.name", "Pantheon Test")
+    (seed / ".orchestrator").mkdir()
+    (seed / "scripts").mkdir()
+    (seed / ".orchestrator" / "supervisor.py").write_text("", encoding="utf-8")
+    for name in ("run-supervisor-watchdog.sh", "promote-supervisor-runtime.sh"):
+        path = seed / "scripts" / name
+        path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        path.chmod(0o755)
+    (seed / "version.txt").write_text("one\n", encoding="utf-8")
+    _git(seed, "add", ".orchestrator", "scripts", "version.txt")
+    _git(seed, "commit", "-m", "first")
+    first = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "dev")
+    (seed / "version.txt").write_text("two\n", encoding="utf-8")
+    _git(seed, "add", "version.txt")
+    _git(seed, "commit", "-m", "second")
+    second = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "push", "origin", "dev")
+
+    candidate = parent / second
+    _git(tmp_path, "clone", "--no-local", str(seed), str(candidate))
+    _git(candidate, "checkout", "--detach", second)
+    _git(candidate, "remote", "set-url", "origin", "https://github.com/ajoe734/pantheon.git")
+    monkeypatch.setattr(provision.runtime_promotion, "ALLOWED_COMMAND_RUNTIMES_PREFIX", parent)
+    monkeypatch.setattr(provision.runtime_promotion, "TRUSTED_ORIGIN_DEV_URL", str(remote))
+    return remote, seed, candidate, first, second
 
 
 def test_apply_provider_account_schema_removes_stale_live_aliases() -> None:
@@ -223,6 +314,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     assert rendered["watchdog"]["supervisor_command"] == [
         str(python),
         "-u",
+        "-B",
         str(command_root / ".orchestrator" / "supervisor.py"),
         "--config",
         str(live_config),
@@ -456,10 +548,155 @@ def test_ensure_approval_queue_marker_rejects_symlink(tmp_path: Path) -> None:
         ensure_approval_queue_marker(target)
 
 
+def test_validated_immutable_command_root_composes_promotion_identity_layers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit = "a" * 40
+    root = tmp_path / "command-runtimes" / commit
+    (root / ".orchestrator").mkdir(parents=True)
+    (root / "scripts").mkdir()
+    for relative in (
+        ".orchestrator/supervisor.py",
+        "scripts/run-supervisor-watchdog.sh",
+        "scripts/promote-supervisor-runtime.sh",
+    ):
+        (root / relative).write_text("safe\n", encoding="utf-8")
+    (root / "scripts" / "run-supervisor-watchdog.sh").chmod(0o755)
+    (root / "scripts" / "promote-supervisor-runtime.sh").chmod(0o755)
+    calls: list[tuple[object, ...]] = []
+
+    monkeypatch.setattr(
+        provision.runtime_promotion,
+        "resolve_candidate_root",
+        lambda path: calls.append(("resolve", path)) or root,
+    )
+    monkeypatch.setattr(
+        provision.runtime_promotion,
+        "parse_origin_url",
+        lambda path: calls.append(("remote", path))
+        or "https://github.com/ajoe734/pantheon.git",
+    )
+    monkeypatch.setattr(
+        provision.runtime_promotion,
+        "validate_remote_url",
+        lambda url: calls.append(("validate_remote", url))
+        or SimpleNamespace(slug="ajoe734/pantheon"),
+    )
+    monkeypatch.setattr(
+        provision.runtime_promotion,
+        "verify_git_head_and_dev_ancestry",
+        lambda path, basename: calls.append(("ancestry", path, basename)) or commit,
+    )
+    monkeypatch.setattr(
+        provision.runtime_promotion,
+        "verify_working_tree_cleanliness",
+        lambda path, expected_head: calls.append(("clean", path, expected_head))
+        or "b" * 40,
+    )
+
+    identity = validated_immutable_command_root(root)
+
+    assert identity == {
+        "root": str(root),
+        "head": commit,
+        "tree": "b" * 40,
+        "remote": "https://github.com/ajoe734/pantheon.git",
+        "repository": "ajoe734/pantheon",
+    }
+    assert [call[0] for call in calls] == [
+        "resolve",
+        "remote",
+        "validate_remote",
+        "ancestry",
+        "clean",
+    ]
+
+
+def test_immutable_command_root_uses_fresh_accepted_dev_not_stale_local_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, _seed, candidate, first, second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    _git(candidate, "update-ref", "refs/remotes/origin/dev", first)
+
+    identity = validated_immutable_command_root(candidate)
+
+    assert identity["head"] == second
+    assert identity["repository"] == "ajoe734/pantheon"
+    assert _git(candidate, "rev-parse", "origin/dev") == first
+
+
+def test_immutable_command_root_rejects_unaccepted_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, seed, accepted, _first, _second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    parent = accepted.parent
+    (seed / "version.txt").write_text("unaccepted\n", encoding="utf-8")
+    _git(seed, "add", "version.txt")
+    _git(seed, "commit", "-m", "unaccepted")
+    unaccepted_sha = _git(seed, "rev-parse", "HEAD")
+    unaccepted = parent / unaccepted_sha
+    _git(tmp_path, "clone", "--no-local", str(seed), str(unaccepted))
+    _git(unaccepted, "checkout", "--detach", unaccepted_sha)
+    _git(
+        unaccepted,
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+
+    with pytest.raises(ValueError, match="cat-file|Not a valid object"):
+        validated_immutable_command_root(unaccepted)
+
+
+def test_immutable_command_root_rejects_mutable_and_symlink_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, seed, candidate, _first, second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    mutable = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--no-local", str(seed), str(mutable))
+    _git(mutable, "checkout", "--detach", second)
+    mutable_alias = candidate.parent / ("f" * 40)
+    mutable_alias.symlink_to(mutable, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="not a direct child"):
+        validated_immutable_command_root(mutable)
+    with pytest.raises(ValueError, match="symlink"):
+        validated_immutable_command_root(mutable_alias)
+
+
+def test_immutable_command_root_rejects_dirty_tracked_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _remote, _seed, candidate, _first, _second = _immutable_runtime_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    (candidate / "version.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="dirty|differs"):
+        validated_immutable_command_root(candidate)
+
+
 def test_main_bootstraps_split_root_approval_queue_before_watchdog_config(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    command_root = tmp_path / "dev-root"
+    command_root = tmp_path / "command-runtimes" / ("a" * 40)
     status_root = tmp_path / "canonical-root"
     live_config = tmp_path / "runtime" / "live.json"
     repo_config = command_root / ".orchestrator" / "config.json"
@@ -468,6 +705,18 @@ def test_main_bootstraps_split_root_approval_queue_before_watchdog_config(
     (command_root / ".orchestrator" / "supervisor.py").write_text("", encoding="utf-8")
     (command_root / "scripts").mkdir()
     (command_root / "scripts" / "run-supervisor-watchdog.sh").write_text("", encoding="utf-8")
+    (command_root / "scripts" / "promote-supervisor-runtime.sh").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        provision,
+        "validated_immutable_command_root",
+        lambda path: {
+            "root": str(path),
+            "head": path.name,
+            "tree": "b" * 40,
+            "remote": "https://github.com/ajoe734/pantheon.git",
+            "repository": "ajoe734/pantheon",
+        },
+    )
     repo_config.write_text(
         json.dumps(
             {
@@ -509,3 +758,74 @@ def test_main_bootstraps_split_root_approval_queue_before_watchdog_config(
     assert json.loads(live_config.read_text(encoding="utf-8"))["paths"][
         "approval_queue"
     ] == str(status_root / ".orchestrator" / "approval-queue.json")
+
+
+def test_main_existing_config_is_noop_or_requires_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_root = tmp_path / "command-runtimes" / ("c" * 40)
+    status_root = tmp_path / "status"
+    runtime = tmp_path / "runtime"
+    repo_config = command_root / ".orchestrator" / "config.json"
+    (command_root / ".orchestrator").mkdir(parents=True)
+    (status_root / ".orchestrator").mkdir(parents=True)
+    runtime.mkdir()
+    (command_root / ".orchestrator" / "supervisor.py").write_text("", encoding="utf-8")
+    (command_root / "scripts").mkdir()
+    for name in ("run-supervisor-watchdog.sh", "promote-supervisor-runtime.sh"):
+        (command_root / "scripts" / name).write_text("", encoding="utf-8")
+    (status_root / ".git").mkdir()
+    (status_root / "ai-status.json").write_text('{"tasks":[]}\n', encoding="utf-8")
+    repo_config.write_text(
+        json.dumps(
+            {
+                "paths": {
+                    "status_file": "ai-status.json",
+                    "approval_queue": ".orchestrator/approval-queue.json",
+                },
+                "watchdog": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        provision,
+        "validated_immutable_command_root",
+        lambda path: {
+            "root": str(path),
+            "head": path.name,
+            "tree": "d" * 40,
+            "remote": "https://github.com/ajoe734/pantheon.git",
+            "repository": "ajoe734/pantheon",
+        },
+    )
+    args = [
+        "--repo-config",
+        str(repo_config),
+        "--live-config",
+        str(runtime / "live.json"),
+        "--command-root",
+        str(command_root),
+        "--status-root",
+        str(status_root),
+        "--python",
+        sys.executable,
+    ]
+
+    assert main(args) == 0
+    live_config = runtime / "live.json"
+    before = live_config.read_bytes()
+    inode = live_config.stat().st_ino
+    assert main(args) == 0
+    assert live_config.read_bytes() == before
+    assert live_config.stat().st_ino == inode
+
+    changed = json.loads(before)
+    changed["watchdog"]["supervisor_command"][3] = "/mutable/dev-root/.orchestrator/supervisor.py"
+    live_config.write_text(json.dumps(changed) + "\n", encoding="utf-8")
+    drifted = live_config.read_bytes()
+
+    assert main(args) == 2
+    assert live_config.read_bytes() == drifted
