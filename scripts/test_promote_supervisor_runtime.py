@@ -1497,6 +1497,65 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert verify_working_tree_cleanliness(candidate) == tree
 
 
+def test_candidate_identity_survives_closed_standard_stream_descriptors(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    proof_path = tmp_path / "closed-stdio-proof"
+    child = """
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import promote_supervisor_runtime as promotion
+
+for descriptor in (0, 1, 2):
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
+
+candidate = Path(sys.argv[1])
+parent = Path(sys.argv[2])
+proof_path = Path(sys.argv[3])
+with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+    handle = promotion._open_candidate_root_handle(candidate)
+    try:
+        assert min(
+            handle.descriptor,
+            handle.git_descriptor,
+            handle.git_objects_descriptor,
+            handle.git_config_descriptor,
+            handle.git_head_descriptor,
+            handle.git_index_descriptor,
+        ) >= 3
+        assert promotion.parse_origin_url(handle)
+    finally:
+        promotion._close_candidate_root_handle(handle)
+proof_path.write_text("validated\\n", encoding="utf-8")
+"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            child,
+            str(candidate),
+            str(parent),
+            str(proof_path),
+        ],
+        cwd=Path(__file__).resolve().parent,
+        check=False,
+        close_fds=True,
+    )
+
+    assert result.returncode == 0
+    assert proof_path.read_text(encoding="utf-8") == "validated\n"
+
+
 @pytest.mark.parametrize(
     "remote_url",
     [

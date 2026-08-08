@@ -605,6 +605,32 @@ def _identity_from_stat(path_stat: os.stat_result) -> FilesystemIdentity:
     )
 
 
+def _move_descriptor_above_standard_streams(descriptor: int) -> int:
+    """Keep descriptor-bound identities out of subprocess stdio slots.
+
+    A daemon may start with one or more of descriptors 0, 1, and 2 closed. In
+    that case ``os.open`` reuses the vacant number. These identity descriptors
+    are later exposed to Git through ``/dev/fd`` while
+    ``subprocess.run(capture_output=True)`` installs its own child-side stdout
+    and stderr pipes. Leaving a candidate directory on fd 1 or 2 therefore
+    turns the same ``/dev/fd/<n>`` into a pipe in the child and produces a
+    misleading ENOTDIR even though the descriptor is a directory in the
+    promotion process.
+
+    F_DUPFD_CLOEXEC allocates a descriptor at or above 3 while retaining the
+    explicit ``pass_fds`` boundary used for Git children.
+    """
+    if descriptor > 2:
+        return descriptor
+    try:
+        duplicate = fcntl.fcntl(descriptor, fcntl.F_DUPFD_CLOEXEC, 3)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    os.close(descriptor)
+    return duplicate
+
+
 def _open_directory_descriptor(path: Path, *, label: str) -> int:
     """Open an absolute directory one no-follow component at a time."""
     _validate_absolute_identity_path(path, label=label)
@@ -614,16 +640,20 @@ def _open_directory_descriptor(path: Path, *, label: str) -> int:
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    descriptor = os.open(path.anchor, flags)
+    descriptor = _move_descriptor_above_standard_streams(
+        os.open(path.anchor, flags)
+    )
     traversed = Path(path.anchor)
     try:
         for component in path.parts[1:]:
             traversed = traversed / component
             try:
-                next_descriptor = os.open(
-                    component,
-                    flags,
-                    dir_fd=descriptor,
+                next_descriptor = _move_descriptor_above_standard_streams(
+                    os.open(
+                        component,
+                        flags,
+                        dir_fd=descriptor,
+                    )
                 )
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
@@ -655,7 +685,9 @@ def _capture_directory_component_identities(
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    descriptor = os.open(path.anchor, flags)
+    descriptor = _move_descriptor_above_standard_streams(
+        os.open(path.anchor, flags)
+    )
     traversed = Path(path.anchor)
     components = [
         PathComponentIdentity(
@@ -667,10 +699,12 @@ def _capture_directory_component_identities(
         for component in path.parts[1:]:
             traversed = traversed / component
             try:
-                next_descriptor = os.open(
-                    component,
-                    flags,
-                    dir_fd=descriptor,
+                next_descriptor = _move_descriptor_above_standard_streams(
+                    os.open(
+                        component,
+                        flags,
+                        dir_fd=descriptor,
+                    )
                 )
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
@@ -744,7 +778,9 @@ def _open_relative_descriptor(
     if require_directory:
         flags |= os.O_DIRECTORY
     try:
-        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+        descriptor = _move_descriptor_above_standard_streams(
+            os.open(name, flags, dir_fd=parent_descriptor)
+        )
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"{label} does not exist") from exc
     except OSError as exc:
@@ -833,7 +869,9 @@ def _open_path_descriptor(
         flags |= os.O_DIRECTORY
     try:
         try:
-            descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+            descriptor = _move_descriptor_above_standard_streams(
+                os.open(path.name, flags, dir_fd=parent_descriptor)
+            )
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"{label} does not exist: {path}") from exc
         except OSError as exc:
