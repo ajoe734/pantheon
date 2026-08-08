@@ -1,168 +1,445 @@
 {
-  "schema_version": "pantheon.supervisor_preemption_exact_head_review_evidence.v1",
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731 live scheduler closeout",
+    "note": "Exact-head review, protected merge, immutable live promotion, watchdog readback, and a real post-merge auto-worker canary are bound in one task-scoped manifest.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "not_applicable; source identities and per-file SHA-256 values are recorded in integrity",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Any changed acceptance, review, merge, live identity, or canary fact requires a reviewed task PR and a new record_log entry.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
   "task": {
-    "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
-    "title": "Independently review scheduler eligibility and grace exact head for live rescue",
-    "owner": "Codex",
-    "reviewer": "Antigravity",
-    "phase": "Supervisor Runtime Repair / Wave 0 Emergency Exact-Head Review",
-    "review_only": true,
-    "status_at_closeout_cut": "review_approved",
-    "overall_admission": "review_approved_owner_closeout_ready",
-    "proposed_review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
-    "evidence_cut_at": "2026-07-31T14:55:36Z",
-    "repository": "ajoe734/pantheon",
     "base_branch": "dev",
-    "task_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731"
+    "evidence_cut_at": "2026-07-31T15:31:22Z",
+    "evidence_cut_semantics": "The cut follows protected merge of PR #4399, exact live supervisor replacement, a successful watchdog sweep, a nine-sample 361-second canary heartbeat window, and the canary's governed handoff at 2026-07-31T15:28:54Z. The later closeout PR merge is recorded by governed done delivery metadata because a manifest cannot contain its own future merge commit.",
+    "id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+    "overall_admission": "accepted_live_closeout",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair / Wave 0 Scheduler Gate",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "Pantheon development supervisor runtime",
+    "target_maturity": "live",
+    "task_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+    "title": "Govern exact-head scheduler eligibility fix through live canary"
+  },
+  "authorities": {
+    "actual_state": [
+      "GitHub PR #4399 exact head, required checks, canonical review status, root-freeze status, and merge commit",
+      "/home/lupin/pantheon/.orchestrator/state.json supervisor and worker projections",
+      "/home/lupin/pantheon/.orchestrator/worker-runtime heartbeat and status files",
+      "systemd user watchdog timer/service readback and live supervisor process identity"
+    ],
+    "desired_state": [
+      ".orchestrator/dispatch_policy.py and .orchestrator/supervisor.py at merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "schemas/product-evidence.schema.json",
+      ".orchestrator/task-briefs/sup_preemption_dispatch_eligibility_20260731.md"
+    ],
+    "task_packet": ".orchestrator/task-briefs/sup_preemption_dispatch_eligibility_20260731.md"
   },
   "scope": {
-    "owned_layer": "Independent exact-head review receipt and owner closeout evidence for the scheduler preemption repair.",
-    "not_changing": "PR #4399 implementation, .orchestrator/config.json, supervisor runtime configuration, task owner/reviewer assignments, branch protection, or live worker state.",
-    "composes_with": "PR #4399 implementation task SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731 and its separately governed merge and live-rescue sequence.",
-    "changed_files": [
-      ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+    "authoritative_write_owner": "Codex owns closeout artifacts and finalization; Antigravity owns the exact-head independent review verdict; Human/Ops owns the protected root-freeze authorization.",
+    "composes_with": [
+      "PR #4397 / merge cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
+      "PR #4399 / merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/sup_preemption_dispatch_eligibility_20260731.md",
       "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/README.md",
       "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json"
-    ]
-  },
-  "review_subject": {
-    "source_task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
-    "pull_request": 4399,
-    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4399",
-    "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
-    "base": "dev",
-    "reviewed_exact_head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
-    "reviewed_files": [
+    ],
+    "implementation_changed_files": [
       ".orchestrator/dispatch_policy.py",
       ".orchestrator/supervisor.py",
       ".orchestrator/test_dispatch_policy.py",
       ".orchestrator/test_supervisor.py"
+    ],
+    "not_changing": ".orchestrator/config.json, owner/reviewer assignments, provider credentials, Wave D/E release state, frontend, BFF, or product-service behavior.",
+    "owned_layer": "Supervisor dispatch/preemption candidate eligibility, five-minute worker stability grace, and live acceptance evidence."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+        "subject": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731: stop worker churn",
+        "delivery_state": "merged_via_pr_4399",
+        "hosted_cut_inclusion": true
+      },
+      {
+        "sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+        "subject": "Merge branch 'dev' into task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "delivery_state": "exact_reviewed_pr_head",
+        "hosted_cut_inclusion": true,
+        "note": "The merge from dev changed none of the four reviewed implementation/test files."
+      }
+    ],
+    "pull_request": {
+      "number": 4399,
+      "url": "https://github.com/ajoe734/pantheon/pull/4399",
+      "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+      "base": "dev",
+      "merged_at": "2026-07-31T15:05:06Z",
+      "merge_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    "required_checks": [
+      {
+        "workflow": "branch-ci.yml",
+        "event": "pull_request",
+        "run_id": 30640209890,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30640209890",
+        "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "branch-ci.yml",
+        "event": "push",
+        "run_id": 30640212521,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30640212521",
+        "head_sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
     ]
   },
-  "independent_review": {
-    "reviewer": "Antigravity",
-    "decision": "approve",
-    "status": "review_approved",
-    "recorded_at": "2026-07-31T14:48:04Z",
-    "mode": "required_commit_status",
-    "status_context": "Pantheon canonical review gate",
-    "status_id": 51438945031,
-    "status_state": "success",
-    "reviewed_head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
-    "github_review_api_error": "gh: Unprocessable Entity (HTTP 422)",
-    "verdict": "Dispatch and priority preemption consume the same lifecycle candidate decision; preemption also honors provider readiness, dependency eligibility, worker-capacity eligibility, unchanged-event cooldown, failure-loop and chair-reassignment triage, and a five-minute new-worker stability grace without intercepting terminal cleanup."
-  },
-  "root_freeze": {
-    "actor": "Human/Ops",
-    "status_context": "Pantheon root merge freeze 2026-07-27",
-    "status_id": 51438976285,
-    "status_state": "success",
-    "recorded_at": "2026-07-31T14:48:34Z",
-    "head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e"
-  },
-  "review_findings": [
-    {
-      "area": "canonical lifecycle eligibility",
-      "result": "accepted",
-      "evidence": "task_execution_dispatch_candidate is called by both dispatch_ready_tasks and higher_priority_ready_task_exists for review, owner-finalize, owned in-progress, owned todo, and dependency eligibility."
-    },
-    {
-      "area": "preemption-only admission filters",
-      "result": "accepted",
-      "evidence": "higher_priority_ready_task_exists applies agent_can_take_task, failure_loop_task_agents_for_task_map, chair_reassignment_triage_needed_for_task, and dispatch_event_is_in_unchanged_cooldown before deciding that a higher-priority candidate can terminate a worker."
-    },
-    {
-      "area": "new-worker grace",
-      "result": "accepted",
-      "evidence": "DEFAULT_PRIORITY_PREEMPTION_GRACE_SECONDS is 300; worker_priority_preemption_grace_active gates ordinary priority escalation inside higher_priority_ready_task_exists and is not inserted into terminal worker cleanup."
-    },
-    {
-      "area": "configuration boundary",
-      "result": "accepted",
-      "evidence": "The default is added in code through ready_dispatch_settings; .orchestrator/config.json is unchanged."
-    }
-  ],
-  "owner_closeout_verification": {
-    "owner": "Codex",
-    "approved_scope_still_true_at_reviewed_head": true,
+  "validation": {
     "commands": [
       {
-        "command": "git archive a924a6f3c0c54982d7efe145750cc99c57bc7f2e | tar -x -C <isolated-snapshot>; cd <isolated-snapshot>; PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py",
-        "result": "passed: 486 passed, 4 subtests passed in 59.87s"
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py in an isolated checkout at merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+        "result": "486 passed, 4 subtests passed in 60.75s",
+        "conclusion": "pass"
       },
       {
-        "command": "cd <isolated-snapshot>; /home/lupin/pantheon/.venv/bin/python -m py_compile .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
-        "result": "passed"
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
+        "result": "passed",
+        "conclusion": "pass"
       },
       {
-        "command": "/home/lupin/pantheon/.venv/bin/python scripts/git/check_commit_trailers.py --range a924a6f3c0c54982d7efe145750cc99c57bc7f2e^..a924a6f3c0c54982d7efe145750cc99c57bc7f2e --skip-merge",
-        "result": "passed"
+        "command": "pytest focused provider-auth, logical-capacity, unchanged-cooldown, failure-loop-triage, and five-minute-grace selectors",
+        "result": "5 passed in 0.80s",
+        "conclusion": "pass"
       },
       {
-        "command": "git diff --check a924a6f3c0c54982d7efe145750cc99c57bc7f2e^..a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
-        "result": "passed"
+        "command": "git diff a924a6f3c0c54982d7efe145750cc99c57bc7f2e..894eb813c7cb5609ae517103a727d93ba8cbd1ed -- four reviewed implementation/test files",
+        "result": "empty; reviewed file bytes are unchanged through merge",
+        "conclusion": "pass"
       },
       {
-        "command": "git diff a924a6f3c0c54982d7efe145750cc99c57bc7f2e..6f391cfd4cde8fcee0a7f913bfe2937aba955d15 -- .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
-        "result": "passed: empty diff across the four reviewed files"
+        "command": "git diff implementation-parent..a924a6f3c -- .orchestrator/config.json; git merge-base --is-ancestor cf6a8fed7 894eb813c",
+        "result": "config diff empty; dependency merge is an ancestor",
+        "conclusion": "pass"
       }
     ],
-    "exact_head_ci": {
-      "head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
-      "workflow_runs": [
-        30634161384,
-        30634186652
-      ],
-      "required_checks": {
-        "Commit trailers": "success on push and pull_request runs",
-        "Runtime mirror guard": "success on push and pull_request runs",
-        "Smoke acceptance": "success on push and pull_request runs"
+    "validated_at": "2026-07-31T15:31:22Z",
+    "validated_base_sha": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
+    "validated_head_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "Pantheon development supervisor runtime",
+    "public_bff_base_url": "not_applicable; supervisor runtime has no public HTTP surface",
+    "publish_cut": {
+      "status": "pass",
+      "merge_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "merged_at": "2026-07-31T15:05:06Z"
+    },
+    "canonical_root_deploy": {
+      "status": "pass",
+      "source_root": "/home/lupin/pantheon-ci-deploy/dev-root-894eb813c7cb-live",
+      "source_sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      "source_tree": "d1d55a322bee18df6d114403ece627bfb946f235",
+      "supervisor_pid": 669007,
+      "started_at": "2026-07-31T15:15:03Z",
+      "config": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "config_sha256": "99809368a6c040fba01700f3423e86561e261f928b9764b366d28c7fcaa87bc6"
+    },
+    "identity_admission": {
+      "status": "pass",
+      "proof": "process cwd, git commit/tree, supervisor state PID/lifecycle, and immutable root all agree"
+    },
+    "post_cut_runtime_observation": {
+      "status": "pass",
+      "watchdog_timer": "active",
+      "watchdog_sweep_exit_status": 0,
+      "watchdog_preserved_supervisor_pid": 669007,
+      "canary_window": {
+        "start": "2026-07-31T15:21:11Z",
+        "end": "2026-07-31T15:27:12Z",
+        "elapsed_seconds": 361,
+        "sample_count": 9,
+        "final_direct_heartbeat_at": "2026-07-31T15:27:34Z"
       }
     }
   },
-  "pre_fix_live_evidence": {
-    "source_runtime_sha": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a",
-    "watchdog_log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260731T141335Z.log",
-    "runs": [
-      {
-        "run_id": "codex-20260731T141614Z-62ed770a",
-        "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
-        "started_at": "2026-07-31T14:16:14Z",
-        "finished_at": "2026-07-31T14:16:17Z",
-        "exit_code": 143,
-        "signal": 15,
-        "watchdog_observation": "worker superseded for priority escalation at 2026-07-31T14:17:11Z"
-      },
-      {
-        "run_id": "codex-20260731T141730Z-d2604461",
-        "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-20260731",
-        "started_at": "2026-07-31T14:17:30Z",
-        "finished_at": "2026-07-31T14:17:34Z",
-        "exit_code": 143,
-        "signal": 15
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "pass",
+      "observed_at": "2026-07-31T15:15:03Z",
+      "proof": "PID-bound swap runbook discovered the old supervisor and validated the live config before replacement."
+    },
+    "capture_time_hosted_readback": {
+      "status": "pass",
+      "observed_at": "2026-07-31T15:27:12Z",
+      "supervisor_pid": 669007,
+      "lifecycle": "running",
+      "task_state_shadow": "caught_up with projected and expected SHA-256 equal",
+      "watchdog": "timer active; latest service exit status 0"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "The live swap preserved existing worker leases and run identities; the canary remained one run with one runner/child/provider PID chain.",
+        "No duplicate canary dispatch or second canary run appeared during the nine-sample observation window."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "higher_priority_ready_task_exists rejects candidates that fail agent_can_take_task before considering preemption; focused auth-down provider coverage passed.",
+        "Unchanged-event cooldown and failure-loop triage each returned false in their focused priority-preemption regressions.",
+        "Logical slot capacity and the five-minute stability grace each blocked ordinary priority preemption in focused regressions.",
+        "The live classifier returned higher_priority_ready_task_exists=false after grace at 2026-07-31T15:19:32Z and 2026-07-31T15:28:06Z; four urgent Codex2 review/finalize candidates were failure-loop plus triage blocked, while a later eligible finalize used the free codex2_2 lane instead of preempting the canary.",
+        "No provider-ineligible or unchanged-cooldown urgent candidate appeared live during this window; those two exclusions are accepted from the exact merged call path plus focused regressions, not claimed as live injection."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "Queue event evt-20260731T151128Z-ec5eae07 correlates task SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731 to lane codex2-1 and run codex-20260731T151146Z-323146a8.",
+        "Run codex-20260731T151146Z-323146a8 correlates runner 638723, child 638790, provider process 638797, start 2026-07-31T15:11:46Z, and exact command SHA 894eb813c7cb5609ae517103a727d93ba8cbd1ed."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "The PID-bound live swap replaced supervisor PID 614854 with PID 669007 at 2026-07-31T15:15:03Z from the exact immutable merge root.",
+        "The canary began before the swap and remained running afterward; supervisor scan logs list it continuously, and the 361-second post-restart window ended at 2026-07-31T15:27:12Z with the same run and PIDs.",
+        "The systemd watchdog timer completed a subsequent status-0 sweep and preserved healthy supervisor PID 669007."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "The runbook uses a PID-bound admission lock and immutable source roots; the prior root and logs remain available for a bounded reverse swap.",
+        "The hosted process was switched only after exact SHA/tree and config identity checks; no config mutation was needed."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Pantheon development supervisor runtime only; no production deployment."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend surface changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No identity or interactive authentication surface changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Supervisor scheduling only; no trading or capital-affecting action."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Owner, independent reviewer, and protected root-freeze authorities remained distinct and unchanged."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant data path changed."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Antigravity supplied exact-head independent approval and Human/Ops supplied the protected merge status; Codex performs owner closeout."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Use PR #4399 implementation without a parallel rewrite.",
+      "status": "pass",
+      "evidence_refs": ["implementation_delivery.pull_request", "implementation_delivery.anchor_commits"]
+    },
+    {
+      "id": "AC2",
+      "statement": "Verify the 486-test result and complete canonical exact-head review.",
+      "status": "pass",
+      "evidence_refs": ["validation.commands[0]", "record_log[1]"]
+    },
+    {
+      "id": "AC3",
+      "statement": "Merge and live-promote PR #4397 before fleet canary acceptance.",
+      "status": "pass",
+      "evidence_refs": ["validation.commands[4]", "record_log[0]"]
+    },
+    {
+      "id": "AC4",
+      "statement": "Move #4399 through protected merge only when authorized.",
+      "status": "pass",
+      "evidence_refs": ["implementation_delivery.pull_request", "record_log[2]"]
+    },
+    {
+      "id": "AC5",
+      "statement": "Promote the exact merged code and verify supervisor/watchdog recovery from authoritative state.",
+      "status": "pass",
+      "evidence_refs": ["deployment.canonical_root_deploy", "behavioral_proof.restart_and_recovery"]
+    },
+    {
+      "id": "AC6",
+      "statement": "Run a real auto-worker canary and record identity, timing, scan, and greater-than-five-minute survival evidence.",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.request_receipt_downstream_correlation", "behavioral_proof.restart_and_recovery"]
+    },
+    {
+      "id": "AC7",
+      "statement": "Provider-ineligible, cooldown-blocked, and failure-loop-blocked tasks cannot priority-preempt the canary.",
+      "status": "pass",
+      "evidence_refs": ["behavioral_proof.failure_and_degraded_behavior", "validation.commands[2]"]
+    },
+    {
+      "id": "AC8",
+      "statement": "Do not edit .orchestrator/config.json or release Wave D/E.",
+      "status": "pass",
+      "evidence_refs": ["scope.not_changing", "validation.commands[4]"]
+    }
+  ],
+  "residual_risks": {
+    "auxiliary_canary_lane_and_live_candidate_coverage": {
+      "blocking_for_this_task": false,
+      "containment": "Use the auxiliary task only for real run/PID/heartbeat/restart survival and live failure-loop/classifier facts. Bind provider-ineligible and unchanged-cooldown exclusions to the exact merged eligibility call path and focused tests. Leave the auxiliary canary task in review for its own reviewer.",
+      "description": "Supervisor helper-claim selected Codex2 instead of the auxiliary packet's initially requested Antigravity lane, and no live provider-ineligible or unchanged-cooldown urgent candidate occurred during the sample window.",
+      "expiry": "When the auxiliary canary reviewer accepts its governed handoff or requests a lane-specific rerun.",
+      "owner": "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731 reviewer",
+      "recheck_trigger": "Independent review of the auxiliary canary task or any claim that all three exclusion classes were live-injected.",
+      "severity": "low"
+    },
+    "shared_command_root_worker_pin_multiplex": {
+      "blocking_for_this_task": false,
+      "containment": "The live supervisor runs from the immutable exact-merge root. The shared command root is kept at 894eb813 for new workers; the older owner worker uses the byte-identical scheduler rescue cut only while issuing its governed final status command.",
+      "description": "Workers launched on either side of the command-root sync retain immutable per-run SHA bindings, so one mutable shared path cannot satisfy two historical SHA identities simultaneously.",
+      "expiry": "When all workers pinned to pre-merge command SHA 88ace74d have exited.",
+      "owner": "Supervisor runtime operations",
+      "recheck_trigger": "Any watchdog restart, command-root sync, or governed status command from a pre-merge worker.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "four implementation/test files at merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+      ".orchestrator/config.json unchanged-boundary file",
+      "live config identity"
+    ],
+    "companion_checksum_path": "not_applicable; values are embedded below",
+    "hosted_semantic_sha256": {
+      "live_config": "99809368a6c040fba01700f3423e86561e261f928b9764b366d28c7fcaa87bc6",
+      "live_git_tree": "d1d55a322bee18df6d114403ece627bfb946f235"
+    },
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+    "normalized_hosted_readback": {
+      "supervisor_pid": 669007,
+      "supervisor_started_at": "2026-07-31T15:15:03Z",
+      "canary_run_id": "codex-20260731T151146Z-323146a8",
+      "canary_window_end": "2026-07-31T15:27:12Z"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "A manifest cannot contain a stable digest of its own complete bytes.",
+    "source_artifact_sha256_by_epoch": {
+      "894eb813c7cb5609ae517103a727d93ba8cbd1ed": {
+        ".orchestrator/dispatch_policy.py": "a2155668417cc163a271e87dd4e7bf252bbb9a42df4f041a4ab695774ac49bde",
+        ".orchestrator/supervisor.py": "04e9d0555a977f3502cbad68701e20c6687ee6ece94fc8de95ac6f1ee6182eab",
+        ".orchestrator/test_dispatch_policy.py": "30f426815218aa58d5aa0f53b486286a0fb40a50f680ace89cd514ff4354aa45",
+        ".orchestrator/test_supervisor.py": "512f1a7a0deeccb20cbea7a151d2be45e2d36590afd70756cfe4568c12083bb4",
+        ".orchestrator/config.json": "86c6a20474ff83501ba12318c3db7f45e252d90dfd22b07d4ff598d1231b8136"
       }
-    ],
-    "conclusion": "The pre-fix supervisor terminated newly dispatched workers within three to four seconds with SIGTERM. This is failure evidence for the old runtime, not post-fix canary proof."
+    }
   },
-  "post_approval_pr_boundary": {
-    "observed_at": "2026-07-31T14:55:36Z",
-    "pull_request_state": "OPEN",
-    "merge_state_status": "BLOCKED",
-    "current_head": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
-    "current_head_parents": [
-      "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
-      "cf6a8fed7baeb102330bf32af3f59cc347d1e92a"
-    ],
-    "reviewed_file_diff_from_approved_head": "empty",
-    "current_head_canonical_review_status": "missing",
-    "current_head_root_freeze_status": "missing",
-    "approval_reused_for_current_head": false,
-    "note": "The base merge did not alter the reviewed implementation/test files, but exact-head policy does not transfer the a924 approval statuses to 6f391c. PR #4399 remains a separately governed implementation delivery."
-  },
-  "known_limitations": [
-    "This evidence closes only the independently approved review task; it does not approve PR #4399 current head 6f391cfd4cde8fcee0a7f913bfe2937aba955d15.",
-    "It does not merge PR #4399 or claim the implementation is present on dev.",
-    "It does not claim a post-fix live auto worker survived the five-minute grace window or legitimately reached terminal cleanup.",
-    "It does not change .orchestrator/config.json, supervisor implementation, runtime credentials, provider routing, task ownership, reviewer assignment, or branch protection."
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-31T15:01:47Z",
+      "kind": "dependency_merge_verified",
+      "status": "pass",
+      "actor": "Codex",
+      "reference": "PR #4397 merge",
+      "sha": "cf6a8fed7baeb102330bf32af3f59cc347d1e92a"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-31T15:03:56Z",
+      "kind": "independent_review_approved",
+      "status": "approved",
+      "actor": "Antigravity",
+      "reference": "Pantheon canonical review gate status 51439966378 on PR #4399 exact head",
+      "sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-31T15:04:52Z",
+      "kind": "protected_merge_authorization",
+      "status": "approved",
+      "actor": "Human/Ops",
+      "reference": "Pantheon root merge freeze 2026-07-27 status 51440025565",
+      "sha": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-31T15:05:06Z",
+      "kind": "protected_merge",
+      "status": "pass",
+      "actor": "GitHub",
+      "reference": "PR #4399",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-31T15:15:03Z",
+      "kind": "live_supervisor_swap",
+      "status": "pass",
+      "actor": "Codex",
+      "reference": "PID-bound immutable-root supervisor swap",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-31T15:28:54Z",
+      "kind": "live_canary_observation",
+      "status": "observed_with_declared_scope_caveats",
+      "actor": "Codex2",
+      "reference": "Governed handoff of nine-sample 361-second window for run codex-20260731T151146Z-323146a8; helper-claimed Codex2 lane and lack of live provider/cooldown candidates explicitly retained as caveats",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    },
+    {
+      "sequence": 7,
+      "recorded_at": "2026-07-31T15:31:22Z",
+      "kind": "owner_closeout_evidence_cut",
+      "status": "accepted",
+      "actor": "Codex",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+      "sha": "894eb813c7cb5609ae517103a727d93ba8cbd1ed"
+    }
   ]
 }

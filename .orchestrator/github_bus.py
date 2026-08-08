@@ -1868,10 +1868,63 @@ def consume_cloud_relay_commands(
     return changed
 
 
+# Task states that never regain a task branch worth polling for a PR.
+_PR_RECONCILIATION_TERMINAL_STATUSES = frozenset({"done", "archived", "superseded"})
+
+# PR evidence kinds that mean "already resolved"; no need to re-probe the
+# remote branch every tick once one of these is recorded.
+_PR_RECONCILIATION_RESOLVED_EVIDENCE = frozenset({"merged_task_pr", "open_task_pr"})
+
+
+def _pr_reconciliation_candidates(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    status: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Tasks eligible for a PR upsert attempt this sync tick.
+
+    PR creation must be an idempotent, continuously reconciled invariant
+    ("does a branch with a diff exist -> does a PR exist for it") rather
+    than a one-shot side effect of a single status transition. A task whose
+    status is literally `"review"` right now is always eligible (existing
+    fast path, cheapest check). Any other non-terminal task is *also*
+    eligible when it already carries a task branch on the remote but no
+    resolved PR evidence yet -- this is what prevents a task that leaves
+    `"review"` before a PR is opened (reassignment, a blocked dependency, a
+    crashed closeout worker) from being permanently PR-less. See
+    SUP-REVIEW-PIPELINE-INTEGRITY-20260804.
+    """
+    candidates: list[dict[str, Any]] = []
+    for task in status.get("tasks", []):
+        task_status = task.get("status")
+        if task_status == "review":
+            candidates.append(task)
+            continue
+        if task_status in _PR_RECONCILIATION_TERMINAL_STATUSES:
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id:
+            continue
+        entry = task_bus_entry(bus_state, task_id)
+        pr_ref = entry.get("review_pr") or {}
+        if pr_ref.get("evidence_kind") in _PR_RECONCILIATION_RESOLVED_EVIDENCE:
+            continue
+        try:
+            branch = review_branch_for_task(config, status, task)
+        except GitHubBusError:
+            continue
+        if not branch:
+            continue
+        if remote_branch_head_sha(branch) is None:
+            continue
+        candidates.append(task)
+    return candidates
+
+
 def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], repo: str) -> bool:
     changed = False
     blocked_tasks = {task.get("id"): task for task in status.get("tasks", []) if task.get("status") == "blocked"}
-    review_tasks = [task for task in status.get("tasks", []) if task.get("status") == "review"]
+    review_tasks = _pr_reconciliation_candidates(config, bus_state, status)
 
     blocker_by_task = {item.get("task_id"): item for item in status.get("blockers", []) if item.get("status") == "open"}
 

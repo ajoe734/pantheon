@@ -1,0 +1,242 @@
+{
+  "schema_version": "pantheon.supervisor.stale_reaper_evidence_anchor_repair.v1",
+  "task": {
+    "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+    "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "current_dev_composed_exact_head_review_pending",
+    "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json",
+    "evidence_cut_at": "2026-08-06T14:29:24Z",
+    "prior_owner": "Codex",
+    "superseded_reviewer_claims": [
+      "Codex2"
+    ]
+  },
+  "scope": {
+    "owned_layer": "Repair of the invalid evidence anchor recorded by the PR #4385 stale L12 missing_process failure-streak reaper packet, delivered on a superseding task branch.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      ".orchestrator/supervisor.py and .orchestrator/test_supervisor.py, which now match origin/dev exactly",
+      "the dev-level provider_permissions.py regression introduced by squash 23ae23c21",
+      "the deletion of .github/workflows/canonical-review-gate.yml from dev",
+      "provider credentials, readiness, or dispatch capacity",
+      "product services, hosted deployment, or live-capital authority",
+      "independent reviewer authority or protected merge policy"
+    ],
+    "composes_with": [
+      "PR #4385 exact rejected head f5e70e86e01bde005dae5fed94b151c9bc07f389",
+      "PR #4395 exact-head reconciliation evidence at f68827c8e17d6a1f081afe24f62ba85c116166e8",
+      "Antigravity independent review of the resulting PR #4452 exact head"
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/sup_l12_stale_reaper_evidence_anchor_repair_20260731.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731/evidence.json"
+    ],
+    "changed_files_note": "Documentation only against origin/dev@eca6b7de6313027d4c943679a1fa8fb7d93028ba. Earlier revisions of this manifest also listed .orchestrator/supervisor.py and .orchestrator/test_supervisor.py; the reaper implementation reached dev independently via squash 23ae23c21 (PR #4590), so those entries were false for this head and have been removed.",
+    "code_delta_vs_dev": "none"
+  },
+  "source_reconciliation": {
+    "subject_task": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "subject_pull_request": 4385,
+    "subject_pr_head_before_edit": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+    "exact_head_reconcile_pull_request": 4395,
+    "exact_head_reconcile_head": "f68827c8e17d6a1f081afe24f62ba85c116166e8",
+    "exact_head_reconcile_decision": "reject_f5e70e86_and_repair_subject_anchor",
+    "invalid_anchor": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+    "actual_anchor": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+    "invalid_anchor_is_commit": false,
+    "actual_anchor_is_commit": true,
+    "actual_anchor_introduces_reaper_function": true,
+    "actual_anchor_is_ancestor_of_repair_head": true,
+    "subject_head_is_ancestor_of_repair_head": true,
+    "invalid_anchor_remaining_occurrences": "none in the subject packet; retained only in this task's own README and manifest where it is named as the defective value"
+  },
+  "repair": {
+    "strategy": "superseding_task_pr_with_preserved_subject_ancestry",
+    "integration_base": "93e5b3d4ad0ad94f79bfe512ba3f67402da8d468",
+    "anchor_commit": "87dd23dc84552dc58f72bd58cb58b968d358b684",
+    "anchor_parents": [
+      "93e5b3d4ad0ad94f79bfe512ba3f67402da8d468",
+      "f5e70e86e01bde005dae5fed94b151c9bc07f389"
+    ],
+    "corrected_locations": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/implementation/anchor_commit",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/delivery/anchor_commit"
+    ],
+    "config_json_changed": false
+  },
+  "current_base_revalidation": {
+    "revalidated_at": "2026-08-06T14:29:24Z",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "task_pull_request": 4452,
+    "base_head": "eca6b7de6313027d4c943679a1fa8fb7d93028ba",
+    "base_is_ancestor_of_task_head": true,
+    "composed_head_before_this_evidence_commit": "802488601d4d03fb8b26596943bd2bd3722199b7",
+    "previous_pr_head": "7786617d30980dbcbb9ef44f5cf793ecd0a0b4de",
+    "review_target": "the exact PR #4452 head produced by this evidence commit, which this manifest cannot name because it is written before that commit exists",
+    "merge_conflicts": "none; origin/dev merged cleanly into the task branch",
+    "command_runtime_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+    "python": "/home/lupin/pantheon/.venv/bin/python"
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "git merge-base --is-ancestor origin/dev HEAD",
+        "result": "pass",
+        "conclusion": "origin/dev@eca6b7de is an ancestor of the task head; the PR is not behind."
+      },
+      {
+        "command": "git diff --stat origin/dev HEAD",
+        "result": "pass",
+        "conclusion": "5 files changed, documentation and task brief only."
+      },
+      {
+        "command": "git diff --quiet origin/dev HEAD -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "Both supervisor sources are byte-identical to origin/dev; this branch introduces no code delta."
+      },
+      {
+        "command": "git diff --quiet origin/dev HEAD -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "No supervisor configuration change."
+      },
+      {
+        "command": "git cat-file -e 9d53a94a265c55af4c8d15c50ab3751f1440ac0f^{commit}",
+        "result": "pass",
+        "conclusion": "Fails object lookup as required; the invalid anchor is not a commit."
+      },
+      {
+        "command": "git cat-file -e 9d53a94a295d71ee49aea6f4b96e47fbcfd29093^{commit}",
+        "result": "pass",
+        "conclusion": "The corrected anchor resolves as a commit."
+      },
+      {
+        "command": "git show 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 -- .orchestrator/supervisor.py",
+        "result": "pass",
+        "conclusion": "The corrected anchor is the commit that introduces reap_stale_l12_missing_process_failure_streaks."
+      },
+      {
+        "command": "git merge-base --is-ancestor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 HEAD; git merge-base --is-ancestor f5e70e86e01bde005dae5fed94b151c9bc07f389 HEAD",
+        "result": "pass",
+        "conclusion": "The real implementation anchor and the rejected subject head are both preserved in the superseding ancestry."
+      },
+      {
+        "command": "git grep -l 9d53a94a265c55af4c8d15c50ab3751f1440ac0f HEAD",
+        "result": "pass",
+        "conclusion": "The invalid SHA no longer appears in the subject packet; only this task's own documentation names it, as the defective value."
+      },
+      {
+        "command": "python -c 'json.load(...)' on both evidence manifests",
+        "result": "pass",
+        "conclusion": "Both subject and repair manifests are syntactically valid JSON."
+      },
+      {
+        "command": "python scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "result": "pass",
+        "conclusion": "Every non-merge task commit in the delivery range carries valid task trailers."
+      },
+      {
+        "command": "git diff --check origin/dev..HEAD",
+        "result": "pass",
+        "conclusion": "No whitespace errors in the delivery range."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python -c 'import supervisor'",
+        "result": "fail",
+        "conclusion": "ImportError: cannot import name 'provider_auth_probe_due' from 'provider_permissions'. Reproduces identically on unmodified origin/dev; not caused by this branch."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python -m unittest <five focused stale-reaper tests>",
+        "result": "pass",
+        "conclusion": "Ran 5 focused stale-reaper regressions in 0.009s, OK. Required a local uncommitted restoration of .orchestrator/provider_permissions.py to its pre-#4590 revision 0f52e40e9 so that supervisor could be imported at all. The restoration was reverted and is not part of the delivery."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python .orchestrator/test_supervisor.py",
+        "result": "fail",
+        "conclusion": "Ran 611 tests in 90.560s: 8 failures, 18 errors, all in provider probe, hysteresis, and codex-cache-quarantine paths. Measured on the same locally patched hybrid tree, where dev's supervisor sources expect the newer provider_permissions.py that #4590 deleted. No green full-suite baseline exists on origin/dev today; this manifest claims none."
+      }
+    ]
+  },
+  "dev_regression_observed": {
+    "owned_by_this_task": false,
+    "squash_commit": "23ae23c21",
+    "pull_request": 4590,
+    "character": "stale-base mass-deletion squash into dev",
+    "effects": [
+      ".orchestrator/provider_permissions.py reverted from 2427 lines (0f52e40e9) to 2006, deleting provider_auth_probe_due which .orchestrator/supervisor.py:90 imports, so import supervisor fails on dev",
+      ".github/workflows/canonical-review-gate.yml deleted from dev while still present on master"
+    ],
+    "disposition": "recorded for Human/Ops remediation; deliberately not repaired on this task branch because it is a different owned layer and needs its own review"
+  },
+  "delivery": {
+    "supersedes_pull_request": 4385,
+    "task_pull_request": 4452,
+    "task_pull_request_url": "https://github.com/ajoe734/pantheon/pull/4452",
+    "auto_merge_enabled": false,
+    "reviewed_head_sha": null,
+    "merge_commit": null,
+    "protected_merge_complete": false,
+    "governed_closeout_complete": false
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "status": "pending_independent_exact_head_review",
+    "decision": null,
+    "reviewed_task_pr": 4452,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "approval_event_id": null,
+    "notes": [
+      "No GitHub review is recorded for the current composed PR head.",
+      "Antigravity must review the exact PR #4452 head produced by this evidence commit and bind this manifest before protected merge and done.",
+      "The reviewer should expect a documentation-only diff: this branch has no code delta against origin/dev."
+    ],
+    "historical_invalid_approval": {
+      "reviewer": "Antigravity",
+      "reviewed_head_claim": "14487789314c4495e865a7d7ef1aae9c43d70650",
+      "reviewed_at": "2026-08-01T14:41:16Z",
+      "approval_event_id": "ai-status-event-b096995d1461ef4a03d90e4e5ec9c4f4873504963535a1f8e6daaf56d5ef91bc",
+      "actual_pr_head_at_that_time": "1448778931c2058fceb715ad13423e639f5c0865",
+      "disposition": "invalid_nonexistent_head_and_no_github_review"
+    }
+  },
+  "superseded_records": {
+    "note": "Retained as history. These runs predate squash 23ae23c21 and cannot be reproduced on the current base.",
+    "owner_validation_2026_08_01": {
+      "owner": "Codex",
+      "full_supervisor_suite": "473 tests passed",
+      "focused_stale_reaper_tests": "5 passed"
+    },
+    "current_dev_revalidation_2026_08_04": {
+      "owner": "Codex",
+      "reviewer_named": "Codex2",
+      "composed_head": "5b3b522fc75a8597de2025927170ace9aa16677f",
+      "base_head": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+      "full_supervisor_suite": "584 tests passed",
+      "focused_stale_reaper_tests": "5 passed"
+    },
+    "owner_closeout_audit_2026_08_01": {
+      "owner": "Codex",
+      "governed_status_before_audit": "review_approved",
+      "closeout_decision": "fail_closed_pending_corrected_exact_head_review_and_manifest_binding",
+      "still_valid": true
+    }
+  },
+  "admission": {
+    "owner_implementation_complete": true,
+    "exact_head_independent_review_complete": false,
+    "protected_merge_complete": false,
+    "governed_closeout_complete": false,
+    "wave0_dependency_satisfied": false
+  }
+}

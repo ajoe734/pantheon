@@ -1,0 +1,272 @@
+{
+  "schema_version": "pantheon.supervisor.stale_reaper_exact_head_reconcile_evidence.v1",
+  "task": {
+    "id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+    "title": "Reconcile stale failure-streak reaper exact PR head before Wave 0 closeout",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "review",
+    "phase": "Supervisor Runtime Repair / Wave 0 Exact-Head Reconcile",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
+    "evidence_cut_at": "2026-08-06T12:20:00Z"
+  },
+  "subject_task": {
+    "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "canonical_status": "blocked",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "canonical_reviewed_head": "86dd9006b15bba67a83886e4a2d672e511aa8709",
+    "canonical_review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+    "canonical_row_is_sufficient_for_current_head": false
+  },
+  "pull_request_snapshot": {
+    "number": 4385,
+    "url": "https://github.com/ajoe734/pantheon/pull/4385",
+    "state": "CLOSED",
+    "base_ref": "dev",
+    "head_ref": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "head_sha": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+    "head_tree": "d6e781f5c8717ea908ef9dbf4e0c780089266230",
+    "mergeable": "UNKNOWN",
+    "merge_state_status": "CLOSED",
+    "review_decision": "",
+    "auto_merge_authorized": false,
+    "observed_required_checks": {
+      "Commit trailers": "SUCCESS",
+      "Runtime mirror guard": "SUCCESS",
+      "Smoke acceptance": "SUCCESS",
+      "Python packaging provision": "SUCCESS"
+    },
+    "observed_check_run_ids": [
+      30560430682,
+      30560426419
+    ],
+    "observed_at": "2026-08-06T12:20:00Z"
+  },
+  "head_relationship": {
+    "canonical_reviewed_head": "86dd9006b15bba67a83886e4a2d672e511aa8709",
+    "canonical_reviewed_tree": "f057d59678fa40d2e41c16e98909c3617f3e67d7",
+    "current_head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+    "merge_base": "575040212a14d1ededc5d8ed54b8c187a4ebe2b2",
+    "reviewed_head_is_ancestor_of_current_head": false,
+    "current_pr_base": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+    "current_pr_base_tree": "60ecd6091c7cef21f423b0aac62a8cbc667d5dac",
+    "range_diff": [
+      {
+        "old_commit": "b41a69c11003c3dc441d12d704fc65372a31b5db",
+        "new_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+        "classification": "patch_equivalent"
+      },
+      {
+        "old_commit": "86dd9006b15bba67a83886e4a2d672e511aa8709",
+        "new_commit": "833c365807863fcd72b50004962aeba183737bab",
+        "classification": "patch_equivalent"
+      },
+      {
+        "old_commit": null,
+        "new_commit": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+        "classification": "new_after_rebase"
+      }
+    ]
+  },
+  "path_classification": {
+    "old_head_to_current_head_total": 18,
+    "base_only_rebase_delta": {
+      "count": 14,
+      "classification_proof": "These paths changed between 86dd9006 and 833c3658, are present in dev@6f87a207, and are absent from origin/dev...f5e70e86.",
+      "paths": [
+        ".github/workflows/branch-ci.yml",
+        ".github/workflows/publish-promote.yml",
+        ".orchestrator/task-briefs/ops_promote_pr_ci_trigger_001.md",
+        ".orchestrator/task-briefs/sup_l12_fleet_dispatch_readback_20260729.md",
+        "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md",
+        "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-READBACK-20260729/evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/README.md",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/evidence.sha256",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/reconcile/L12-MANIFEST-REVIEW-GAP-TASKS-20260729.md",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/verify_reconcile_evidence.py",
+        "scripts/git/publish_promote.py",
+        "scripts/git/test_git_workflow_helpers.py"
+      ]
+    },
+    "new_exact_head_delta": {
+      "from": "833c365807863fcd72b50004962aeba183737bab",
+      "to": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+      "count": 4,
+      "paths": [
+        {
+          "path": ".orchestrator/task-briefs/sup_l12_stale_failure_streak_reaper_20260729.md",
+          "classification": "review-readiness metadata refresh"
+        },
+        {
+          "path": ".orchestrator/test_supervisor.py",
+          "classification": "adds one Claude2 review_ready_dispatch stale-streak regression"
+        },
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+          "classification": "rebased anchor and review-stage proof refresh; contains invalid anchor SHA"
+        },
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+          "classification": "verification and delivery refresh; contains invalid anchor SHA"
+        }
+      ]
+    },
+    "whole_pr_delta_against_current_dev": {
+      "count": 5,
+      "paths": [
+        ".orchestrator/supervisor.py",
+        ".orchestrator/task-briefs/sup_l12_stale_failure_streak_reaper_20260729.md",
+        ".orchestrator/test_supervisor.py",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json"
+      ],
+      "config_json_changed": false
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "title": "Current evidence binds a nonexistent implementation anchor",
+      "invalid_anchor": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+      "actual_anchor": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+      "locations": [
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/implementation/anchor_commit",
+        "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/delivery/anchor_commit"
+      ],
+      "proof": [
+        "git cat-file -e 9d53a94a265c55af4c8d15c50ab3751f1440ac0f^{commit} exits 128",
+        "git cat-file -e 9d53a94a295d71ee49aea6f4b96e47fbcfd29093^{commit} exits 0",
+        "PR #4385 commit list contains 9d53a94a295d71ee49aea6f4b96e47fbcfd29093"
+      ],
+      "impact": "The machine-readable exact-head evidence is not internally referentially valid, so f5e70e86 cannot receive an evidence-backed exact-head approval.",
+      "required_action": "Reopen the subject task, correct both manifest anchor fields and the README, push the narrow repair, and independently review the resulting new PR head."
+    },
+    {
+      "id": "F2",
+      "severity": "blocking_for_wave0",
+      "title": "No independent review is bound to the current PR head",
+      "proof": [
+        "Canonical review_approved next text names 86dd9006b15bba67a83886e4a2d672e511aa8709.",
+        "PR #4385 current head is f5e70e86e01bde005dae5fed94b151c9bc07f389.",
+        "The current evidence review block remains pending_independent_review with reviewed_head_sha null.",
+        "GitHub reviewDecision is empty; green CI is not independent review."
+      ],
+      "impact": "The subject task remains unsatisfied as a Wave 0 dependency even though its canonical row is review_approved."
+    }
+  ],
+  "decision": {
+    "owner_reconciliation": "reopen_required",
+    "exact_head_approval_eligible": false,
+    "exact_head_rejected": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+    "recommended_canonical_action": "PR #4385 is now CLOSED. The narrow anchor correction must be submitted as a new PR against dev (or explicit supersede if replaced), and PR #4385 cannot be pushed to directly.",
+    "wave0_dependency_satisfied": false,
+    "protected_merge_still_required_after_repair": true,
+    "root_freeze_still_required_after_repair": true,
+    "governed_owner_closeout_still_required_after_repair": true
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Do not count the subject review_approved row alone as done.",
+      "status": "pass",
+      "proof": "The decision explicitly leaves wave0_dependency_satisfied false and records the old/current head mismatch."
+    },
+    {
+      "id": "AC2",
+      "criterion": "Inspect current head f5e70e86 against reviewed head 86dd9006.",
+      "status": "pass",
+      "proof": "Commit ancestry, tree identities, merge base, range-diff, PR snapshot, and isolated tests are recorded."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Classify all added files, including workflow/publish-promote and evidence artifacts.",
+      "status": "pass",
+      "proof": "All 18 direct-tree-diff paths are split into 14 base-only paths and 4 new exact-head paths; the five whole-PR paths are recorded separately."
+    },
+    {
+      "id": "AC4",
+      "criterion": "Produce exact-head approval or concrete reopen/supersede action.",
+      "status": "pass",
+      "proof": "Antigravity independently confirmed F1 at task PR #4395 head 607a474688566b1a62c4ec24998c4d6864d62a88 and required the subject task to reopen for the anchor correction."
+    },
+    {
+      "id": "AC5",
+      "criterion": "Preserve protected merge, root-freeze, and governed closeout gates.",
+      "status": "pass",
+      "proof": "All three remain explicitly required after correction and independent exact-head review."
+    },
+    {
+      "id": "AC6",
+      "criterion": "Archive task-specific evidence and keep .orchestrator/config.json untouched.",
+      "status": "pass",
+      "proof": "This task changes only its task brief and evidence directory; config diff at the subject PR head is also empty."
+    }
+  ],
+  "verification": {
+    "isolated_checkout_head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+    "checkout_python": "checkout-scoped .venv-pantheon/bin/python3 provisioned from the main worktree dependency environment",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Exact-head detached worktree received a checkout-scoped interpreter with pytest and Pantheon imports."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "result": "pass",
+        "conclusion": "5 tests passed in 0.008 seconds."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "462 tests passed in 9.751 seconds."
+      },
+      {
+        "command": "jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+        "result": "pass",
+        "conclusion": "Current subject manifest is syntactically valid JSON."
+      },
+      {
+        "command": "git diff --check 833c365807863fcd72b50004962aeba183737bab f5e70e86e01bde005dae5fed94b151c9bc07f389",
+        "result": "pass",
+        "conclusion": "No whitespace errors in the added exact-head commit."
+      },
+      {
+        "command": "git diff --quiet 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e f5e70e86e01bde005dae5fed94b151c9bc07f389 -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "No supervisor config change in PR #4385."
+      },
+      {
+        "command": "git range-diff 86dd9006^^..86dd9006 9d53a94a^..f5e70e86",
+        "result": "pass",
+        "conclusion": "The original two commits are patch-equivalent after rebase; f5e70e86 is the sole added commit."
+      }
+    ],
+    "harness_note": "An initial focused invocation omitted PYTHONPATH=.orchestrator, so unittest could not import test_supervisor and executed zero product tests. The corrected recorded command then executed and passed all five focused tests.",
+    "validated_at": "2026-07-31T12:17:11Z",
+    "command_runtime_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e"
+  },
+  "review": {
+    "reviewer": "Claude",
+    "status": "review",
+    "decision": "reopen_subject_task",
+    "reviewed_task_pr": "https://github.com/ajoe734/pantheon/pull/4395",
+    "reviewed_task_head_sha": "38a70d05acdb497509575ab3d8405eb9e719b1dd",
+    "reviewed_at": "2026-08-06T12:20:00Z",
+    "notes": [
+      "Reviewed lineage: parent commit 38a70d05acdb497509575ab3d8405eb9e719b1dd, pushed head 8a6176393a992e7eb3914324b714e3bdaa884bf2 (== origin task head).",
+      "Prior review: Antigravity independently verified PR #4385 exact head reconciliation evidence in this manifest at 2026-07-31T12:25:16Z for prior head 607a474688566b1a62c4ec24998c4d6864d62a88.",
+      "Confirmed F1: PR #4385 head f5e70e86e01bde005dae5fed94b151c9bc07f389 references nonexistent implementation anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f instead of actual commit 9d53a94a295d71ee49aea6f4b96e47fbcfd29093.",
+      "Rejected PR #4385 exact head f5e70e86 for exact-head approval and required SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 to reopen for anchor SHA correction.",
+      "Rebind update: Rebound task and review blocks to current cycle (owner Antigravity, reviewer Claude, status review at head edb1698aa) and updated pull_request_snapshot to CLOSED state per Claude reopening directions."
+    ]
+  }
+}
