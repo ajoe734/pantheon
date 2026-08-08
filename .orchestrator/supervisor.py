@@ -10498,6 +10498,10 @@ def status_command_subprocess_context(
         env.pop(key, None)
     env.update(issued_env)
     env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    # ``-B`` is local to one interpreter.  Status commands import additional
+    # command-root modules and may themselves launch Python children, so bind
+    # the inheritable form at this common subprocess boundary.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     if workspace_path is not None and str(workspace_path).strip():
         workspace_root = Path(str(workspace_path)).expanduser().resolve()
         env["PANTHEON_WORKTREE_ROOT"] = str(workspace_root)
