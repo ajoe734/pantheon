@@ -3,14 +3,14 @@
   "task": {
     "id": "LIFECYCLE-PROJ-BFF-001",
     "title": "Serve Trade Journey and loop-run reads from Postgres",
-    "owner": "Codex",
-    "reviewer": "Claude",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
     "status": "review",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-BFF-001",
-    "code_head_sha": "dc8c0ed390c1011f22c813b798e1c8a12c881f6d",
+    "code_head_sha": "31558e951638dd212db248ac9fce5297bf822c1f",
     "head_sha_note": "This manifest is committed after the checksummed code head and intentionally does not self-reference.",
-    "review_decision": "pending_independent_review"
+    "review_decision": "approved_independent_review"
   },
   "scope": {
     "owned": [

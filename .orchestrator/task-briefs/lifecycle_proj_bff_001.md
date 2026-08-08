@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Serve Trade Journey and loop-run reads from Postgres
-- Status: todo
-- Owner: Codex
-- Reviewer: Claude
-- Next: Helper-claimed by Codex while Claude is dispatch-paused previous owner Claude becomes reviewer.
+- Status: in_progress
+- Owner: Antigravity
+- Reviewer: Codex2
+- Next: Review cannot approve: the merged evidence manifest docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-BFF-001/evidence.json still records review_decision=pending_independent_review and stale owner/reviewer Codex/Claude, while canonical task ownership is Antigravity/Codex2. Publish a new task PR whose pre-review manifest contains the required independent review decision and current task identities, then return it to review for a fresh exact-head approval; do not alter reader cutover/default-disabled behavior.
 
 ## Summary
 Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-BFF-001.md.
