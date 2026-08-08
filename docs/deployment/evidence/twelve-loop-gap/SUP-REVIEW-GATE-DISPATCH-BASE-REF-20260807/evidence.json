@@ -5,7 +5,7 @@
     "title": "Dispatch canonical-review-gate workflow against base branch, not head",
     "phase": "Supervisor Dispatch Reliability",
     "owner": "Codex",
-    "reviewer": "Claude",
+    "reviewer": "Antigravity",
     "status": "review_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -28,7 +28,7 @@
     "composes_with": [
       "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805, which added the explicit recheck dispatch",
       "the canonical-review-gate workflow on dev, which evaluates the supplied head_ref and head_sha inputs",
-      "Claude's independent exact-head review and the protected dev merge path"
+      "Antigravity's independent exact-head review and the protected dev merge path"
     ]
   },
   "root_cause_and_change": {
@@ -69,7 +69,7 @@
     ]
   },
   "review": {
-    "required_reviewer": "Claude",
+    "required_reviewer": "Antigravity",
     "status": "pending_independent_exact_head_review",
     "decision": null,
     "approval_event_id": null,
