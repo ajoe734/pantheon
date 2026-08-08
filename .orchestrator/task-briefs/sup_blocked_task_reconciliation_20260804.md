@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Add structured, checkable blockers and a generic blocked-task reconciliation pass
 - Status: in_progress
-- Owner: Antigravity
-- Reviewer: Claude
-- Next: PR #4587 merged into dev at feb46f745afea8b5cccab972e3c3cc53c6f50176: docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md now exists on dev. The design-doc-missing blocker no longer applies -- retry from scratch.
+- Owner: Codex
+- Reviewer: Antigravity
+- Next: Reopened by Human/Ops: PR #4582's two over-length commit subjects (88cf2725e, a50a90c7e) have been rewritten (now 342e20081, tree-identical, verified via git diff --stat against the prior head; check_commit_trailers.py passes) and force-pushed to the task branch. Branch CI Gate should now pass. Retry closeout.
 
 ## Summary
 Root-cause fix for a pattern hit four separate times live on 2026-08-04: blocked is a one-way door in dispatch_ready_tasks (owned/review/finalize status lists never include it), so a task whose blocking condition later resolves (CI turns green, a dependency finishes) stays frozen until a human manually reopens it. The codebase already has five prior one-off 'reaper' tasks attempting fragments of this same fix, and all five are themselves stuck blocked as of today -- proof point patches don't compose. This task builds the one generic mechanism instead and must be able to retire all five as superseded.

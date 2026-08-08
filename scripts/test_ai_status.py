@@ -3261,6 +3261,49 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         )
 
+    def test_blocker_without_check_kind_remains_a_legacy_human_gate(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_blocker(
+                self.state,
+                ["REG-002", "Need an operator judgement", "Claude"],
+            )
+
+        blocker = self.state["blockers"][-1]
+        self.assertNotIn("check_kind", blocker)
+        self.assertEqual(blocker["task_id"], "REG-002")
+
+    def test_blocker_records_structured_pr_ci_and_dependency_checks(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_blocker(
+                self.state,
+                ["REG-002", "Awaiting PR CI", "Claude", "github_pr_ci", "4582"],
+            )
+            ai_status.command_blocker(
+                self.state,
+                [
+                    "REG-002",
+                    "Awaiting schema task",
+                    "Claude",
+                    "task_dependency",
+                    "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+                    "done",
+                ],
+            )
+
+        pr_blocker, dependency_blocker = self.state["blockers"][-2:]
+        self.assertEqual(
+            {"check_kind": pr_blocker["check_kind"], "pr_number": pr_blocker["pr_number"]},
+            {"check_kind": "github_pr_ci", "pr_number": 4582},
+        )
+        self.assertEqual(dependency_blocker["task_id"], "REG-002")
+        self.assertEqual(
+            dependency_blocker["check_params"],
+            {
+                "task_id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+                "required_status": "done",
+            },
+        )
+
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
         self.state["handoffs"] = []
