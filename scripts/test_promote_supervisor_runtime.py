@@ -3213,6 +3213,69 @@ def test_mutable_incumbent_root_rejects_unaccepted_git_head(
             )
 
 
+def test_mutable_incumbent_root_accepts_bound_worktree_gitfile(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    _git(
+        source,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+    mutable_root = tmp_path / "dev-root"
+    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
+    generated = mutable_root / ".orchestrator" / "task-briefs" / "generated.md"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text("runtime-only task brief\n", encoding="utf-8")
+    root_stat = mutable_root.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        binding = promotion._mutable_root_binding(
+            ProcessCwdIdentity(
+                path=mutable_root,
+                device=root_stat.st_dev,
+                inode=root_stat.st_ino,
+            )
+        )
+
+    assert (mutable_root / ".git").is_file()
+    assert binding[0] == commit
+    assert binding[1] == tree
+    assert binding[3] == "https://github.com/ajoe734/pantheon.git"
+    assert binding[4].slug == "ajoe734/pantheon"
+    assert len(binding[5]) == len(promotion.GOVERNED_LAUNCH_SOURCES)
+
+
+def test_mutable_incumbent_root_rejects_symlinked_git_control(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, _remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    external_git = tmp_path / "external-git"
+    (source / ".git").rename(external_git)
+    (source / ".git").symlink_to(external_git, target_is_directory=True)
+    root_stat = source.stat()
+
+    with pytest.raises(ValueError, match="Git control cannot be a symlink"):
+        promotion._mutable_root_binding(
+            ProcessCwdIdentity(
+                path=source,
+                device=root_stat.st_dev,
+                inode=root_stat.st_ino,
+            )
+        )
+
+
 def test_materialize_rollback_runtime_binds_incumbent_commit_and_tree(
     tmp_path: Path,
 ) -> None:

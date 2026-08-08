@@ -520,6 +520,7 @@ def _subprocess_environment() -> dict[str, str]:
 def _run_git(
     cwd: Path | CandidateRootHandle,
     *args: str,
+    environment_overrides: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = _subprocess_environment()
     if isinstance(cwd, CandidateRootHandle):
@@ -558,6 +559,8 @@ def _run_git(
         cwd_arg = cwd
         pass_fds = ()
         display_cwd = cwd
+    if environment_overrides is not None:
+        env.update(environment_overrides)
     try:
         return subprocess.run(
             ["git", *args],
@@ -579,6 +582,28 @@ def _run_git(
 
 def _git_output(cwd: Path | CandidateRootHandle, *args: str) -> str:
     return _run_git(cwd, *args).stdout.strip()
+
+
+def _run_mutable_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run read-only Git discovery against a mutable incumbent checkout."""
+    return _run_git(
+        cwd,
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        *args,
+        environment_overrides={
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        },
+    )
+
+
+def _mutable_git_output(cwd: Path, *args: str) -> str:
+    return _run_mutable_git(cwd, *args).stdout.strip()
 
 
 def _validate_absolute_identity_path(path: Path, *, label: str) -> None:
@@ -4619,6 +4644,175 @@ def _discover_supervisor_seed(
     return generation, argv, cwd
 
 
+def _normalized_git_reported_path(root: Path, raw: str, *, label: str) -> Path:
+    if not raw or "\x00" in raw:
+        raise ValueError(f"{label} is empty or malformed")
+    reported = Path(raw)
+    normalized = Path(
+        os.path.abspath(reported if reported.is_absolute() else root / reported)
+    )
+    _validate_absolute_identity_path(normalized, label=label)
+    return normalized
+
+
+def _capture_mutable_git_layout(
+    cwd: ProcessCwdIdentity,
+) -> tuple[
+    tuple[PathComponentIdentity, ...],
+    tuple[PathComponentIdentity, ...],
+    bytes | None,
+    tuple[PathComponentIdentity, ...],
+]:
+    """Bind a mutable root and either its local .git directory or gitfile."""
+    root_components = _capture_directory_component_identities(
+        cwd.path,
+        label="Mutable incumbent root",
+    )
+    root_identity = root_components[-1].identity
+    if (root_identity.device, root_identity.inode) != (cwd.device, cwd.inode):
+        raise ValueError("Mutable incumbent cwd identity changed")
+
+    git_control_path = cwd.path / ".git"
+    try:
+        git_control_stat = git_control_path.lstat()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError("Mutable incumbent .git control is missing") from exc
+    if stat.S_ISLNK(git_control_stat.st_mode):
+        raise ValueError("Mutable incumbent Git control cannot be a symlink")
+
+    gitfile_bytes: bytes | None
+    if stat.S_ISDIR(git_control_stat.st_mode):
+        git_control_components = _capture_directory_component_identities(
+            git_control_path,
+            label="Mutable incumbent Git directory",
+        )
+        git_directory = git_control_path
+        gitfile_bytes = None
+    elif stat.S_ISREG(git_control_stat.st_mode):
+        descriptor = _open_path_descriptor(
+            git_control_path,
+            label="Mutable incumbent Git gitfile",
+            require_directory=False,
+        )
+        try:
+            before = os.fstat(descriptor)
+            if before.st_nlink != 1:
+                raise ValueError("Mutable incumbent Git gitfile must not be hard-linked")
+            gitfile_bytes = _read_descriptor_bytes(
+                descriptor,
+                limit=4096,
+                label="Mutable incumbent Git gitfile",
+            )
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        stable_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        stable_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if stable_after != stable_before or len(gitfile_bytes) != before.st_size:
+            raise ValueError("Mutable incumbent Git gitfile changed during capture")
+        git_control_components = root_components + (
+            PathComponentIdentity(
+                path=git_control_path,
+                identity=_identity_from_stat(before),
+            ),
+        )
+        _assert_path_component_identities(
+            git_control_components,
+            label="Mutable incumbent Git gitfile",
+        )
+        try:
+            gitfile_text = gitfile_bytes.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Mutable incumbent Git gitfile is not UTF-8") from exc
+        gitfile_match = re.fullmatch(r"gitdir: ([^\r\n\x00]+)\r?\n?", gitfile_text)
+        if gitfile_match is None:
+            raise ValueError("Mutable incumbent Git gitfile is malformed")
+        raw_git_directory = gitfile_match.group(1)
+        if raw_git_directory != raw_git_directory.strip():
+            raise ValueError("Mutable incumbent Git gitfile path is not canonical")
+        git_directory = _normalized_git_reported_path(
+            cwd.path,
+            raw_git_directory,
+            label="Mutable incumbent Git directory",
+        )
+    else:
+        raise ValueError(
+            "Mutable incumbent .git control must be a directory or regular gitfile"
+        )
+
+    git_directory_components = _capture_directory_component_identities(
+        git_directory,
+        label="Mutable incumbent Git directory",
+    )
+    return (
+        root_components,
+        git_control_components,
+        gitfile_bytes,
+        git_directory_components,
+    )
+
+
+def _capture_mutable_head_tree(root: Path) -> tuple[str, str]:
+    head = _mutable_git_output(root, "rev-parse", "--verify", "HEAD^{commit}")
+    tree = _mutable_git_output(root, "rev-parse", "--verify", "HEAD^{tree}")
+    if not HEX_40_PATTERN.fullmatch(head) or not HEX_40_PATTERN.fullmatch(tree):
+        raise ValueError("Mutable incumbent HEAD/tree is not a full lowercase SHA-1")
+    return head, tree
+
+
+def _verify_mutable_tracked_cleanliness(
+    root: Path,
+    *,
+    expected_head: str,
+    expected_tree: str,
+) -> None:
+    """Reject index/tracked drift without applying immutable-runtime dirt rules."""
+    index_flags = _run_mutable_git(root, "ls-files", "-v", "-z").stdout
+    for record in index_flags.split("\0"):
+        if not record:
+            continue
+        if len(record) < 3 or record[1] != " ":
+            raise ValueError(f"Malformed mutable Git index flag record: {record!r}")
+        if record[0] != "H":
+            raise ValueError(
+                "Forbidden mutable tracked index flag "
+                f"{record[0]!r}: {record[2:]}"
+            )
+    head_before, tree_before = _capture_mutable_head_tree(root)
+    if (head_before, tree_before) != (expected_head, expected_tree):
+        raise ValueError("Mutable incumbent HEAD/tree changed during validation")
+    try:
+        _run_mutable_git(root, "diff-index", "--cached", "--quiet", "HEAD", "--")
+    except ValueError as exc:
+        raise ValueError("Mutable incumbent index differs from HEAD") from exc
+    try:
+        _run_mutable_git(
+            root,
+            "diff-files",
+            "--quiet",
+            "--ignore-submodules=all",
+            "--",
+        )
+    except ValueError as exc:
+        raise ValueError("Tracked git tree is dirty") from exc
+    if _capture_mutable_head_tree(root) != (head_before, tree_before):
+        raise ValueError("Mutable incumbent HEAD/tree changed during validation")
+
+
 def _mutable_root_binding(
     cwd: ProcessCwdIdentity,
     *,
@@ -4631,33 +4825,73 @@ def _mutable_root_binding(
     GitRemoteIdentity,
     tuple[LaunchFileIdentity, ...],
 ]:
-    """Capture Git and governed-source bytes from a mutable process cwd."""
-    handle = _open_candidate_root_handle(
+    """Capture Git and governed-source bytes from a mutable process cwd.
+
+    The mutable staging checkout may be a linked worktree with a regular .git
+    gitfile. Immutable candidates remain on ``_open_candidate_root_handle``
+    and continue to require a local, standalone .git directory.
+    """
+    layout_before = _capture_mutable_git_layout(cwd)
+    expected_git_directory = layout_before[-1][-1].path
+    reported_git_directory = _normalized_git_reported_path(
         cwd.path,
-        require_immutable_location=False,
+        _mutable_git_output(cwd.path, "rev-parse", "--absolute-git-dir"),
+        label="Mutable incumbent reported Git directory",
     )
-    try:
-        if (
-            handle.identity.device != cwd.device
-            or handle.identity.inode != cwd.inode
-        ):
-            raise ValueError("Mutable incumbent cwd identity changed")
-        remote_url = parse_origin_url(handle)
-        remote = validate_remote_url(remote_url)
-        head, tree = _read_head_tree(handle)
-        trusted_dev = _fetch_trusted_dev_identity(head)
-        if trusted_dev.candidate_commit_tree != tree:
-            raise ValueError(
-                "Mutable incumbent tree differs from the accepted dev commit"
-            )
-        verify_working_tree_cleanliness(
-            handle,
-            expected_head=head,
-            expected_tree=tree,
-        )
-        _assert_candidate_handle_path(handle)
-    finally:
-        _close_candidate_root_handle(handle)
+    if reported_git_directory != expected_git_directory:
+        raise ValueError("Mutable incumbent Git gitfile target changed or escaped")
+    common_directory = _normalized_git_reported_path(
+        cwd.path,
+        _mutable_git_output(cwd.path, "rev-parse", "--git-common-dir"),
+        label="Mutable incumbent Git common directory",
+    )
+    common_components_before = _capture_directory_component_identities(
+        common_directory,
+        label="Mutable incumbent Git common directory",
+    )
+    top_level = _normalized_git_reported_path(
+        cwd.path,
+        _mutable_git_output(cwd.path, "rev-parse", "--show-toplevel"),
+        label="Mutable incumbent Git top level",
+    )
+    if top_level != cwd.path:
+        raise ValueError("Mutable incumbent cwd is not the Git top level")
+
+    config_names = _run_mutable_git(
+        cwd.path,
+        "config",
+        "--local",
+        "--no-includes",
+        "--name-only",
+        "--list",
+    ).stdout.splitlines()
+    if any(
+        name.lower().startswith(("include.", "includeif."))
+        for name in config_names
+    ):
+        raise ValueError("Mutable incumbent Git config cannot include external config")
+    raw_remote = _run_mutable_git(
+        cwd.path,
+        "config",
+        "--local",
+        "--no-includes",
+        "--get-all",
+        "remote.origin.url",
+    ).stdout
+    remote_urls = raw_remote.splitlines()
+    if len(remote_urls) != 1 or not remote_urls[0]:
+        raise ValueError("Mutable incumbent must configure exactly one remote.origin.url")
+    remote_url = remote_urls[0]
+    remote = validate_remote_url(remote_url)
+    head, tree = _capture_mutable_head_tree(cwd.path)
+    trusted_dev = _fetch_trusted_dev_identity(head)
+    if trusted_dev.candidate_commit_tree != tree:
+        raise ValueError("Mutable incumbent tree differs from the accepted dev commit")
+    _verify_mutable_tracked_cleanliness(
+        cwd.path,
+        expected_head=head,
+        expected_tree=tree,
+    )
 
     fs = filesystem or OSLaunchFilesystem()
     sources = tuple(
@@ -4667,6 +4901,35 @@ def _mutable_root_binding(
             require_executable=require_executable,
         )
         for role, relative, require_executable in GOVERNED_LAUNCH_SOURCES
+    )
+    if _capture_mutable_git_layout(cwd) != layout_before:
+        raise ValueError("Mutable incumbent root/Git layout changed during capture")
+    if (
+        _capture_directory_component_identities(
+            common_directory,
+            label="Mutable incumbent Git common directory",
+        )
+        != common_components_before
+    ):
+        raise ValueError("Mutable incumbent Git common directory changed during capture")
+    if _normalized_git_reported_path(
+        cwd.path,
+        _mutable_git_output(cwd.path, "rev-parse", "--absolute-git-dir"),
+        label="Mutable incumbent reported Git directory",
+    ) != expected_git_directory:
+        raise ValueError("Mutable incumbent reported Git directory changed during capture")
+    if _normalized_git_reported_path(
+        cwd.path,
+        _mutable_git_output(cwd.path, "rev-parse", "--git-common-dir"),
+        label="Mutable incumbent Git common directory",
+    ) != common_directory:
+        raise ValueError("Mutable incumbent Git common directory changed during capture")
+    if _capture_mutable_head_tree(cwd.path) != (head, tree):
+        raise ValueError("Mutable incumbent HEAD/tree changed during capture")
+    _verify_mutable_tracked_cleanliness(
+        cwd.path,
+        expected_head=head,
+        expected_tree=tree,
     )
     return head, tree, trusted_dev, remote_url, remote, sources
 
