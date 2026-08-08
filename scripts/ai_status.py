@@ -6206,10 +6206,73 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
 
 
+def structured_blocker_fields(args: list[str]) -> dict[str, Any]:
+    """Parse the opt-in, machine-checkable portion of a blocker command.
+
+    The legacy three-argument ``blocker`` command deliberately remains a
+    prose-only human gate.  A caller has to name one of these forms explicitly
+    before the supervisor may ever reconsider the blocker:
+
+    ``github_pr_ci <pr-number>``
+        Re-sample the named pull request's required CI contexts.
+    ``task_dependency <task-id> [required-status]``
+        Re-sample the named canonical task row (``done`` by default).
+    """
+
+    if not args:
+        return {}
+
+    check_kind = str(args[0] or "").strip().lower()
+    if check_kind == "github_pr_ci":
+        if len(args) != 2:
+            raise SystemExit(
+                "Usage: blocker <task-id> <message> <waiting-for> "
+                "github_pr_ci <pr-number>"
+            )
+        try:
+            pr_number = int(args[1])
+        except (TypeError, ValueError) as exc:
+            raise SystemExit("github_pr_ci blocker requires a positive PR number") from exc
+        if pr_number <= 0:
+            raise SystemExit("github_pr_ci blocker requires a positive PR number")
+        return {"check_kind": check_kind, "pr_number": pr_number}
+
+    if check_kind == "task_dependency":
+        if len(args) not in {2, 3}:
+            raise SystemExit(
+                "Usage: blocker <task-id> <message> <waiting-for> "
+                "task_dependency <task-id> [required-status]"
+            )
+        dependency_task_id = str(args[1] or "").strip()
+        required_status = str(args[2] if len(args) == 3 else "done").strip().lower()
+        if not dependency_task_id or not required_status:
+            raise SystemExit(
+                "task_dependency blocker requires a task id and non-empty required status"
+            )
+        return {
+            "check_kind": check_kind,
+            # ``task_id`` is already the identity of the task being blocked.
+            # Keep kind-specific keys nested so a dependency cannot overwrite
+            # that identity while still preserving the structured shape.
+            "check_params": {
+                "task_id": dependency_task_id,
+                "required_status": required_status,
+            },
+        }
+
+    raise SystemExit(
+        "Unknown blocker check_kind. Supported kinds: github_pr_ci, task_dependency"
+    )
+
+
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
-        raise SystemExit("Usage: blocker <task-id> <message> <waiting-for>")
+        raise SystemExit(
+            "Usage: blocker <task-id> <message> <waiting-for> "
+            "[github_pr_ci <pr-number> | task_dependency <task-id> [required-status]]"
+        )
     task_id, message, waiting_for = args[0], args[1], canonical_agent_name(args[2])
+    check_fields = structured_blocker_fields(args[3:])
     actor = current_actor()
     ensure_agent(actor)
     ensure_agent(waiting_for)
@@ -6225,16 +6288,16 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
-    state.setdefault("blockers", []).append(
-        {
-            "task_id": task_id,
-            "owner": actor,
-            "waiting_for": waiting_for,
-            "message": message,
-            "status": "open",
-            "created_at": timestamp,
-        }
-    )
+    blocker = {
+        "task_id": task_id,
+        "owner": actor,
+        "waiting_for": waiting_for,
+        "message": message,
+        "status": "open",
+        "created_at": timestamp,
+        **check_fields,
+    }
+    state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
 
 

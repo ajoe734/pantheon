@@ -43,6 +43,13 @@
     "provider_capability_refresh_interval_seconds": 300,
     "provider_probe_failure_hysteresis_threshold": 3
   },
+  "blocked_task_reconciliation": {
+    "enabled": false,
+    "shadow_only": true,
+    "interval_seconds": 300,
+    "max_tasks_per_run": 8,
+    "github_timeout_seconds": 15
+  },
   "worker_runtime": {
     "worker_lease_seconds": 600,
     "queue_lease_seconds": 1800,
