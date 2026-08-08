@@ -269,7 +269,7 @@ class RuntimeConfigTests(unittest.TestCase):
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["disabled_agents"], ["Antigravity2", "Copilot"])
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Copilot"])
         self.assertEqual(ready_dispatcher["target_workload"]["Claude"], 5)
         self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 1)
@@ -293,7 +293,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config["providers"]["claude2"]["account"], "claude_account_shared_max_1")
         self.assertNotIn("Claude2", ready_dispatcher["disabled_agents"])
 
-    def test_primary_antigravity_lane_is_enabled_and_alternate_stays_disabled(self) -> None:
+    def test_primary_and_alternate_antigravity_lanes_are_enabled(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
@@ -303,13 +303,13 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config["providers"]["antigravity"]["delivery_mode"], "antigravity")
         self.assertEqual(config["providers"]["antigravity2"]["delivery_mode"], "antigravity")
         self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 5)
-        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 6)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 1)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 6)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity"], 1)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 6)
         self.assertNotIn("Antigravity", ready_dispatcher["disabled_agents"])
-        self.assertIn("Antigravity2", ready_dispatcher["disabled_agents"])
+        self.assertNotIn("Antigravity2", ready_dispatcher["disabled_agents"])
 
     def test_live_provider_account_schema_is_strict_and_complete(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
