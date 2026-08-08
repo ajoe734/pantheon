@@ -849,6 +849,16 @@ def test_assign_timeout_before_task_is_retryable_and_unadmitted(
     assert state["tasks"] == []
 
 
+def test_assign_timeout_defaults_and_caps_at_ten_seconds() -> None:
+    assert dev_bridge_dispatcher._assign_timeout_seconds({}) == 10.0
+    assert dev_bridge_dispatcher._assign_timeout_seconds(
+        {dev_bridge_dispatcher.ASSIGN_TIMEOUT_ENV: "30"}
+    ) == 10.0
+    assert dev_bridge_dispatcher._assign_timeout_seconds(
+        {dev_bridge_dispatcher.ASSIGN_TIMEOUT_ENV: "3"}
+    ) == 3.0
+
+
 def test_timeout_after_one_task_resumes_exact_packet_without_duplicate_rows(
     tmp_path: Path,
 ) -> None:
