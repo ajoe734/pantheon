@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This wrapper can execute from an immutable command runtime.  Export the
+# inheritable form before any helper interpreter starts; ``python -B`` alone
+# would not protect Python subprocesses launched by ai_status.py.
+export PYTHONDONTWRITEBYTECODE=1
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 is_auto_worker_status_command() {
@@ -113,7 +118,7 @@ fi
 if is_auto_worker_status_command || [[ -n "${PANTHEON_COMMAND_ROOT:-${PANTHEON_STATUS_COMMAND_ROOT:-}}" ]]; then
   COMMAND_ROOT="$(validate_command_root "${PANTHEON_COMMAND_ROOT:-${PANTHEON_STATUS_COMMAND_ROOT:-}}")"
   export PANTHEON_STATUS_COMMAND_WRAPPER_ROOT="$ROOT_DIR"
-  exec python3 "$COMMAND_ROOT/scripts/ai_status.py" "$@"
+  exec python3 -B "$COMMAND_ROOT/scripts/ai_status.py" "$@"
 fi
 
-exec python3 "$ROOT_DIR/scripts/ai_status.py" "$@"
+exec python3 -B "$ROOT_DIR/scripts/ai_status.py" "$@"

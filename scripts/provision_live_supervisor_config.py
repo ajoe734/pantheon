@@ -18,6 +18,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+# This command is executed from the immutable candidate before its cleanliness
+# gate runs.  Importing the promotion verifier must not create executable
+# ``scripts/__pycache__`` debris in the candidate that the verifier then
+# rejects.  The command is short-lived, so keep bytecode writes disabled for
+# its entire lifetime, including imports performed by the verifier.
+sys.dont_write_bytecode = True
+
 import promote_supervisor_runtime as runtime_promotion
 
 
@@ -332,6 +339,7 @@ def build_live_config(
     watchdog["supervisor_command"] = [
         str(python_executable),
         "-u",
+        "-B",
         str(command_root / ".orchestrator" / "supervisor.py"),
         "--config",
         str(live_config_path),
