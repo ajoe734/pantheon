@@ -6933,6 +6933,52 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(command[:3], [sys.executable, str(self.root / "scripts" / "ai_status.py"), "recover"])
         self.assertEqual(run_mock.call_args.kwargs["cwd"], str(self.root))
         self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["PYTHONDONTWRITEBYTECODE"],
+            "1",
+        )
+
+    def test_status_command_context_prevents_child_bytecode_writes(self) -> None:
+        (self.root / "scripts" / "status_sibling.py").write_text(
+            "VALUE = 'loaded'\n",
+            encoding="utf-8",
+        )
+        (self.root / "scripts" / "ai_status.py").write_text(
+            "import status_sibling\nprint(status_sibling.VALUE)\n",
+            encoding="utf-8",
+        )
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+
+        with (
+            mock.patch.dict(
+                supervisor.os.environ,
+                {"PYTHONDONTWRITEBYTECODE": "inherited-wrong-value"},
+                clear=False,
+            ),
+            mock.patch.object(
+                supervisor,
+                "status_command_runtime_env",
+                return_value=command_env,
+            ),
+        ):
+            script, env = supervisor.status_command_subprocess_context(self.config)
+
+        result = subprocess.run(
+            [sys.executable, str(script), "recover"],
+            cwd=self.root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "loaded")
+        self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertFalse((self.root / "scripts" / "__pycache__").exists())
 
     def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
         event = {
@@ -25323,4 +25369,3 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
