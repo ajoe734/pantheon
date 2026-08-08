@@ -1,40 +1,58 @@
 {
   "schema": "pantheon.execution-task-dag.v1",
   "program": "agora-current-environment-gap-closure-2026-08-08",
-  "generated_at": "2026-08-08T10:43:43Z",
-  "source_baseline": "0f2ab06f8de5be84ad18862d5f55a1fd65266324",
+  "generated_at": "2026-08-08T11:31:00Z",
+  "inventory_cutoff": "2026-08-08T11:31:00Z",
+  "source_baseline": "de8635aa958593ca332395baba1880aacf096952",
   "merge_target": "dev",
-  "objective": "Restore current dev BFF service, complete and verify the real tenant-safe Agora-to-Learning/Imitation-to-Consultation chain, reaccept an exact hosted pair, and reconcile lifecycle truth without duplicating the existing L12 minimum DAG.",
-  "constraints": {
+  "objective": "Restore incumbent-safe dev BFF delivery, add durable tenant-safe Agora handoff consumption and candidate-to-Consultation lineage, materialize the existing real Learning verifier, reaccept one current exact hosted pair, and reconcile lifecycle truth without duplicating the active L12 minimum DAG.",
+  "dispatch_policy": {
+    "single_final_handoff": true,
+    "do_not_poll_auto_workers_after_cutoff": true,
     "supervisor_only_dispatcher": true,
+    "supersedes_preliminary_packet": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+    "preliminary_packet_is_not_implementation_authority": true,
+    "canonical_id_and_hash_readback_required": true,
+    "conflicting_existing_task_must_block_not_replay": true
+  },
+  "constraints": {
+    "requires_clean_task_worktree": true,
     "requires_branch_pr_merge": true,
     "independent_exact_head_review": true,
     "safe_write_defaults": true,
     "live_capital_enabled": false,
+    "no_direct_cross_owner_database_writes": true,
+    "no_historical_row_bulk_ack": true,
     "no_direct_runtime_state_edits": true,
     "no_direct_queue_edits": true,
-    "no_orchestrator_config_edits": true
+    "no_orchestrator_config_edits": true,
+    "frontend_repo": "ajoe734/execute-plans",
+    "frontend_merge_target": "dev"
   },
   "external_dependencies": [
     "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
     "L12-MIN-SRC-20260808",
+    "L12-MIN-TEACH-20260808",
     "L12-MIN-AGORA-20260808",
     "L12-MIN-IMIT-20260808",
     "L12-MIN-CONS-20260808",
+    "L12-MIN-BFF-20260808",
+    "L12-MIN-INTEGRATE-20260808",
     "L12-MIN-E2E-20260808",
-    "L12-MIN-HOSTED-20260808"
+    "L12-MIN-HOSTED-20260808",
+    "L12-MIN-CLOSE-20260808"
   ],
   "tasks": [
     {
       "id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
-      "title": "Reconcile and admit the Agora current-environment addendum",
-      "summary": "Verify canonical dependency and artifact truth, resolve the minimum packet-A receipt/readback ambiguity without replay, and release only non-duplicate addendum work.",
-      "phase": "A0 coordination admission",
+      "title": "Admit the final Agora current-environment addendum",
+      "summary": "Perform one authoritative conflict/hash readback, supersede the premature packet, and release only exact or missing final task specifications.",
+      "phase": "A0 governed admission",
       "wave": "A0",
       "owner": "Antigravity",
-      "owner_capability": "authoritative task-state and cross-worktree reconciliation",
+      "owner_capability": "authoritative task-state, PR, branch, and artifact reconciliation",
       "reviewer": "Claude",
-      "reviewer_capability": "independent cross-service plan and scope review",
+      "reviewer_capability": "independent cross-service plan, duplicate, and scope review",
       "dependsOn": [],
       "branch": "task/AGORA-CURRENT-GAP-EXECUTION-20260808",
       "worktree": "/tmp/pantheon-worker-worktrees/pantheon/AGORA-CURRENT-GAP-EXECUTION-20260808",
@@ -44,42 +62,42 @@
       ],
       "out_of_scope": [
         "product code",
-        "deployment runtime",
-        ".orchestrator/config.json",
-        "canonical task JSON and event logs",
-        "manual queue files"
+        "deployment mutation",
+        "manual queue/state edits",
+        "supervisor policy changes",
+        "continuous progress monitoring"
       ],
       "artifacts": [
         "docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808/"
       ],
       "acceptance": [
-        "Start from current origin/dev and authoritative task-state checkpoint; do not rely only on the shared checkout.",
-        "Verify the seven addendum task IDs are absent from active and archived task state, open PRs, branches, and worktrees before admission.",
-        "Verify every external L12-MIN dependency, owner/reviewer assignment, task-spec hash, and current status from authoritative state.",
-        "Reconcile packet A invalid_materialization against later canonical task rows without replaying or redispatching any existing L12-MIN ID.",
-        "Validate dependency reachability, unique final sink, artifact overlap ordering, declared branches/worktrees, merge target, rollout, and rollback.",
-        "Publish review_pending evidence and obtain independent exact-head review before declaring the gate done."
+        "Use the frozen audit for planning and perform exactly one fresh authoritative admission readback; do not start a progress-monitoring loop.",
+        "Record the preliminary packet pkt-agora-current-environment-gap-20260808-e765bcbed as superseded and determine whether it produced any canonical rows or immutable hashes.",
+        "For every final task ID, admit an absent row, accept an exact hash match, or block on a conflicting hash; never replay, overwrite, or hand-edit a canonical row.",
+        "Verify all external L12-MIN dependencies and preserve their existing owners/scopes instead of redispatching them.",
+        "Verify DAG acyclicity, dependency reachability, one final sink, scope-overlap ordering, declared worktrees, merge targets, rollout, and rollback.",
+        "Publish review_pending admission evidence and require independent exact-head review before releasing downstream tasks."
       ],
       "validation": [
-        "authoritative task-state readback",
-        "open PR, remote branch, and worktree snapshot",
-        "execution-tasks JSON dependency and overlap validator",
+        "authoritative task-state ID/hash readback",
+        "single open-PR/remote-branch/worktree collision snapshot",
+        "execution task DAG validator",
         "git diff --check"
       ],
-      "rollout": "Documentation/evidence admission only; supervisor releases downstream tasks after independent review.",
-      "rollback": "Revert the reconciliation evidence merge and leave all product/runtime state unchanged.",
+      "rollout": "Documentation and admission evidence only; the supervisor releases downstream work after exact-head review.",
+      "rollback": "Revert admission evidence and leave product, runtime, queue, and canonical state unchanged.",
       "evidence_root": "docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808"
     },
     {
       "id": "AGORA-DEV-DEPLOY-RECOVERY-20260808",
-      "title": "Restore dev BFF and make failed candidate deployment incumbent-safe",
-      "summary": "Recover the current public BFF through governed dev authority and make dependency or candidate failure preserve or restore the last accepted serving pair.",
-      "phase": "A1 P0 dev recovery",
+      "title": "Restore dev BFF and make candidate deployment incumbent-safe",
+      "summary": "Recover public dev BFF through governed deployment authority and guarantee failed candidates preserve or restore the last accepted incumbent.",
+      "phase": "A1 P0 deployment recovery",
       "wave": "A1",
       "owner": "Claude",
-      "owner_capability": "nonproduction deployment transaction and rollback repair",
+      "owner_capability": "nonproduction deployment transaction, lease, and rollback repair",
       "reviewer": "Antigravity",
-      "reviewer_capability": "failure-injection and hosted identity review",
+      "reviewer_capability": "failure injection, incumbent preservation, and hosted identity review",
       "dependsOn": [
         "AGORA-CURRENT-GAP-EXECUTION-20260808"
       ],
@@ -96,9 +114,9 @@
       "out_of_scope": [
         "services/source_ingestion product implementation",
         "frontend source",
-        "production or live trading",
+        "production/live trading",
         "deployment authority redesign",
-        "direct edits to /home/lupin/pantheon-ci-deploy/dev-root"
+        "direct dev-root edits"
       ],
       "artifacts": [
         ".github/workflows/nonprod-deploy.yml",
@@ -108,152 +126,264 @@
         "docs/deployment/evidence/agora/AGORA-DEV-DEPLOY-RECOVERY-20260808/"
       ],
       "acceptance": [
-        "Record the exact current 502/container/manifest state and deployment run 31250996848 before mutation.",
-        "Use only the existing dev environment lease and deployment authority for the smallest temporary recovery; label it temporary and restore a public BFF readiness and version 200 without changing safe write defaults.",
-        "Do not repair Source Ingestion product code in this task; route a reproduced service-code defect to L12-MIN-SRC-20260808.",
-        "Make an unhealthy dependency or candidate fail before the serving incumbent is lost, or automatically restore the captured incumbent BFF and exact manifest before releasing the lease.",
-        "A failed candidate must not leave operator-bff unserved in Created state and must not publish a new deployment manifest.",
-        "Add deterministic failure-injection coverage for source-ingest unhealthy, candidate BFF readiness failure, rollback success, rollback failure, and unchanged manifest.",
-        "Deliver the permanent source change through PR, independent exact-head review, merge, and one bounded dev deployment; record served FE/BFF identities, rollback baseline, readiness, and safe posture."
+        "Record deployment run 31250996848, manifest identity, public 502s, operator-bff Created state, and source-ingest health evidence before mutation.",
+        "Use only the existing dev environment lease and deployment authority for the smallest temporary live recovery; label it temporary and complete the permanent PR flow in the same task.",
+        "Restore public /readyz and /bff/version 200 without changing read-only, strict-fallback, authentication, or write defaults.",
+        "Keep Source Ingestion service-code repair in L12-MIN-SRC-20260808; this task owns transaction ordering and rollback only.",
+        "Before replacing an incumbent, prove candidate dependencies and candidate BFF readiness; otherwise preserve or automatically restore the captured incumbent and its unchanged manifest.",
+        "Cover source-ingest unhealthy, candidate BFF failure, lease-heartbeat failure, rollback success, rollback failure, and unchanged-manifest cases deterministically.",
+        "Merge the reviewed permanent fix and perform one bounded dev rollout with served FE/BFF identities and rollback evidence."
       ],
       "validation": [
-        "focused deploy transaction tests",
+        "focused deploy transaction contract tests",
         "docker compose configuration validation",
-        "failure matrix with unchanged-manifest assertions",
+        "failure matrix with incumbent and manifest assertions",
         "public /readyz and /bff/version readback",
-        "exact deployment manifest/runtime identity comparison"
+        "served manifest/runtime identity comparison"
       ],
-      "rollout": "Restore current dev first only through the governed lease, then deploy the reviewed permanent fix once after merge.",
-      "rollback": "Reselect the last accepted exact pair under the governed lease and revert the source merge if the transaction repair regresses dev delivery.",
+      "rollout": "Restore dev through the governed lease, then deploy the merged transaction repair once; no repeated rescue loop.",
+      "rollback": "Reselect the captured last accepted incumbent under the lease and revert the source merge if the repair regresses delivery.",
       "evidence_root": "docs/deployment/evidence/agora/AGORA-DEV-DEPLOY-RECOVERY-20260808"
     },
     {
-      "id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
-      "title": "Complete the tenant-safe Agora to Imitation and Consultation chain",
-      "summary": "Connect durable Agora dataset handoff consumption, terminal shadow candidate generation, and governed Consultation memo production with correlated identifiers.",
-      "phase": "A2 cross-loop integration",
+      "id": "AGORA-IMIT-HANDOFF-CONSUME-20260808",
+      "title": "Consume and acknowledge Agora learning handoffs in Policy Learning",
+      "summary": "Add a tenant-bound durable consumer so a fresh learn DatasetVersion creates one idempotent Policy Learning job/candidate and is acknowledged only after durable ingestion.",
+      "phase": "A2a Agora to Imitation durable edge",
       "wave": "A2",
       "owner": "Antigravity",
-      "owner_capability": "Agora, Policy Learning, and Consultation integration",
+      "owner_capability": "Agora handoff contract and Policy Learning durable worker integration",
       "reviewer": "Claude",
-      "reviewer_capability": "independent tenant-safe durable workflow review",
+      "reviewer_capability": "tenant/auth boundary, idempotency, and acknowledgement-order review",
       "dependsOn": [
         "AGORA-CURRENT-GAP-EXECUTION-20260808",
         "L12-MIN-AGORA-20260808",
-        "L12-MIN-IMIT-20260808",
-        "L12-MIN-CONS-20260808"
+        "L12-MIN-IMIT-20260808"
       ],
-      "branch": "task/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
-      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "branch": "task/AGORA-IMIT-HANDOFF-CONSUME-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/AGORA-IMIT-HANDOFF-CONSUME-20260808",
       "merge_target": "dev",
       "declared_scope": [
-        "services/control-plane/bff/agora/dataset_extraction/",
-        "services/control-plane/bff/agora/router.py",
-        "services/control-plane/bff/tests/test_agora_persona_interactions.py",
-        "services/policy-learning/",
-        "services/consultation/",
-        "docs/deployment/evidence/agora/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808/"
+        "services/control-plane/bff/agora/dataset_extraction/router.py",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py",
+        "services/policy-learning/agora_handoff_consumer.py",
+        "services/policy-learning/scheduler_worker.py",
+        "services/policy-learning/tests/test_agora_handoff_consumer.py",
+        "docs/deployment/evidence/agora/AGORA-IMIT-HANDOFF-CONSUME-20260808/"
       ],
       "out_of_scope": [
-        "shared L12 catalog and Compose files",
-        "frontend source",
-        "live capital or automatic deployment approval",
-        "broad security or architecture redesign"
+        "Consultation",
+        "docker-compose.yml",
+        "broad BFF auth redesign",
+        "direct writes to Agora-owned tables from Policy Learning",
+        "historical observe-row bulk acknowledgement",
+        "live execution or promotion"
       ],
       "artifacts": [
-        "services/control-plane/bff/agora/dataset_extraction/",
-        "services/control-plane/bff/agora/router.py",
-        "services/control-plane/bff/tests/test_agora_persona_interactions.py",
-        "services/policy-learning/",
-        "services/consultation/",
-        "docs/deployment/evidence/agora/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808/"
+        "services/control-plane/bff/agora/dataset_extraction/router.py",
+        "services/control-plane/bff/agora/dataset_extraction/test_router.py",
+        "services/policy-learning/agora_handoff_consumer.py",
+        "services/policy-learning/scheduler_worker.py",
+        "services/policy-learning/tests/test_agora_handoff_consumer.py",
+        "docs/deployment/evidence/agora/AGORA-IMIT-HANDOFF-CONSUME-20260808/"
       ],
       "acceptance": [
-        "Use the outputs of the three predecessor L12-MIN component tasks; do not reimplement their happy paths.",
-        "Persist one tenant-scoped Agora interaction, evidence record, DatasetVersion, and downstream handoff with correlated identifiers.",
-        "Acknowledge the handoff only after durable Policy Learning ingestion and make retry or duplicate delivery idempotent.",
-        "Produce one terminal shadow candidate linked to the DatasetVersion without seed fallback or live execution authority.",
-        "Create one governed Consultation request from the terminal candidate and persist a terminal memo or handoff linked to the same chain.",
-        "Prove a second tenant cannot read, acknowledge, replay, or correlate the first tenant's records.",
-        "Record before/after backlog counts and preserve historical pending rows unless their own durable consumer receipts justify acknowledgement."
+        "Use predecessor outputs; do not reimplement the basic extraction or candidate happy path.",
+        "Discover only eligible tenant-scoped learn handoffs through a service-owned authenticated contract; Policy Learning must not write Agora tables directly.",
+        "Persist a consumer receipt or idempotency key and create at most one Policy Learning job/candidate for one handoff despite duplicate delivery, restart, or two workers.",
+        "Acknowledge the Agora handoff only after durable downstream persistence succeeds; a failed persistence or lost lease leaves it safely retryable.",
+        "Bind acknowledgement to tenant, user, dataset version, digest, and consumer receipt; cross-tenant read/ack returns no foreign data and changes no row.",
+        "Prove one new learn flow reaches terminal shadow-candidate processing with no seed fallback and no runtime promotion authority.",
+        "Report historical pending counts but neither bulk-acknowledge nor relabel the 81 observe records."
       ],
       "validation": [
-        "focused Agora extraction and handoff tests",
-        "Policy Learning scheduler and persistence tests",
-        "Consultation workflow and persistence tests",
-        "Postgres restart and duplicate-delivery tests",
-        "tenant-negative integration tests"
+        "focused BFF handoff auth/ack tests",
+        "Policy Learning consumer and scheduler tests",
+        "duplicate and two-worker lease tests",
+        "Postgres restart/retry test",
+        "tenant and unauthorized negative tests"
       ],
-      "rollout": "Merge after all three component predecessors; enable only the paper/shadow development path.",
-      "rollback": "Revert the integration merge; preserve or quarantine durable audit rows and never delete historical evidence to roll back code.",
-      "evidence_root": "docs/deployment/evidence/agora/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808"
+      "rollout": "Merge after L12-MIN-AGORA and L12-MIN-IMIT; keep the consumer disabled until the binding task supplies scoped credentials.",
+      "rollback": "Disable the consumer and revert its merge; preserve durable receipts, handoffs, candidates, and audit rows.",
+      "evidence_root": "docs/deployment/evidence/agora/AGORA-IMIT-HANDOFF-CONSUME-20260808"
     },
     {
-      "id": "AGORA-L12-REAL-VERIFIER-20260808",
-      "title": "Build a non-self-attesting Agora cross-loop verifier",
-      "summary": "Verify the correlated tenant-safe chain with real service calls, durable readbacks, restart and negative controls rather than literal pass output.",
-      "phase": "A3 real verifier",
-      "wave": "A3",
+      "id": "IMIT-CONSULTATION-INTAKE-20260808",
+      "title": "Create governed Consultation intake from terminal Imitation candidates",
+      "summary": "Add an idempotent tenant-safe intake edge from terminal shadow candidates to Consultation requests with full dataset/handoff/candidate lineage.",
+      "phase": "A2b Imitation to Consultation edge",
+      "wave": "A2",
       "owner": "Claude",
-      "owner_capability": "independent cross-service verification",
+      "owner_capability": "Policy Learning API and Consultation durable workflow integration",
       "reviewer": "Antigravity",
-      "reviewer_capability": "verifier integrity and negative-control review",
+      "reviewer_capability": "lineage, idempotency, DLQ/replay, and no-runtime-effect review",
       "dependsOn": [
-        "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
-        "L12-MIN-E2E-20260808"
+        "AGORA-IMIT-HANDOFF-CONSUME-20260808",
+        "L12-MIN-CONS-20260808"
       ],
-      "branch": "task/AGORA-L12-REAL-VERIFIER-20260808",
-      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/AGORA-L12-REAL-VERIFIER-20260808",
+      "branch": "task/IMIT-CONSULTATION-INTAKE-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/IMIT-CONSULTATION-INTAKE-20260808",
       "merge_target": "dev",
       "declared_scope": [
-        "scripts/verify_agora_learning_cross_loop.py",
-        "scripts/test_verify_agora_learning_cross_loop.py",
-        "docs/deployment/evidence/agora/AGORA-L12-REAL-VERIFIER-20260808/"
+        "services/consultation/policy_learning_intake.py",
+        "services/consultation/supervisor.py",
+        "services/consultation/test_policy_learning_intake.py",
+        "docs/deployment/evidence/agora/IMIT-CONSULTATION-INTAKE-20260808/"
+      ],
+      "out_of_scope": [
+        "Policy Learning candidate implementation",
+        "docker-compose.yml",
+        "consultation workflow redesign",
+        "deployment/broker/capital actions",
+        "cross-tenant candidate enumeration"
+      ],
+      "artifacts": [
+        "services/consultation/policy_learning_intake.py",
+        "services/consultation/supervisor.py",
+        "services/consultation/test_policy_learning_intake.py",
+        "docs/deployment/evidence/agora/IMIT-CONSULTATION-INTAKE-20260808/"
+      ],
+      "acceptance": [
+        "Consume only authenticated terminal shadow candidates for the configured tenant and ignore proposed, claimed, failed, degraded, or foreign-tenant candidates.",
+        "Create exactly one governed Consultation request per candidate using a durable idempotency key.",
+        "Persist dataset version, Agora handoff, candidate, tenant/user, trace, and request identifiers without granting runtime or promotion authority.",
+        "Allow the existing Consultation executor to produce a terminal memo/handoff; do not fork or duplicate its workflow implementation.",
+        "Send intake failures to a bounded durable retry/DLQ path and prove replay produces one request, not duplicates.",
+        "Prove a second tenant cannot enumerate, create, replay, or read the first tenant's candidate-derived Consultation records."
+      ],
+      "validation": [
+        "focused Consultation intake tests",
+        "idempotent request creation tests",
+        "terminal-state filtering tests",
+        "DLQ and replay tests",
+        "tenant/auth negative tests"
+      ],
+      "rollout": "Merge after the handoff consumer and L12-MIN-CONS; keep intake disabled until runtime bindings are admitted.",
+      "rollback": "Disable intake and revert its merge; retain candidate, request, memo, handoff, and DLQ audit state.",
+      "evidence_root": "docs/deployment/evidence/agora/IMIT-CONSULTATION-INTAKE-20260808"
+    },
+    {
+      "id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "title": "Bind the Agora-Learning-Consultation workers in the dev runtime",
+      "summary": "Add only the runtime credentials, endpoints, health contract, and activation needed for the two reviewed cross-service edges.",
+      "phase": "A2c runtime binding",
+      "wave": "A2",
+      "owner": "Antigravity",
+      "owner_capability": "Compose/runtime service binding and fail-closed credential wiring",
+      "reviewer": "Claude",
+      "reviewer_capability": "shared-file integration, credential scope, and activation review",
+      "dependsOn": [
+        "IMIT-CONSULTATION-INTAKE-20260808",
+        "L12-MIN-INTEGRATE-20260808"
+      ],
+      "branch": "task/AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "merge_target": "dev",
+      "declared_scope": [
+        "docker-compose.yml",
+        "scripts/test_agora_learning_cross_loop_compose_contract.py",
+        "docs/deployment/loop-catalog.registry.json",
+        "docs/deployment/evidence/agora/AGORA-LEARNING-CROSS-LOOP-BIND-20260808/"
+      ],
+      "out_of_scope": [
+        "product algorithms",
+        "frontend source",
+        "plaintext secrets",
+        "broad Compose cleanup",
+        "production/live-capital activation"
+      ],
+      "artifacts": [
+        "docker-compose.yml",
+        "scripts/test_agora_learning_cross_loop_compose_contract.py",
+        "docs/deployment/evidence/agora/AGORA-LEARNING-CROSS-LOOP-BIND-20260808/"
+      ],
+      "acceptance": [
+        "Start only after L12-MIN-INTEGRATE releases shared Compose/catalog ownership.",
+        "Wire scoped service URLs and non-embedded credentials for Agora handoff consumption and Consultation intake; no service may receive broader write authority than its endpoint requires.",
+        "Fail closed and report degraded when a token, upstream, tenant scope, or durable store is absent; never fall back to seed or anonymous cross-service access.",
+        "Expose bounded worker health/backlog/readback without making queue emptiness equal readiness.",
+        "Prove restart activation, credential rejection, tenant mismatch, upstream outage, and disabled-by-default rollback behavior.",
+        "Touch the loop catalog only if the runtime binding changes a declared contract; otherwise leave it byte-identical."
+      ],
+      "validation": [
+        "docker compose config",
+        "focused Compose contract test",
+        "service credential and tenant-negative tests",
+        "restart and upstream-outage test",
+        "loop-catalog validation when changed"
+      ],
+      "rollout": "Enable the two consumers only in paper/shadow dev after both source PRs and shared integration merge.",
+      "rollback": "Disable the consumer/intake bindings and restore the prior Compose configuration; preserve durable records for later replay.",
+      "evidence_root": "docs/deployment/evidence/agora/AGORA-LEARNING-CROSS-LOOP-BIND-20260808"
+    },
+    {
+      "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "title": "Materialize and execute the real Learning product verifier",
+      "summary": "Reuse the planned successor ID and verify Teaching, Agora, Imitation, and Consultation through actual service boundaries and durable readbacks.",
+      "phase": "A3 real Learning verifier",
+      "wave": "A3",
+      "owner": "Antigravity",
+      "owner_capability": "independent four-loop service-bound verification",
+      "reviewer": "Claude2",
+      "reviewer_capability": "verifier integrity, negative controls, and exact-head evidence review",
+      "dependsOn": [
+        "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+        "L12-MIN-TEACH-20260808",
+        "L12-MIN-E2E-20260808"
+      ],
+      "branch": "task/L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "merge_target": "dev",
+      "declared_scope": [
+        "scripts/verify_twelve_loop_learning.py",
+        "scripts/test_verify_twelve_loop_learning.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001/"
       ],
       "out_of_scope": [
         "product implementation",
-        "fixture-only acceptance",
-        "literal or self-declared pass dictionaries",
+        "obsolete 28-task catalog dispatch",
+        "fixture-only or literal pass evidence",
+        "runtime mutation",
         "live-capital actions"
       ],
       "artifacts": [
-        "scripts/verify_agora_learning_cross_loop.py",
-        "scripts/test_verify_agora_learning_cross_loop.py",
-        "docs/deployment/evidence/agora/AGORA-L12-REAL-VERIFIER-20260808/"
+        "scripts/verify_twelve_loop_learning.py",
+        "scripts/test_verify_twelve_loop_learning.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001/"
       ],
       "acceptance": [
-        "Invoke actual authenticated service routes and durable API or database readbacks; fail closed when any required service is absent.",
-        "Capture exact interaction, evidence, dataset version, handoff, acknowledgement, candidate, consultation request, and memo identifiers in one correlated result.",
-        "Verify duplicate/idempotency conflict behavior, acknowledgement ordering, tenant isolation, restart readback, failure-to-DLQ, and replay to successful terminal output.",
-        "Record safe write posture and prove unauthorized or disallowed writes fail without weakening strict authentication.",
-        "Record aggregate backlog counts before and after the test and never purge or bulk-acknowledge historical rows.",
-        "The verifier must return nonzero for a missing service, mismatched tenant, missing durable readback, unacknowledged handoff, missing candidate, or missing consultation memo.",
-        "Independent review must inspect the verifier source and raw evidence; owner-authored review_approved is invalid."
+        "Materialize this existing planned ID only if absent; block on a conflicting canonical hash and never create AGORA-L12-REAL-VERIFIER-20260808.",
+        "Invoke actual authenticated Teaching, Agora, Policy Learning, and Consultation routes and durable API/database readbacks; fail closed when any required service is absent.",
+        "Capture one non-fixture chain of teaching/session, interaction/evidence, learn dataset version, handoff/ack, terminal candidate, Consultation request, memo/handoff, tenant/user, and trace identifiers.",
+        "Verify duplicate/idempotency conflict, two-worker behavior, ack ordering, tenant isolation, RBAC/auth rejection, restart durability, failure-to-DLQ, and replay to one terminal result.",
+        "Prove no seed fallback, no runtime mutation, no candidate promotion, safe write defaults, and no historical-row purge or bulk acknowledgement.",
+        "Return nonzero for missing/mismatched lineage, unavailable service, foreign tenant, absent durable readback, missing ack/candidate/memo, unsafe posture, or self-attested evidence.",
+        "Independent reviewer must inspect verifier source and raw checksummed evidence; owner self-approval is invalid."
       ],
       "validation": [
-        "unit tests with service and database failure injection",
+        "verifier unit tests with service/database failure injection",
         "local Compose service-bound run",
-        "Postgres restart run",
-        "negative tenant and auth controls",
+        "Postgres and service restart run",
+        "tenant, RBAC, and credential negatives",
         "raw evidence checksum validation"
       ],
-      "rollout": "Verifier-only source merge; product failures return to the owning component or integration task.",
-      "rollback": "Revert the verifier merge; do not change product/runtime state as rollback.",
-      "evidence_root": "docs/deployment/evidence/agora/AGORA-L12-REAL-VERIFIER-20260808"
+      "rollout": "Verifier-only merge; route a failure to the exact owning component or bridge task rather than patching product code here.",
+      "rollback": "Revert verifier source/evidence only; do not mutate product or runtime state as verifier rollback.",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001"
     },
     {
       "id": "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
       "title": "Reaccept the current Agora hosted exact pair",
-      "summary": "Bind served FE/BFF identities to reviewed source and rerun current Agora cross-loop, restart, compatibility, auth, and safe-write acceptance.",
+      "summary": "Bind served FE/BFF identities to reviewed commits and rerun current Learning-chain, restart, compatibility, auth, tenant, and safe-write acceptance.",
       "phase": "A4 hosted reacceptance",
       "wave": "A4",
-      "owner": "Antigravity",
-      "owner_capability": "hosted exact-pair validation",
-      "reviewer": "Claude",
-      "reviewer_capability": "deployment and security-posture evidence review",
+      "owner": "Claude",
+      "owner_capability": "hosted exact-pair and cross-loop acceptance",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "deployment identity, security posture, and evidence review",
       "dependsOn": [
         "AGORA-DEV-DEPLOY-RECOVERY-20260808",
-        "AGORA-L12-REAL-VERIFIER-20260808",
+        "L12-VERIFY-LEARN-REAL-VERIFIER-001",
         "L12-MIN-HOSTED-20260808"
       ],
       "branch": "task/AGORA-CURRENT-HOSTED-REACCEPT-20260808",
@@ -268,7 +398,7 @@
         "product implementation",
         "frontend feature work",
         "production deployment",
-        "real write or live-capital enablement"
+        "real-write/live-capital enablement"
       ],
       "artifacts": [
         "scripts/verify_agora_current_hosted_acceptance.py",
@@ -276,35 +406,35 @@
         "docs/deployment/evidence/agora/AGORA-CURRENT-HOSTED-REACCEPT-20260808/"
       ],
       "acceptance": [
-        "Require public BFF /readyz and /bff/version HTTP 200 and capture the actually served BFF revision.",
-        "Require exact equality among served FE SHA, served BFF SHA, pair ID, deployment manifest, Agora v1.13 compatibility manifest, and independently reviewed source commits.",
-        "Run AGORA-L12-REAL-VERIFIER-20260808 against hosted dev and require the correlated chain and all negative controls to pass.",
-        "Restart the BFF through governed dev authority and prove the same durable records and exact pair remain readable afterward.",
-        "Prove live mode, strict fallback, no embedded token, read-only profile, real writes false, stub writes false, unauthorized failures, and governed write rejection.",
-        "Reject stale, historical, fallback, local-only, self-attested, unreviewed, or manifest-only evidence.",
-        "On any failure, keep or restore the last accepted exact pair and leave the candidate unaccepted."
+        "Require public /readyz and /bff/version 200 and capture the actually served BFF revision.",
+        "Require exact equality among served FE SHA, served BFF SHA, pair ID, deployment manifest, Agora v1.13 compatibility identity, reviewed PR heads, and merged dev commits.",
+        "Run L12-VERIFY-LEARN-REAL-VERIFIER-001 against hosted dev and retain its correlated identifiers and raw checksums.",
+        "Restart the BFF through governed dev authority and prove the same exact pair and durable records remain readable afterward.",
+        "Prove live mode, strict fallback, no embedded token, read-only profile, real/stub writes false, unauthorized rejection, tenant isolation, and governed-write rejection.",
+        "Reject stale, historical-only, fallback, local-only, fixture-only, self-attested, unreviewed, manifest-only, or mismatched evidence.",
+        "On failure, keep or restore the previous accepted exact pair and leave the candidate unaccepted."
       ],
       "validation": [
         "hosted exact identity and manifest checksum",
         "Agora v1.13 compatibility gate",
-        "real cross-loop verifier",
+        "real Learning verifier hosted run",
         "restart persistence readback",
-        "auth and safe-write negative probes"
+        "tenant/auth/safe-write negative probes"
       ],
-      "rollout": "One bounded dev exact-pair admission through the existing deployment workflow after every predecessor merge.",
-      "rollback": "Keep or reselect the previous accepted exact pair and preserve its manifest; never switch on failed proof.",
+      "rollout": "One bounded dev exact-pair admission after all predecessor merges; no retry loop that changes candidates underneath evidence.",
+      "rollback": "Keep or reselect the prior accepted exact pair and preserve its manifest; never switch on failed proof.",
       "evidence_root": "docs/deployment/evidence/agora/AGORA-CURRENT-HOSTED-REACCEPT-20260808"
     },
     {
       "id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
-      "title": "Reconcile Agora UI polish and current lifecycle truth",
-      "summary": "Synchronize stale draft/index state with exact merged and hosted evidence while preserving the UI polish 010 task-specific evidence limitation.",
-      "phase": "A5 documentation truth",
+      "title": "Reconcile Agora UI polish and lifecycle truth",
+      "summary": "Replace stale draft labels with an exact 001-011 source/hosted-evidence matrix without manufacturing historical acceptance.",
+      "phase": "A5 lifecycle documentation",
       "wave": "A5",
       "owner": "Claude",
-      "owner_capability": "evidence and lifecycle truth reconciliation",
+      "owner_capability": "cross-repository evidence and lifecycle reconciliation",
       "reviewer": "Antigravity",
-      "reviewer_capability": "historical PR and ancestry verification",
+      "reviewer_capability": "historical PR, ancestry, and hosted-proof review",
       "dependsOn": [
         "AGORA-CURRENT-HOSTED-REACCEPT-20260808"
       ],
@@ -317,9 +447,10 @@
         "docs/deployment/evidence/agora/AGORA-UI-LIFECYCLE-RECONCILE-20260808/"
       ],
       "out_of_scope": [
-        "execute-plans frontend source",
+        "execute-plans source",
         "Pantheon product code",
-        "manufactured historical hosted evidence"
+        "manufactured historical evidence",
+        "rewriting old proof as current proof"
       ],
       "artifacts": [
         "docs/bff/execution-tasks/2026-07-13-agora-ui-polish/",
@@ -327,33 +458,33 @@
         "docs/deployment/evidence/agora/AGORA-UI-LIFECYCLE-RECONCILE-20260808/"
       ],
       "acceptance": [
-        "Build a complete UI polish 001-011 matrix from exact execute-plans and Pantheon PRs, merge SHAs, checks, and hosted evidence.",
-        "Distinguish exact task-scoped hosted proof from proof that a task merge is merely an ancestor of a later accepted frontend.",
-        "Record UI polish 010 as source-delivered and present in later hosted ancestry, but do not claim an equivalent standalone task-specific hosted closeout unless new evidence proves it.",
+        "Build a complete 001-011 matrix from exact execute-plans/Pantheon PRs, merge SHAs, review/check evidence, and hosted artifacts.",
+        "Classify source-delivered, task-scoped-hosted-proof, and later-hosted-ancestry separately.",
+        "Record 001 and 010 honestly when no same-named standalone hosted evidence exists; do not relabel their delivered source as absent.",
         "Remove stale draft labels only where canonical merge/evidence truth supports the transition.",
-        "Update the remaining-work index to distinguish historical completion from the newly accepted current pair and cross-loop result.",
+        "Update the remaining-work index to separate historical completion from the newly accepted current pair and cross-loop result.",
         "Keep evidence review_pending until independent exact-head review."
       ],
       "validation": [
-        "GitHub PR/head/merge ancestry checks",
-        "local link and path validation",
-        "status matrix consistency check",
+        "cross-repository PR and merge ancestry check",
+        "local path/link validation",
+        "001-011 status matrix consistency check",
         "git diff --check"
       ],
-      "rollout": "Documentation-only merge after hosted reacceptance.",
-      "rollback": "Revert the documentation merge; no runtime action is allowed.",
+      "rollout": "Documentation-only merge after current hosted acceptance.",
+      "rollback": "Revert documentation only; no runtime or product action is permitted.",
       "evidence_root": "docs/deployment/evidence/agora/AGORA-UI-LIFECYCLE-RECONCILE-20260808"
     },
     {
       "id": "AGORA-CURRENT-CLOSE-20260808",
       "title": "Close the Agora current-environment milestone",
-      "summary": "Publish the final exact evidence matrix and close only when serving deployment, cross-loop chain, safety posture, and lifecycle truth all pass.",
+      "summary": "Publish one final exact-evidence matrix and close only when deployment, cross-loop chain, safety posture, and lifecycle truth all pass.",
       "phase": "A6 closeout",
       "wave": "A6",
       "owner": "Antigravity",
-      "owner_capability": "release evidence closeout",
-      "reviewer": "Claude",
-      "reviewer_capability": "exact-head and hosted acceptance review",
+      "owner_capability": "release evidence and canonical closeout",
+      "reviewer": "Claude2",
+      "reviewer_capability": "independent exact-head, hosted, and residual-risk review",
       "dependsOn": [
         "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
         "AGORA-UI-LIFECYCLE-RECONCILE-20260808"
@@ -367,27 +498,28 @@
       "out_of_scope": [
         "product implementation",
         "deployment mutation",
-        "closing the broader L12 minimum milestone"
+        "closing the broader L12 minimum milestone",
+        "continuous worker monitoring"
       ],
       "artifacts": [
         "docs/deployment/evidence/agora/AGORA-CURRENT-CLOSE-20260808/"
       ],
       "acceptance": [
-        "Publish one gap-by-gap table linking task IDs, implementation PRs, merge SHAs, independent exact-head reviews, required checks, deployed FE/BFF identities, runtime readbacks, and rollback evidence.",
-        "Verify every predecessor is canonical done/archived and no accepted evidence points to a superseded or unserved pair.",
-        "Re-probe public BFF readiness/version and the deployment manifest at closeout time.",
-        "Require the hosted correlated Agora-to-Imitation-to-Consultation result, tenant and auth negatives, restart readback, and safe write posture.",
-        "Record residual non-blocking work separately with owner and expiry; do not relabel a blocker as residual risk.",
-        "Close only after independent reviewer approval; owner self-approval or historical exact-pair evidence is insufficient."
+        "Publish a gap-by-gap matrix linking canonical task IDs, PRs, merge SHAs, independent exact-head reviews, required checks, served FE/BFF identities, durable lineage, hosted readbacks, and rollback proof.",
+        "Verify every predecessor is canonical done/archived and no evidence points to a superseded, unreviewed, mismatched, or unserved pair.",
+        "Re-probe public BFF readiness/version and the deployment manifest once at closeout.",
+        "Require the hosted Teaching-Agora-Imitation-Consultation lineage, ack ordering, tenant/auth negatives, restart readback, DLQ/replay, and safe-write posture.",
+        "Record real residual non-blockers separately with owner and expiry; never relabel a blocking failure as residual risk.",
+        "Close only after independent reviewer approval; owner self-approval and historical AG-HOSTED-CLOSE-002 evidence are insufficient."
       ],
       "validation": [
-        "canonical task and archive readback",
-        "GitHub PR/check/review/merge verification",
-        "public hosted identity and readiness probes",
-        "evidence checksum and internal-link validation"
+        "canonical task/archive readback",
+        "PR/check/review/merge verification",
+        "single final public identity/readiness probe",
+        "evidence checksum and link validation"
       ],
-      "rollout": "Evidence-only final merge after all predecessors pass.",
-      "rollback": "Revert the closeout evidence merge and reopen the exact blocking predecessor; do not mutate runtime as a documentation rollback.",
+      "rollout": "Evidence-only final merge after every predecessor passes.",
+      "rollback": "Revert closeout evidence and reopen the exact failed predecessor; documentation rollback must not mutate runtime.",
       "evidence_root": "docs/deployment/evidence/agora/AGORA-CURRENT-CLOSE-20260808"
     }
   ]

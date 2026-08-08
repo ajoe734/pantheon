@@ -2,222 +2,220 @@
 
 Date: 2026-08-08
 
-Frozen repository baseline: `0f2ab06f8de5be84ad18862d5f55a1fd65266324`
+Frozen Pantheon baseline: `de8635aa958593ca332395baba1880aacf096952`
 
-Audit cutoff: `2026-08-08T10:28:00Z`
+Audit cutoff: `2026-08-08T11:31:00Z`
+
+Dispatch status: final packet pending validation and exact-head planning review.
+No product or runtime implementation is authorized by the planning branch
+itself.
 
 ## Objective
 
-Restore the current Pantheon dev BFF without weakening safe defaults, complete
-the real Agora -> Learning / Imitation -> Consultation handoff chain, prove it
-with a service-bound verifier, reaccept one exact hosted FE/BFF pair, and then
-reconcile the Agora lifecycle documents.
+Restore current dev BFF availability without weakening safe defaults, close
+the two missing durable edges from Agora to Policy Learning and from terminal
+Imitation candidates to Consultation, bind those workers safely, execute the
+already-planned real four-loop Learning verifier, reaccept one exact hosted
+FE/BFF pair, and then synchronize Agora lifecycle documentation.
 
-This packet is an addendum to the already-materialized twelve-loop minimum
-functional program. It does not redispatch work already owned by
-`L12-MIN-AGORA-20260808`, `L12-MIN-IMIT-20260808`,
-`L12-MIN-CONS-20260808`, `L12-MIN-BFF-20260808`,
-`L12-MIN-E2E-20260808`, or `L12-MIN-HOSTED-20260808`.
+This is a coordination packet. The Pantheon supervisor is the only routine
+implementation dispatcher. Chatbox planning does not implement product,
+deployment, or control-plane changes.
 
-## Current verdict
+## Frozen conclusion
 
-Agora's principal product and UI source delivery is substantially complete,
-and historical exact-pair hosted acceptance is valid for its frozen 2026-07-24
-pair. The current environment is not accepted:
+Agora's principal feature and UI source work is substantially delivered, and
+the historical `AG-HOSTED-CLOSE-002` result remains valid for FE
+`e4399e3ec68f...` plus BFF `f71c1f8ba889...`. The current environment is not
+accepted:
 
-- the public BFF `/readyz` and `/bff/version` returned HTTP 502;
-- `pantheon-operator-bff-1` was left in `Created` state after deployment run
-  `31250996848` failed;
-- `pantheon-source-ingest-1` was running but unhealthy;
-- the served frontend manifest still declares BFF `be956c07aca8...`, while the
-  unstarted candidate image declares revision `a55721bce2a7...`;
-- the manifest still declares read-only, strict fallback, real writes false,
-  stub writes false, and no embedded bearer token, but the unavailable BFF
-  prevents runtime revalidation;
-- the current database contains 81 Agora dataset records and 81 evidence
-  handoffs, all 81 handoffs are pending, zero are acknowledged, and Policy
-  Learning contains zero candidates.
+- public BFF `/readyz` and `/bff/version` returned 502;
+- deployment run `31250996848` left `operator-bff` unserved after a candidate
+  dependency failed;
+- the old frontend manifest remained, but it did not identify a functioning
+  BFF runtime;
+- all 81 existing Agora dataset records are `observe`, all 81 evidence
+  handoffs are pending, and zero are acknowledged;
+- Policy Learning has zero candidates and no Agora handoff consumer;
+- Consultation has no Policy-Learning candidate intake, zero memos/handoffs,
+  and two historical dead-letter items; and
+- the real Learning verifier has been planned but not materialized.
 
-The full frozen evidence and gap-to-task traceability are in
-`GAP-AUDIT.md`. The machine-readable task DAG is in `execution-tasks.json`.
+See [GAP-AUDIT.md](./GAP-AUDIT.md) for the full evidence inventory and
+[execution-tasks.json](./execution-tasks.json) for the machine-readable task
+contracts.
 
-## Deduplication result
+## Deduplication decisions
 
-| Observed gap | Existing canonical owner | Addendum delta |
+| Existing scope | Canonical owner | This addendum's boundary |
 |---|---|---|
-| Source Ingestion service cannot finish readiness/tick | `L12-MIN-SRC-20260808` | No duplicate service repair. The addendum deployment task owns only incumbent preservation, governed recovery, and deploy transaction behavior. |
-| Agora interaction -> evidence/dataset handoff | `L12-MIN-AGORA-20260808` | No duplicate component task. |
-| Agora dataset -> terminal shadow candidate | `L12-MIN-IMIT-20260808` | No duplicate component task. |
-| Consultation request -> terminal memo | `L12-MIN-CONS-20260808` | No duplicate component task. |
-| Dependency health event and BFF readback | `L12-MIN-BFF-20260808` | No duplicate health-monitor task. Deployment recovery separately restores serving availability. |
-| Twelve normal happy paths | `L12-MIN-E2E-20260808` | Add one Agora-specific service-bound verifier for correlation, tenant isolation, duplicate/restart, acknowledgement, and DLQ/replay, which the minimum task explicitly excludes. |
-| Twelve hosted terminal readbacks | `L12-MIN-HOSTED-20260808` | Add current Agora exact-pair reacceptance after the generic hosted gate. |
-| Minimum twelve-loop closeout | `L12-MIN-CLOSE-20260808` | Add a separate Agora current-environment closeout; it must not close the broader L12 milestone. |
-| UI polish lifecycle/index drift | None active | Add documentation-only reconciliation after current hosted proof. |
+| Source Ingestion readiness/tick repair | `L12-MIN-SRC-20260808` | Deployment task owns incumbent preservation and rollback transaction, not Source Ingestion product code |
+| Agora interaction to DatasetVersion/handoff | `L12-MIN-AGORA-20260808` | New consumer starts after this component task |
+| Dataset to shadow candidate happy path | `L12-MIN-IMIT-20260808` | New task owns durable handoff consumption/ack ordering, not the base candidate implementation |
+| Consultation request to terminal memo | `L12-MIN-CONS-20260808` | New task owns candidate-derived request intake only |
+| Shared Compose/catalog integration | `L12-MIN-INTEGRATE-20260808` | New binding task waits for this shared-file owner |
+| Twelve normal service-bound paths | `L12-MIN-E2E-20260808` | Real Learning verifier adds lineage, auth/tenant, duplicate, restart, ack, and DLQ/replay proof |
+| Twelve hosted terminal readbacks | `L12-MIN-HOSTED-20260808` | Agora current hosted task adds exact-pair and full Learning-chain acceptance |
+| Real Learning verifier successor | `L12-VERIFY-LEARN-REAL-VERIFIER-001` in prior planned catalog | Reuse this ID; do not create `AGORA-L12-REAL-VERIFIER-20260808` and do not dispatch the obsolete 28-task catalog |
+| Broader minimum closeout | `L12-MIN-CLOSE-20260808` | Agora closeout does not close the broader twelve-loop milestone |
 
-The canonical checkpoint already contains the minimum successor task cards.
-Packet A's bridge receipt reports `invalid_materialization` because its
-immediate installed-runtime readback failed, while a later authoritative
-checkpoint contains the task rows. The reconciliation task must confirm the
-durable hashes and must not replay or duplicate those IDs. Packet B was
-admitted with verified authoritative readback for `L12-MIN-HOSTED-20260808`
-and `L12-MIN-CLOSE-20260808`.
+A preliminary packet was incorrectly queued before this audit was complete:
+`pkt-agora-current-environment-gap-20260808-e765bcbed`. It is not accepted as
+implementation authority. The one final handoff must explicitly supersede it,
+read back canonical IDs/hashes once, and refuse to replay or overwrite any
+conflicting materialization.
 
-## Execution DAG
+## Final execution DAG
 
 ```text
 AGORA-CURRENT-GAP-EXECUTION-20260808
-        |
-        +--> AGORA-DEV-DEPLOY-RECOVERY-20260808
-        |
-        +--> existing L12-MIN-AGORA / IMIT / CONS
-                    |
-                    v
-            AGORA-L12-CROSS-LOOP-INTEGRATE-20260808
-                    |
-          existing L12-MIN-E2E-20260808
-                    |
-                    v
-            AGORA-L12-REAL-VERIFIER-20260808
-                    |
-          existing L12-MIN-HOSTED-20260808
-                    |   + deployment recovery
-                    v
-            AGORA-CURRENT-HOSTED-REACCEPT-20260808
-                    |
-            AGORA-UI-LIFECYCLE-RECONCILE-20260808
-                    |
-            AGORA-CURRENT-CLOSE-20260808
+  |
+  +--> AGORA-DEV-DEPLOY-RECOVERY-20260808 ----------------------+
+  |                                                             |
+  +--> existing L12-MIN-AGORA + L12-MIN-IMIT                    |
+          |                                                     |
+          v                                                     |
+      AGORA-IMIT-HANDOFF-CONSUME-20260808                       |
+          |                                                     |
+          +--> existing L12-MIN-CONS                            |
+          v                                                     |
+      IMIT-CONSULTATION-INTAKE-20260808                         |
+          |                                                     |
+          +--> existing L12-MIN-INTEGRATE                       |
+          v                                                     |
+      AGORA-LEARNING-CROSS-LOOP-BIND-20260808                   |
+          |                                                     |
+          +--> existing L12-MIN-TEACH + L12-MIN-E2E             |
+          v                                                     |
+      L12-VERIFY-LEARN-REAL-VERIFIER-001                        |
+          |                                                     |
+          +--> existing L12-MIN-HOSTED                          |
+          |                                                     |
+          +-----------------------------------------------------+
+          v
+      AGORA-CURRENT-HOSTED-REACCEPT-20260808
+          |
+          v
+      AGORA-UI-LIFECYCLE-RECONCILE-20260808
+          |
+          v
+      AGORA-CURRENT-CLOSE-20260808
 ```
 
-The deployment recovery lane may proceed as soon as the reconciliation gate
-passes. It does not wait for the product DAG because public BFF availability is
-a P0 dev-environment issue. The current hosted reacceptance remains ordered
-after both the deployment recovery and the real cross-loop verifier.
+The P0 deployment lane may run after admission without waiting for the product
+DAG. Exact hosted acceptance waits for both deployment recovery and the real
+Learning verifier.
 
-## Task packets
+## Governed task packets
 
 ### `AGORA-CURRENT-GAP-EXECUTION-20260808`
 
-- Owner capability: task-state and cross-worktree reconciliation.
-- Independent reviewer capability: cross-service plan and scope review.
-- Scope: read-only current-state inspection plus task-scoped evidence.
-- Acceptance: verify the seven addendum tasks remain non-duplicates; verify
-  every external `L12-MIN-*` dependency and task-spec hash in authoritative
-  state; resolve Packet A's receipt/readback ambiguity without replaying it;
-  record current PR, branch, worktree, and artifact collisions; release the
-  addendum DAG only when dependency and ownership truth is exact.
-- Out of scope: product changes, direct state JSON edits, queue-file edits,
-  provider policy, supervisor scheduling changes, and live deployment.
+Admission/reconciliation only. It performs one authoritative task/PR/branch/
+worktree readback, supersedes the preliminary packet, compares every canonical
+ID and immutable task hash, validates the final DAG, and releases only absent
+or exact-matching task specifications. A hash conflict blocks; it is never
+overwritten or replayed.
 
 ### `AGORA-DEV-DEPLOY-RECOVERY-20260808`
 
-- Owner capability: nonproduction deployment transaction and rollback repair.
-- Independent reviewer capability: failure-injection and hosted identity
-  review.
-- Scope: `.github/workflows/nonprod-deploy.yml`,
-  `scripts/deploy_nonprod_vm.sh`, focused deploy contract tests, and task
-  evidence. It must not change Source Ingestion product code owned by
-  `L12-MIN-SRC-20260808`.
-- Acceptance: perform only the smallest governed dev recovery necessary to
-  restore a BFF readiness 200; preserve or restore the last accepted incumbent
-  when any candidate dependency is unhealthy; never publish a new manifest
-  before candidate admission; make dependency failure leave no unserved
-  `Created` BFF; add failure-injection regression coverage; merge the source
-  fix and perform one bounded dev rollout with exact identity evidence.
-- Rollback: under the environment lease, select the last accepted exact pair;
-  revert the source merge if the transaction change regresses delivery.
+Owns the deployment transaction and governed dev recovery. It must restore a
+public BFF 200, keep safe defaults, validate dependencies before incumbent
+replacement, automatically restore the last accepted BFF/manifest when a
+candidate or lease fails, and add deterministic failure-matrix coverage. Any
+Source Ingestion product defect returns to `L12-MIN-SRC-20260808`.
 
-### `AGORA-L12-CROSS-LOOP-INTEGRATE-20260808`
+### `AGORA-IMIT-HANDOFF-CONSUME-20260808`
 
-- Owner capability: Agora, Policy Learning, and Consultation integration.
-- Independent reviewer capability: tenant-safe durable workflow review.
-- Scope is dependency-ordered after the three existing component tasks so
-  their overlapping service paths are never edited in parallel.
-- Acceptance: one tenant-scoped Agora interaction produces persisted evidence
-  and a DatasetVersion handoff; the handoff is acknowledged only after durable
-  downstream ingestion; Policy Learning produces a terminal shadow candidate
-  linked to that dataset; the candidate produces a governed Consultation
-  request and terminal memo/handoff; all identifiers are correlated; no seed
-  fallback and no live-capital authority are introduced.
-- Rollback: revert the integration merge; retain or quarantine durable audit
-  rows instead of deleting them.
+Owns the missing durable Agora-to-Policy-Learning edge. It consumes only
+eligible tenant-scoped `learn` handoffs, persists an idempotent downstream
+receipt/job/candidate, and acknowledges through the Agora-owned authenticated
+contract only after persistence succeeds. Policy Learning may not write Agora
+tables directly, and the 81 historical `observe` rows may not be bulk-acked.
 
-### `AGORA-L12-REAL-VERIFIER-20260808`
+### `IMIT-CONSULTATION-INTAKE-20260808`
 
-- Owner capability: independent cross-service verification.
-- Independent reviewer capability: verifier integrity and negative-control
-  review.
-- Scope: a new dedicated verifier, focused tests, and evidence only. Product
-  repair is returned to the owning task.
-- Acceptance: use actual service calls and durable database/API readbacks;
-  fail when a required service is absent; record exact interaction, evidence,
-  dataset, handoff, acknowledgement, candidate, consultation request, and memo
-  identifiers; cover duplicate/idempotency, tenant isolation, restart
-  readback, failure-to-DLQ, replay, and safe write posture; reconcile backlog
-  counts without purging historical rows; reject fixture-only or literal-pass
-  evidence.
+Owns the terminal-candidate-to-Consultation intake edge. It creates exactly
+one tenant-scoped governed request with dataset/handoff/candidate/trace lineage
+and lets the existing Consultation executor produce the memo/handoff. It must
+prove state filtering, retry/DLQ, replay idempotency, tenant isolation, and no
+runtime or capital effect.
+
+### `AGORA-LEARNING-CROSS-LOOP-BIND-20260808`
+
+Owns only Compose/runtime endpoints, scoped credentials, activation, health,
+and fail-closed configuration. It waits for `L12-MIN-INTEGRATE-20260808` so
+workers never edit shared Compose/catalog files in parallel. Both new consumers
+remain disabled until this reviewed task activates them in paper/shadow dev.
+
+### `L12-VERIFY-LEARN-REAL-VERIFIER-001`
+
+Uses the existing successor ID and verifier-only file scope. It must call real
+Teaching, Agora, Policy Learning, and Consultation boundaries; correlate one
+non-fixture learn chain; prove ack order, duplicate/two-worker behavior,
+tenant/RBAC/auth negatives, restart persistence, DLQ/replay, safe writes, and
+zero runtime mutation; and fail nonzero on missing or self-attested evidence.
 
 ### `AGORA-CURRENT-HOSTED-REACCEPT-20260808`
 
-- Owner capability: hosted exact-pair validation.
-- Independent reviewer capability: deployment and security-posture evidence
-  review.
-- Acceptance: require public BFF readiness and version 200; bind runtime BFF
-  revision, FE revision, pair ID, deployment manifest, Agora v1.13 manifest,
-  and reviewed source; rerun the real verifier against hosted dev; repeat BFF
-  restart/readback; prove live/strict/read-only settings and negative writes;
-  refuse acceptance on drift, fallback, unreviewed source, or stale evidence.
-- Rollback: keep or reselect the previous accepted exact pair; never switch the
-  manifest on a failed candidate.
+Requires public BFF readiness/version 200 and exact equality between served FE,
+served BFF, pair ID, manifest, compatibility identity, reviewed heads, and
+merged commits. It runs the real Learning verifier against hosted dev, repeats
+governed restart/readback, and rejects stale, local, historical-only,
+manifest-only, fallback, unsafe, or mismatched proof.
 
 ### `AGORA-UI-LIFECYCLE-RECONCILE-20260808`
 
-- Owner capability: evidence and lifecycle truth reconciliation.
-- Independent reviewer capability: historical PR/ancestry verification.
-- Acceptance: update the 001-011 matrix from exact merged PRs and hosted
-  descendants; distinguish task-scoped hosted proof from descendant ancestry;
-  state honestly that UI polish 010 was merged but lacks equivalent standalone
-  hosted closeout; update remaining-work/current-environment language only
-  after the current hosted task passes.
-- Out of scope: frontend product changes and manufactured evidence.
+Documentation only. It builds the exact 001-011 matrix and distinguishes
+source delivery, task-scoped hosted proof, and later hosted ancestry. In
+particular, 001 and 010 must not be called unimplemented merely because no
+same-named standalone hosted evidence file was found.
 
 ### `AGORA-CURRENT-CLOSE-20260808`
 
-- Owner capability: release evidence closeout.
-- Independent reviewer capability: exact-head and hosted acceptance review.
-- Acceptance: publish one final table linking each gap to implementation PR,
-  merge SHA, independent review, check run, deployed identities, runtime
-  readback, rollback proof, and canonical task status; close only when every
-  predecessor is done and the public environment still serves the reviewed
-  pair.
+The unique final sink. It links every gap to canonical status, PR, merge SHA,
+independent exact-head review, required checks, deployed identities, durable
+lineage, runtime readback, and rollback evidence. It closes only the Agora
+current-environment milestone.
 
-## Shared delivery rules
+## Acceptance invariants
 
-Every source-changing task must use its declared clean task worktree and
-branch, target `dev`, run focused and relevant regression validation, commit
-only declared artifacts, push, open a PR, wait required checks, obtain an
-independent exact-head review, merge, and archive evidence. The Pantheon
-supervisor is the sole routine dispatcher.
+Every source-changing task must:
 
-No task may edit `/home/lupin/pantheon-ci-deploy/dev-root`, canonical runtime
-state, queue JSON, or `.orchestrator/config.json` directly. A temporary live
-repair is permitted only for the smallest dev BFF recovery and must be followed
-by the exact source/config delivery flow in the same task.
+1. use its declared clean worktree and task branch;
+2. target Pantheon `dev` (or execute-plans `dev` if a later explicitly scoped
+   frontend task is ever needed);
+3. stay inside declared artifacts and defer overlap to its predecessor;
+4. run focused and relevant regression validation;
+5. commit and push only task-owned files;
+6. open a PR, pass visible required checks, and obtain independent exact-head
+   review;
+7. merge through repository policy and archive reviewer-consumable evidence;
+8. retain strict authentication, tenant isolation, read-only/safe-write
+   defaults, and no live-capital authority; and
+9. preserve durable audit rows on rollback.
 
-## Merge and rollout order
+No task may directly edit canonical task/event JSON, queue files,
+`.orchestrator/config.json`, or
+`/home/lupin/pantheon-ci-deploy/dev-root`. A smallest temporary dev BFF rescue
+is allowed only inside the deployment recovery task and must be followed by the
+exact permanent source delivery flow in the same task.
 
-1. Merge and close the reconciliation gate.
-2. Restore BFF and merge the deployment transaction repair.
-3. Complete the existing `L12-MIN-AGORA`, `L12-MIN-IMIT`, and
-   `L12-MIN-CONS` component tasks.
-4. Merge the Agora cross-loop integration task.
-5. Complete `L12-MIN-E2E` and merge the real Agora verifier.
-6. Complete the generic L12 hosted task, then run Agora exact-pair
-   reacceptance.
-7. Reconcile UI/lifecycle truth.
-8. Close Agora current-environment status.
+## Merge, rollout, and rollback order
 
-If a hosted probe fails, keep or restore the previous accepted pair, leave the
-new candidate unaccepted, attach the exact failure evidence to its owner task,
-and do not advance downstream closeout.
+1. Admit the final addendum after one conflict/hash readback.
+2. Run the P0 deployment recovery lane.
+3. Complete the existing Agora/Imitation minimum components.
+4. Merge the handoff consumer.
+5. Complete the existing Consultation minimum component and merge candidate
+   intake.
+6. Complete the existing shared integration task and merge runtime binding.
+7. Complete Teaching/E2E predecessors and merge the real Learning verifier.
+8. Complete the generic hosted gate, then perform one Agora exact-pair hosted
+   admission.
+9. Reconcile UI/lifecycle truth.
+10. Merge the Agora current-environment closeout.
+
+If any candidate, service, identity, tenant, auth, restart, DLQ/replay, or safe
+posture proof fails, the candidate remains unaccepted. Hosted rollback restores
+the previous accepted pair; product rollback disables the new consumers while
+preserving their durable rows for diagnosis and later replay.
