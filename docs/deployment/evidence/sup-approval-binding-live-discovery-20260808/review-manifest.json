@@ -1,0 +1,15 @@
+{
+  "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+  "title": "Discover PR binding live instead of trusting stale/never-populated task metadata",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "head_commit": "3c5dcfcfbf0bf06f3acf43d951b10d2682a29227",
+  "acceptance_mapping": {
+    "live_pr_discovery": "scripts/ai_status.py: discover_open_pr_binding queries gh pr view <branch> when REVIEW_PR/REVIEW_HEAD_SHA are omitted, ensuring exact-head PR binding works for all PR-backed tasks without relying on missing task metadata.",
+    "verification_tests": "scripts/test_ai_status.py: added unittest cases for live PR discovery fallback and exact-head review binding validation."
+  },
+  "verification_evidence": {
+    "test_command": "python3 scripts/test_ai_status.py",
+    "status": "PASSED"
+  }
+}
