@@ -15,6 +15,7 @@ import hmac
 import os
 import re
 import threading
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
@@ -815,7 +816,28 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     }
 
 
+_SOURCE_FRESHNESS_CACHE_TTL_SECONDS = max(
+    1, int(os.getenv("SOURCE_INGEST_FRESHNESS_CACHE_TTL_SECONDS", "30"))
+)
+_source_freshness_cache: dict[str, Any] = {"computed_at": 0.0, "payload": None}
+_source_freshness_cache_lock = threading.Lock()
+
+
 def _source_freshness_readiness() -> dict[str, Any]:
+    # _connector_freshness_summary re-reads and re-parses several JSONL stores
+    # per connector with no caching of its own; at current connector counts
+    # (hundreds) that is tens of minutes of wall-clock time per call, which
+    # made every /healthz, /livez, /readyz, and /metrics request hang far past
+    # any client or container healthcheck timeout. Health probes must be O(1)
+    # from the caller's perspective, so cache the result for a short TTL
+    # instead of recomputing it inline on every probe.
+    now = time.monotonic()
+    with _source_freshness_cache_lock:
+        cached_payload = _source_freshness_cache["payload"]
+        cache_age = now - _source_freshness_cache["computed_at"]
+        if cached_payload is not None and cache_age < _SOURCE_FRESHNESS_CACHE_TTL_SECONDS:
+            return cached_payload
+
     summaries = [
         _connector_freshness_summary(config.connector.connector_id)
         for config in connector_store.list_configs()
@@ -823,7 +845,7 @@ def _source_freshness_readiness() -> dict[str, Any]:
     scheduled = [summary for summary in summaries if summary["schedule_enabled"]]
     stale = [summary for summary in scheduled if summary["status"] == "stale"]
     degraded = [summary for summary in scheduled if summary["status"] in {"degraded", "never_ingested"}]
-    return {
+    payload = {
         # Data staleness is visible but does not make the API process unready;
         # the scheduler depends on API readiness and must be able to repair it.
         "status": "stale" if stale else ("degraded_data" if degraded else "ok"),
@@ -832,6 +854,10 @@ def _source_freshness_readiness() -> dict[str, Any]:
         "stale_connector_count": len(stale),
         "degraded_connector_count": len(degraded),
     }
+    with _source_freshness_cache_lock:
+        _source_freshness_cache["computed_at"] = time.monotonic()
+        _source_freshness_cache["payload"] = payload
+    return payload
 
 
 def _connector_schema_hash(connector: SourceConnector, fetch: dict[str, Any] | None) -> str:
