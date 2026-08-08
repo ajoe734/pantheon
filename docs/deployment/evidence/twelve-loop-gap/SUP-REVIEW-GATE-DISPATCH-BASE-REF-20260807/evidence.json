@@ -5,20 +5,21 @@
     "title": "Dispatch canonical-review-gate workflow against base branch, not head",
     "phase": "Supervisor Dispatch Reliability",
     "owner": "Codex",
-    "reviewer": "Antigravity",
+    "reviewer": "Codex2",
     "status": "review_pending",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json",
-    "evidence_cut_at": "2026-08-07T12:22:19Z"
+    "evidence_cut_at": "2026-08-08T15:16:15Z"
   },
   "scope": {
     "owned_layer": "The GitHub review bridge's best-effort workflow-dispatch reference for canonical review-gate rechecks.",
     "changed_files": [
       "scripts/git/github_review_bridge.py",
       "scripts/git/test_github_review_bridge.py",
-      "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json"
+      "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json",
+      ".orchestrator/task-briefs/sup_review_gate_dispatch_base_ref_20260807.md"
     ],
     "not_changing": [
       ".github/workflows/canonical-review-gate.yml and its trigger definition",
@@ -28,7 +29,7 @@
     "composes_with": [
       "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805, which added the explicit recheck dispatch",
       "the canonical-review-gate workflow on dev, which evaluates the supplied head_ref and head_sha inputs",
-      "Antigravity's independent exact-head review and the protected dev merge path"
+      "Codex2's independent exact-head review and the protected dev merge path"
     ]
   },
   "root_cause_and_change": {
@@ -37,9 +38,9 @@
     "safety_property": "The workflow source is resolved from the current protected base branch while the reviewed PR identity remains the exact explicit head inputs."
   },
   "delivery": {
-    "base_commit": "f9cf4e8f83899aac8f2b1a215e89bf92eac086fd",
+    "base_commit": "619acd04184e8d3fc3aef322d160e7c9106670ad",
     "implementation_commit_before_evidence": "78cae643d16d1827aeec61443e65cb39309418c3",
-    "pull_request": null,
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4605",
     "reviewed_head": null,
     "merge_commit": null,
     "protected_merge_complete": false,
@@ -59,7 +60,7 @@
       },
       {
         "command": "git merge-base --is-ancestor origin/dev HEAD",
-        "result": "pass after rebasing implementation commit onto origin/dev@f9cf4e8f83899aac8f2b1a215e89bf92eac086fd",
+        "result": "pass after merging origin/dev@619acd04184e8d3fc3aef322d160e7c9106670ad into the task branch",
         "conclusion": "The task branch is based on the current dev tip at the evidence cut."
       }
     ],
@@ -69,7 +70,7 @@
     ]
   },
   "review": {
-    "required_reviewer": "Antigravity",
+    "required_reviewer": "Codex2",
     "status": "pending_independent_exact_head_review",
     "decision": null,
     "approval_event_id": null,
