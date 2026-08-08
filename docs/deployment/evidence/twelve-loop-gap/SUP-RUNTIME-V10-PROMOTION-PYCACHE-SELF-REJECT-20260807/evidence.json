@@ -5,15 +5,15 @@
     "title": "governed promotion pipeline rejects its own generated __pycache__, blocking all automated dev-root sync",
     "owner": "Codex",
     "reviewer": "Claude2",
-    "status": "pending_independent_review",
+    "status": "pending_independent_rereview",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/evidence.json",
-    "evidence_cut_at": "2026-08-08T11:19:35Z"
+    "evidence_cut_at": "2026-08-08T11:53:53Z"
   },
   "scope": {
-    "owned_layer": "Immutable supervisor candidate provisioning, governed promotion Python entrypoints, persistent supervisor Python argv, and their focused regression contracts.",
+    "owned_layer": "Immutable supervisor candidate provisioning, governed launch environment, watchdog and status child-process inheritance, persistent supervisor Python argv, and their focused regression contracts.",
     "not_changing": [
       "the deny-by-default candidate cleanliness allowlist",
       "supervisor scheduling or fleet policy",
@@ -27,15 +27,22 @@
       "the existing sync-dev-root rollback-safe promotion transaction"
     ],
     "changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/supervisor_watchdog.py",
       ".orchestrator/task-briefs/sup_runtime_v10_promotion_pycache_self_reject_20260807.md",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_supervisor_watchdog.py",
+      "scripts/ai-status.sh",
       "scripts/deploy_nonprod_vm.sh",
       "scripts/promote-supervisor-runtime.sh",
       "scripts/promote_supervisor_runtime.py",
       "scripts/provision_live_supervisor_config.py",
+      "scripts/run-supervisor-watchdog.sh",
       "scripts/sync-dev-root.sh",
       "scripts/test_dev_supervisor_watchdog_deploy_contract.py",
       "scripts/test_promote_supervisor_runtime.py",
       "scripts/test_provision_live_supervisor_config.py",
+      "scripts/test_status_command_runtime_pin.py",
       "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/README.md",
       "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/evidence.json"
     ]
@@ -54,15 +61,33 @@
         "scripts/git/__pycache__/"
       ]
     },
-    "secondary_observation": "A separate 2026-08-06 retry aborted while treating a checkout with a gitfile .git as an immutable standalone runtime. The repaired sync and deploy paths continue to materialize standalone command-runtimes/<40-hex> clones with real .git directories; this task does not weaken that identity guard."
+    "review_rejection": {
+      "reviewed_head_sha": "9f2b6b0165a3be8899b7f96f1fb0fd12a9d0bf23",
+      "reviewer": "Claude2",
+      "decision": "changes_requested",
+      "recorded_at": "2026-08-08T11:38:15Z",
+      "finding": "python -B is interpreter-local; supervisor and worker status children could repopulate the immutable command root after launch because they did not inherit PYTHONDONTWRITEBYTECODE=1."
+    },
+    "secondary_observation": {
+      "description": "A separate 2026-08-06 retry aborted while treating a checkout with a gitfile .git as an immutable standalone runtime.",
+      "scope_decision": "Not reproduced or root-caused by this pycache repair. It requires a separately supervisor-dispatched task before any closure claim; no task id is invented in this worker lane.",
+      "preserved_guard": "The repaired sync and deploy paths continue to materialize standalone command-runtimes/<40-hex> clones with real .git directories and do not weaken the candidate Git-directory identity guard."
+    }
   },
   "repair": {
     "anchor_commit": "3a889bf14d3761a7f13ae55e23ec4d198058f91e",
-    "strategy": "Prevent bytecode writes at every candidate-side entrypoint and persist Python -B in the config-owned supervisor command so promotion launch and watchdog restart remain clean.",
+    "review_repair_anchor_commit": "8041de89a4b39dc40acc7310b592485685600700",
+    "legacy_migration_fixture_anchor_commit": "42e235a4d6d07fb201459f53ba1212264a9771f5",
+    "strategy": "Prevent bytecode writes at every candidate-side entrypoint, make PYTHONDONTWRITEBYTECODE=1 part of the governed and watchdog launch environment so descendants inherit it, and retain Python -B in config-owned argv as belt-and-braces protection.",
     "controls": [
       "provision_live_supervisor_config disables bytecode before importing the promotion verifier",
       "promote-supervisor-runtime.sh invokes both discover and promote modes with python3 -B",
       "sync-dev-root and nonprod deployment invoke candidate provisioning with python3 -B",
+      "the governed launch contract requires PYTHONDONTWRITEBYTECODE=1 and binds it into the launched process identity whenever the config-owned argv contains -B",
+      "a legacy incumbent without -B remains capturable once so config drift can move it through the existing governed promotion transaction",
+      "watchdog launches and restarts export PYTHONDONTWRITEBYTECODE=1 to the supervisor and every descendant",
+      "supervisor status subprocess context sets PYTHONDONTWRITEBYTECODE=1 for recover, dispatch, and batch mutations",
+      "ai-status.sh exports PYTHONDONTWRITEBYTECODE=1 before any helper interpreter and invokes ai_status.py with -B",
       "newly rendered supervisor commands include -B",
       "promotion config variants insert -B for legacy live configs and do so idempotently",
       "verify_working_tree_cleanliness remains unchanged and continues rejecting ignored directories"
@@ -70,27 +95,27 @@
     "security_decision": "Do not allowlist __pycache__ or .pyc. Untracked executable bytecode remains forbidden in an immutable command runtime."
   },
   "validation": {
-    "validated_at": "2026-08-08T11:19:35Z",
-    "validated_head": "3a889bf14d3761a7f13ae55e23ec4d198058f91e",
+    "validated_at": "2026-08-08T11:53:53Z",
+    "validated_head": "42e235a4d6d07fb201459f53ba1212264a9771f5",
     "commands": [
       {
         "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_sync_dev_root.py scripts/test_dev_supervisor_watchdog_deploy_contract.py scripts/test_deploy_runtime_state_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py",
-        "result": "280 passed in 54.99s",
+        "result": "284 passed in 56.23s",
         "conclusion": "pass"
       },
       {
-        "command": "bash -n scripts/promote-supervisor-runtime.sh scripts/sync-dev-root.sh scripts/deploy_nonprod_vm.sh",
+        "command": ".venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor_watchdog.py .orchestrator/test_supervisor.py::DispatchStatusSyncTests scripts/test_status_command_runtime_pin.py::StatusCommandRuntimePinTests::test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free",
+        "result": "84 passed in 22.83s",
+        "conclusion": "pass"
+      },
+      {
+        "command": "bash -n scripts/ai-status.sh scripts/run-supervisor-watchdog.sh scripts/promote-supervisor-runtime.sh scripts/sync-dev-root.sh scripts/deploy_nonprod_vm.sh",
         "result": "exit 0",
         "conclusion": "pass"
       },
       {
-        "command": "python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_dev_supervisor_watchdog_deploy_contract.py",
+        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/supervisor_watchdog.py scripts/promote_supervisor_runtime.py scripts/provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_status_command_runtime_pin.py",
         "result": "exit 0",
-        "conclusion": "pass"
-      },
-      {
-        "command": "git merge-base --is-ancestor 85b09fee9 origin/dev; git merge-base --is-ancestor 52f545ec2 origin/dev",
-        "result": "both exit 0 at origin/dev 52f545ec2e64515b50e4ca7e901d1251dda937da",
         "conclusion": "pass"
       },
       {
@@ -98,12 +123,26 @@
         "result": "exit 0",
         "conclusion": "pass"
       }
-    ]
+    ],
+    "exploratory_full_file_run": {
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_sync_dev_root.py scripts/test_dev_supervisor_watchdog_deploy_contract.py scripts/test_deploy_runtime_state_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_status_command_runtime_pin.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_supervisor.py",
+      "result_before_fixture_correction": "958 passed, 5 failed, 176 subtests passed in 230.95s",
+      "task_failure_disposition": "One legacy-incumbent test fixture assumed the repaired environment even though its argv intentionally lacked -B; the fixture was corrected and the complete 284-test promotion/deploy suite then passed.",
+      "pre_existing_failures_outside_scope": [
+        "two status-command mutation fixtures omit the exact process generation now required by ai_status.py",
+        "two runtime-config tests still expect Antigravity2 disabled while current .orchestrator/config.json enables it"
+      ]
+    }
   },
   "acceptance": {
     "pre_review": {
       "candidate_provision_import_writes_no_pycache": "pass",
       "promotion_wrapper_uses_no_bytecode_mode": "pass",
+      "governed_launch_environment_is_inheritable_and_identity_bound": "pass",
+      "legacy_incumbent_remains_migratable": "pass",
+      "watchdog_restart_environment_is_inheritable": "pass",
+      "supervisor_status_child_writes_no_bytecode": "pass",
+      "worker_status_wrapper_writes_no_bytecode": "pass",
       "supervisor_config_persists_no_bytecode_mode": "pass",
       "legacy_config_variant_upgrade_is_idempotent": "pass",
       "candidate_cleanliness_guard_remains_fail_closed": "pass",
@@ -115,19 +154,19 @@
         "the task PR is merged into dev",
         "sync-dev-root materializes the merged dev SHA as a standalone immutable runtime",
         "the governed promotion transaction records outcome=promoted with three fresh successful loops",
-        "live config and supervisor process bind the promoted immutable command root and include Python -B",
+        "live config and supervisor process bind the promoted immutable command root, include Python -B, and expose PYTHONDONTWRITEBYTECODE=1 in the process identity",
         "the promoted command runtime has no ignored __pycache__ or .pyc",
         "the promoted SHA contains both PR #4582 and PR #4625"
       ]
     }
   },
   "rollout_and_rollback": {
-    "rollout": "After protected merge, invoke the existing sync-dev-root governed handoff from the configured command root. Do not directly edit dev-root or signal the supervisor outside the transaction.",
+    "rollout": "After protected merge, invoke the existing sync-dev-root governed handoff from the configured command root. The current /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json supervisor_command lacks -B, so build_live_config will intentionally report config drift and the first run must migrate that legacy incumbent through the governed promotion transaction. Do not directly edit dev-root or signal the supervisor outside the transaction.",
     "rollback": "The existing promotion transaction retains the incumbent identity and config, terminates a failed candidate generation, reinstalls the rollback config, relaunches the incumbent, and requires fresh rollback loops before reporting rolled_back.",
     "fail_closed": "If candidate materialization, cleanliness, identity, config CAS, process launch, or post-launch loop verification fails, do not claim PR #4582/#4625 runtime promotion."
   },
   "delivery": {
-    "task_pull_request": null,
+    "task_pull_request": "https://github.com/ajoe734/pantheon/pull/4629",
     "reviewed_head_sha": null,
     "merge_commit": null,
     "protected_merge_complete": false,
@@ -136,14 +175,16 @@
   },
   "review": {
     "reviewer": "Claude2",
-    "status": "pending_independent_exact_head_review",
-    "decision": null,
-    "reviewed_head_sha": null,
-    "reviewed_at": null,
+    "status": "pending_independent_exact_head_rereview",
+    "decision": "changes_requested_on_prior_head",
+    "reviewed_head_sha": "9f2b6b0165a3be8899b7f96f1fb0fd12a9d0bf23",
+    "reviewed_at": "2026-08-08T11:38:15Z",
     "notes": [
       "Review that no __pycache__ or .pyc allowlist was introduced.",
-      "Review that every supported candidate provisioning/promotion entrypoint uses no-bytecode mode.",
-      "Review that persistent supervisor argv contains -B for both initial rendering and legacy promotion variants.",
+      "Review that governed launch, watchdog restart, supervisor status subprocess, and worker status wrapper all propagate PYTHONDONTWRITEBYTECODE=1.",
+      "Review the real child-process regression that executes command_root/scripts/ai_status.py both directly and through ai-status.sh and scans the full command root for bytecode.",
+      "Review that persistent supervisor argv contains -B for both initial rendering and legacy promotion variants, while a legacy incumbent remains capturable for one governed migration.",
+      "Review the explicit rollout note for the currently installed live config's expected first-run drift.",
       "Bind this already committed manifest with REVIEW_FILE when approving the exact PR head."
     ]
   }
