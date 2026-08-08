@@ -1,0 +1,139 @@
+{
+  "schema_version": "pantheon.supervisor.runtime_promotion_git_dir_enotdir_repair.v1",
+  "task": {
+    "id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+    "title": "Fix governed promotion ENOTDIR failure on candidate .git directory check",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "pending_independent_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+    "evidence_cut_at": "2026-08-08T15:07:42Z"
+  },
+  "scope": {
+    "owned_layer": "Governed supervisor promotion filesystem/Git identity capture for immutable candidates and bootstrap mutable incumbents, plus focused regression coverage.",
+    "not_changing": [
+      "immutable candidate symlink or gitfile rejection",
+      "promotion scheduling, transaction states, rollback ordering, or deployment authority",
+      "live supervisor configuration or process state",
+      "candidate creation or deletion policy",
+      "supervisor fleet policy or canonical task-state governance"
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json"
+    ]
+  },
+  "incident": {
+    "live_failure_evidence": [
+      "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260806T221058790512Z-2056841.json",
+      "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T131005132693Z-3639200.json",
+      "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T133138574179Z-3815249.json",
+      "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T134307753860Z-3911075.json",
+      "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T143911364247Z-100873.json"
+    ],
+    "observed_failure": "ValueError: Candidate Git directory is a symlink or has the wrong type: [Errno 20] Not a directory: '.git'",
+    "root_cause": "The bootstrap mutable-incumbent capture called _open_candidate_root_handle(require_immutable_location=False). That parameter relaxed only the command-runtimes path restriction; the handle still required a standalone .git directory. Pantheon's mutable dev-root is a linked worktree whose .git is a regular gitfile, so the immutable-only O_DIRECTORY check failed before rollback materialization.",
+    "misleading_label": "The shared immutable handle labeled every root as Candidate Git directory, which made the failure appear to originate from the standalone 619acd candidate even though the incompatible layer was mutable-incumbent binding.",
+    "base_runtime": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+    "real_mutable_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "real_mutable_gitfile": "gitdir: /home/lupin/pantheon/.git/worktrees/dev-root"
+  },
+  "repair": {
+    "fd_floor_anchor": "3d0354bd9fd9f4ea6a9e7a1623a59039776ae529",
+    "mutable_gitfile_anchor": "4e06d7f2898c31e576ecd73d5e2d66c7f1b4fe6e",
+    "strategy": "Keep immutable candidate validation unchanged and introduce a separate read-only mutable Git binding for bootstrap incumbents.",
+    "controls": [
+      "immutable candidates still require a direct command-runtimes/<sha> child with a local .git directory",
+      "mutable .git may be either a directory or a stable regular gitfile, but never a symlink, hard link, or other file type",
+      "the mutable root, .git control, referenced Git directory, and common directory are captured component-by-component with no-follow directory opens and revalidated after source capture",
+      "the gitfile has a bounded size, strict UTF-8 single-record format, and canonical non-padded target path",
+      "mutable Git discovery disables fsmonitor, untracked cache, hooks, optional locks, replacement objects, global config, and system config",
+      "the Git top level must equal the process cwd, the local config must not contain includes, and the single origin URL must validate as ajoe734/pantheon",
+      "HEAD/tree must match a fresh trusted origin/dev fetch before and after capture",
+      "index flags, staged drift, and tracked worktree drift fail closed; untracked runtime-only mutable files do not contaminate the freshly materialized rollback clone",
+      "all candidate identity descriptors are promoted above fd 0/1/2 before being exposed through /dev/fd to Git children"
+    ]
+  },
+  "validation": {
+    "validated_at": "2026-08-08T15:07:42Z",
+    "validated_code_head": "4e06d7f2898c31e576ecd73d5e2d66c7f1b4fe6e",
+    "commands": [
+      {
+        "command": "base 619acd runtime source: _mutable_root_binding(ProcessCwdIdentity(/home/lupin/pantheon-ci-deploy/dev-root))",
+        "result": "exit 23; ValueError: Candidate Git directory is a symlink or has the wrong type: [Errno 20] Not a directory: '.git'",
+        "conclusion": "exact incident reproduced read-only"
+      },
+      {
+        "command": "task source: _mutable_root_binding(ProcessCwdIdentity(/home/lupin/pantheon-ci-deploy/dev-root))",
+        "result": "exit 0; head=619acd04184e8d3fc3aef322d160e7c9106670ad tree=33dbb7f25df0c9153e1417151cc712d923d53640 sources=7",
+        "conclusion": "same real mutable worktree binds successfully without promotion"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py",
+        "result": "234 passed in 48.16s",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_sync_dev_root.py",
+        "result": "7 passed in 3.25s",
+        "conclusion": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "exit 0",
+        "conclusion": "pass"
+      }
+    ]
+  },
+  "acceptance": {
+    "pre_review": {
+      "exact_live_root_failure_reproduced_from_base_source": "pass",
+      "real_dev_root_mutable_binding_passes_with_task_source": "pass",
+      "linked_worktree_gitfile_regression": "pass",
+      "mutable_git_control_symlink_rejection": "pass",
+      "mutable_tracked_drift_rejection": "pass",
+      "immutable_candidate_gitfile_rejection": "pass",
+      "immutable_candidate_git_directory_symlink_rejection": "pass",
+      "closed_stdio_descriptor_regression": "pass",
+      "full_promotion_suite": "pass",
+      "sync_contract_suite": "pass"
+    },
+    "runtime_rollout": {
+      "status": "not_authorized_in_this_task",
+      "required_followup": "After protected merge, a separately authorized operator may run the existing governed sync/promotion path and require a promoted transaction with fresh-loop evidence."
+    }
+  },
+  "rollout_and_rollback": {
+    "rollout": "Merge through the task PR into dev. Do not run sync-dev-root, edit live config, signal the supervisor, or delete candidates in this source-repair task.",
+    "rollback": "Revert the task PR if independent review finds the mutable gitfile binding too permissive or any existing promotion regression fails. The runtime remains untouched by this task.",
+    "fail_closed": "Any mutable root/gitfile/Git-directory/common-directory identity drift, symlink, hard-linked gitfile, malformed gitfile, untrusted remote, external config include, unaccepted tree, staged change, tracked worktree change, or immutable candidate gitfile remains a hard failure."
+  },
+  "delivery": {
+    "task_pull_request": null,
+    "reviewed_head_sha": null,
+    "merge_commit": null,
+    "protected_merge_complete": false,
+    "governed_runtime_promotion_complete": false,
+    "governed_closeout_complete": false
+  },
+  "review": {
+    "reviewer": "Claude2",
+    "status": "pending_independent_exact_head_review",
+    "decision": null,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "notes": [
+      "Confirm the immutable CandidateRootHandle still rejects both symlink and regular gitfile .git controls.",
+      "Review that the new gitfile path is reachable only from bootstrap mutable-incumbent capture.",
+      "Review no-follow component binding and the before/after revalidation of mutable root, Git directory, common directory, HEAD/tree, index, tracked tree, and governed sources.",
+      "Review that untracked mutable runtime debris is ignored only on the mutable source and is never accepted in an immutable candidate.",
+      "Bind this committed manifest with REVIEW_FILE when approving the exact PR head."
+    ]
+  }
+}
