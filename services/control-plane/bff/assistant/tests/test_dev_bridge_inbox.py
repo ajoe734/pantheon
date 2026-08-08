@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from .. import dev_bridge_dispatcher, dev_bridge_inbox
 from ..dev_bridge_inbox import drain_task_packet_inbox, queue_payload, queue_task_packet
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
-from ..dev_bridge_signer import sign_packet
+from ..dev_bridge_signer import has_seen_packet, sign_packet
 from .dev_bridge_test_support import write_materializing_ai_status
 
 
 TEST_KEY = b"test-key-for-dev-bridge-inbox"
 
 
-def _make_packet(packet_id: str) -> DevTaskPacket:
+def _make_packet(packet_id: str, *, task_id: str = "INBOX-TASK-001") -> DevTaskPacket:
     return DevTaskPacket(
         packetId=packet_id,
         emittedAt="2026-06-07T00:00:00Z",
@@ -29,7 +31,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
         sourceTurnIds=["turn-user", "turn-assistant"],
         tasks=[
             BridgeTask(
-                id="INBOX-TASK-001",
+                id=task_id,
                 title="Materialize queued assistant task",
                 owner="Codex",
                 reviewer="Claude",
@@ -121,3 +123,61 @@ def test_queue_rejects_unsigned_packet(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Packet has no signature"):
         queue_task_packet(_make_packet("pkt_inbox_unsigned"), repo_root=str(repo_root))
+
+
+def test_bounded_drain_reserves_admission_for_new_signed_packet_after_retry_timeouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four due retries cannot consume all four slots ahead of a new packet."""
+
+    monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
+    monkeypatch.setattr(dev_bridge_inbox, "RETRY_BASE_SECONDS", 0.0)
+    repo_root = _write_fake_repo(tmp_path)
+    retry_packet_ids = [f"pkt_retry_{index}" for index in range(1, 5)]
+    retry_packets = [
+        sign_packet(
+            _make_packet(packet_id, task_id=f"INBOX-RETRY-{index}"),
+            key_store={"assistant-bridge-dev": TEST_KEY},
+        )
+        for index, packet_id in enumerate(retry_packet_ids, start=1)
+    ]
+    for packet in retry_packets:
+        queue_task_packet(packet, repo_root=str(repo_root))
+
+    real_run = dev_bridge_dispatcher.subprocess.run
+
+    def timeout_old_assignments(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        metadata = json.loads(str(environment["TASK_METADATA_JSON"]))
+        packet_id = metadata["dev_bridge"]["packet_id"]
+        if packet_id in retry_packet_ids:
+            return subprocess.CompletedProcess(command, 75, "", "canonical writer busy")
+        return real_run(command, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(dev_bridge_dispatcher.subprocess, "run", timeout_old_assignments)
+        first = drain_task_packet_inbox(repo_root=str(repo_root), limit=4)
+
+        assert first["processedCount"] == 0
+        assert first["errorCount"] == 4
+        assert all(item["status"] == "retryable" for item in first["errors"])
+
+        newer = sign_packet(
+            _make_packet("pkt_new_signed", task_id="INBOX-NEW-SIGNED"),
+            key_store={"assistant-bridge-dev": TEST_KEY},
+        )
+        queue_task_packet(newer, repo_root=str(repo_root))
+
+        second = drain_task_packet_inbox(repo_root=str(repo_root), limit=4)
+
+    assert second["processedCount"] == 1
+    assert second["errorCount"] == 3
+    assert second["packets"][0]["packetId"] == newer.packet_id
+    assert second["packets"][0]["status"] == "processed"
+    assert has_seen_packet(newer.packet_id, repo_root=str(repo_root))
+    assert not any(has_seen_packet(packet.packet_id, repo_root=str(repo_root)) for packet in retry_packets)
+    inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
+    assert (inbox / "receipts" / f"{newer.packet_id}.json").is_file()
+    assert (inbox / "processed" / f"{newer.packet_id}.json").is_file()

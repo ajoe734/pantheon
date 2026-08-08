@@ -29,6 +29,7 @@ PROCESSING_RETRY_SCHEMA = "pantheon.assistant-dev-packet-retry.v1"
 PROCESSING_CLAIM_TTL_SECONDS = 300.0
 RETRY_BASE_SECONDS = 0.25
 RETRY_MAX_SECONDS = 5.0
+FRESH_ADMISSION_RESERVE = 1
 
 
 def _now() -> str:
@@ -411,6 +412,64 @@ def _receipt_target_dir(inbox: Path, receipt: Mapping[str, Any]) -> Path:
     return inbox / ("failed" if receipt.get("status") in {"failed", "error"} else "processed")
 
 
+def _processing_admission_candidates(
+    inbox: Path,
+    processing: Iterable[Path],
+    *,
+    now: float,
+) -> list[tuple[Path, Dict[str, str]]]:
+    """Order due processing files with a bounded first-attempt reserve.
+
+    Retry metadata remains advisory: it can only identify a packet as a due
+    retry after its exact packet identity matches.  Authentication, replay
+    protection, and dispatch fencing still occur in ``dispatch_task_packet``
+    after this short queue-lock phase.
+
+    A bounded drain reserves one slot for a packet with no matching retry
+    metadata whenever due retries are also present.  Without that reserve,
+    alphabetically earlier retry files can consume every ``limit`` slot on
+    every tick and permanently starve a newer signed packet in ``processing``.
+    """
+
+    fresh: list[tuple[Path, Dict[str, str]]] = []
+    due_retries: list[tuple[Path, Dict[str, str]]] = []
+    for path in processing:
+        try:
+            _packet, identity = _packet_identity(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            # Invalid packet content is still allowed through the ordinary
+            # drain error path so it can be terminally failed instead of
+            # hot-looping.
+            identity = {
+                "packet_id": path.stem,
+                "packet_digest": "invalid",
+            }
+
+        retry_path = _retry_path(inbox, path)
+        try:
+            retry = _read_optional_json(retry_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            retry = None
+        if retry is not None:
+            # Unsigned retry metadata is advisory only.  A forged or stale
+            # identity cannot suppress a valid signed packet.
+            if _identity_matches(retry, identity):
+                next_attempt = _epoch(retry.get("next_attempt_epoch"))
+                if next_attempt is not None and next_attempt > now:
+                    continue
+                due_retries.append((path, identity))
+                continue
+            retry_path.unlink(missing_ok=True)
+        fresh.append((path, identity))
+
+    if fresh and due_retries:
+        # One fresh packet must receive an attempt in every bounded drain;
+        # remaining capacity remains available to due retries.  If a selected
+        # item loses its live fence below, later candidates backfill the slot.
+        return [*fresh[:FRESH_ADMISSION_RESERVE], *due_retries, *fresh[FRESH_ADMISSION_RESERVE:]]
+    return [*fresh, *due_retries]
+
+
 def _claim_processing_files(
     inbox: Path,
     max_items: Optional[int],
@@ -424,7 +483,8 @@ def _claim_processing_files(
             processing.append(_move(path, inbox / "processing"))
         claims: list[tuple[Path, str, int]] = []
         now = time.time()
-        for path in processing:
+        candidates = _processing_admission_candidates(inbox, processing, now=now)
+        for path, identity in candidates:
             if max_items is not None and len(claims) >= max_items:
                 break
             fence = _try_acquire_processing_fence(inbox, path)
@@ -432,30 +492,6 @@ def _claim_processing_files(
                 continue
             claimed = False
             try:
-                try:
-                    _packet, identity = _packet_identity(path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    # Invalid packet content is still claimed so the ordinary
-                    # drain error path can durably fail it instead of hot-looping.
-                    identity = {
-                        "packet_id": path.stem,
-                        "packet_digest": "invalid",
-                    }
-                retry_path = _retry_path(inbox, path)
-                try:
-                    retry = _read_optional_json(retry_path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    retry = None
-                if retry is not None:
-                    # Unsigned retry metadata is advisory only.  A forged or stale
-                    # identity cannot suppress a valid signed packet.
-                    if _identity_matches(retry, identity):
-                        next_attempt = _epoch(retry.get("next_attempt_epoch"))
-                        if next_attempt is not None and next_attempt > now:
-                            continue
-                    else:
-                        retry_path.unlink(missing_ok=True)
-
                 claim_path = _claim_path(inbox, path)
                 try:
                     existing = _read_optional_json(claim_path)
