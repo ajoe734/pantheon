@@ -1,0 +1,192 @@
+{
+  "schema_version": "agora_current_gap_admission_readback.v1",
+  "task": {
+    "id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "review_pending",
+    "decision": "blocked",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/AGORA-CURRENT-GAP-EXECUTION-20260808",
+    "pull_request": 4628,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4628"
+  },
+  "snapshot": {
+    "observed_at": "2026-08-08T14:50:08Z",
+    "origin_dev": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+    "command_runtime_sha": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+    "task_head_before_evidence": "ec0df10fb1ebb45aab7cb5bd95d5fde0bbdd3c04",
+    "canonical_checkpoint_updated_at": "2026-08-08T14:50:08Z",
+    "readback_policy": "one bounded authoritative admission snapshot; no continuous worker polling"
+  },
+  "packet_readback": {
+    "preliminary": {
+      "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+      "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+      "receipt_status": "processed",
+      "admission_status": "admitted",
+      "admitted_at": "2026-08-08T14:38:54Z",
+      "admission_record": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-agora-current-environment-gap-20260808-e765bcbed--e32265e892a924d6.json",
+      "materialized_task_count": 7,
+      "superseded_as_planning_authority": true,
+      "canonical_rows_remain_immutable": true,
+      "tasks": [
+        {"id": "AGORA-CURRENT-GAP-EXECUTION-20260808", "hash": "129ddbf0bd25bf1136b59ec4250c4cbc14ec5866fbcd25400fc5dcc9e217deb7"},
+        {"id": "AGORA-DEV-DEPLOY-RECOVERY-20260808", "hash": "2f31a57f29a047d9e104a7918bf026aba232489910fe1fec7048c3d7a4ddd0f8"},
+        {"id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808", "hash": "e1563e3eab8ce24f15e2bae2ab65e2b6fc9fde88f6347aad15fd2562fd89de22"},
+        {"id": "AGORA-L12-REAL-VERIFIER-20260808", "hash": "c35fc2bcba3ebb43dea7a2bda9202398cfafef63496eeff3f5fed765ba133a81"},
+        {"id": "AGORA-CURRENT-HOSTED-REACCEPT-20260808", "hash": "81c80be8b4a439bd6a977aef7b187b5c9d7a1125b3f2f7ac81cac5ca6326bead"},
+        {"id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808", "hash": "7561a5fd8f1834ab00582dfa1d758414b490ea0bdf56431185b4c0bdcc8ec11f"},
+        {"id": "AGORA-CURRENT-CLOSE-20260808", "hash": "898b407537ee2cb50511b64a25e73adec786812352f1e0f17037999ec1f1fef8"}
+      ]
+    },
+    "final": {
+      "packet_id": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a",
+      "packet_digest": "ecd0e13cb8cc306cd8414e6c559a2e16f7c6ceaacfec2f2dceb5cb45d24595cb",
+      "receipt_status": "failed",
+      "admission_status": "not_attempted",
+      "admission_record": null,
+      "drained_at": "2026-08-08T14:40:14Z",
+      "retryable": false,
+      "replay_rejected": false,
+      "signed_task_count": 9,
+      "materialized_exact_rows": 4,
+      "conflicting_rows": 5,
+      "safe_to_replay": false,
+      "exact_rows_lack_packet_admission_record": true
+    },
+    "reconciliation_action": {
+      "packet_replayed": false,
+      "packet_queued": false,
+      "canonical_row_overwritten": false,
+      "queue_or_state_json_edited": false,
+      "downstream_released": false
+    }
+  },
+  "final_spec_hash_readback": [
+    {"id": "AGORA-CURRENT-GAP-EXECUTION-20260808", "desired_hash": "f4400fdafcaebc1690b300a197fae81c9a27bfde8cf6f217d83f8104543b8571", "canonical_hash": "129ddbf0bd25bf1136b59ec4250c4cbc14ec5866fbcd25400fc5dcc9e217deb7", "match": false, "canonical_packet": "pkt-agora-current-environment-gap-20260808-e765bcbed", "status": "in_progress", "owner": "Codex", "reviewer": "Codex2"},
+    {"id": "AGORA-DEV-DEPLOY-RECOVERY-20260808", "desired_hash": "89c2ca0b9724969b1a51dd8484c760c2f766e614f64a17c22d6bb271bbee6b9c", "canonical_hash": "2f31a57f29a047d9e104a7918bf026aba232489910fe1fec7048c3d7a4ddd0f8", "match": false, "canonical_packet": "pkt-agora-current-environment-gap-20260808-e765bcbed", "status": "todo", "owner": "Codex", "reviewer": "Codex2"},
+    {"id": "AGORA-IMIT-HANDOFF-CONSUME-20260808", "desired_hash": "9e07fff14b59e886cae5ec3cca34607ec00f371855be04ffe2680dcfcfe6f2bd", "canonical_hash": "9e07fff14b59e886cae5ec3cca34607ec00f371855be04ffe2680dcfcfe6f2bd", "match": true, "canonical_packet": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a", "status": "todo", "owner": "Antigravity", "reviewer": "Claude"},
+    {"id": "IMIT-CONSULTATION-INTAKE-20260808", "desired_hash": "4a05538ff79df19d2d7584b2b59db812a7c2664cbb3bffbdc91395e36cc73e0c", "canonical_hash": "4a05538ff79df19d2d7584b2b59db812a7c2664cbb3bffbdc91395e36cc73e0c", "match": true, "canonical_packet": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a", "status": "todo", "owner": "Claude", "reviewer": "Antigravity"},
+    {"id": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808", "desired_hash": "2db28ba0fddfd990fb575bac543ab2591776023aec11f9646be9ed614808abed", "canonical_hash": "2db28ba0fddfd990fb575bac543ab2591776023aec11f9646be9ed614808abed", "match": true, "canonical_packet": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a", "status": "todo", "owner": "Antigravity", "reviewer": "Claude"},
+    {"id": "L12-VERIFY-LEARN-REAL-VERIFIER-001", "desired_hash": "a8fecdee6f9263d7e2dccce803bcf3ea7211cb9f7e6546fc20722cf9dc039c3f", "canonical_hash": "a8fecdee6f9263d7e2dccce803bcf3ea7211cb9f7e6546fc20722cf9dc039c3f", "match": true, "canonical_packet": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a", "status": "todo", "owner": "Antigravity", "reviewer": "Claude2"},
+    {"id": "AGORA-CURRENT-HOSTED-REACCEPT-20260808", "desired_hash": "24168c066f38144770115f91c9d259236151a71e625b9483f3766f9e5d5d409f", "canonical_hash": "81c80be8b4a439bd6a977aef7b187b5c9d7a1125b3f2f7ac81cac5ca6326bead", "match": false, "canonical_packet": "pkt-agora-current-environment-gap-20260808-e765bcbed", "status": "todo", "owner": "Codex2", "reviewer": "Codex"},
+    {"id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808", "desired_hash": "3ffa1f0f81872a0d4b39531ef85004eeea430e4091ed8e013a845ae15e40d67b", "canonical_hash": "7561a5fd8f1834ab00582dfa1d758414b490ea0bdf56431185b4c0bdcc8ec11f", "match": false, "canonical_packet": "pkt-agora-current-environment-gap-20260808-e765bcbed", "status": "todo", "owner": "Codex", "reviewer": "Codex2"},
+    {"id": "AGORA-CURRENT-CLOSE-20260808", "desired_hash": "5b516cb1bc21abf422684cee63f6026b670197f2f4c9bd776450ba2dac3dc85a", "canonical_hash": "898b407537ee2cb50511b64a25e73adec786812352f1e0f17037999ec1f1fef8", "match": false, "canonical_packet": "pkt-agora-current-environment-gap-20260808-e765bcbed", "status": "todo", "owner": "Codex2", "reviewer": "Codex"}
+  ],
+  "external_dependencies": [
+    {"id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "status": "todo", "owner": "Codex2", "reviewer": "Codex", "hash": "8f8409756482761d618efd03eaff82cb08bee5de2aecbd31fc40cd6fee4ddc20"},
+    {"id": "L12-MIN-SRC-20260808", "status": "todo", "owner": "Claude", "reviewer": "Antigravity", "hash": "b26a0b546d674baba3f6f64df7994e87d7d67529cdbb3f1074e4d4e750609d51"},
+    {"id": "L12-MIN-TEACH-20260808", "status": "todo", "owner": "Antigravity", "reviewer": "Claude", "hash": "5e0a446d74d22c36f819701f57325e2991118ad6ccba6d5d38ce80e3731fe026"},
+    {"id": "L12-MIN-AGORA-20260808", "status": "todo", "owner": "Claude", "reviewer": "Antigravity", "hash": "e5395117a42a170326d081eb2425ade016101ff8d6fcbb2ffb68ac0268d4afe3"},
+    {"id": "L12-MIN-IMIT-20260808", "status": "todo", "owner": "Antigravity", "reviewer": "Claude", "hash": "7819c46f9aa1917f7fd10811a744995eb94746045fa1ce3a2d7f5cf28e096670"},
+    {"id": "L12-MIN-CONS-20260808", "status": "todo", "owner": "Claude", "reviewer": "Antigravity", "hash": "2dd5858d64fe44e3716cbb2b5a1fd17d7d50264072cd01daeddd5cc20fac0a04"},
+    {"id": "L12-MIN-BFF-20260808", "status": "todo", "owner": "Antigravity", "reviewer": "Claude", "hash": "6ce9276e0d52bca20b5de451319bf519d348131b3626f5ecd6e1a807113e9cda"},
+    {"id": "L12-MIN-INTEGRATE-20260808", "status": "todo", "owner": "Claude", "reviewer": "Antigravity", "hash": "c72ecd5fc0d2d47e7efd358d7c6b75b4eb5ca66036c97e39a4566c1fdd12b8a6"},
+    {"id": "L12-MIN-E2E-20260808", "status": "todo", "owner": "Antigravity", "reviewer": "Claude", "hash": "1aeb2706e36712ed510b6bf83cc21a32edf39fe285f217d82f3bf9349cdea889"},
+    {"id": "L12-MIN-HOSTED-20260808", "status": "todo", "owner": "Codex2", "reviewer": "Codex", "hash": "1af031a1be4dd70e226b5b81828c03067758c5f71a2410bc463524802df92a81"},
+    {"id": "L12-MIN-CLOSE-20260808", "status": "todo", "owner": "Codex2", "reviewer": "Codex", "hash": "0a2e0dabcfb144fe1099dd3a5c0c3cc738f48c126b451df57b0f07116ef33131"}
+  ],
+  "collision_snapshot": {
+    "seven_new_addendum_ids": [
+      "AGORA-DEV-DEPLOY-RECOVERY-20260808",
+      "AGORA-IMIT-HANDOFF-CONSUME-20260808",
+      "IMIT-CONSULTATION-INTAKE-20260808",
+      "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
+      "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "AGORA-CURRENT-CLOSE-20260808"
+    ],
+    "pre_admission_bounded_audit": "absent from active/archive state, open PRs, branches, and worktrees at 2026-08-08T11:31:00Z",
+    "post_receipt_active_rows": "all seven present after packet processing",
+    "archive_matches": [],
+    "downstream_open_prs": [],
+    "downstream_remote_branches": [],
+    "downstream_worktrees": [],
+    "coordination_open_pr": {"number": 4628, "head": "task/AGORA-CURRENT-GAP-EXECUTION-20260808", "observed_head": "2d1f16b1ab3c9fc0f89b2648e93c496365bbb03b"},
+    "obsolete_active_rows": [
+      {"id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808", "status": "todo", "hash": "e1563e3eab8ce24f15e2bae2ab65e2b6fc9fde88f6347aad15fd2562fd89de22", "owner": "Codex2", "reviewer": "Codex"},
+      {"id": "AGORA-L12-REAL-VERIFIER-20260808", "status": "todo", "hash": "c35fc2bcba3ebb43dea7a2bda9202398cfafef63496eeff3f5fed765ba133a81", "owner": "Codex", "reviewer": "Codex2"}
+    ]
+  },
+  "dag_validation": {
+    "planned": {
+      "task_count": 9,
+      "acyclic": true,
+      "reachable_from_admission": 9,
+      "unique_sink": "AGORA-CURRENT-CLOSE-20260808",
+      "declared_branches_valid": true,
+      "declared_worktrees_valid": true,
+      "merge_targets_valid": true,
+      "rollout_and_rollback_present": true
+    },
+    "canonical_materialization": {
+      "matches_planned_dag": false,
+      "sinks_within_final_ids": [
+        "AGORA-CURRENT-CLOSE-20260808",
+        "L12-VERIFY-LEARN-REAL-VERIFIER-001"
+      ],
+      "hosted_dependency": "AGORA-L12-REAL-VERIFIER-20260808",
+      "required_hosted_dependency": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "unique_sink_proven": false
+    },
+    "ordered_artifact_overlaps": [
+      {"predecessor": "L12-MIN-AGORA-20260808", "successor": "AGORA-IMIT-HANDOFF-CONSUME-20260808", "surface": "services/control-plane/bff/agora/dataset_extraction/"},
+      {"predecessor": "L12-MIN-IMIT-20260808", "successor": "AGORA-IMIT-HANDOFF-CONSUME-20260808", "surface": "services/policy-learning/"},
+      {"predecessor": "L12-MIN-CONS-20260808", "successor": "IMIT-CONSULTATION-INTAKE-20260808", "surface": "services/consultation/supervisor.py"},
+      {"predecessor": "L12-MIN-INTEGRATE-20260808", "successor": "AGORA-LEARNING-CROSS-LOOP-BIND-20260808", "surface": "docker-compose.yml and loop catalog"}
+    ],
+    "unordered_obsolete_overlap": {
+      "task": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "conflicts_with": [
+        "AGORA-IMIT-HANDOFF-CONSUME-20260808",
+        "IMIT-CONSULTATION-INTAKE-20260808"
+      ],
+      "reason": "the preliminary broad task spans Agora, Policy Learning, and Consultation while the final DAG splits those owned layers"
+    }
+  },
+  "admission_decision": {
+    "decision": "blocked",
+    "downstream_release_authorized": false,
+    "reasons": [
+      "Five final same-ID task specs conflict with immutable preliminary packet hashes.",
+      "Four exact final rows lack the final packet's durable admission record because that packet failed as a whole.",
+      "Two obsolete preliminary rows remain active todo tasks.",
+      "The current canonical dependency graph has two sinks and does not route hosted acceptance through the real Learning verifier."
+    ],
+    "safe_current_control": "Keep AGORA-CURRENT-GAP-EXECUTION-20260808 blocked; every preliminary and final downstream row remains directly or transitively dependent on it.",
+    "required_reconciliation": [
+      "Preserve both packet receipts and all immutable bridge provenance.",
+      "Retire obsolete and conflicting revisions through a governed follow-up; do not hand-edit canonical state.",
+      "Choose unique successor IDs or implement an independently reviewed first-class partial-admission reconciliation transaction.",
+      "Revalidate one canonical sink, artifact ordering, and hosted dependency on L12-VERIFY-LEARN-REAL-VERIFIER-001.",
+      "Obtain independent exact-head review before changing this gate to done."
+    ]
+  },
+  "scope_boundary": {
+    "owned_layer": "Admission evidence, packet receipt/readback reconciliation, immutable hash comparison, dependency and collision proof.",
+    "not_changing": "Product code, deployment/runtime state, supervisor policy, queue/state JSON, orchestrator configuration, external L12 task scope, or live-capital authority.",
+    "canonical_task_state_files_edited_directly": false,
+    "runtime_implementation_changed": false,
+    "packet_replayed": false
+  },
+  "validation": [
+    {"command": "git fetch origin dev --prune; compare origin/dev and PANTHEON_COMMAND_RUNTIME_SHA", "result": "pass; both 619acd04184e8d3fc3aef322d160e7c9106670ad"},
+    {"command": "read preliminary and final packet receipts plus preliminary admission record", "result": "pass; preliminary admitted seven rows, final failed with four exact materializations and five conflicts"},
+    {"command": "one bounded authoritative task-state ID/hash readback", "result": "pass; all external dependencies and packet-bound rows captured at checkpoint 2026-08-08T14:50:08Z"},
+    {"command": "gh pr list --repo ajoe734/pantheon --state open --limit 500 --json number,headRefName,baseRefName,title,url", "result": "pass; only coordination PR #4628 matched Agora final/obsolete IDs"},
+    {"command": "git ls-remote --heads origin 'refs/heads/task/*'", "result": "pass; only the coordination branch matched final/obsolete IDs"},
+    {"command": "git -C $PANTHEON_STATUS_ROOT worktree list --porcelain", "result": "pass; only this coordination worktree matched final/obsolete IDs"},
+    {"command": "planned execution-task DAG structural validator", "result": "pass; 9 unique tasks, acyclic, all reachable, unique final sink, branches/worktrees/merge targets/rollout/rollback valid"},
+    {"command": "canonical task hash and dependency comparison", "result": "blocked as designed; 4 exact hashes, 5 conflicts, 2 obsolete rows, 2 canonical sinks"},
+    {"command": "jq empty docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808/evidence.json", "result": "pass"},
+    {"command": "git diff --check", "result": "pass"}
+  ],
+  "review": {
+    "decision": "pending",
+    "required_reviewer": "Codex2",
+    "required_binding": "exact PR head after this manifest is committed",
+    "approval_effect": "Review may confirm the blocked admission finding; it must not authorize downstream implementation or mark the gate done until governed reconciliation produces the intended canonical DAG."
+  }
+}
