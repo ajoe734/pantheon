@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Gate fleet bootstrap on exact runtime root coherence
-- Status: review_approved
+- Status: in_progress
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Supervisor resumed SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801 for finalize after successful dispatch.
+- Next: Supervisor recorded worker failure streak 1/2 for SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801.
 
 ## Summary
 在任何 L12 重盤點或 25-task admission 前，證明 supervisor、watchdog、worker runner、command runtime、Git source root 與 status root 各自綁定正確且真實 auto-worker 可持續運行。
