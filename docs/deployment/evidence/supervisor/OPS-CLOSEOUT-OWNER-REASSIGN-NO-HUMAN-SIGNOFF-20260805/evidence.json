@@ -1,0 +1,90 @@
+{
+  "schema_version": "ops_closeout_owner_reassign_review.v1",
+  "task": {
+    "id": "OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+    "title": "Auto-verify owner reassignment chain so closeout needs no human sign-off (P0)",
+    "phase": "Supervisor Runtime Repair / Closeout Automation",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Owner and reviewer reassignment verification in scripts/ai_status.py: one audited chain walker shared by the reconcile recovery path (validate_merged_done_evidence) and the normal owner closeout path (collect_done_delivery_metadata commit-trailer gates).",
+    "not_changing": ".orchestrator/supervisor.py, dispatch policy, review authority, the exact-head approval binding, and the loop_done_guardrail product-evidence checks. The supervisor already emits the audited task_reassigned events this work consumes, so no emitter change was needed.",
+    "implementation_files": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ]
+  },
+  "prior_cycle": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/4573",
+    "merged_as": "bc7e91ec7",
+    "owner_at_the_time": "Antigravity",
+    "delivered": "Owner-drift fallback for the reconcile recovery path only: validate_merged_done_evidence stopped hard-comparing the evidence Owner line and gained _verified_owner_reassignment.",
+    "gap_found_after_takeover": "The acceptance criterion is that a reassigned task closes out without Human/Ops running reconcile_merged_done at all. The normal done path was still fail-closed: _verified_done_owner_reassignment accepted only a single latest hop and required old_reviewer == new_reviewer == the canonical reviewer, and a stale Reviewer trailer had no fallback whatsoever. The supervisor reassigns owner and reviewer together, so both trailers go stale in the same event and closeout was still blocked."
+  },
+  "problem": {
+    "summary": "Owner reassignment is a routine, recurring event -- a provider hits its quota and the supervisor hands the lane to a fallback -- but closeout treated the resulting identity drift as an anomaly requiring a human signature.",
+    "real_audit_chain_for_this_task": [
+      {
+        "ts": "2026-08-05T11:59:31Z",
+        "owner": "Codex2 -> Antigravity",
+        "reviewer": "Codex -> Claude",
+        "event_id": "supervisor-reassign-a52459993d083b..."
+      },
+      {
+        "ts": "2026-08-05T12:26:28Z",
+        "owner": "Antigravity -> Claude",
+        "reviewer": "Claude -> Antigravity",
+        "event_id": "supervisor-reassign-31a6995cfdde0e..."
+      }
+    ],
+    "note": "Both events are multi-hop AND combined owner+reviewer swaps -- exactly the two shapes the pre-existing done-path gate rejected."
+  },
+  "change": {
+    "_audited_reassignment_events": "Shared reader that accepts only events the supervisor itself wrote through persist_task_reassignment: Orchestrator actor, populated old_owner/new_owner, and an event_id that is the deterministic digest over the event's own payload. The narrative task_reassigned lines write_activity_log emits (from_owner/to_owner keys, no digest) are skipped by design.",
+    "_walk_audited_role_chain": "Shared walker for either role. It skips audited history that predates the identity being walked from, then requires every subsequent audited hop for that role to continue the chain, and requires the chain to terminate exactly at the canonical identity. A gap, a fork, or an ambiguous same-timestamp pair fails closed.",
+    "_verified_reassignment_chain": "Reconcile path now walks the shared audited chain instead of any matching log line. This closes a forgery hole the prior cycle opened: it had dropped the old exact ts/message binding to the task row without replacing it with an authenticity check.",
+    "_verified_done_owner_reassignment": "Rewritten on the shared walker. Accepts multi-hop owner chains, still requires the chain to start no earlier than the delivered commit, and verifies reviewer continuity by walking the reviewer role through the same audited events rather than demanding the reviewer never moved.",
+    "_verified_done_reviewer_reassignment": "New. Gives the Reviewer commit trailer the same audited-chain fallback the LLM-Agent trailer has, instead of an unconditional mismatch failure.",
+    "collect_done_delivery_metadata": "Both stale trailers are now verified against the audit and recorded as commit_owner_reassignment / commit_reviewer_reassignment delivery metadata. The delivered commit timestamp is fetched once and shared by both checks."
+  },
+  "acceptance": {
+    "owner_chain_verification": "PASS -- _verified_owner_reassignment walks the task_reassigned chain and auto-admits a legal, continuous owner history.",
+    "single_hop": "PASS -- test_collect_done_accepts_prior_owner_from_latest_audited_reassignment, test_owner_reassignment_verifies_exact_task_reassigned_audit_event.",
+    "multi_hop": "PASS -- test_multihop_owner_reassignment_chain (reconcile), test_collect_done_accepts_multi_hop_owner_chain (done, 2 owner hops + 2 reviewer hops).",
+    "combined_owner_reviewer_swap": "PASS -- test_collect_done_accepts_combined_owner_and_reviewer_swap replays this task's own audit and closes out with both trailers stale; test_combined_owner_and_reviewer_swap_chain covers the reconcile side.",
+    "negative_missing_or_broken_chain": "PASS -- test_broken_owner_reassignment_chain_fails, test_owner_reassignment_requires_exact_task_readback, test_reviewer_reassignment_requires_exact_task_readback, test_collect_done_rejects_owner_drift_with_no_audit, test_prior_owner_reassignment_rejects_stale_matching_event, test_prior_owner_reassignment_rejects_event_before_commit, test_prior_owner_reassignment_requires_reviewer_continuity, test_done_reviewer_reassignment_rejects_event_before_commit.",
+    "negative_forged_audit": "PASS -- test_reassignment_chain_rejects_unaudited_event, test_reassignment_chain_rejects_tampered_event_payload, test_done_reviewer_reassignment_rejects_unaudited_event, test_prior_owner_reassignment_rejects_forged_audit_identity.",
+    "no_human_signoff_required": "PASS -- a task whose owner (and reviewer) was reassigned for normal provider-availability reasons now finalizes through scripts/ai-status.sh done. Human/Ops reconcile_merged_done is no longer on the path."
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/test_ai_status.py -q",
+        "result": "184 passed, 31 subtests passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/python -m pytest .orchestrator/test_supervisor.py -q",
+        "result": "595 passed, 158 subtests passed (no supervisor change; run to confirm no regression in the event emitter this work depends on)"
+      }
+    ],
+    "live_audit_check": {
+      "command": "recompute _supervisor_reassignment_event_id over both task_reassigned events for this task in /home/lupin/pantheon/ai-activity-log.jsonl",
+      "result": "MATCH for 2026-08-05T11:59:31Z and 2026-08-05T12:26:28Z -- the production events satisfy the authenticity check the gates now require"
+    }
+  },
+  "reviewer_instructions": {
+    "independent_checks_requested": [
+      "Confirm _walk_audited_role_chain cannot admit a chain that skips an audited hop for the role being walked, and that it terminates exactly at the canonical identity.",
+      "Confirm the reconcile path is no longer satisfiable by a hand-appended activity line.",
+      "Confirm reviewer continuity is still enforced when the owner chain is valid but the reviewer moved with no explaining hop.",
+      "Confirm no change to .orchestrator/supervisor.py in this PR diff."
+    ]
+  }
+}
