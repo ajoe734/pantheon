@@ -61,6 +61,7 @@ PROCESS_ENVIRONMENT_ALLOWLIST = (
     "PANTHEON_COMMAND_ROOT",
     "PANTHEON_COMMAND_RUNTIME_SHA",
     "PANTHEON_STATUS_ROOT",
+    "PYTHONDONTWRITEBYTECODE",
 )
 GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT = (
     "PANTHEON_COMMAND_BASE_REF",
@@ -68,6 +69,7 @@ GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT = (
     "PANTHEON_COMMAND_ROOT",
     "PANTHEON_COMMAND_RUNTIME_SHA",
     "PANTHEON_STATUS_ROOT",
+    "PYTHONDONTWRITEBYTECODE",
 )
 GOVERNED_LAUNCH_FORBIDDEN_ENVIRONMENT = frozenset(
     {
@@ -1945,9 +1947,16 @@ def derive_supervisor_config_variant(
             "Captured live config must contain exactly one supervisor entrypoint"
         )
     command = list(raw_command)
-    command[supervisor_indexes[0]] = str(
+    supervisor_index = supervisor_indexes[0]
+    command[supervisor_index] = str(
         command_root / SUPERVISOR_ENTRYPOINT_RELATIVE
     )
+    # The runtime root is immutable and its cleanliness is revalidated during
+    # every post-launch observation.  Persist Python's no-bytecode flag in the
+    # config-owned argv so both the promotion launch and later watchdog
+    # restarts cannot create ignored __pycache__ content in that root.
+    if "-B" not in command[1:supervisor_index]:
+        command.insert(supervisor_index, "-B")
     watchdog["supervisor_command"] = command
     content = _encode_live_config(payload)
     return SupervisorConfigVariant(
@@ -2226,6 +2235,9 @@ def _expected_governed_launch_environment(
         "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
         "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
         "PANTHEON_STATUS_ROOT": str(status_root),
+        # Unlike ``python -B``, this setting is inherited by every Python
+        # subprocess the supervisor launches from the immutable command root.
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
@@ -3216,6 +3228,13 @@ def discover_incumbent_supervisor_process(
         "PANTHEON_COMMAND_RUNTIME_SHA": expected.runtime_sha,
         "PANTHEON_STATUS_ROOT": expected.status_root,
     }
+    supervisor_index = expected.argv.index(str(expected.entrypoint))
+    if "-B" in expected.argv[1:supervisor_index]:
+        # A repaired runtime binds both layers: ``-B`` protects the supervisor
+        # interpreter and the environment protects every descendant.  Legacy
+        # incumbents without ``-B`` remain capturable for their one governed
+        # migration; candidate and rollback variants both receive the flag.
+        expected_environment["PYTHONDONTWRITEBYTECODE"] = "1"
     _guarded_process_compare(
         runtime_reader,
         generation,
@@ -3223,7 +3242,7 @@ def discover_incumbent_supervisor_process(
         actual=set(environment_contract),
         expected=set(expected_environment),
     )
-    for name in PROCESS_ENVIRONMENT_ALLOWLIST:
+    for name in expected_environment:
         _guarded_process_compare(
             runtime_reader,
             generation,
@@ -3279,7 +3298,7 @@ def discover_incumbent_supervisor_process(
         cwd_tree=cwd_tree,
         environment_contract=tuple(
             (name, environment_contract[name])
-            for name in PROCESS_ENVIRONMENT_ALLOWLIST
+            for name in expected_environment
         ),
         admission_lock=lock_after,
     )

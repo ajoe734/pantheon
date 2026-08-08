@@ -759,6 +759,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
             captured["env"].get("PANTHEON_STATUS_ROOT"),
             str(status_file.parent),
         )
+        self.assertEqual(captured["env"].get("PYTHONDONTWRITEBYTECODE"), "1")
 
     def test_supervisor_lock_held_true_when_locked(self) -> None:
         self.hold_lock()
