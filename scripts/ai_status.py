@@ -7155,10 +7155,53 @@ GITHUB_REVIEW_MODES = {
 }
 
 
+def discover_open_pr_binding(
+    repository: str, *, head_branch: str, base_branch: str
+) -> dict[str, Any] | None:
+    """Independently ask GitHub whether an open PR exists at this exact head
+    branch, rather than trusting task metadata.
+
+    `source_ref`/`github` fields on a task record are legacy one-off
+    dispatch-provenance markers written by ad-hoc `dispatch_*.py` batch
+    task-creation scripts -- never by the normal assign/handoff/approve flow.
+    `task_has_pr_review_target`'s metadata check therefore silently misses the
+    overwhelming majority of real, PR-backed tasks, degrading the exact-head
+    binding safety gate to "only enforced when the reviewer happens to
+    remember REVIEW_PR/REVIEW_HEAD_SHA on their own" -- confirmed live: of 55
+    open task-branch PRs, 20 backing tasks had no such metadata, and at least
+    12 of those had never been through a bound approval at all.
+    SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808.
+    """
+    result = run_gh_json_command(
+        [
+            "pr", "view", head_branch,
+            "--repo", repository,
+            "--json", "number,headRefOid,baseRefName,state",
+        ]
+    )
+    if not isinstance(result, Mapping):
+        return None
+    if str(result.get("state") or "").upper() != "OPEN":
+        return None
+    pr_number = result.get("number")
+    head_sha = str(result.get("headRefOid") or "").strip().lower()
+    if not isinstance(pr_number, int) or pr_number <= 0:
+        return None
+    if not APPROVAL_HEAD_SHA_RE.match(head_sha):
+        return None
+    return {
+        "pr": pr_number,
+        "head_sha": head_sha,
+        "head_branch": head_branch,
+        "base": str(result.get("baseRefName") or "").strip() or base_branch,
+    }
+
+
 def resolve_approval_binding(
     task: dict[str, Any],
     *,
     warn_if_unbound: bool = True,
+    repository: str | None = None,
 ) -> dict[str, Any]:
     """Bind an approval to the exact pull-request head the reviewer inspected.
 
@@ -7188,6 +7231,22 @@ def resolve_approval_binding(
     independent = bool(reviewer) and reviewer != owner
 
     if not raw_pr and not raw_head:
+        discovered = (
+            discover_open_pr_binding(
+                repository, head_branch=head_branch, base_branch=base_branch
+            )
+            if repository
+            else None
+        )
+        if discovered is not None:
+            print(
+                f"note: {task_id} approval auto-bound to PR #{discovered['pr']} at "
+                f"exact head {discovered['head_sha'][:12]} (REVIEW_PR/REVIEW_HEAD_SHA "
+                "were not supplied; discovered live from GitHub because task metadata "
+                "does not reliably record the delivery PR).",
+                file=sys.stderr,
+            )
+            return discovered
         if independent and task_has_pr_review_target(task):
             raise SystemExit(
                 f"{task_id} is PR-backed but approve has no exact reviewed-head "
@@ -7380,11 +7439,11 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
-    binding = resolve_approval_binding(task)
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    repository_slug_value = repository_slug(config, repository_id)
+    binding = resolve_approval_binding(task, repository=repository_slug_value)
     if review_file and binding:
-        config = load_config()
-        repository_id = task_primary_repository_id(config, task)
-        repository_slug_value = repository_slug(config, repository_id)
         if not repository_slug_value or not review_evidence_file_committed(
             repository=repository_slug_value,
             head_sha=binding["head_sha"],
