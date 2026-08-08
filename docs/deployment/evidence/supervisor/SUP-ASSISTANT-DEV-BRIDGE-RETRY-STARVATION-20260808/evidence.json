@@ -1,0 +1,96 @@
+{
+  "schema_version": "assistant_dev_bridge_retry_fairness_evidence.v1",
+  "task": {
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+    "title": "Prevent bridge retry starvation of signed task packets",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+    "implementation_commit": "329fc4c0d8eb86ad26d65fa2f7c6bb7a997b554d",
+    "review_status": "review_pending"
+  },
+  "scope": {
+    "owned_layer": "Assistant dev bridge inbox admission ordering for due retry packets and fresh signed processing packets.",
+    "not_changing": [
+      "Packet signature verification",
+      "dispatch and processing fences",
+      "replay protection and durable admission records",
+      "canonical task-state locks or mutation commands",
+      "supervisor runtime scheduling, live config, packet deletion, or runtime promotion"
+    ],
+    "implementation_files": [
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py"
+    ]
+  },
+  "incident_regression": {
+    "scenario": "Four older signed packets receive retryable canonical-writer exit 75 outcomes and therefore have due retry metadata. A newer distinct signed packet is then queued while the drain limit remains four.",
+    "prior_failure_mode": "Processing files were ordered ahead of newly moved pending files, so the four due retries could claim every bounded drain slot indefinitely.",
+    "delivered_behavior": "When both cohorts are eligible, each bounded drain reserves one first-attempt slot, then uses the remaining capacity for due retries. The newer signed packet still traverses normal dispatcher signature verification, dispatch fencing, canonical readback, durable admission, replay marking, receipt persistence, and archive finalization.",
+    "regression_test": "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py::test_bounded_drain_reserves_admission_for_new_signed_packet_after_retry_timeouts"
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "status": "pass",
+      "statement": "Four retryable packets cannot exhaust a drain limit of four ahead of a newer signed packet.",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py::test_bounded_drain_reserves_admission_for_new_signed_packet_after_retry_timeouts"
+      ]
+    },
+    {
+      "id": "AC2",
+      "status": "pass",
+      "statement": "The newly admitted packet receives a processed receipt and replay mark, while retry packets remain unadmitted and retryable.",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py::test_bounded_drain_reserves_admission_for_new_signed_packet_after_retry_timeouts"
+      ]
+    },
+    {
+      "id": "AC3",
+      "status": "pass",
+      "statement": "Signature, exact-identity retry metadata, fences, canonical admission, replay, and receipt recovery retain their existing fail-closed coverage.",
+      "evidence": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+      ]
+    },
+    {
+      "id": "AC4",
+      "status": "pending_review",
+      "statement": "The committed exact head requires independent Codex review before the governed PR merge and owner closeout."
+    }
+  ],
+  "validation": {
+    "runtime": "Temporary isolated virtualenv with pytest 9.1.1 and pydantic 2.13.4.",
+    "focused_inbox": {
+      "command": "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "result": "4 passed in 5.72s"
+    },
+    "bridge_reliability": {
+      "command": "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "result": "45 passed in 16.21s"
+    },
+    "syntax_and_scope": {
+      "commands": [
+        "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m py_compile services/control-plane/bff/assistant/dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+        "git diff --check origin/dev...HEAD"
+      ],
+      "result": "pass"
+    },
+    "broader_assistant_suite": {
+      "command": "/tmp/pantheon-bridge-pytest.EL7Rwe/bin/python -m pytest -q services/control-plane/bff/assistant/tests",
+      "result": "1 failed, 174 passed",
+      "non_task_failure": "services/control-plane/bff/assistant/tests/test_orchestrator_status.py::TestOrchestratorStatus::test_read_orchestrator_status_missing_files walks from its temporary directory to the pre-existing /tmp/ai-status.json and reads project=pantheon instead of unknown. Neither that test nor orchestrator_status.py is in this task diff."
+    }
+  },
+  "delivery": {
+    "rollout": "Source-only change. Merge the independently reviewed task PR to dev; no direct live mutation or runtime promotion is part of this task.",
+    "rollback": "Revert the merged task commit. Do not delete or hand-edit any live inbox, retry, claim, receipt, replay, admission, or canonical task-state records."
+  },
+  "review": {
+    "status": "pending",
+    "required_manifest_path": "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808/evidence.json"
+  }
+}
