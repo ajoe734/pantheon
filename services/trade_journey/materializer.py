@@ -47,6 +47,30 @@ class JourneyProjection:
     graph_edges: list[dict[str, str]] = field(default_factory=list)
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "journey_id": self.journey_id,
+            "tenant_id": self.tenant_id,
+            "environment": self.environment,
+            "timeline": self.timeline,
+            "snapshot": self.snapshot,
+            "graph_edges": self.graph_edges,
+            "diagnostics": self.diagnostics,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JourneyProjection:
+        return cls(
+            journey_id=data["journey_id"],
+            tenant_id=data["tenant_id"],
+            environment=data["environment"],
+            timeline=list(data.get("timeline") or []),
+            snapshot=dict(data.get("snapshot") or {}),
+            graph_edges=list(data.get("graph_edges") or []),
+            diagnostics=list(data.get("diagnostics") or []),
+        )
+
+
 
 class JourneyMaterializer:
     """Build projections solely from immutable input event history.

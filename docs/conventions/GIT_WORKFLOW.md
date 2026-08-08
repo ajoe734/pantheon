@@ -265,6 +265,10 @@ Pantheon implementation:
   and launches auto workers from that isolated cwd while routing
   `ai-status.sh` updates back to the supervisor root with
   `PANTHEON_STATUS_ROOT`
+- `worker_worktrees.source_root` may point at a writable git checkout
+  when the supervisor runs split-root: status/activity files remain in
+  the shared supervisor root, while `git worktree add` writes metadata
+  under the configured source checkout
 - `worker_tree_guard` may be enabled in warn or block mode to detect
   dirty high-fragility surfaces inside the task worktree before
   dispatch; it is disabled by default and does not auto-restore state

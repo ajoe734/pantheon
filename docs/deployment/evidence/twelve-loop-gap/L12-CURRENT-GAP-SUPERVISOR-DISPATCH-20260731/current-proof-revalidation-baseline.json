@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "audit_id": "L12-CURRENT-PROOF-REVALIDATION-BASELINE-20260731",
+  "observed_at": "2026-07-31T13:39:17Z",
+  "source_commit": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e",
+  "authorities": {
+    "loop_catalog": "docs/deployment/loop-catalog.registry.json",
+    "bff_binding_test": "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+    "validator": "scripts/validate_twelve_loop_gap_evidence.py",
+    "archive_root": "/home/lupin/pantheon/ai-task-archive/tasks",
+    "canonical_task_state": "/home/lupin/pantheon/ai-status.json"
+  },
+  "catalog_controller_coverage": {
+    "canonical_loop_count": 12,
+    "implemented": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication"
+    ],
+    "not_implemented": [
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "bff_rejection_for_not_implemented": "catalog controller contract is not implemented"
+  },
+  "archived_original_task_evidence": [
+    {
+      "task_id": "L12-FLEET-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "companion_checksum",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-CTRL-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-TEL-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-REC-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-SRC-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-ALPHA-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-AGORA-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-CONS-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-DEP-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-DIST-001",
+      "validator_result": "pass",
+      "rejection_rules": [],
+      "checksum_result": "pass",
+      "current_proof_accepted": true
+    },
+    {
+      "task_id": "L12-TEACH-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-IMIT-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding",
+        "mutable_observation_binding"
+      ],
+      "checksum_result": "fail: README.md digest mismatch",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-CAP-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "checks_bound_to_commits",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-EVO-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-BFF-001",
+      "validator_result": "pass",
+      "rejection_rules": [],
+      "checksum_result": "fail: README.md digest mismatch",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-SIGNOFF-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    },
+    {
+      "task_id": "L12-MANIFEST-001",
+      "validator_result": "pass",
+      "rejection_rules": [],
+      "checksum_result": "pass",
+      "current_proof_accepted": true
+    },
+    {
+      "task_id": "L12-TRUTH-001",
+      "validator_result": "fail",
+      "rejection_rules": [
+        "bound_document_consistency",
+        "current_cut_consistency",
+        "current_delivery_checks",
+        "head_binding"
+      ],
+      "checksum_result": "pass",
+      "current_proof_accepted": false
+    }
+  ],
+  "totals": {
+    "archived_rows_checked": 18,
+    "validator_pass": 3,
+    "checksum_pass": 16,
+    "validator_and_checksum_pass": 2,
+    "revalidation_required": 16
+  },
+  "accepted_task_ids": [
+    "L12-DIST-001",
+    "L12-MANIFEST-001"
+  ],
+  "acceptance_boundary": "Historical archived done status is not current closeout proof. Every rejected row requires governed current evidence revalidation, and any contradictory behavioral replay requires implementation repair."
+}

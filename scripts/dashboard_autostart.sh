@@ -34,6 +34,7 @@ MANAGE_TUNNEL="${PANTHEON_DASHBOARD_MANAGE_TUNNEL:-1}"
 LOG_DIR="${ROOT_DIR}/.orchestrator/logs"
 LOG_FILE="${LOG_DIR}/dashboard-autostart.log"
 LOCK_FILE="${ROOT_DIR}/.orchestrator/dashboard-autostart.lock"
+URL_FILE="${LOG_DIR}/cloudflared-dashboard.url"
 
 mkdir -p "${LOG_DIR}"
 
@@ -66,7 +67,8 @@ if ! server_healthy; then
   tmux kill-session -t "${SERVER_SESSION}" 2>/dev/null || true
   tmux new-session -d -s "${SERVER_SESSION}" \
     "cd '${ROOT_DIR}' && PORT='${PORT}' HOST='${HOST}' \
-     bash '${ROOT_DIR}/scripts/run-dashboard.sh' >> '${LOG_DIR}/dashboard-run.log' 2>&1"
+     bash '${ROOT_DIR}/scripts/run-dashboard.sh' >> '${LOG_DIR}/dashboard-run.log' 2>&1" \
+    9>&-
   for _ in $(seq 1 10); do
     sleep 1
     if server_healthy; then
@@ -80,23 +82,34 @@ if ! server_healthy; then
   fi
 fi
 
-if [[ "${MANAGE_TUNNEL}" == "1" ]] && ! tunnel_alive; then
-  if ! command -v cloudflared >/dev/null 2>&1; then
-    log "tunnel session missing but cloudflared is not installed; serving locally only"
-    exit 0
+if [[ "${MANAGE_TUNNEL}" == "1" ]]; then
+  if ! tunnel_alive; then
+    if ! command -v cloudflared >/dev/null 2>&1; then
+      log "tunnel session missing but cloudflared is not installed; serving locally only"
+      exit 0
+    fi
+    log "tunnel session '${TUNNEL_SESSION}' missing; starting (public URL will change)"
+    tmux new-session -d -s "${TUNNEL_SESSION}" \
+      "cd '${ROOT_DIR}' && PANTHEON_DASHBOARD_TUNNEL_TARGET='http://${HOST}:${PORT}' \
+       PANTHEON_DASHBOARD_TUNNEL_PUBLIC_PATH='/' \
+       PANTHEON_DASHBOARD_TUNNEL_RESTART_DELAY_SECONDS='2' \
+       bash '${ROOT_DIR}/scripts/dashboard_tunnel_keepalive.sh'" \
+      9>&-
   fi
-  log "tunnel session '${TUNNEL_SESSION}' missing; starting (public URL will change)"
-  tmux new-session -d -s "${TUNNEL_SESSION}" \
-    "cd '${ROOT_DIR}' && PANTHEON_DASHBOARD_TUNNEL_TARGET='http://${HOST}:${PORT}' \
-     PANTHEON_DASHBOARD_TUNNEL_PUBLIC_PATH='/' \
-     PANTHEON_DASHBOARD_TUNNEL_RESTART_DELAY_SECONDS='2' \
-     bash '${ROOT_DIR}/scripts/dashboard_tunnel_keepalive.sh'"
+
+  url=""
   for _ in $(seq 1 20); do
     sleep 1
-    url="$(grep -oE 'https://[-a-z0-9]+\.trycloudflare\.com' "${LOG_DIR}/cloudflared-dashboard.log" 2>/dev/null | tail -1 || true)"
+    if [[ -s "${URL_FILE}" ]]; then
+      url="$(tr -d '\r\n' < "${URL_FILE}")"
+    fi
     if [[ -n "${url}" ]]; then
       log "tunnel up: ${url}"
       break
     fi
   done
+  if [[ -z "${url}" ]]; then
+    log "ERROR: tunnel session is running but no current URL was captured; see cloudflared-dashboard.log"
+    exit 1
+  fi
 fi

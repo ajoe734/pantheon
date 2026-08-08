@@ -1,0 +1,156 @@
+{
+  "schema_version": "supervisor_provider_pause_recovery_probe.v1",
+  "task": {
+    "id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+    "title": "Make quota pauses probeable and self-recovering",
+    "phase": "Supervisor reliability / provider pause recovery",
+    "owner": "Codex",
+    "reviewer": "Human/Ops",
+    "status": "review_approved",
+    "review_status": "approved",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802"
+  },
+  "dependency": {
+    "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+    "status": "done",
+    "merge_commit": "c25471b48d1c2e476d2a639db36f341c6dc16c8a",
+    "verified_as_base": true
+  },
+  "scope": {
+    "owned_layer": "Provider failure classification, dispatch-pause recovery gates, bounded targeted recovery probing, and supervisor regression evidence.",
+    "not_changing": "Provider credentials, account/quota grouping, configured probe values, runtime-state JSON, reviewer policy, service processes, rollout, and product code.",
+    "implementation_files": [
+      ".orchestrator/rewrite/provider_health.py",
+      ".orchestrator/supervisor.py"
+    ],
+    "test_files": [
+      ".orchestrator/rewrite/test_provider_health.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "evidence_files": [
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/evidence.md"
+    ],
+    "anchors": [
+      "d2b8501fc",
+      "ae153f7b0"
+    ]
+  },
+  "contract": {
+    "probe_classification": "quota_reached is quota_terminal/degraded even when the failure text also contains authentication-probe wording; only credential statuses classify as auth/revoked.",
+    "pause_expiry": "An expired quota or capacity pause becomes a live-recovery-probe gate and continues blocking dispatch instead of disappearing on wall-clock expiry.",
+    "recovery_authority": "Only an authoritative probe with source=live and a checked_at at or after the gate boundary may clear a probe-gated pause; cached success is insufficient.",
+    "bounded_probing": "Due recovery probes are de-duplicated by provider dispatch group, capped per cycle, and failed probes schedule next_recovery_probe_at from the failed-probe interval.",
+    "refresh_independence": "Targeted recovery probing consumes the pre-lock runtime snapshot and still runs when supervisor.auto_refresh_provider_capabilities is false.",
+    "auth_semantics": "Authentication pauses remain sticky until a fresh live success; a recovery probe that reveals auth upgrades the existing pause to the sticky auth gate.",
+    "lock_boundary": "Recovery probe subprocesses run in probe_provider_reports before _run_once_locked acquires runtime admission; the locked phase only reconciles probe results."
+  },
+  "acceptance": {
+    "quota_never_sticky_auth": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/rewrite/test_provider_health.py::ClassifyHealthTests::test_quota_probe_status_has_a_quota_failure_kind",
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_classifies_quota_reached_probe_envelope_before_auth_words",
+        ".orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests::test_live_quota_probe_is_degraded_and_never_creates_an_auth_pause"
+      ]
+    },
+    "expired_pause_remains_blocked": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_expired_quota_pause_becomes_probe_gated_without_reopening_dispatch",
+        ".orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests::test_capacity_pause_stays_blocked_while_recovery_probe_is_pending"
+      ]
+    },
+    "fresh_live_success_only": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderPauseRecoveryProbeTests::test_cached_success_cannot_clear_a_probe_gated_quota_pause",
+        ".orchestrator/test_supervisor.py::ProviderPauseRecoveryProbeTests::test_auto_refresh_false_still_runs_one_targeted_recovery_probe",
+        ".orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests::test_live_not_ready_probe_holds_lane_until_a_live_success"
+      ]
+    },
+    "bounded_recovery_when_auto_refresh_disabled": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProviderPauseRecoveryProbeTests::test_auto_refresh_false_still_runs_one_targeted_recovery_probe",
+        ".orchestrator/test_supervisor.py::ProviderPauseRecoveryProbeTests::test_failed_live_recovery_probe_is_interval_bounded",
+        ".orchestrator/test_supervisor.py::ProviderPauseRecoveryProbeTests::test_fresh_full_refresh_result_avoids_a_duplicate_targeted_probe"
+      ]
+    },
+    "auth_stays_sticky": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_mark_revoked_auth_pause_is_sticky_until_probe",
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_sticky_revoked_auth_recovery_requires_live_probe_success",
+        ".orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests::test_probe_gated_auth_pause_survives_its_wall_clock_window"
+      ]
+    },
+    "probe_outside_runtime_lock": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::SupervisorRuntimeAdmissionLockTests::test_run_once_probes_providers_before_taking_the_runtime_lock",
+        ".orchestrator/test_supervisor.py::SupervisorRuntimeAdmissionLockTests::test_supervisor_runtime_writer_surface_uses_canonical_helpers"
+      ]
+    },
+    "no_out_of_scope_changes": {
+      "status": "proven",
+      "changed_paths": [
+        ".orchestrator/rewrite/provider_health.py",
+        ".orchestrator/rewrite/test_provider_health.py",
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_supervisor.py",
+        "docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/evidence.json",
+        "docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/evidence.md"
+      ]
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": ".venv-pantheon/bin/python .orchestrator/rewrite/test_provider_health.py",
+      "result": "14 tests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python .orchestrator/test_supervisor.py DetectWorkerFailureTests FreshAuthProbeLaneHoldTests ProviderPauseRecoveryProbeTests CachedProviderCapabilityLoopTests WorkerOsDuplicateGuardTests SupervisorRuntimeAdmissionLockTests",
+      "result": "93 focused recovery/admission tests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python .orchestrator/test_supervisor.py",
+      "result": "486 tests passed in 9.131s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/supervisor.py .orchestrator/rewrite/provider_health.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review": {
+    "decision": "approved",
+    "reviewer": "Human/Ops",
+    "reviewed_head": "116f0cafd0142cfa8a018144fbcba0f83d04f046",
+    "pull_request": 4486,
+    "recorded_at": "2026-08-02T06:10:11Z",
+    "notes": "Exact-head independent review in a clean worktree passed provider-health 14, focused supervisor 93, full supervisor 486, py_compile, and diff checks; all nine GitHub checks were green and the six-file scope did not alter account groups or global reviewer policy."
+  },
+  "delivery": {
+    "base_commit": "c25471b48d1c2e476d2a639db36f341c6dc16c8a",
+    "implementation_head": "116f0cafd0142cfa8a018144fbcba0f83d04f046",
+    "pull_request": 4486,
+    "merge_commit": "71fea47cbe65bb3e07792afa7e9f0134fd0066f5",
+    "merged_at": "2026-08-02T06:13:56Z",
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev"
+  },
+  "closeout": {
+    "scope": "Durable review and merge evidence only; no runtime implementation changed after exact-head approval.",
+    "normal_done_precondition": "The final task commit must bind the current canonical reviewer Human/Ops after reviewer reassignment from Codex2."
+  }
+}
