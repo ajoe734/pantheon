@@ -11,9 +11,10 @@ SCRIPT = ROOT / "scripts" / "check_staged_generated_files.py"
 
 
 class CheckStagedGeneratedFilesTests(unittest.TestCase):
-    def run_script(self, *paths: str) -> subprocess.CompletedProcess[str]:
+    def run_script(self, *paths: str, input_text: str = "") -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(SCRIPT), *paths],
+            input=input_text,
             text=True,
             capture_output=True,
             check=False,
@@ -34,6 +35,36 @@ class CheckStagedGeneratedFilesTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ai-activity-log.jsonl", result.stderr)
         self.assertIn("dashboard-bundle.json", result.stderr)
+        self.assertIn(".orchestrator/state.json", result.stderr)
+
+    def test_allows_only_the_explicit_dashboard_bundle_deletions_in_diff_mode(self) -> None:
+        result = self.run_script(
+            "--diff-name-status",
+            "--allow-deleted-path",
+            "dashboard-bundle.json",
+            "--allow-deleted-path",
+            "docs-site/dashboard-bundle.json",
+            input_text="D\tdashboard-bundle.json\nD\tdocs-site/dashboard-bundle.json\n",
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, "")
+
+    def test_diff_mode_still_blocks_generated_additions_modifications_and_other_deletions(self) -> None:
+        result = self.run_script(
+            "--diff-name-status",
+            "--allow-deleted-path",
+            "dashboard-bundle.json",
+            "--allow-deleted-path",
+            "docs-site/dashboard-bundle.json",
+            input_text=(
+                "A\tdashboard-bundle.json\n"
+                "M\tdocs-site/dashboard-bundle.json\n"
+                "D\t.orchestrator/state.json\n"
+            ),
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("dashboard-bundle.json", result.stderr)
+        self.assertIn("docs-site/dashboard-bundle.json", result.stderr)
         self.assertIn(".orchestrator/state.json", result.stderr)
 
 
