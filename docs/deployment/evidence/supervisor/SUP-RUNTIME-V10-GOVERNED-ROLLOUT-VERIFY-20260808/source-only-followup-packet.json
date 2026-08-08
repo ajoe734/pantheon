@@ -1,0 +1,67 @@
+{
+  "version": "pantheon.assistant.dev-task.v1",
+  "packetId": "sup-runtime-v10-candidate-git-identity-followup-20260808-1343",
+  "intent": "source_only_remediation_dispatch",
+  "emittedAt": "2026-08-08T13:45:52Z",
+  "actor": {
+    "id": "Codex2",
+    "roles": [
+      "auto-worker"
+    ],
+    "capabilities": [
+      "integration",
+      "schema",
+      "acceptance"
+    ]
+  },
+  "mode": "supervisor_source_only",
+  "sourceConversationId": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "sourceTurnIds": [
+    "promotion-evidence-20260808T134307753860Z-3911075",
+    "candidate-discover-20260808T134552Z"
+  ],
+  "documents": [
+    {
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T134307753860Z-3911075.json",
+        "sha256:1c252fb6a3691ac47a92e2a770782b503372b4825bb1f71031828efe8e92fe0e"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+      "title": "Diagnose transaction-time immutable candidate Git identity rejection",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "phase": "Supervisor Runtime / Source-only Candidate Identity Repair",
+      "dependsOn": [
+        "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+      ],
+      "artifacts": [
+        "scripts/promote_supervisor_runtime.py",
+        "scripts/sync-dev-root.sh",
+        "scripts/test_promote_supervisor_runtime.py",
+        "scripts/test_sync_dev_root.py",
+        "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808/"
+      ],
+      "acceptance": [
+        "Reproduce or deterministically explain the transaction-time Candidate Git directory ENOTDIR that aborted the governed promotion of 619acd04184e8d3fc3aef322d160e7c9106670ad.",
+        "Preserve the real-directory, no-symlink, no-gitfile immutable candidate guard and its fail-closed behaviour.",
+        "Add focused source regression coverage plus a committed pre-review evidence manifest.",
+        "Perform no live config edit, direct process signal, manual checkout, candidate deletion, or runtime promotion; any later rollout is separately authorized."
+      ],
+      "summary": "The authorized governed rollout aborted before mutation with Candidate Git directory ENOTDIR, while later discover-only verification accepted the same candidate's Git identity. Diagnose and repair only the source transaction boundary; do not retry the live promotion in this task."
+    }
+  ],
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "requiresBranchPrMerge": true,
+    "noDirectShellFromWeb": true
+  },
+  "auditConversationHref": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+}
