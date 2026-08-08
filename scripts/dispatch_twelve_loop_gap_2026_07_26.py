@@ -174,6 +174,52 @@ PREVIOUS_CURRENT_CATALOG_CANONICAL_SHA256 = (
 PREVIOUS_CURRENT_SOURCE_PR = 4394
 PREVIOUS_CURRENT_SOURCE_HEAD = "fb9adfb84944e276b254ccfdfff784fb6728a7f4"
 PREVIOUS_CURRENT_SOURCE_BRANCH_CI_RUN = 30635898120
+PREVIOUS_HELD_CLOSE_RELEASE_ORDER_CONTRACT_SHA256 = {
+    "L12-CONTROLLER-CATALOG-INTEGRATION-20260731": (
+        "c9b5a5e7c955b0958f514efec9aeae72538541b4b091b7ce3cd47f6dbd2b9388"
+    ),
+    "L12-CURRENT-PROOF-RELEASE-GATE-20260731": (
+        "3dfcfd78246e800716b7cc97d25ab6a8f0831c64ac63d6436bcb6fe0cfacd943"
+    ),
+    "L12-VERIFY-LEARN-REAL-VERIFIER-001": (
+        "ba59f566dbb0eee2a914b6b428dc96eb564dbe7d57d125b7009b532f3f624e13"
+    ),
+}
+HELD_CLOSE_TASK_ID = "L12-CLOSE-001"
+HELD_CLOSE_REGISTRY_ARTIFACT = "docs/deployment/loop-catalog.registry.json"
+HELD_CLOSE_CATALOG_TASK_CONTRACT_SHA256 = (
+    "807aa54dfff9f9132c974964c0fe8cf0851b6dd9fa11243d21ad48a9c70d9e64"
+)
+HELD_CLOSE_DEPENDENCIES = [
+    "L12-HOSTED-001",
+    "L12-TRUTH-001",
+    "L12-SIGNOFF-001",
+]
+HELD_CLOSE_ARTIFACTS = [
+    HELD_CLOSE_REGISTRY_ARTIFACT,
+    "docs/04/pantheon_twelve_loop_gap_2026-07-26",
+    "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+]
+HELD_CLOSE_ARTIFACT_CONFLICT_GUARD = {
+    "schema_version": 1,
+    "program_id": PROGRAM_ID,
+    "catalog_sha256": (
+        "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d"
+    ),
+    "task_id": HELD_CLOSE_TASK_ID,
+    "artifact_scope": [
+        {
+            "repo": "pantheon",
+            "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26",
+        },
+        {
+            "repo": "pantheon",
+            "path": "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+        },
+        {"repo": "pantheon", "path": HELD_CLOSE_REGISTRY_ARTIFACT},
+    ],
+    "allowed_overlap_task_ids": ["L12-TRUTH-001"],
+}
 CURRENT_OWNER_PREFERENCE = [
     "Antigravity",
     "Claude2",
@@ -1700,6 +1746,80 @@ def _current_task_materialization_truth(
     return truth
 
 
+def _held_close_overlap_is_release_ordered(
+    *,
+    catalog: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    incoming: dict[str, Any],
+    incoming_scope: list[tuple[str, str]],
+    active_close: dict[str, Any],
+) -> bool:
+    """Admit only the pinned previous-current integration-to-close edge."""
+
+    if (
+        catalog.get("program_id") != PREVIOUS_CURRENT_PROGRAM_ID
+        or str(incoming.get("id") or "")
+        != "L12-CONTROLLER-CATALOG-INTEGRATION-20260731"
+    ):
+        return False
+    active_scope = task_artifact_scope(active_close)
+    overlapping_pairs = {
+        (left_repo, left_path, right_repo, right_path)
+        for left_repo, left_path in incoming_scope
+        for right_repo, right_path in active_scope
+        if left_repo == right_repo and artifact_overlaps(left_path, right_path)
+    }
+    if overlapping_pairs != {
+        (
+            "pantheon",
+            HELD_CLOSE_REGISTRY_ARTIFACT,
+            "pantheon",
+            HELD_CLOSE_REGISTRY_ARTIFACT,
+        )
+    }:
+        return False
+
+    owner = str(active_close.get("owner") or "").strip()
+    reviewer = str(active_close.get("reviewer") or "").strip()
+    if (
+        str(active_close.get("status") or "").strip() != "todo"
+        or owner not in CURRENT_ALLOWED_FLEET_ACTORS
+        or reviewer not in CURRENT_ALLOWED_FLEET_ACTORS
+        or owner == reviewer
+        or active_close.get("depends_on") != HELD_CLOSE_DEPENDENCIES
+        or active_close.get("artifacts") != HELD_CLOSE_ARTIFACTS
+        or active_close.get("program_id") != PROGRAM_ID
+        or active_close.get("auto_created_by") != AUTO_CREATED_BY
+        or active_close.get("catalog_task_contract_sha256")
+        != HELD_CLOSE_CATALOG_TASK_CONTRACT_SHA256
+        or active_close.get("artifact_conflict_guard")
+        != HELD_CLOSE_ARTIFACT_CONFLICT_GUARD
+        or active_close.get("target_repo") != "pantheon"
+        or active_close.get("merge_target") != "dev"
+        or active_close.get("evidence_root")
+        != "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001"
+        or active_close.get("requires_human_ops_signoff") is not True
+    ):
+        return False
+
+    # This binds the full previous-current graph, including the release gate
+    # that holds close behind controller integration and hosted proof. The
+    # per-task digests also reject callers that mutate the validated task list.
+    if canonical_json_sha256(catalog) != PREVIOUS_CURRENT_CATALOG_CANONICAL_SHA256:
+        return False
+    by_id = {str(task.get("id") or ""): task for task in tasks}
+    for (
+        task_id,
+        expected_sha256,
+    ) in PREVIOUS_HELD_CLOSE_RELEASE_ORDER_CONTRACT_SHA256.items():
+        task = by_id.get(task_id)
+        if task is None or canonical_json_sha256(
+            task_contract(task, catalog=catalog)
+        ) != expected_sha256:
+            return False
+    return True
+
+
 def _current_live_overlap_guard(
     *,
     catalog: dict[str, Any],
@@ -1722,16 +1842,31 @@ def _current_live_overlap_guard(
                 "superseded",
             }:
                 continue
+            held_close_pair = (
+                catalog.get("program_id") == PREVIOUS_CURRENT_PROGRAM_ID
+                and active_id == HELD_CLOSE_TASK_ID
+                and task["id"] == "L12-CONTROLLER-CATALOG-INTEGRATION-20260731"
+            )
             overlap = any(
                 left_repo == right_repo and artifact_overlaps(left_path, right_path)
                 for left_repo, left_path in catalog_scope
                 for right_repo, right_path in task_artifact_scope(active)
             )
-            if not overlap:
+            # A malformed held-close row must not hide the registry collision
+            # by dropping its artifacts or spoofing its target repository.
+            if not overlap and not held_close_pair:
                 continue
             if active_id in catalog_ids:
                 continue
             if active_id in external_ids and active_id in task["depends_on"]:
+                continue
+            if held_close_pair and _held_close_overlap_is_release_ordered(
+                catalog=catalog,
+                tasks=tasks,
+                incoming=task,
+                incoming_scope=catalog_scope,
+                active_close=active,
+            ):
                 continue
             raise DispatchError(
                 "live nonterminal artifact overlap is not dependency-ordered: "
