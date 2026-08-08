@@ -1,0 +1,68 @@
+{
+  "version": "pantheon.assistant.dev-task.v1",
+  "packetId": "sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255",
+  "intent": "source_only_remediation_dispatch",
+  "emittedAt": "2026-08-08T22:58:00Z",
+  "actor": {
+    "id": "Codex",
+    "roles": [
+      "auto-worker"
+    ],
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ]
+  },
+  "mode": "supervisor_source_only",
+  "sourceConversationId": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "sourceTurnIds": [
+    "promotion-evidence-20260808T225515388905Z-3787166",
+    "candidate-discover-20260808T225631Z"
+  ],
+  "documents": [
+    {
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T225515388905Z-3787166.json",
+        "sha256:0b60885dcf2e0434e92c3ae02b0478dce800ca8ff0330a5f7ba9a87d1d50c33b",
+        "mutable-drift:.orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+      "title": "Repair mutable bootstrap handling of generated tracked drift",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "phase": "Supervisor Runtime / Source-only Mutable Bootstrap Repair",
+      "dependsOn": [],
+      "artifacts": [
+        "scripts/promote_supervisor_runtime.py",
+        "scripts/test_promote_supervisor_runtime.py",
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_supervisor.py",
+        "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/"
+      ],
+      "acceptance": [
+        "Reproduce the exact bootstrap failure against a mutable linked worktree whose only tracked drift is an orchestrator-regenerated .orchestrator/task-briefs/*.md file.",
+        "Choose and document a source-only boundary that either prevents runtime task-brief generation from dirtying the mutable command checkout or safely separates provenance-verified generated task-brief drift from governed launch-source identity; do not broadly ignore tracked drift.",
+        "Continue to reject any tracked change to supervisor, watchdog, promotion, status-command, config-provisioning, or other governed launch sources, plus symlink, gitfile, Git identity, index, and staged drift hazards.",
+        "Prove the immutable candidate guard, mutable gitfile binding, config CAS, transaction ordering, rollback, and bytecode self-rejection suites remain green with a committed pre-review evidence manifest.",
+        "Perform no live config edit, direct process signal, manual checkout/reset/stash, candidate deletion, runtime promotion, supervisor scheduling change, or fleet-routing policy change; any later rollout is a separately authorized governed task."
+      ],
+      "summary": "The authorized 5877b644 rollout retry failed closed before mutation because bootstrap mutable-incumbent validation rejects one tracked task brief that the orchestrator itself regenerated in the active dev-root. Repair only the source boundary and regression fixtures; do not weaken governed launch-source identity or touch live runtime."
+    }
+  ],
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "requiresBranchPrMerge": true,
+    "noDirectShellFromWeb": true
+  },
+  "auditConversationHref": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+}

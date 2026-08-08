@@ -1,29 +1,47 @@
 # SUP-RUNTIME-V10 governed rollout verification
 
-This evidence records the authorized 2026-08-08 governed promotion attempt
-from `origin/dev` commit
-`619acd04184e8d3fc3aef322d160e7c9106670ad`.  It was executed only through
-`sync-dev-root.sh`, which handed the candidate to the existing transactional
-promotion operator.
+Owner: Codex
 
-The operator failed closed before it captured an incumbent, changed live
-configuration, signalled a process, or launched a candidate.  Its durable
-transaction record is:
+Reviewer: Codex2
+
+Outcome: fail closed; runtime unchanged; source-only follow-up required
+
+On 2026-08-08 the authorized retry used only
+`$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT`.
+The sync script protected the live mutable `dev-root`, fetched merged `dev`,
+materialized immutable candidate
+`5877b64425c8d6aede147d6cbbc6fbb9e228c259`, and handed all promotion
+authority to the candidate's transactional operator.
+
+The prior candidate-Git identity repair is present through merge commit
+`fee6f738a58b82ccc269ed8481ddc5a1a7a68b85`, but the retry stopped at the
+next fail-closed boundary: the mutable incumbent contains one tracked change,
+an orchestrator-regenerated task brief. The operator rejected it with
+`ValueError: Tracked git tree is dirty` before incumbent capture, config
+mutation, process signalling, or candidate launch.
+
+Durable transaction evidence:
 
 ```text
 /home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/
-supervisor-runtime-promotion-20260808T134307753860Z-3911075.json
-SHA-256: 1c252fb6a3691ac47a92e2a770782b503372b4825bb1f71031828efe8e92fe0e
+supervisor-runtime-promotion-20260808T225515388905Z-3787166.json
+SHA-256: 0b60885dcf2e0434e92c3ae02b0478dce800ca8ff0330a5f7ba9a87d1d50c33b
 ```
 
-The precise rejection was `Candidate Git directory is a symlink or has the
-wrong type: [Errno 20] Not a directory: '.git'`.  A later read-only candidate
-discovery successfully bound that same candidate's real `.git` directory,
-commit, tree, remote, and bytecode-clean working tree.  That discrepancy is a
-source-only follow-up: do not retry, alter the candidate, edit live config, or
-signal the incumbent outside the promotion transaction.
+Post-abort observations confirm PID `98981` still runs from mutable commit
+`619acd04184e8d3fc3aef322d160e7c9106670ad`, and the live config hash remains
+`904830b6ff1487f0a3d665be13446c55c8ab20d775ae37d9a0107647270eafa9`.
+The immutable candidate passed commit/tree/remote/standalone-Git identity
+discovery and remained free of ignored `__pycache__`, `.pyc`, and `.pyo`
+paths after the discovery child ran.
 
-`evidence.json` contains the command, hashes, process observations, and the
-explicit non-claims for candidate launch, status-child proof, and loop
-recovery.  It also records the source-only repair packet requested through the
-assistant dev bridge.
+No candidate process existed, so this record intentionally does not claim the
+`python -B` launch contract, status-child bytecode proof, three fresh loops,
+authoritative-shadow catch-up, queue/worker parity, or provider baseline.
+Those checks remain blocked until the source-only bootstrap drift policy is
+repaired and a separately authorized governed retry succeeds.
+
+`evidence.json` is the task-scoped review manifest. The source-only packet
+`source-only-followup-mutable-tracked-drift.json` is submitted through the
+signed assistant dev bridge; its receipt and materialized task identity are
+recorded in the manifest after supervisor drain.
