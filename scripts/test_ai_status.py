@@ -1951,6 +1951,125 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("github_review_bridge", task)
         self.assertEqual(self._approval_events(), [])
 
+    def test_approve_discovers_pr_binding_live_when_env_vars_absent(self) -> None:
+        """SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808: source_ref/github task
+        metadata is never populated by the normal assign/handoff flow, so the
+        exact-head safety gate must not depend on it. When REVIEW_PR/
+        REVIEW_HEAD_SHA are absent, approve must ask GitHub directly whether an
+        open PR exists at this task's branch instead of silently no-op'ing."""
+
+        discovered = {
+            "pr": 4218,
+            "head_sha": "c" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        bridge_evidence = {
+            "repository": "ajoe734/pantheon",
+            "pr": 4218,
+            "head_sha": "c" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "approve",
+            "actor": "Claude",
+            "mode": "required_commit_status",
+            "status_id": 202,
+            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+            "status_state": "success",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "repository_slug", return_value="ajoe734/pantheon"),
+            mock.patch.object(
+                ai_status, "discover_open_pr_binding", return_value=dict(discovered)
+            ) as discover,
+            mock.patch.object(
+                ai_status, "bridge_github_review_decision", return_value=bridge_evidence
+            ) as github_bridge,
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Approved via live-discovered head."],
+            )
+
+        discover.assert_called_once_with(
+            "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
+        )
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["review_binding"], discovered)
+        github_bridge.assert_called_once_with(
+            task,
+            actor="Claude",
+            decision="approve",
+            message="Approved via live-discovered head.",
+            binding=discovered,
+        )
+
+    def test_approve_falls_back_to_unbound_warning_when_no_pr_is_discovered(self) -> None:
+        """No open PR found live (and no metadata claims one either) must still
+        behave exactly like the pre-existing internal-only approval path."""
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "repository_slug", return_value="ajoe734/pantheon"),
+            mock.patch.object(ai_status, "discover_open_pr_binding", return_value=None),
+        ):
+            ai_status.command_approve(self.state, ["REG-002", "Approved."])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("review_binding", task)
+
+    def test_discover_open_pr_binding_accepts_an_open_matching_pr(self) -> None:
+        with mock.patch.object(
+            ai_status,
+            "run_gh_json_command",
+            return_value={
+                "number": 4218,
+                "headRefOid": "D" * 40,
+                "baseRefName": "dev",
+                "state": "OPEN",
+            },
+        ) as run_gh:
+            result = ai_status.discover_open_pr_binding(
+                "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
+            )
+
+        self.assertEqual(
+            result,
+            {"pr": 4218, "head_sha": "d" * 40, "head_branch": "task/REG-002", "base": "dev"},
+        )
+        run_gh.assert_called_once_with(
+            [
+                "pr", "view", "task/REG-002",
+                "--repo", "ajoe734/pantheon",
+                "--json", "number,headRefOid,baseRefName,state",
+            ]
+        )
+
+    def test_discover_open_pr_binding_ignores_a_closed_or_merged_pr(self) -> None:
+        with mock.patch.object(
+            ai_status,
+            "run_gh_json_command",
+            return_value={
+                "number": 4218,
+                "headRefOid": "d" * 40,
+                "baseRefName": "dev",
+                "state": "MERGED",
+            },
+        ):
+            result = ai_status.discover_open_pr_binding(
+                "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
+            )
+        self.assertIsNone(result)
+
+    def test_discover_open_pr_binding_returns_none_when_gh_finds_nothing(self) -> None:
+        with mock.patch.object(ai_status, "run_gh_json_command", return_value=None):
+            result = ai_status.discover_open_pr_binding(
+                "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
+            )
+        self.assertIsNone(result)
+
     def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
         """Not every task has a PR, so the refusal belongs to the merge gate."""
 
@@ -2586,10 +2705,65 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("terminal_outcome", task)
         self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
 
-    def test_reconcile_merged_done_requires_human_ops(self) -> None:
+    def test_reconcile_merged_done_requires_human_ops_or_reviewer(self) -> None:
+        """The owner (Codex) is neither Human/Ops nor the current reviewer
+        (Claude) and must still be rejected -- self-service is for the
+        independent reviewer who already verified the evidence, not for the
+        owner whose own delivery is being reconciled."""
+
         self.state["tasks"][0]["status"] = "blocked"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
+                ai_status.command_reconcile_merged_done(
+                    self.state,
+                    ["REG-002", "Merged delivery reconciled"],
+                )
+
+    def test_reconcile_merged_done_allows_current_reviewer_self_service(self) -> None:
+        """Once validate_merged_done_evidence's automated chain verification
+        exists (added alongside this change), the reviewer who already
+        independently verified the evidence should not have to wait on a
+        human to press the same button -- that was the whole point of
+        automating the verification in the first place."""
+
+        self.state["tasks"][0]["status"] = "blocked"
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "commit": "a" * 40,
+        }
+        consumed_ref = {
+            "verdict_id": "pclose-reconcile-reviewer-001",
+            "consumption_record_id": "pclose-consume-reconcile-reviewer-001",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=consumed_ref,
+            ),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Reviewer self-service reconcile"],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["terminal_outcome"], "completed")
+
+    def test_reconcile_merged_done_rejects_stale_reviewer_after_drift(self) -> None:
+        """If the task's reviewer has itself since drifted away, the old
+        reviewer identity must not retain self-service access -- only the
+        *current* reviewer field is trusted, same as Human/Ops always was."""
+
+        self.state["tasks"][0]["status"] = "blocked"
+        self.state["tasks"][0]["reviewer"] = "Gemini"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
                 ai_status.command_reconcile_merged_done(
                     self.state,
                     ["REG-002", "Merged delivery reconciled"],
@@ -3261,6 +3435,49 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(self.state["blockers"][0]["status"], "resolved")
         self.assertFalse(
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
+        )
+
+    def test_blocker_without_check_kind_remains_a_legacy_human_gate(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_blocker(
+                self.state,
+                ["REG-002", "Need an operator judgement", "Claude"],
+            )
+
+        blocker = self.state["blockers"][-1]
+        self.assertNotIn("check_kind", blocker)
+        self.assertEqual(blocker["task_id"], "REG-002")
+
+    def test_blocker_records_structured_pr_ci_and_dependency_checks(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_blocker(
+                self.state,
+                ["REG-002", "Awaiting PR CI", "Claude", "github_pr_ci", "4582"],
+            )
+            ai_status.command_blocker(
+                self.state,
+                [
+                    "REG-002",
+                    "Awaiting schema task",
+                    "Claude",
+                    "task_dependency",
+                    "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+                    "done",
+                ],
+            )
+
+        pr_blocker, dependency_blocker = self.state["blockers"][-2:]
+        self.assertEqual(
+            {"check_kind": pr_blocker["check_kind"], "pr_number": pr_blocker["pr_number"]},
+            {"check_kind": "github_pr_ci", "pr_number": 4582},
+        )
+        self.assertEqual(dependency_blocker["task_id"], "REG-002")
+        self.assertEqual(
+            dependency_blocker["check_params"],
+            {
+                "task_id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+                "required_status": "done",
+            },
         )
 
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:

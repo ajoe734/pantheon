@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import quote
 from contextlib import contextmanager
 import copy
 from copy import deepcopy
@@ -10497,6 +10498,10 @@ def status_command_subprocess_context(
         env.pop(key, None)
     env.update(issued_env)
     env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    # ``-B`` is local to one interpreter.  Status commands import additional
+    # command-root modules and may themselves launch Python children, so bind
+    # the inheritable form at this common subprocess boundary.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     if workspace_path is not None and str(workspace_path).strip():
         workspace_root = Path(str(workspace_path)).expanduser().resolve()
         env["PANTHEON_WORKTREE_ROOT"] = str(workspace_root)
@@ -13686,6 +13691,322 @@ def reconcile_ownerless_in_progress_tasks(
     return changed
 
 
+def blocked_task_reconciliation_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Return bounded settings for the opt-in blocked-task reconciler.
+
+    The feature is disabled unless explicitly enabled.  When it is enabled in
+    ``shadow_only`` mode it may prove that a structured blocker is resolved,
+    but it never mutates canonical task state.  That gives an operator a
+    production observation window before the one-way ``blocked`` gate is
+    opened for real.
+    """
+
+    raw = config.get("blocked_task_reconciliation")
+    settings = raw if isinstance(raw, dict) else {}
+    github_bus = config.get("github_bus") or {}
+    try:
+        interval_seconds = max(60, int(settings.get("interval_seconds", 300) or 300))
+    except (TypeError, ValueError):
+        interval_seconds = 300
+    try:
+        max_tasks_per_run = max(1, int(settings.get("max_tasks_per_run", 8) or 8))
+    except (TypeError, ValueError):
+        max_tasks_per_run = 8
+    try:
+        github_timeout_seconds = max(1, int(settings.get("github_timeout_seconds", 15) or 15))
+    except (TypeError, ValueError):
+        github_timeout_seconds = 15
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "shadow_only": bool(settings.get("shadow_only", True)),
+        "interval_seconds": interval_seconds,
+        "max_tasks_per_run": max_tasks_per_run,
+        "github_timeout_seconds": github_timeout_seconds,
+        "repository": str(settings.get("repository") or github_bus.get("repo") or "").strip(),
+    }
+
+
+def blocked_task_reconciliation_due(
+    state: dict[str, Any],
+    settings: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> bool:
+    """Keep the GitHub probe out of the supervisor's normal 30s cadence."""
+
+    bucket = state.get("blocked_task_reconciliation")
+    last_run_at = _parse_iso_utc(
+        str(bucket.get("last_run_at") or "") if isinstance(bucket, dict) else ""
+    )
+    if last_run_at is None:
+        return True
+    return now >= last_run_at + timedelta(seconds=int(settings["interval_seconds"]))
+
+
+def github_pr_ci_rollup_is_green(
+    required_contexts: set[str],
+    rollup: Any,
+) -> bool:
+    """Return true only when every required context is represented as SUCCESS."""
+
+    if not required_contexts or not isinstance(rollup, list):
+        return False
+    context_states: dict[str, list[str]] = {context: [] for context in required_contexts}
+    for item in rollup:
+        if not isinstance(item, Mapping):
+            continue
+        context = str(item.get("name") or item.get("context") or "").strip()
+        if context not in context_states:
+            continue
+        outcome = str(item.get("conclusion") or item.get("state") or "").strip().upper()
+        context_states[context].append(outcome)
+    return all(states and all(state == "SUCCESS" for state in states) for states in context_states.values())
+
+
+def github_pr_ci_blocker_resolved(
+    config: dict[str, Any],
+    blocker: Mapping[str, Any],
+    *,
+    settings: Mapping[str, Any] | None = None,
+) -> bool:
+    """Probe a PR's required checks with the same GitHub primitives as review.
+
+    Any unavailable API response, unknown protection configuration, or missing
+    check fails closed.  A temporary GitHub failure must never reopen work.
+    """
+
+    settings = settings or blocked_task_reconciliation_settings(config)
+    repository = str(settings.get("repository") or "").strip()
+    try:
+        pr_number = int(blocker.get("pr_number"))
+    except (TypeError, ValueError):
+        return False
+    if not repository or pr_number <= 0:
+        return False
+    timeout = int(settings.get("github_timeout_seconds", 15) or 15)
+    try:
+        pr_result = subprocess.run(
+            [
+                "gh", "pr", "view", str(pr_number), "--repo", repository,
+                "--json", "baseRefName,statusCheckRollup",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if pr_result.returncode != 0:
+            return False
+        pr_payload = json.loads(pr_result.stdout)
+        if not isinstance(pr_payload, dict):
+            return False
+        base = str(pr_payload.get("baseRefName") or "").strip()
+        if not base:
+            return False
+        protection_result = subprocess.run(
+            [
+                "gh", "api",
+                f"repos/{repository}/branches/{quote(base, safe='')}/protection/required_status_checks",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if protection_result.returncode != 0:
+            return False
+        protection = json.loads(protection_result.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return False
+    if not isinstance(protection, dict):
+        return False
+    required_contexts = {
+        str(context).strip()
+        for context in protection.get("contexts", [])
+        if str(context).strip()
+    }
+    for check in protection.get("checks", []):
+        if isinstance(check, Mapping) and str(check.get("context") or "").strip():
+            required_contexts.add(str(check["context"]).strip())
+    return github_pr_ci_rollup_is_green(
+        required_contexts,
+        pr_payload.get("statusCheckRollup"),
+    )
+
+
+def structured_blocker_resolved(
+    config: dict[str, Any],
+    blocker: Mapping[str, Any],
+    task_map: Mapping[str, Mapping[str, Any]],
+    *,
+    settings: Mapping[str, Any],
+) -> bool:
+    """Evaluate one explicitly machine-checkable blocker, fail-closed by default."""
+
+    check_kind = str(blocker.get("check_kind") or "").strip().lower()
+    if check_kind == "github_pr_ci":
+        return github_pr_ci_blocker_resolved(config, blocker, settings=settings)
+    if check_kind == "task_dependency":
+        params = blocker.get("check_params")
+        params = params if isinstance(params, Mapping) else {}
+        dependency_id = str(
+            params.get("task_id") or blocker.get("dependency_task_id") or ""
+        ).strip()
+        required_status = str(
+            params.get("required_status") or blocker.get("required_status") or "done"
+        ).strip().lower()
+        dependency = task_map.get(dependency_id)
+        return bool(
+            dependency
+            and str(dependency.get("status") or "").strip().lower() == required_status
+        )
+    return False
+
+
+def reconcile_blocked_tasks(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Auto-trigger the governed reopen transition for structured blockers only.
+
+    This is deliberately called from ``run_once``'s pre-admission I/O section,
+    not ``_run_once_locked``.  Its minute-level interval and fail-closed GitHub
+    probing keep normal dispatch ticks free of external check-rollup calls.
+    """
+
+    settings = blocked_task_reconciliation_settings(config)
+    if not settings["enabled"] or not config.get("paths", {}).get("status_file"):
+        return False
+    now = _parse_iso_utc(utc_now()) or datetime.now(timezone.utc)
+    if not blocked_task_reconciliation_due(state, settings, now=now):
+        return False
+
+    bucket = state.setdefault("blocked_task_reconciliation", {})
+    bucket["last_run_at"] = _isoformat_utc(now)
+    counts = {
+        "blocked_tasks_checked": 0,
+        "blocked_tasks_reconciled": 0,
+        "blocked_tasks_shadow_resolved": 0,
+    }
+    try:
+        status = load_status(config)
+    except (KeyError, RuntimeError, OSError):
+        bucket["last_result"] = "status_unavailable"
+        return False
+
+    schema = config.get("schema", {}) or {}
+    tasks_path = str(schema.get("tasks_path", "tasks"))
+    task_id_field = str(schema.get("task_id_field", "id"))
+    owner_field = str(schema.get("assignee_field", "owner"))
+    reviewer_field = str(schema.get("reviewer_field", "reviewer"))
+    tasks = [
+        task for task in status.get(tasks_path, [])
+        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+    ]
+    task_map = {
+        str(task.get(task_id_field)).strip(): task
+        for task in tasks
+    }
+    open_blockers_by_task: dict[str, list[dict[str, Any]]] = {}
+    for blocker in status.get("blockers", []) or []:
+        if not isinstance(blocker, dict):
+            continue
+        if str(blocker.get("status") or "").strip().lower() not in {"open", "pending", "active"}:
+            continue
+        task_id = str(blocker.get("task_id") or "").strip()
+        if task_id:
+            open_blockers_by_task.setdefault(task_id, []).append(blocker)
+
+    changed = False
+    for task in tasks:
+        if counts["blocked_tasks_checked"] >= settings["max_tasks_per_run"]:
+            break
+        task_id = str(task.get(task_id_field) or "").strip()
+        if str(task.get("status") or "").strip().lower() != "blocked":
+            continue
+        blockers = open_blockers_by_task.get(task_id, [])
+        # No record means no machine-checkable fact.  In particular, a legacy
+        # blocked row or any prose-only blocker is never guessed or auto-cleared.
+        if not blockers or any(not str(blocker.get("check_kind") or "").strip() for blocker in blockers):
+            continue
+        counts["blocked_tasks_checked"] += 1
+        if not all(
+            structured_blocker_resolved(config, blocker, task_map, settings=settings)
+            for blocker in blockers
+        ):
+            continue
+
+        message = (
+            "Supervisor auto-reopened this task after every opt-in structured "
+            "blocker re-sampled as resolved."
+        )
+        if settings["shadow_only"]:
+            counts["blocked_tasks_shadow_resolved"] += 1
+            continue
+        owner = str(task.get(owner_field) or "").strip()
+        reviewer = str(task.get(reviewer_field) or "").strip()
+        if not owner:
+            continue
+        reopened = persist_task_reassignment(
+            config,
+            task_id=task_id,
+            new_owner=owner,
+            new_reviewer=reviewer or owner,
+            message=message,
+            new_status="in_progress",
+            resolve_open_blockers=True,
+            resolve_open_handoffs=True,
+            reset_failure_streak=True,
+            activity_event_type="reopen",
+            expected_status="blocked",
+        )
+        if reopened:
+            counts["blocked_tasks_reconciled"] += 1
+            changed = True
+
+    bucket["last_result"] = "shadow" if settings["shadow_only"] else "applied"
+    bucket["last_counts"] = counts
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "blocked_tasks_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(counts)),
+    )
+    return changed
+
+
+def persist_blocked_task_reconciliation_runtime(
+    config: dict[str, Any],
+    snapshot: Mapping[str, Any],
+) -> bool:
+    """Persist only the periodic reconciler's small scheduling/metric bucket.
+
+    The GitHub query and canonical status transition happen before runtime
+    admission. This short, ordered write records when that independent pass
+    last ran without importing an entire stale runtime snapshot.
+    """
+
+    incoming = snapshot.get("blocked_task_reconciliation")
+    if not isinstance(incoming, dict):
+        return False
+    incoming_at = _parse_iso_utc(str(incoming.get("last_run_at") or ""))
+    if incoming_at is None:
+        return False
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        current = state.get("blocked_task_reconciliation")
+        current_at = _parse_iso_utc(
+            str(current.get("last_run_at") or "") if isinstance(current, dict) else ""
+        )
+        if current_at is not None and current_at >= incoming_at:
+            return False
+        state["blocked_task_reconciliation"] = deepcopy(incoming)
+        save_runtime_state(config, state)
+    return True
+
+
+
 def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
     """Return whether a materialized catalog contract fixes owner/reviewer.
 
@@ -13709,6 +14030,9 @@ def _persist_task_reassignment_locked(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    resolve_open_handoffs: bool = False,
+    reset_failure_streak: bool = False,
+    activity_event_type: str = "task_reassigned",
     expected_owner: str | None = None,
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
@@ -13749,8 +14073,10 @@ def _persist_task_reassignment_locked(
     task["reviewer"] = new_reviewer
     if new_status:
         task["status"] = new_status
-        if str(new_status).lower() == "todo":
+        if str(new_status).lower() in {"todo", "in_progress"}:
             task.pop("waiting_for", None)
+    if reset_failure_streak:
+        task["failure_streak"] = 0
     task["last_update"] = timestamp
     task["next"] = message
 
@@ -13764,6 +14090,10 @@ def _persist_task_reassignment_locked(
 
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") != task_id or handoff.get("status") == "done":
+            continue
+        if resolve_open_handoffs:
+            handoff["status"] = "done"
+            handoff["resolved_at"] = timestamp
             continue
         target = str(handoff.get("to") or "")
         if target in {old_owner, old_reviewer} and target not in {new_owner, new_reviewer}:
@@ -13782,8 +14112,9 @@ def _persist_task_reassignment_locked(
             }
         )
 
+    event_type = str(activity_event_type or "task_reassigned").strip() or "task_reassigned"
     event = {
-        "event_id": "supervisor-reassign-"
+        "event_id": f"supervisor-{event_type.replace('_', '-')}-"
         + hashlib.sha256(
             (
                 f"{task_id}\0{timestamp}\0{old_owner}\0{new_owner}\0"
@@ -13792,7 +14123,7 @@ def _persist_task_reassignment_locked(
         ).hexdigest(),
         "ts": timestamp,
         "agent": "Orchestrator",
-        "type": "task_reassigned",
+        "type": event_type,
         "task_id": task_id,
         "old_owner": old_owner,
         "new_owner": new_owner,
@@ -13816,6 +14147,9 @@ def persist_task_reassignment(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    resolve_open_handoffs: bool = False,
+    reset_failure_streak: bool = False,
+    activity_event_type: str = "task_reassigned",
     expected_owner: str | None = None,
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
@@ -13836,6 +14170,9 @@ def persist_task_reassignment(
             handoff_to=handoff_to,
             handoff_from=handoff_from,
             resolve_open_blockers=resolve_open_blockers,
+            resolve_open_handoffs=resolve_open_handoffs,
+            reset_failure_streak=reset_failure_streak,
+            activity_event_type=activity_event_type,
             expected_owner=expected_owner,
             expected_reviewer=expected_reviewer,
             expected_status=expected_status,
@@ -20168,6 +20505,26 @@ def run_once(
             quiet=quiet,
         )
     )
+    # This owns a separate, minute-level cadence. It can call GitHub but runs
+    # before runtime admission; dispatch's locked hot path therefore never
+    # waits on a PR check-rollup query.
+    blocked_reconciliation_scratch = deepcopy(github_runtime_snapshot)
+    blocked_reconciliation_changed = bool(
+        _safe_phase(
+            "reconcile_blocked_tasks",
+            reconcile_blocked_tasks,
+            config,
+            blocked_reconciliation_scratch,
+            quiet=quiet,
+        )
+    )
+    _safe_phase(
+        "persist_blocked_task_reconciliation_runtime",
+        persist_blocked_task_reconciliation_runtime,
+        config,
+        blocked_reconciliation_scratch,
+        quiet=quiet,
+    )
     base_ref_token = _PREFETCHED_WORKER_BASE_REFS.set(
         frozenset(prefetched_worker_base_refs)
     )
@@ -20207,7 +20564,7 @@ def run_once(
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
                 assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
-                prelock_changed=github_bus_changed,
+                prelock_changed=github_bus_changed or blocked_reconciliation_changed,
             )
         )
         changed = changed or pre_poll_changed

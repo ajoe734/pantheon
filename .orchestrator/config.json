@@ -43,6 +43,13 @@
     "provider_capability_refresh_interval_seconds": 300,
     "provider_probe_failure_hysteresis_threshold": 3
   },
+  "blocked_task_reconciliation": {
+    "enabled": false,
+    "shadow_only": true,
+    "interval_seconds": 300,
+    "max_tasks_per_run": 8,
+    "github_timeout_seconds": 15
+  },
   "worker_runtime": {
     "worker_lease_seconds": 600,
     "queue_lease_seconds": 1800,
@@ -899,7 +906,6 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Antigravity2",
       "Copilot"
     ],
     "dependency_done_statuses": [
@@ -941,7 +947,7 @@
       "Claude": 5,
       "Claude2": 5,
       "Antigravity": 5,
-      "Antigravity2": 0,
+      "Antigravity2": 6,
       "Codex": 30,
       "Codex2": 30,
       "Copilot": 0
@@ -950,7 +956,7 @@
       "Claude": 1,
       "Claude2": 1,
       "Antigravity": 1,
-      "Antigravity2": 0,
+      "Antigravity2": 6,
       "Codex": 4,
       "Codex2": 4,
       "Copilot": 0
@@ -962,7 +968,7 @@
     "max_concurrent_per_account": {
       "claude_account_shared_max_1": 1,
       "antigravity": 1,
-      "antigravity2": 0,
+      "antigravity2": 6,
       "codex1": 4,
       "codex2": 4,
       "copilot": 0

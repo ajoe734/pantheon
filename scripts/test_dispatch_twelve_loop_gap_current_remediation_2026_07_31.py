@@ -78,11 +78,10 @@ def readiness(
     return payload
 
 
-def external_rows() -> list[dict]:
-    dependency_ids = sorted(
-        module.CURRENT_EXTERNAL_DEPENDENCY_IDS
-        | module.CURRENT_RUNTIME_GATE_IDS
-    )
+def external_rows(catalog_payload: dict | None = None) -> list[dict]:
+    profile = module._current_profile(catalog_payload or catalog())
+    assert profile is not None
+    dependency_ids = sorted(profile["external_dependency_ids"] | module.CURRENT_RUNTIME_GATE_IDS)
     return [
         {
             "id": task_id,
@@ -93,8 +92,39 @@ def external_rows() -> list[dict]:
     ]
 
 
-def active_state(tasks: list[dict] | None = None) -> dict:
-    return {"tasks": [*external_rows(), *(tasks or [])]}
+def active_state(
+    tasks: list[dict] | None = None,
+    *,
+    catalog_payload: dict | None = None,
+) -> dict:
+    return {"tasks": [*external_rows(catalog_payload), *(tasks or [])]}
+
+
+def held_close_row(
+    *,
+    owner: str = "Claude2",
+    reviewer: str = "Antigravity",
+) -> dict:
+    return {
+        "id": module.HELD_CLOSE_TASK_ID,
+        "owner": owner,
+        "reviewer": reviewer,
+        "status": "todo",
+        "depends_on": list(module.HELD_CLOSE_DEPENDENCIES),
+        "artifacts": list(module.HELD_CLOSE_ARTIFACTS),
+        "program_id": module.PROGRAM_ID,
+        "auto_created_by": module.AUTO_CREATED_BY,
+        "catalog_task_contract_sha256": (
+            module.HELD_CLOSE_CATALOG_TASK_CONTRACT_SHA256
+        ),
+        "artifact_conflict_guard": deepcopy(
+            module.HELD_CLOSE_ARTIFACT_CONFLICT_GUARD
+        ),
+        "target_repo": "pantheon",
+        "merge_target": "dev",
+        "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+        "requires_human_ops_signoff": True,
+    }
 
 
 def canonical_test_state(ai_status) -> dict:
@@ -935,6 +965,158 @@ def test_current_concurrent_live_artifact_conflict_fails_closed(
             tasks,
             status_root=tmp_path,
             state=active_state([rogue]),
+            readiness=readiness(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("owner", "reviewer", "field", "malformed", "should_pass"),
+    [
+        ("Antigravity", "Claude", None, None, True),
+        ("Claude2", "Antigravity", None, None, True),
+        ("Antigravity", "Claude", "status", "in_progress", False),
+        ("UnknownAgent", "Claude", "owner", "UnknownAgent", False),
+        ("Antigravity", "Antigravity", "reviewer", "Antigravity", False),
+        (
+            "Antigravity",
+            "Claude",
+            "depends_on",
+            ["L12-HOSTED-001"],
+            False,
+        ),
+        ("Antigravity", "Claude", "artifacts", [], False),
+        (
+            "Antigravity",
+            "Claude",
+            "program_id",
+            module.PREVIOUS_CURRENT_PROGRAM_ID,
+            False,
+        ),
+        ("Antigravity", "Claude", "auto_created_by", "other_dispatcher", False),
+        (
+            "Antigravity",
+            "Claude",
+            "catalog_task_contract_sha256",
+            "0" * 64,
+            False,
+        ),
+        (
+            "Antigravity",
+            "Claude",
+            "artifact_conflict_guard",
+            {"task_id": module.HELD_CLOSE_TASK_ID},
+            False,
+        ),
+        ("Antigravity", "Claude", "target_repo", "execute-plans", False),
+        ("Antigravity", "Claude", "merge_target", "master", False),
+        (
+            "Antigravity",
+            "Claude",
+            "evidence_root",
+            "docs/deployment/evidence/twelve-loop-gap/other",
+            False,
+        ),
+        (
+            "Antigravity",
+            "Claude",
+            "requires_human_ops_signoff",
+            False,
+            False,
+        ),
+    ],
+)
+def test_previous_current_held_close_is_the_only_admitted_overlap(
+    owner: str,
+    reviewer: str,
+    field: str | None,
+    malformed: object,
+    should_pass: bool,
+    tmp_path: Path,
+) -> None:
+    payload = previous_current_catalog()
+    tasks = module.validate_catalog(payload)
+    active_close = held_close_row(owner=owner, reviewer=reviewer)
+    if field is not None:
+        active_close[field] = deepcopy(malformed)
+
+    if should_pass:
+        plan = module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state([active_close], catalog_payload=payload),
+            readiness=readiness(),
+        )
+        assert len(plan["create"]) == 25
+        return
+
+    with pytest.raises(module.DispatchError, match="live nonterminal artifact overlap"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state([active_close], catalog_payload=payload),
+            readiness=readiness(),
+        )
+
+
+@pytest.mark.parametrize("mutation", ["catalog", "release_gate_task"])
+def test_previous_current_held_close_rejects_mutated_release_contract(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    payload = previous_current_catalog()
+    tasks = module.validate_catalog(payload)
+    if mutation == "catalog":
+        payload["generated_at"] = "2026-07-31T16:00:01Z"
+    else:
+        tasks = deepcopy(tasks)
+        release_gate = next(
+            task
+            for task in tasks
+            if task["id"] == "L12-CURRENT-PROOF-RELEASE-GATE-20260731"
+        )
+        release_gate["dispatch_rules"] = [
+            *release_gate["dispatch_rules"],
+            "mutated after catalog validation",
+        ]
+
+    with pytest.raises(module.DispatchError, match="live nonterminal artifact overlap"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state([held_close_row()], catalog_payload=payload),
+            readiness=readiness(),
+        )
+
+
+@pytest.mark.parametrize("mutation", ["other_task", "extra_close_overlap"])
+def test_previous_current_held_close_rejects_every_other_overlap(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    payload = previous_current_catalog()
+    tasks = deepcopy(module.validate_catalog(payload))
+    if mutation == "other_task":
+        incoming = next(task for task in tasks if task["wave"] == "G1")
+        incoming["artifacts"].append(module.HELD_CLOSE_REGISTRY_ARTIFACT)
+    else:
+        incoming = next(
+            task
+            for task in tasks
+            if task["id"] == "L12-CONTROLLER-CATALOG-INTEGRATION-20260731"
+        )
+        incoming["artifacts"].append(
+            "docs/04/pantheon_twelve_loop_gap_2026-07-26/current-integration"
+        )
+
+    with pytest.raises(module.DispatchError, match="live nonterminal artifact overlap"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state([held_close_row()], catalog_payload=payload),
             readiness=readiness(),
         )
 

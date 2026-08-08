@@ -55,6 +55,37 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+@pytest.mark.parametrize("arguments", [(), ("--promote",)])
+def test_shell_entrypoint_disables_candidate_bytecode(
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+) -> None:
+    scripts_dir = tmp_path / "candidate" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    wrapper = scripts_dir / "promote-supervisor-runtime.sh"
+    shutil.copy2(Path(__file__).with_name("promote-supervisor-runtime.sh"), wrapper)
+    wrapper.chmod(0o755)
+    (scripts_dir / "promote_supervisor_runtime.py").write_text(
+        "import sys\nprint(sys.dont_write_bytecode)\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.pop("PYTHONDONTWRITEBYTECODE", None)
+
+    result = subprocess.run(
+        [str(wrapper), *arguments],
+        cwd=scripts_dir.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+    assert not (scripts_dir / "__pycache__").exists()
+
+
 def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     status_root = repo.parent / f"{repo.name}-status-root"
     state_path = status_root / ".orchestrator" / "state.json"
@@ -141,6 +172,7 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     argv = (
         str(executable),
         "-u",
+        "-B",
         str(repo / ".orchestrator" / "supervisor.py"),
         "--config",
         str(live_config_path),
@@ -255,6 +287,7 @@ def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdenti
             ("PANTHEON_COMMAND_ROOT", str(repo)),
             ("PANTHEON_COMMAND_RUNTIME_SHA", "a" * 40),
             ("PANTHEON_STATUS_ROOT", str(status_root)),
+            ("PYTHONDONTWRITEBYTECODE", "1"),
         ),
         admission_lock=lock,
     )
@@ -1268,6 +1301,18 @@ def _persistent_process_reader(
         owner_pid=generation.pid,
         owner_starttime_ticks=generation.starttime_ticks,
     )
+    environment = {
+        "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
+        "PANTHEON_STATUS_ROOT": str(status_root),
+    }
+    supervisor_index = next(
+        index
+        for index, argument in enumerate(argv)
+        if Path(argument).name == "supervisor.py"
+    )
+    if "-B" in argv[1:supervisor_index]:
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return InjectedRuntimeProcessReader(
         pids=(generation.pid,),
         generations={generation.pid: generation},
@@ -1280,13 +1325,7 @@ def _persistent_process_reader(
                 inode=root_stat.st_ino,
             )
         },
-        environment={
-            generation.pid: {
-                "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
-                "PANTHEON_COMMAND_RUNTIME_SHA": identity.head_commit,
-                "PANTHEON_STATUS_ROOT": str(status_root),
-            }
-        },
+        environment={generation.pid: environment},
         locks=[lock, lock],
     )
 
@@ -2571,12 +2610,56 @@ def test_config_variants_are_derived_from_one_capture_without_external_write(
     assert str(rollback_root / ".orchestrator" / "supervisor.py") in (
         rollback_variant.supervisor_argv
     )
+    candidate_entrypoint = candidate_variant.supervisor_argv.index(
+        str(candidate / ".orchestrator" / "supervisor.py")
+    )
+    rollback_entrypoint = rollback_variant.supervisor_argv.index(
+        str(rollback_root / ".orchestrator" / "supervisor.py")
+    )
+    assert candidate_variant.supervisor_argv[candidate_entrypoint - 1] == "-B"
+    assert rollback_variant.supervisor_argv[rollback_entrypoint - 1] == "-B"
     assert candidate_variant.sha256 == hashlib.sha256(
         candidate_variant.content
     ).hexdigest()
     assert rollback_variant.sha256 == hashlib.sha256(
         rollback_variant.content
     ).hexdigest()
+
+
+def test_config_variant_keeps_existing_no_bytecode_flag_idempotent(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+    payload = json.loads(identity.config_bytes)
+    command = payload["watchdog"]["supervisor_command"]
+    entrypoint_index = next(
+        index
+        for index, argument in enumerate(command)
+        if Path(argument).name == "supervisor.py"
+    )
+    command.insert(entrypoint_index, "-B")
+    config_bytes = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+    identity = replace(
+        identity,
+        config_bytes=config_bytes,
+        config_byte_length=len(config_bytes),
+        config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+    )
+
+    variant = promotion.derive_supervisor_config_variant(
+        identity,
+        command_root=identity.candidate_root,
+    )
+
+    assert variant.supervisor_argv.count("-B") == 1
 
 
 def _config_install_fixture(
@@ -2791,6 +2874,7 @@ def _injected_process_fixture(
     argv = (
         str(executable),
         "-u",
+        "-B",
         str(entrypoint),
         "--config",
         str(config_path),
@@ -2879,6 +2963,7 @@ def _injected_process_fixture(
                 "PANTHEON_COMMAND_ROOT": str(candidate),
                 "PANTHEON_COMMAND_RUNTIME_SHA": commit,
                 "PANTHEON_STATUS_ROOT": str(status_root),
+                "PYTHONDONTWRITEBYTECODE": "1",
             }
         },
         locks=[lock, lock],
@@ -3207,6 +3292,7 @@ def test_governed_launch_contract_composes_real_sources_and_safe_values(
     assert contract.stdout_log_path == contract.stderr_log_path
     assert contract.status_command_root == candidate.candidate_root
     assert contract.status_command_runtime_sha == candidate.head_commit
+    assert dict(contract.required_environment)["PYTHONDONTWRITEBYTECODE"] == "1"
     assert {source.role for source in contract.source_identities} == {
         "supervisor",
         "watchdog_intent",
@@ -3301,6 +3387,10 @@ def test_governed_launch_contract_rejects_wrong_cwd(tmp_path: Path) -> None:
         (
             lambda environment: environment.pop("PANTHEON_COMMAND_RUNTIME_SHA"),
             "missing PANTHEON_COMMAND_RUNTIME_SHA",
+        ),
+        (
+            lambda environment: environment.pop("PYTHONDONTWRITEBYTECODE"),
+            "missing PYTHONDONTWRITEBYTECODE",
         ),
         (
             lambda environment: environment.__setitem__(
@@ -3517,8 +3607,34 @@ def test_process_identity_binds_exact_generation_argv_cwd_git_env_and_lock(
         "PANTHEON_COMMAND_ROOT",
         "PANTHEON_COMMAND_RUNTIME_SHA",
         "PANTHEON_STATUS_ROOT",
+        "PYTHONDONTWRITEBYTECODE",
     }
     assert "SECRET" not in encoded_summary
+
+
+def test_process_identity_allows_one_governed_legacy_incumbent_migration(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PYTHONDONTWRITEBYTECODE")
+
+    identity = _discover_injected(candidate, reader)
+
+    assert identity.argv == legacy_argv
+    assert dict(identity.environment_contract) == {
+        "PANTHEON_COMMAND_ROOT": str(candidate.candidate_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": candidate.head_commit,
+        "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
+    }
 
 
 def test_process_identity_revalidates_candidate_inside_lock_bracket(
@@ -3567,7 +3683,12 @@ def test_process_identity_rejects_multiple_supervisor_candidates(
 
 def test_process_identity_rejects_wrong_config_argv(tmp_path: Path) -> None:
     candidate, reader, argv = _injected_process_fixture(tmp_path)
-    reader.argv[1717] = argv[:4] + (str(tmp_path / "wrong-config.json"),) + argv[5:]
+    config_index = argv.index("--config") + 1
+    reader.argv[1717] = (
+        argv[:config_index]
+        + (str(tmp_path / "wrong-config.json"),)
+        + argv[config_index + 1 :]
+    )
 
     with pytest.raises(ValueError, match="config path mismatch"):
         _discover_injected(candidate, reader)
@@ -3676,6 +3797,7 @@ def test_process_identity_rejects_wrong_cwd_git_identity(
         "PANTHEON_COMMAND_ROOT",
         "PANTHEON_COMMAND_RUNTIME_SHA",
         "PANTHEON_STATUS_ROOT",
+        "PYTHONDONTWRITEBYTECODE",
     ],
 )
 def test_process_identity_rejects_wrong_allowlisted_environment(
@@ -3747,6 +3869,7 @@ def test_procfs_environment_reader_returns_only_allowlisted_contract(
         b"SECRET_TOKEN=must-not-escape\0"
         b"PANTHEON_COMMAND_RUNTIME_SHA=" + b"a" * 40 + b"\0"
         b"PANTHEON_STATUS_ROOT=/status\0"
+        b"PYTHONDONTWRITEBYTECODE=1\0"
     )
 
     contract = ProcfsRuntimeProcessReader(
@@ -3757,6 +3880,7 @@ def test_procfs_environment_reader_returns_only_allowlisted_contract(
         "PANTHEON_COMMAND_ROOT": "/runtime",
         "PANTHEON_COMMAND_RUNTIME_SHA": "a" * 40,
         "PANTHEON_STATUS_ROOT": "/status",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     assert "must-not-escape" not in json.dumps(contract)
 
@@ -3797,6 +3921,7 @@ def _transaction_process_identity(
         argv=(
             str(Path(sys.executable).resolve()),
             "-u",
+            "-B",
             str(root / ".orchestrator" / "supervisor.py"),
             "--config",
             str(root.parent / "live-config.json"),
@@ -3811,6 +3936,7 @@ def _transaction_process_identity(
             ("PANTHEON_COMMAND_ROOT", str(root)),
             ("PANTHEON_COMMAND_RUNTIME_SHA", commit),
             ("PANTHEON_STATUS_ROOT", str(root.parent / "status")),
+            ("PYTHONDONTWRITEBYTECODE", "1"),
         ),
         admission_lock=SupervisorAdmissionLockIdentity(
             path=lock_path,
