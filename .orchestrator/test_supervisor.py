@@ -246,23 +246,23 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(report["providers"]["copilot"]["auth_ready"], True)
         build_provider_capabilities.assert_not_called()
 
-    def test_codex_accounts_allow_four_concurrent_slots(self) -> None:
+    def test_codex_accounts_allow_two_concurrent_slots(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
         account_caps = config["ready_dispatcher"]["max_concurrent_per_account"]
 
         self.assertNotIn("max_tasks_per_agent", ready_dispatcher)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 4)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 4)
-        self.assertEqual(account_caps["codex1"], 4)
-        self.assertEqual(account_caps["codex2"], 4)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 2)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 2)
+        self.assertEqual(account_caps["codex1"], 2)
+        self.assertEqual(account_caps["codex2"], 2)
         self.assertEqual(config["providers"]["codex"]["account"], "codex1")
         self.assertEqual(config["providers"]["codex2"]["account"], "codex2")
         self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 4)
         self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 4)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 2)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 2)
 
     def test_claude_lanes_are_enabled_with_shared_account_limit(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
@@ -304,10 +304,10 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config["providers"]["antigravity2"]["delivery_mode"], "antigravity")
         self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 30)
         self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 30)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 6)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 6)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity"], 6)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 6)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 4)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 4)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity"], 4)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 4)
         self.assertNotIn("Antigravity", ready_dispatcher["disabled_agents"])
         self.assertNotIn("Antigravity2", ready_dispatcher["disabled_agents"])
 
