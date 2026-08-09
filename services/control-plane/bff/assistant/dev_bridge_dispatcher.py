@@ -927,7 +927,7 @@ def _run_governed_task_show(
             and error == f"Unknown task: {task_id}"
         ):
             raise MaterializedTaskMissingError(
-                f"materialized task {task_id!r} is missing"
+                f"{label} reported exact absence: {error}"
             )
         detail = error or output or f"exit {result.returncode}"
         if result.returncode in {3, 75}:
@@ -956,8 +956,12 @@ def _canonical_task_state_readback(
     required = str(
         environment.get(REQUIRE_TASK_STATE_READBACK_ENV) or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
+    ai_status, status_env, governed = _status_command_context(
+        repo_root,
+        environment=environment,
+    )
     if not task_state_env:
-        if required:
+        if required or governed:
             raise ValueError(
                 "canonical task-state runtime binding is missing; "
                 "file/activity-only bridge dispatch is not admissible"
@@ -967,10 +971,6 @@ def _canonical_task_state_readback(
             "taskIds": [task.id for task in packet.tasks],
         }
 
-    ai_status, status_env, governed = _status_command_context(
-        repo_root,
-        environment=environment,
-    )
     if not governed:
         raise ValueError(
             "canonical task-state readback requires the governed command runtime"
@@ -1061,7 +1061,11 @@ def _validate_materialized_tasks(
         repo_root,
         environment=command_environment,
     )
-    if task_state_env:
+    _ai_status, _status_env, governed = _status_command_context(
+        repo_root,
+        environment=command_environment,
+    )
+    if task_state_env or governed:
         # Governed mode has exactly one read authority.  Repository-local
         # projection and archive files are derived outputs and must never be a
         # fallback when the authoritative `show` path is unavailable.
