@@ -3037,6 +3037,7 @@ def _discover_injected(
     *,
     git_identity: tuple[str, str] | None = None,
     allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     return discover_incumbent_supervisor_process(
         identity,
@@ -3047,6 +3048,9 @@ def _discover_injected(
             else (identity.head_commit, identity.tracked_tree_identity)
         ),
         allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
+        ),
     )
 
 
@@ -4747,6 +4751,44 @@ def test_process_identity_rejects_admission_lock_generation_drift(
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
         _discover_injected(candidate, reader)
+
+
+def test_mutable_bootstrap_accepts_only_dynamic_flock_id_churn(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_admission_lock_id_churn=True,
+    )
+
+    assert (
+        identity.admission_lock.kernel_lock_id
+        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
+    )
+
+
+def test_mutable_bootstrap_rejects_other_admission_lock_drift(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(
+        original,
+        kernel_lock_id="72",
+        mtime_ns=34,
+    )
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_admission_lock_id_churn=True,
+        )
 
 
 def test_process_identity_rejects_admission_lock_owner_generation_mismatch(
