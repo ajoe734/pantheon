@@ -6,8 +6,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Title: Bind historical generated task-brief canonicality for legacy bootstrap
 - Status: in_progress
 - Owner: Antigravity2
-- Reviewer: Antigravity
-- Next: Replace ecdc structural authorization with candidate-tracked exact provenance bindings: path/task/length/SHA256 + authoritative historical event + old command-runtime 5877b644 + prevention boundary f5570754. Never trust mutable disk status/archive. Keep current-render/head-blob fast paths and identity revalidation; add mutated-byte/wrong-path/wrong-event/source/boundary negatives; update evidence, amend or add compliant commit, push, test, handoff.
+- Reviewer: Codex2
+- Next: Reject PR #4671 head 9652c6aac: its provenance constant contains only a 634-byte test fixture and omits the two actual live dev-root drifts (1364/21a8c81a... and 2132/40bb9032...). Neither live blob exists in candidate Git history, so real rollout still fails closed. Add exact path/task/length/SHA plus authoritative event, old command-runtime 5877b644, and prevention-boundary f5570754 bindings for both; add positive live-byte and wrong event/source/boundary negatives; update evidence and request fresh exact-head review.
 
 ## Summary
 PR #4667 retained strict byte equality by re-rendering legacy brief content from current bound config, but the active pre-fix brief now fails that comparison before any promotion mutation. Repair only a fail-closed historical-context provenance boundary for the known generated residue; do not broaden drift acceptance or touch the live runtime.

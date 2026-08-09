@@ -5019,6 +5019,13 @@ sys.stdout.write(json.dumps({
 CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS: dict[str, set[tuple[int, str]]] = {
     ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md": {
         (634, "dde1769f5ddf4a1d7c0f861d81f02e9dc977a27415d085a6db6614ecfca2772c"),
+        (1364, "21a8c81a28417a8dbbe1641e436deb35d38dced9b8a2944d6ff25ce36165c737"),
+    },
+    ".orchestrator/task-briefs/sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md": {
+        (2132, "40bb9032a826cf94ec2e0e596266dfaf0d90c48c7dc84fb7b179021fdb66dae6"),
+    },
+    ".orchestrator/task-briefs/sup_l12_guarded_remediation_catalog_correction_20260803.md": {
+        (3092, "7ba325bbafa79eaf8fef8d50b7cb147be95bb234844516f6150f0e2905fc16c7"),
     },
 }
 
