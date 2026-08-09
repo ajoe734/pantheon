@@ -4261,7 +4261,7 @@ def evaluate_promotion_invariants(
         if isinstance(w_info, dict):
             task_id = w_info.get("current_task_id") or w_info.get("task_id")
             w_status = w_info.get("status")
-            if w_status in ("running", "started", "active") and task_id:
+            if w_status in ("running", "started", "active", "retry_backoff") and task_id:
                 if task_id in active_worker_tasks:
                     duplicate_workers.append(f"{w_name}:{task_id}")
                 else:
@@ -4368,7 +4368,7 @@ def evaluate_promotion_invariants(
         # Find active workers reverse-linked to this event (matching canonical run_id == lease_owner)
         matched_workers: list[tuple[str, dict[str, Any]]] = []
         for w_name, w_info in workers.items():
-            if isinstance(w_info, dict) and w_info.get("status") in ("running", "started", "active"):
+            if isinstance(w_info, dict) and w_info.get("status") in ("running", "started", "active", "retry_backoff"):
                 c_run_id = get_canonical_run_id(w_name, w_info)
                 if c_run_id == q_lease_owner or w_info.get("queue_event_id") == evt_id:
                     matched_workers.append((w_name, w_info))

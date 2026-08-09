@@ -1131,6 +1131,47 @@ def test_evaluate_promotion_invariants_rejects_duplicate_canonical_run_id() -> N
     assert "duplicate_canonical_run_id:run_dup" in worker_inv["details"]["reasons"]
 
 
+def test_evaluate_promotion_invariants_accepts_retry_backoff_worker() -> None:
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {
+            "w_retry": {
+                "status": "retry_backoff",
+                "current_task_id": "T1",
+                "queue_event_id": "evt1",
+                "run_id": "run_retry",
+                "runner_finished_at": "2026-08-09T18:00:00Z",
+            },
+        },
+        "queue": {
+            "events": {
+                "evt1": {
+                    "id": "evt1",
+                    "task_id": "T1",
+                    "status": "retry_backoff",
+                    "run_id": "run_retry",
+                    "lease_owner": "run_retry",
+                }
+            }
+        },
+        "worker_worktrees": {
+            "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_retry"}}
+        },
+    }
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status={"tasks": []},
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is True
+    assert worker_inv["details"]["reasons"] == []
+
+
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],

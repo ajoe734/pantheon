@@ -11586,6 +11586,49 @@ class OrphanedQueueEventTests(unittest.TestCase):
             ["worker_reaped", "queue_event_pruned"],
         )
 
+    def test_prune_event_queue_drops_finished_retry_workers_without_processes(self) -> None:
+        event = {
+            "event_id": "stale-finished-retry",
+            "task_id": "task-2",
+            "target_agent": "codex",
+            "created_at": "2026-08-09T10:00:00Z",
+        }
+        state = {
+            "queue": {"events": {"stale-finished-retry": {"status": "retry_backoff"}}},
+            "workers": {
+                "retry-2": {
+                    "run_id": "retry-2",
+                    "task_id": "task-2",
+                    "queue_event_id": "stale-finished-retry",
+                    "status": "retry_backoff",
+                    "runner_finished_at": "2026-08-09T10:02:00Z",
+                    "next_retry_at": "2026-08-09T11:00:00Z",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [{"id": "task-2", "status": "todo"}]},
+            ),
+            mock.patch.object(supervisor, "worker_process_generation_is_current", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "save_event_queue") as save_event_queue,
+        ):
+            changed = supervisor.prune_event_queue(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"], {})
+        self.assertEqual(state["queue"]["events"], {})
+        save_event_queue.assert_called_once_with(self.config, [])
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["worker_reaped", "queue_event_pruned"],
+        )
+
 
 class ChairReviewDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
