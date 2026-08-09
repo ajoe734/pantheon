@@ -299,6 +299,9 @@ def test_recovered_packet_can_be_rearmed_after_a_new_failed_drain(
     current_receipt = json.loads(
         (inbox / "receipts" / failed.name).read_text(encoding="utf-8")
     )
+    previous_recovery = json.loads(
+        (inbox / "recoveries" / failed.name).read_text(encoding="utf-8")
+    )
     assert current_receipt != initial_receipt
 
     rearmed = recover_failed_task_packet(
@@ -321,7 +324,14 @@ def test_recovered_packet_can_be_rearmed_after_a_new_failed_drain(
     assert rearmed["rearmAttempt"] == 1
     assert rearmed["rearmEvidencePath"] == str(evidence_path)
     assert evidence["state"] == "queued"
+    assert evidence["previous_recovery"] == previous_recovery
+    assert evidence["previous_recovery_sha256"] == (
+        dev_bridge_inbox._canonical_json_sha256(previous_recovery)
+    )
     assert evidence["current_failed_receipt"] == current_receipt
+    assert evidence["current_failed_receipt_sha256"] == (
+        dev_bridge_inbox._canonical_json_sha256(current_receipt)
+    )
     assert evidence["next_recovery"] == recovery
     assert recovery["rearm_attempt"] == 1
     assert recovery["last_rearm"]["failed_receipt_sha256"] == (
@@ -385,6 +395,72 @@ def test_rearm_rejects_a_manual_failed_bounce_with_the_consumed_receipt(
     assert failed.is_file()
     assert not (inbox / "pending" / failed.name).exists()
     assert not (inbox / "recovery-rearms" / failed.stem).exists()
+
+
+def test_rearm_resumes_a_crash_after_evidence_and_before_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
+    repo_root = _write_fake_repo(tmp_path)
+    packet = sign_packet(
+        _make_packet("pkt_failed_recovery_rearm_pre_rename_crash"),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    failed = _archive_as_failed(repo_root, packet)
+    inbox = failed.parent.parent
+    recover_failed_task_packet(
+        packet.packet_id,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    _drain_as_failed(
+        repo_root,
+        packet,
+        error="injected pre-rename rearm crash precursor",
+        dispatched_at="2026-08-09T08:01:45Z",
+    )
+    evidence_path = inbox / "recovery-rearms" / failed.stem / "000001.json"
+    real_write = dev_bridge_inbox._write_json_atomic
+
+    def crash_after_evidence(path: Path, payload: dict) -> None:
+        real_write(path, payload)
+        if path == evidence_path and payload.get("state") == "prepared":
+            raise SystemExit("injected crash before rearm rename")
+
+    with (
+        patch.object(
+            dev_bridge_inbox,
+            "_write_json_atomic",
+            side_effect=crash_after_evidence,
+        ),
+        pytest.raises(SystemExit, match="before rearm rename"),
+    ):
+        recover_failed_task_packet(
+            packet.packet_id,
+            repo_root=str(repo_root),
+            key_store={"assistant-bridge-dev": TEST_KEY},
+        )
+
+    assert failed.is_file()
+    assert not (inbox / "pending" / failed.name).exists()
+    assert json.loads(evidence_path.read_text(encoding="utf-8"))["state"] == (
+        "prepared"
+    )
+
+    resumed = recover_failed_task_packet(
+        packet.packet_id,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+
+    assert resumed["status"] == "rearmed"
+    assert resumed["rearmAttempt"] == 1
+    assert not failed.exists()
+    assert (inbox / "pending" / failed.name).is_file()
+    assert json.loads(evidence_path.read_text(encoding="utf-8"))["state"] == (
+        "queued"
+    )
 
 
 def test_rearm_resumes_a_crash_after_failed_to_pending_rename(
@@ -455,9 +531,19 @@ def test_rearm_resumes_a_crash_after_failed_to_pending_rename(
     ] == 1
 
 
+@pytest.mark.parametrize(
+    ("digest_field", "expected_error"),
+    [
+        ("previous_recovery_sha256", "previous digest mismatch"),
+        ("current_failed_receipt_sha256", "receipt digest mismatch"),
+        ("next_recovery_sha256", "next digest mismatch"),
+    ],
+)
 def test_rearm_rejects_tampered_retry_evidence_before_another_move(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    digest_field: str,
+    expected_error: str,
 ) -> None:
     monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
     repo_root = _write_fake_repo(tmp_path)
@@ -491,10 +577,10 @@ def test_rearm_rejects_tampered_retry_evidence_before_another_move(
     )
     evidence_path = inbox / "recovery-rearms" / failed.stem / "000001.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    evidence["next_recovery_sha256"] = "0" * 64
+    evidence[digest_field] = "0" * 64
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="next digest mismatch"):
+    with pytest.raises(ValueError, match=expected_error):
         recover_failed_task_packet(
             packet.packet_id,
             repo_root=str(repo_root),
