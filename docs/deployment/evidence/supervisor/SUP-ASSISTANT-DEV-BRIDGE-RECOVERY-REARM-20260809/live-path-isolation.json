@@ -1,0 +1,24 @@
+{
+  "schema_version": "assistant_dev_bridge_recovery_rearm_live_path_isolation.v1",
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809",
+  "captured_at": "2026-08-09T09:20:51Z",
+  "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+  "trace_command": "strace -f -e trace=%file -o /tmp/SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809-files.trace <command>",
+  "result": "83 passed in 93.86s",
+  "trace": {
+    "path": "/tmp/SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809-files.trace",
+    "line_count": 489750,
+    "sha256": "213998be510021bf9b88f4f3d7034df8c2019c63b4237ed24c57dd73324f1b4a",
+    "forbidden_path_pattern": "/home/lupin/pantheon/(ai-status\\.json|ai-activity-log\\.jsonl|\\.orchestrator/(state\\.json|assistant-dev-packets|[^/]*(task|journal|event)[^/]*))",
+    "forbidden_path_syscalls": 0
+  },
+  "isolation": {
+    "status": "pytest temporary repo roots and explicit --repo-root/PANTHEON_STATUS_ROOT bindings",
+    "audit": "pytest temporary ai-activity-log.jsonl files",
+    "journal": "pytest temporary authoritative event logs where journal mode is exercised",
+    "inbox": "pytest temporary .orchestrator/assistant-dev-packets directories",
+    "runtime": "test-local command fixtures with inherited live command/runtime bindings removed"
+  },
+  "interpretation": "The focused rearm, inbox CLI, and reliability suites did not open or mutate the live Pantheon canonical status, activity audit, orchestrator runtime/journal state, or assistant dev bridge inbox.",
+  "limitations": "The syscall trace is external task evidence stored under /tmp and is represented here by its command, line count, SHA-256 digest, forbidden-path predicate, and zero-hit result."
+}

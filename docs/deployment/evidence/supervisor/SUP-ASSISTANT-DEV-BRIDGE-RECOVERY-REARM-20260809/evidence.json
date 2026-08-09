@@ -1,6 +1,6 @@
 {
   "schema_version": "assistant_dev_bridge_recovery_rearm_evidence.v1",
-  "captured_at": "2026-08-09T09:12:56Z",
+  "captured_at": "2026-08-09T09:20:51Z",
   "task": {
     "id": "SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809",
     "title": "Rearm exact recovery after a failed recovered-packet drain",
@@ -13,10 +13,11 @@
   },
   "implementation": {
     "base_commit": "93e321b4fb703faac2114d29e498cd94c08d269c",
-    "implementation_head": "8f0a507dd1622fbac1d170e65e00bbaa0856be85",
+    "implementation_head": "60a2a6d4ddd8b468e076e6e61f09863fb17eaa2f",
     "commits": [
       "c2120db177af977f1d38b16fbf12ffebad293429",
-      "8f0a507dd1622fbac1d170e65e00bbaa0856be85"
+      "8f0a507dd1622fbac1d170e65e00bbaa0856be85",
+      "60a2a6d4ddd8b468e076e6e61f09863fb17eaa2f"
     ]
   },
   "scope": {
@@ -25,6 +26,7 @@
     "implementation_files": [
       "services/control-plane/bff/assistant/dev_bridge_inbox.py",
       "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
       "scripts/drain_assistant_dev_task_packet_inbox.py"
     ]
   },
@@ -34,6 +36,23 @@
       "The recovered pending packet is drained again and fails before assignment, producing a new exact failed receipt and returning the leaf to failed storage.",
       "The prior implementation rejects the resulting failed leaf because the durable recovery record is already queued, leaving no supported retry path."
     ],
+    "isolated_before_rearm": {
+      "failed_leaf": "present and exact-signature verified",
+      "pending_leaf": "absent",
+      "processing_leaf": "absent",
+      "processed_leaf": "absent",
+      "recovery_record": "state=queued and bound to the same complete signed identity",
+      "current_receipt": "new status=failed/error receipt bound to the same packet id and digest",
+      "admission_record": "absent",
+      "replay_record": "absent"
+    },
+    "isolated_after_rearm": {
+      "failed_leaf": "absent",
+      "pending_leaf": "present with byte-identical signed packet",
+      "recovery_record": "state=queued with incremented rearm_attempt and last_rearm digest binding",
+      "rearm_evidence": "state=queued with previous recovery, current failed receipt, next recovery, and all three SHA-256 digests",
+      "implicit_drain_or_assignment": "none"
+    },
     "repair_boundary": "The same exact-id recovery command may rearm only when packet signature/provenance, queue and dispatch fences, recovery history, and a new exact failed receipt all validate. Operators still do not edit or move inbox state manually."
   },
   "delivered_properties": [
@@ -41,7 +60,7 @@
     "Each rearm appends a six-digit attempt record under recovery-rearms/<packet-id>/ that binds the previous recovery, the current failed receipt, the next recovery, canonical SHA-256 digests, packet identity, source/target paths, and timestamps.",
     "The chain validates every prior attempt in order and rejects missing, stale, malformed, symlinked, ambiguous, digest-mismatched, identity-mismatched, or state-mismatched evidence before moving a leaf.",
     "The previously consumed failed receipt digest cannot authorize another move, so manually bouncing the old pending leaf back to failed remains fail-closed.",
-    "A crash after evidence preparation, after failed-to-pending rename, or after next-recovery persistence can be resumed from the last prepared evidence without duplicating attempts.",
+    "Crashes on either side of failed-to-pending rename resume from the last prepared evidence without duplicating attempts.",
     "Repeated genuine failures create consecutive evidence attempts; the regression proves attempts 1 and 2 compose before a successful governed drain.",
     "The existing --recover-failed-packet-id CLI is the supported operator surface and now describes both initial recovery and rearm."
   ],
@@ -64,12 +83,13 @@
     {
       "id": "AC4",
       "status": "pass",
-      "statement": "Prepared retry evidence resumes safely after a crash between leaf rename and recovery-record update."
+      "statement": "Prepared retry evidence resumes safely after crashes immediately before and immediately after failed-to-pending rename."
     },
     {
       "id": "AC5",
       "status": "pass",
-      "statement": "Focused inbox and CLI regressions remain green and use pytest-temporary status roots and inboxes."
+      "statement": "Focused inbox, CLI, and reliability regressions remain green, use pytest-temporary status/audit/journal/inbox/runtime roots, and have zero traced access to live Pantheon state.",
+      "evidence": "live-path-isolation.json"
     },
     {
       "id": "AC6",
@@ -78,20 +98,21 @@
     }
   ],
   "validation": {
-    "new_rearm_regressions": "5 passed, 16 deselected in 2.30s",
-    "focused_inbox_and_cli_suite": "27 passed in 8.13s",
-    "assistant_suite": "198 passed, 1 unrelated existing failure in 42.30s",
+    "new_rearm_regressions": "9 passed, 22 deselected in 3.37s",
+    "focused_inbox_cli_reliability_suite": "83 passed in 31.81s",
+    "focused_suite_with_file_trace": "83 passed in 93.86s",
+    "live_path_isolation": "live-path-isolation.json; trace SHA-256 213998be510021bf9b88f4f3d7034df8c2019c63b4237ed24c57dd73324f1b4a; zero forbidden live-path syscalls",
+    "assistant_suite": "202 passed, 1 unrelated existing failure in 41.10s",
     "assistant_suite_failure": "services/control-plane/bff/assistant/tests/test_orchestrator_status.py::TestOrchestratorStatus::test_read_orchestrator_status_missing_files expects project=unknown but current origin/dev code returns pantheon; the task changes no orchestrator-status source or test.",
     "assistant_suite_failure_recheck": "The same isolated test still failed after unsetting PANTHEON_STATUS_ROOT, confirming it is not caused by the worker's ambient status-root binding.",
-    "python_compile": "pass for dev_bridge_inbox.py, test_dev_bridge_inbox.py, and drain_assistant_dev_task_packet_inbox.py",
+    "python_compile": "pass for dev_bridge_inbox.py, test_dev_bridge_inbox.py, test_dev_bridge_inbox_cli.py, and drain_assistant_dev_task_packet_inbox.py",
     "git_diff_check": "pass for origin/dev...implementation_head",
     "commit_trailers": "pass for origin/dev..implementation_head"
   },
   "coordination_status": {
-    "governed_show": "fail_closed because status_activity_outbox recovery is pending",
-    "governed_start": "fail_closed because the central activity audit contains duplicate event id ai-status-event-b38f76a8cad402b7ad135e8e30a2ca85227210a6a81d40cdc908dfa91cbefa7a",
-    "source_task_effect": "No central ai-status.json, current-work.md, ai-activity-log.jsonl, runtime state, or live inbox file was edited to bypass the invariant.",
-    "required_before_closeout": "The governed command root must recover audit integrity before handoff/approval/done state transitions can materialize."
+    "initial_governed_start": "temporarily failed closed while the central activity audit reported duplicate event id ai-status-event-b38f76a8cad402b7ad135e8e30a2ca85227210a6a81d40cdc908dfa91cbefa7a",
+    "governed_handoff": "pass; the canonical task is in review for Codex2 and binds PR #4663",
+    "source_task_effect": "No central ai-status.json, current-work.md, ai-activity-log.jsonl, runtime state, or live inbox file was edited to bypass or repair the transient invariant."
   },
   "independent_review": {
     "reviewer": "Codex2",
