@@ -244,26 +244,27 @@ def run_tick(
             retryable += 1
         if result.get("status") == "completed":
             completed += 1
-            try:
-                terminal_sessions.append(
-                    complete_and_read_terminal_session(
-                        api_url=api_url,
-                        job=result,
-                        timeout_seconds=timeout_seconds,
+            if result.get("terminalize_session") is True:
+                try:
+                    terminal_sessions.append(
+                        complete_and_read_terminal_session(
+                            api_url=api_url,
+                            job=result,
+                            timeout_seconds=timeout_seconds,
+                        )
                     )
-                )
-            except urllib.error.HTTPError as exc:
-                failed += 1
-                detail = exc.read().decode("utf-8", errors="replace")
-                errors.append(
-                    f"job_id={job_id} terminal_session_http_error={exc.code} {detail}"
-                )
-            except urllib.error.URLError as exc:
-                failed += 1
-                errors.append(f"job_id={job_id} terminal_session_url_error={exc.reason}")
-            except RuntimeError as exc:
-                failed += 1
-                errors.append(f"job_id={job_id} terminal_session_error={exc}")
+                except urllib.error.HTTPError as exc:
+                    failed += 1
+                    detail = exc.read().decode("utf-8", errors="replace")
+                    errors.append(
+                        f"job_id={job_id} terminal_session_http_error={exc.code} {detail}"
+                    )
+                except urllib.error.URLError as exc:
+                    failed += 1
+                    errors.append(f"job_id={job_id} terminal_session_url_error={exc.reason}")
+                except RuntimeError as exc:
+                    failed += 1
+                    errors.append(f"job_id={job_id} terminal_session_error={exc}")
         else:
             failed += 1
             errors.append(f"job_id={job_id} unexpected_status={result.get('status')!r}")

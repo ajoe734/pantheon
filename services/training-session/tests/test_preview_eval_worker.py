@@ -91,6 +91,7 @@ def test_preview_eval_worker_tick_runs_claimable_jobs(monkeypatch) -> None:
                     "job_id": "pvjob-001",
                     "session_id": "trn-1",
                     "status": "completed",
+                    "terminalize_session": True,
                     "reclaimed": True,
                     "retryable": False,
                     "evaluation_proof_ref": "trainer-eval-proof:trn-1:teval-1",
@@ -197,6 +198,7 @@ def test_preview_eval_worker_rejects_nonterminal_session_readback(monkeypatch) -
                     "job_id": "pvjob-active",
                     "session_id": "trn-active",
                     "status": "completed",
+                    "terminalize_session": True,
                 }
             )
         if request.full_url.endswith("/sessions/trn-active/complete"):
@@ -214,6 +216,37 @@ def test_preview_eval_worker_rejects_nonterminal_session_readback(monkeypatch) -
         "job_id=pvjob-active terminal_session_error=session_id=trn-active "
         "did not reach persisted terminal state: status='active' ended_at=''"
     ]
+
+
+def test_preview_eval_worker_leaves_normal_completed_preview_session_active(monkeypatch) -> None:
+    worker = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+    requests = []
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        requests.append(request)
+        if "preview-jobs?" in request.full_url:
+            return _Response([{"job_id": "pvjob-preview-only", "status": "queued"}])
+        assert request.full_url.endswith("/preview-jobs/pvjob-preview-only/run")
+        return _Response(
+            {
+                "job_id": "pvjob-preview-only",
+                "session_id": "trn-preview-only",
+                "status": "completed",
+                "terminalize_session": False,
+            }
+        )
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", fake_urlopen)
+
+    result = worker.run_tick(api_url="http://training-session-svc:8099", limit=1)
+
+    assert result["completed"] == 1
+    assert result["failed"] == 0
+    assert result["terminal_session_ids"] == []
+    assert [request.get_method() for request in requests] == ["GET", "POST"]
 
 
 def test_preview_eval_worker_persists_terminal_session_for_learning_readback(
@@ -239,10 +272,15 @@ def test_preview_eval_worker_persists_terminal_session_for_learning_readback(
     seed_changed_supported_controls(service, session_id)
     queued = client.post(
         f"/api/training/sessions/{session_id}/preview-jobs",
-        json={"mode": "refresh", "requested_by": "operator-1"},
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-1",
+            "terminalize_session": True,
+        },
         headers={"Idempotency-Key": "minimum-teaching-command-001"},
     )
     assert queued.status_code == 201
+    assert queued.json()["terminalize_session"] is True
 
     def service_urlopen(request, timeout):  # noqa: ANN001
         del timeout
