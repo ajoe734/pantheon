@@ -14537,6 +14537,132 @@ def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> Delive
     return None
 
 
+def isolated_worker_workspace_path(worker: Mapping[str, Any]) -> Path | None:
+    """Return an isolated worker's declared workspace without trusting it exists."""
+    snapshot = worker.get("request_snapshot")
+    request_metadata = (
+        snapshot.get("metadata")
+        if isinstance(snapshot, Mapping) and isinstance(snapshot.get("metadata"), Mapping)
+        else {}
+    )
+    mode = str(
+        worker.get("workspace_mode")
+        or request_metadata.get("workspace_mode")
+        or ""
+    ).strip()
+    raw_path = str(
+        worker.get("workspace_path")
+        or request_metadata.get("workspace_path")
+        or ""
+    ).strip()
+    if mode != "isolated_worktree" or not raw_path:
+        return None
+    return Path(raw_path).expanduser()
+
+
+def isolated_worker_workspace_problem(worker: Mapping[str, Any]) -> str | None:
+    """Describe a missing/unreadable isolated workspace before worker I/O."""
+    workspace = isolated_worker_workspace_path(worker)
+    if workspace is None:
+        return None
+    try:
+        if not workspace.is_dir():
+            return f"isolated worker workspace is missing or not a directory: {workspace}"
+        if not os.access(workspace, os.R_OK | os.X_OK):
+            return f"isolated worker workspace is unreadable: {workspace}"
+    except OSError as exc:
+        return f"isolated worker workspace cannot be inspected: {workspace}: {exc}"
+    return None
+
+
+def worker_workspace_exception_problem(
+    worker: Mapping[str, Any],
+    exc: OSError,
+) -> str | None:
+    """Classify only filesystem errors that resolve inside this worker's workspace."""
+    workspace = isolated_worker_workspace_path(worker)
+    raw_filename = str(getattr(exc, "filename", "") or "").strip()
+    if workspace is None or not raw_filename:
+        return None
+    failed_path = Path(raw_filename).expanduser()
+    if failed_path != workspace and not _path_is_within(failed_path, workspace):
+        return None
+    return (
+        f"isolated worker workspace became unavailable during poll: "
+        f"{workspace}: {exc.__class__.__name__}: {exc}"
+    )
+
+
+def finalize_worker_workspace_unavailable(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    task_map: Mapping[str, Mapping[str, Any]],
+    stage: str,
+    problem: str,
+) -> bool:
+    """Fail closed for one dead worker without aborting unrelated poll work.
+
+    Live process generations retain their identity and lease.  Their workspace
+    fault is recorded and that worker's remaining poll stages are skipped for
+    this cycle; normal lease expiry retains the exact-generation termination
+    guard.  Dead workers are terminalized, while workers whose canonical task
+    already reached a terminal status are completed instead of spuriously
+    retried or failed.
+    """
+    alive = pid_is_alive(worker.get("pid"))
+    workspace = isolated_worker_workspace_path(worker)
+    observation = {
+        "stage": stage,
+        "problem": problem,
+        "workspace_path": str(workspace) if workspace is not None else None,
+    }
+    previous = worker.get("workspace_poll_problem")
+    outcome = "live_worker_preserved"
+    if alive:
+        if previous == observation:
+            return False
+        worker["workspace_poll_problem"] = observation
+    else:
+        task_status = str(
+            task_map.get(str(worker.get("task_id") or ""), {}).get("status") or ""
+        ).lower()
+        terminal_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("worker_terminal_statuses"),
+            ["done", "review_approved"],
+        )
+        completed = worker_runner_succeeded(worker) or task_status in terminal_statuses
+        outcome = "completed" if completed else "failed"
+        worker.update(
+            status=outcome,
+            last_event_at=utc_now(),
+            workspace_poll_problem=observation,
+        )
+        if completed:
+            worker.pop("last_error", None)
+            clear_task_failure_streak_after_worker_completion(config, state, worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+        else:
+            worker["last_error"] = problem
+            finalize_queue_event_record(config, state, worker, "failed", problem)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_workspace_unavailable",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": problem,
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+            "workspace_path": observation["workspace_path"],
+            "poll_stage": stage,
+            "outcome": outcome,
+        },
+    )
+    return True
+
+
 def manual_pending_inbox_can_auto_redeliver(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -14725,8 +14851,11 @@ def retry_due_workers(
     state: dict[str, Any],
     provider_report: dict[str, Any],
     now: datetime,
+    *,
+    task_map: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> bool:
     changed = False
+    canonical_tasks = task_map or {}
     for worker in list(state.get("workers", {}).values()):
         retry_was_held = (
             worker.get("status") == RETRY_QUARANTINED_STATUS
@@ -14774,6 +14903,17 @@ def retry_due_workers(
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:
             continue
+        workspace_problem = isolated_worker_workspace_problem(worker)
+        if workspace_problem:
+            changed = finalize_worker_workspace_unavailable(
+                config,
+                state,
+                worker,
+                task_map=canonical_tasks,
+                stage="retry_due",
+                problem=workspace_problem,
+            ) or changed
+            continue
         request = request_for_worker(config, worker)
         if request is None:
             worker["status"] = "failed"
@@ -14790,18 +14930,32 @@ def retry_due_workers(
             )
             changed = True
             continue
-        ok, outcome, _ = start_worker_for_request(
-            config,
-            state,
-            provider_report,
-            request,
-            queue_event_id=worker.get("queue_event_id"),
-            attempt_count=int(worker.get("attempt_count", 0)) + 1,
-            event_id_for_log=worker.get("queue_event_id"),
-            parent_run_id=worker["run_id"],
-            activity_type="worker_retried",
-            activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
-        )
+        try:
+            ok, outcome, _ = start_worker_for_request(
+                config,
+                state,
+                provider_report,
+                request,
+                queue_event_id=worker.get("queue_event_id"),
+                attempt_count=int(worker.get("attempt_count", 0)) + 1,
+                event_id_for_log=worker.get("queue_event_id"),
+                parent_run_id=worker["run_id"],
+                activity_type="worker_retried",
+                activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
+            )
+        except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
+            workspace_problem = worker_workspace_exception_problem(worker, exc)
+            if workspace_problem is None:
+                raise
+            changed = finalize_worker_workspace_unavailable(
+                config,
+                state,
+                worker,
+                task_map=canonical_tasks,
+                stage="retry_launch",
+                problem=workspace_problem,
+            ) or changed
+            continue
         if ok:
             worker["status"] = "retried"
             worker["superseded_by_run_id"] = outcome
@@ -16135,7 +16289,13 @@ def poll_workers(
     now = datetime.now(timezone.utc)
     if provider_report is None:
         provider_report = load_provider_report(config)
-    changed = retry_due_workers(config, state, provider_report, now) or changed
+    changed = retry_due_workers(
+        config,
+        state,
+        provider_report,
+        now,
+        task_map=task_map,
+    ) or changed
     poll_counts = {
         "marker_updates": 0,
         "commit_progress_updates": 0,
@@ -16156,6 +16316,21 @@ def poll_workers(
         changed = bool(orphan["changed"]) or changed
         if orphan["stop"]:
             continue
+        if (
+            worker.get("status") not in {"completed", "failed"}
+            and not pid_is_alive(worker.get("pid"))
+        ):
+            workspace_problem = isolated_worker_workspace_problem(worker)
+            if workspace_problem:
+                changed = finalize_worker_workspace_unavailable(
+                    config,
+                    state,
+                    worker,
+                    task_map=task_map,
+                    stage="worker_lifecycle",
+                    problem=workspace_problem,
+                ) or changed
+                continue
         observation = poll_worker_observation_stage(
             config,
             state,

@@ -14654,6 +14654,8 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
     def test_poll_workers_wires_commit_progress_into_stall_signal(self) -> None:
         now = datetime.now(timezone.utc)
+        workspace_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace_dir.cleanup)
         old_event = (now - timedelta(seconds=301)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         fresh_heartbeat = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         config = {
@@ -14684,7 +14686,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "last_event_at": old_event,
             "last_heartbeat_at": fresh_heartbeat,
             "workspace_mode": "isolated_worktree",
-            "workspace_path": "/tmp/task-worktree",
+            "workspace_path": workspace_dir.name,
             "work_progress_snapshot": {"commit_sha": "a" * 40},
         }
         state = {
@@ -14720,6 +14722,283 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(worker["commit_progress_count"], 1)
         self.assertIsNotNone(worker.get("last_work_progress_at"))
         terminate_worker_pid.assert_not_called()
+
+    def test_poll_workers_isolates_missing_chair_workspace_and_runs_other_due_retry(self) -> None:
+        now = datetime(2026, 8, 9, 12, 52, tzinfo=timezone.utc)
+        valid_workspace_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(valid_workspace_dir.cleanup)
+        valid_workspace = Path(valid_workspace_dir.name)
+        missing_workspace = valid_workspace / "chair-review-missing"
+        chair = {
+            "run_id": "run-missing-chair",
+            "provider": "codex",
+            "agent_id": "codex",
+            "task_id": None,
+            "status": "retry_backoff",
+            "queue_event_id": "evt-missing-chair",
+            "pid": None,
+            "attempt_count": 1,
+            "retry_count": 1,
+            "next_retry_at": "2026-08-09T12:51:00Z",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(missing_workspace),
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "chair review retry",
+                "task_id": None,
+                "reason": "chair_review:operational_review",
+                "context_files": [],
+                "metadata": {
+                    "workspace_mode": "isolated_worktree",
+                    "workspace_path": str(missing_workspace),
+                    "workspace_task_id": "chair-review-missing",
+                },
+            },
+        }
+        unrelated = {
+            "run_id": "run-unrelated-retry",
+            "provider": "codex",
+            "agent_id": "codex",
+            "task_id": "TASK-UNRELATED",
+            "status": "retry_backoff",
+            "queue_event_id": "evt-unrelated",
+            "pid": None,
+            "attempt_count": 1,
+            "retry_count": 1,
+            "next_retry_at": "2026-08-09T12:51:00Z",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(valid_workspace),
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "unrelated retry",
+                "task_id": "TASK-UNRELATED",
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "context_files": [],
+                "metadata": {
+                    "workspace_mode": "isolated_worktree",
+                    "workspace_path": str(valid_workspace),
+                    "workspace_task_id": "TASK-UNRELATED",
+                },
+            },
+        }
+        state = {
+            "workers": {
+                chair["run_id"]: chair,
+                unrelated["run_id"]: unrelated,
+            },
+            "queue": {
+                "events": {
+                    chair["queue_event_id"]: {"status": "started"},
+                    unrelated["queue_event_id"]: {"status": "started"},
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "TASK-UNRELATED",
+                    "status": "in_progress",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity2",
+                }
+            ]
+        }
+
+        def start_retry(_config, _state, _provider_report, request, **_kwargs):
+            if request.task_id is None:
+                raise FileNotFoundError(2, "No such file or directory", str(missing_workspace))
+            self.assertEqual(request.task_id, "TASK-UNRELATED")
+            return True, "run-unrelated-child", None
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=start_retry) as start_worker,
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(
+                supervisor,
+                "poll_worker_observation_stage",
+                return_value={
+                    "changed": False,
+                    "alive": False,
+                    "process_activity_advanced": False,
+                    "stop": False,
+                },
+            ),
+            mock.patch.object(supervisor, "poll_worker_assignment_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_approval_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_stall_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_failure_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_completion_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.poll_workers(config={"ready_dispatcher": {}}, state=state, provider_report={})
+
+        self.assertTrue(changed)
+        self.assertEqual(chair["status"], "failed")
+        self.assertEqual(state["queue"]["events"][chair["queue_event_id"]]["status"], "failed")
+        self.assertEqual(unrelated["status"], "retried")
+        self.assertEqual(unrelated["superseded_by_run_id"], "run-unrelated-child")
+        self.assertEqual(start_worker.call_count, 1)
+        workspace_events = [
+            call.args[1]
+            for call in write_activity_log.call_args_list
+            if call.args[1].get("type") == "worker_workspace_unavailable"
+        ]
+        self.assertEqual(len(workspace_events), 1)
+        self.assertEqual(workspace_events[0]["worker_run_id"], chair["run_id"])
+
+    def test_poll_workers_completes_terminal_task_with_missing_workspace(self) -> None:
+        workspace_parent = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace_parent.cleanup)
+        missing_workspace = Path(workspace_parent.name) / "completed-task-missing"
+        worker = {
+            "run_id": "run-completed-missing",
+            "provider": "codex",
+            "agent_id": "codex",
+            "task_id": "TASK-COMPLETED",
+            "status": "retry_backoff",
+            "queue_event_id": "evt-completed",
+            "pid": None,
+            "attempt_count": 1,
+            "retry_count": 1,
+            "next_retry_at": "2026-08-09T12:51:00Z",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(missing_workspace),
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "stale completed retry",
+                "task_id": "TASK-COMPLETED",
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "context_files": [],
+                "metadata": {
+                    "workspace_mode": "isolated_worktree",
+                    "workspace_path": str(missing_workspace),
+                },
+            },
+        }
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": worker["task_id"],
+                    "status": "done",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity2",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("terminal task must not relaunch from a missing workspace"),
+            ) as start_worker,
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(
+                supervisor,
+                "poll_worker_observation_stage",
+                return_value={
+                    "changed": False,
+                    "alive": False,
+                    "process_activity_advanced": False,
+                    "stop": False,
+                },
+            ),
+            mock.patch.object(supervisor, "poll_worker_assignment_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_approval_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_stall_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_failure_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_completion_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "clear_task_failure_streak_after_worker_completion") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(
+                config={
+                    "ready_dispatcher": {
+                        "active_worker_statuses": ["retry_backoff"],
+                        "worker_terminal_statuses": ["done", "review_approved"],
+                    }
+                },
+                state=state,
+                provider_report={},
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(state["queue"]["events"][worker["queue_event_id"]]["status"], "completed")
+        start_worker.assert_not_called()
+        clear_streak.assert_called_once_with(mock.ANY, state, worker)
+
+    def test_retry_due_workers_preserves_valid_isolated_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            worker = {
+                "run_id": "run-valid-retry",
+                "provider": "codex",
+                "agent_id": "codex",
+                "task_id": "TASK-VALID",
+                "status": "retry_backoff",
+                "queue_event_id": "evt-valid",
+                "attempt_count": 1,
+                "retry_count": 1,
+                "next_retry_at": "2026-08-09T12:51:00Z",
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": str(workspace),
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="valid retry",
+                task_id=worker["task_id"],
+                reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                metadata={
+                    "workspace_mode": "isolated_worktree",
+                    "workspace_path": str(workspace),
+                },
+            )
+            state = {"workers": {worker["run_id"]: worker}}
+
+            with (
+                mock.patch.object(supervisor, "request_for_worker", return_value=request),
+                mock.patch.object(
+                    supervisor,
+                    "start_worker_for_request",
+                    return_value=(True, "run-valid-child", None),
+                ) as start_worker,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                changed = supervisor.retry_due_workers(
+                    {},
+                    state,
+                    provider_report={},
+                    now=datetime(2026, 8, 9, 12, 52, tzinfo=timezone.utc),
+                )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "retried")
+        self.assertEqual(worker["superseded_by_run_id"], "run-valid-child")
+        start_worker.assert_called_once()
 
     def test_process_activity_snapshot_walks_descendants(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
