@@ -1,0 +1,124 @@
+{
+  "schema_version": "supervisor_legacy_task_brief_bootstrap_boundary.v1",
+  "task": {
+    "id": "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
+    "title": "Design governed bootstrap for accumulated legacy context drift",
+    "phase": "Supervisor Runtime / Source-only Legacy Bootstrap Follow-up",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "The explicit mutable-incumbent bootstrap capture, byte-bound trusted rendering, and transaction revalidation boundary in scripts/promote_supervisor_runtime.py, with its focused regression coverage.",
+    "not_changing": [
+      "Immutable candidate cleanliness or normal mutable-incumbent cleanliness",
+      "Governed launch-source capture, config CAS, promotion lock ordering, candidate/rollback launch, or health acceptance",
+      "Supervisor scheduling, worker routing, task state, live config, live process generations, or deployment state",
+      "The source-side prevention of command-checkout task-brief generation merged by SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808"
+    ],
+    "implementation_files": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py"
+    ],
+    "runtime_mutation_performed": false
+  },
+  "incident": {
+    "reported_context": "The governed f5570754 retry aborted before mutation because the legacy mutable incumbent still contained historical supervisor-generated tracked task-brief overwrites.",
+    "read_only_observation": {
+      "evidence_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T062622204757Z-3114628.json",
+      "outcome": "aborted",
+      "original_failure": "ValueError: Tracked git tree is dirty",
+      "observed_distinct_tracked_paths": [
+        ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md",
+        ".orchestrator/task-briefs/sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md"
+      ]
+    },
+    "boundary_reason": "The rollback runtime is materialized from the mutable incumbent HEAD, while these legacy task-brief worktree bytes are neither governed launch sources nor rollback source bytes. The transaction must nevertheless bind their exact path set and reject every other tracked or staged difference."
+  },
+  "decision": {
+    "entrypoint": "Only OSPromotionBackend.prepare calls capture_mutable_incumbent_snapshot with allow_legacy_task_brief_drift=true, and only when the existing --bootstrap-mutable-incumbent transaction mode is active.",
+    "allowed_residue": "An unstaged diff-files record must be exactly status M for .orchestrator/task-briefs/<lowercase-task-id>.md. The path set is sorted, captured in MutableIncumbentSnapshot, included in transaction evidence, and required to be identical on every mutable-root revalidation.",
+    "fail_closed": [
+      "Default mutable-incumbent capture still rejects every tracked task-brief overwrite.",
+      "Staged drift and non-H index flags are rejected before the legacy exception is considered.",
+      "Any added, deleted, renamed, malformed, duplicate, non-task-brief, or changed path set is rejected.",
+      "Immutable candidate verify_working_tree_cleanliness is unchanged."
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "A normal or non-bootstrap mutable capture rejects a regenerated tracked task brief.",
+      "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked_worktree"
+    },
+    {
+      "id": "AC2",
+      "statement": "The explicit bootstrap captures only modified legal task-brief paths and rejects both an added path and a byte change to an already-bound path at revalidation.",
+      "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_same_path_byte_drift_on_revalidation"
+    },
+    {
+      "id": "AC3",
+      "statement": "The explicit bootstrap rejects staged drift, non-task-brief tracked drift, unprovable canonical bytes, and a symlink substituted for a task brief.",
+      "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_staged_task_brief_drift; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_non_task_brief_tracked_drift; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_noncanonical_task_brief_bytes; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_symlinked_task_brief_drift"
+    },
+    {
+      "id": "AC4",
+      "statement": "No live promotion or runtime mutation occurs in this task.",
+      "evidence_ref": "Task-scoped source/test/evidence diff only; no promotion command was executed."
+    },
+    {
+      "id": "AC5",
+      "statement": "The post-PR-4648 command-root prevention boundary remains active: queue processing references the task brief, while missing briefs are materialized only in the isolated worker worktree.",
+      "evidence_ref": ".orchestrator/test_supervisor.py::SupervisorTests::test_process_queue_references_task_brief_without_rewriting_command_root; .orchestrator/test_supervisor.py::SupervisorTests::test_prepare_worker_workspace_generates_missing_brief_only_in_isolated_worktree; .orchestrator/test_supervisor.py::SupervisorTests::test_run_once_watch_materializes_missing_brief_only_in_isolated_worktree"
+    },
+    {
+      "id": "AC6",
+      "statement": "The canonical task-brief digest renderer extracts git HEAD into an isolated temporary directory, rendering strictly from byte-bound trusted tracked sources; untracked modules and worktree modifications in the mutable root cannot execute code or create import shadows before or during rendering.",
+      "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_ignores_untracked_root_shadow_stdlib; scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_rejects_untracked_imported_module; scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_proves_untracked_and_mutable_worktree_edits_never_execute; scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_post_capture_source_drift_race"
+    }
+  ],
+  "validation": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py -k 'mutable_incumbent_root_rejects_tracked_source_drift or mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked_worktree or mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift or mutable_incumbent_bootstrap_rejects_staged_task_brief_drift or mutable_incumbent_bootstrap_rejects_noncanonical_task_brief_bytes or mutable_incumbent_bootstrap_rejects_same_path_byte_drift_on_revalidation or mutable_incumbent_bootstrap_rejects_symlinked_task_brief_drift or mutable_incumbent_bootstrap_rejects_non_task_brief_tracked_drift or mutable_incumbent_root_accepts_bound_worktree_gitfile'",
+      "result": "9 passed, 236 deselected"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "245 passed"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m pytest -q scripts/test_sync_dev_root.py",
+      "result": "7 passed"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "622 passed, 162 subtests passed"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review": {
+    "decision": "pending_independent_review",
+    "reviewer": "Codex",
+    "required_checks": [
+      "Confirm the exception is reachable only through explicit mutable bootstrap and not through normal candidate or mutable cleanliness paths.",
+      "Confirm only unstaged modified legal task-brief paths are accepted, and their exact set is bound across revalidation and serialized to transaction evidence.",
+      "Confirm all source/config/runtime/scheduling surfaces named out of scope remain unchanged.",
+      "Confirm no promotion command, live config write, process signal, or runtime deployment was executed."
+    ]
+  },
+  "rollback": {
+    "source": "Revert the reviewed task PR; normal strict cleanliness remains the default and the exception is local to bootstrap capture.",
+    "live": "Not applicable; this task makes no live mutation."
+  }
+}

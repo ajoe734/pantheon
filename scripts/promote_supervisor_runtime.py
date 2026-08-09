@@ -11,6 +11,7 @@ import argparse
 import copy
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
@@ -19,6 +20,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from contextlib import contextmanager
@@ -310,6 +312,21 @@ class MutableIncumbentSnapshot:
     repository_slug: str
     process: SupervisorProcessIdentity
     source_identities: tuple[LaunchFileIdentity, ...]
+    legacy_task_brief_drift: tuple["LegacyTaskBriefDrift", ...] = ()
+
+
+@dataclass(frozen=True, order=True)
+class LegacyTaskBriefDrift:
+    """One provenance-bound legacy task-brief overwrite."""
+
+    relative_path: str
+    device: int
+    inode: int
+    mode: int
+    byte_length: int
+    sha256: str
+    canonical_byte_length: int
+    canonical_sha256: str
 
 
 class LaunchFilesystem(Protocol):
@@ -575,6 +592,71 @@ def _run_git(
     except (OSError, subprocess.SubprocessError) as exc:
         stderr = getattr(exc, "stderr", None)
         detail = str(stderr or exc).strip()
+        raise ValueError(
+            f"git {' '.join(args)} failed in {display_cwd}: {detail}"
+        ) from exc
+
+
+def _run_git_bytes(
+    cwd: Path | CandidateRootHandle,
+    *args: str,
+    environment_overrides: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    env = _subprocess_environment()
+    if isinstance(cwd, CandidateRootHandle):
+        cwd_arg = Path(f"/dev/fd/{cwd.descriptor}")
+        pass_fds = (
+            cwd.descriptor,
+            cwd.git_descriptor,
+            cwd.git_objects_descriptor,
+            cwd.git_config_descriptor,
+            cwd.git_head_descriptor,
+            cwd.git_index_descriptor,
+        )
+        display_cwd = cwd.path
+        env.update(
+            {
+                "GIT_DIR": f"/dev/fd/{cwd.git_descriptor}",
+                "GIT_WORK_TREE": f"/dev/fd/{cwd.descriptor}",
+                "GIT_COMMON_DIR": f"/dev/fd/{cwd.git_descriptor}",
+                "GIT_OBJECT_DIRECTORY": f"/dev/fd/{cwd.git_objects_descriptor}",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_INDEX_FILE": f"/dev/fd/{cwd.git_index_descriptor}",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_COUNT": "3",
+                "GIT_CONFIG_KEY_0": "core.fsmonitor",
+                "GIT_CONFIG_VALUE_0": "false",
+                "GIT_CONFIG_KEY_1": "core.untrackedCache",
+                "GIT_CONFIG_VALUE_1": "false",
+                "GIT_CONFIG_KEY_2": "core.hooksPath",
+                "GIT_CONFIG_VALUE_2": os.devnull,
+            }
+        )
+    else:
+        cwd_arg = cwd
+        pass_fds = ()
+        display_cwd = cwd
+    if environment_overrides is not None:
+        env.update(environment_overrides)
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd_arg,
+            capture_output=True,
+            check=True,
+            env=env,
+            pass_fds=pass_fds,
+            text=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        stderr = getattr(exc, "stderr", None)
+        detail = (
+            stderr.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes)
+            else str(stderr or exc)
+        ).strip()
         raise ValueError(
             f"git {' '.join(args)} failed in {display_cwd}: {detail}"
         ) from exc
@@ -1539,6 +1621,11 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
     candidate = PurePosixPath(path)
     if candidate in ALLOWED_GENERATED_UNTRACKED_FILES:
         return True
+    return _is_task_brief_path(path)
+
+
+def _is_task_brief_path(path: str) -> bool:
+    candidate = PurePosixPath(path)
     parts = candidate.parts
     return (
         len(parts) == 3
@@ -4774,13 +4861,247 @@ def _capture_mutable_head_tree(root: Path) -> tuple[str, str]:
     return head, tree
 
 
+def _task_id_from_task_brief_path(relative_path: str) -> str:
+    if not _is_task_brief_path(relative_path):
+        raise ValueError(f"Invalid mutable task-brief path: {relative_path!r}")
+    stem = PurePosixPath(relative_path).stem
+    task_id = stem.upper().replace("_", "-")
+    if not task_id:
+        raise ValueError(f"Mutable task-brief path has no task id: {relative_path!r}")
+    return task_id
+
+
+def _render_canonical_task_brief_digest(
+    root: Path,
+    *,
+    config_bytes: bytes,
+    task_id: str,
+) -> tuple[int, str]:
+    """Render one brief from the bound canonical state without touching root.
+
+    The mutable root is accepted at its Git tree except for the legacy brief
+    residue.  Its ``common.write_task_brief`` implementation is rendered strictly
+    from byte-bound trusted tracked sources extracted from git HEAD into an
+    isolated temporary directory. Untracked files and uncommitted worktree modifications
+    in the mutable root are never placed in sys.path or executed.
+    """
+    program = r'''
+import hashlib
+import json
+import sys
+import tempfile
+from pathlib import Path, PurePosixPath
+
+trusted_root = Path(sys.argv[1]).resolve()
+task_id = sys.argv[2]
+payload = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="strict"))
+config = payload.get("config")
+if not isinstance(config, dict):
+    raise RuntimeError("captured live config must be an object")
+tracked_files = set(payload.get("tracked_files", []))
+
+sys.path.insert(0, str(trusted_root / ".orchestrator"))
+import common
+
+for mod in list(sys.modules.values()):
+    mod_file = getattr(mod, "__file__", None)
+    if not mod_file:
+        continue
+    try:
+        mod_path = Path(mod_file).resolve()
+    except Exception:
+        continue
+    try:
+        rel = mod_path.relative_to(trusted_root)
+    except ValueError:
+        continue
+    rel_str = PurePosixPath(rel).as_posix()
+    if rel_str not in tracked_files:
+        raise RuntimeError(
+            f"Import shadow detected: untracked module imported from mutable root: {rel_str}"
+        )
+
+with tempfile.TemporaryDirectory(prefix="pantheon-task-brief-render-") as temporary:
+    common.TASK_BRIEFS_DIR = Path(temporary)
+    brief = common.write_task_brief(config, task_id)
+    if brief is None:
+        raise RuntimeError("canonical task brief renderer did not resolve task")
+    content = brief.read_bytes()
+
+sys.stdout.write(json.dumps({
+    "byte_length": len(content),
+    "sha256": hashlib.sha256(content).hexdigest(),
+}, sort_keys=True))
+'''
+    environment = _subprocess_environment()
+    for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        environment.pop(name, None)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    tracked_output = _run_mutable_git(root, "ls-files", "-z").stdout
+    tracked_files = [f for f in tracked_output.split("\0") if f]
+    input_payload = json.dumps(
+        {
+            "config": json.loads(config_bytes.decode("utf-8", errors="strict")),
+            "tracked_files": tracked_files,
+        }
+    ).encode("utf-8")
+
+    archive_proc = _run_git_bytes(
+        root,
+        "archive",
+        "--format=tar",
+        "HEAD",
+        environment_overrides={
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        },
+    )
+
+    with tempfile.TemporaryDirectory(prefix="pantheon-trusted-src-") as trusted_src_str:
+        trusted_src_dir = Path(trusted_src_str)
+        with tarfile.open(fileobj=io.BytesIO(archive_proc.stdout), mode="r:*") as tar:
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(path=trusted_src_dir, filter="data")
+            else:
+                tar.extractall(path=trusted_src_dir)
+
+        with tempfile.TemporaryDirectory(prefix="pantheon-render-cwd-") as safe_cwd:
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-B",
+                        "-c",
+                        program,
+                        str(trusted_src_dir),
+                        task_id,
+                    ],
+                    cwd=safe_cwd,
+                    input=input_payload,
+                    capture_output=True,
+                    check=True,
+                    env=environment,
+                    timeout=30,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                detail = getattr(exc, "stderr", b"") or str(exc).encode()
+                raise ValueError(
+                    "Canonical mutable task-brief rendering failed: "
+                    f"{bytes(detail).decode('utf-8', errors='replace').strip()}"
+                ) from exc
+    try:
+        payload = json.loads(result.stdout.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            "Canonical mutable task-brief renderer emitted invalid JSON"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Canonical mutable task-brief renderer emitted no object")
+    byte_length = payload.get("byte_length")
+    sha256 = payload.get("sha256")
+    if (
+        not isinstance(byte_length, int)
+        or byte_length < 0
+        or not isinstance(sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
+    ):
+        raise ValueError(
+            "Canonical mutable task-brief renderer emitted invalid digest"
+        )
+    return byte_length, sha256
+
+
+def _capture_legacy_mutable_task_brief_drift(
+    root: Path,
+    *,
+    config_bytes: bytes,
+    filesystem: LaunchFilesystem,
+) -> tuple[LegacyTaskBriefDrift, ...]:
+    """Bind the only tracked drift accepted by an explicit legacy bootstrap.
+
+    A legacy mutable command root can carry task briefs that an older
+    supervisor generated in place.  Those files are never launch sources and
+    the bootstrap rollback checkout is materialized from HEAD, not from this
+    mutable worktree.  This does not make task-brief drift generally clean:
+    callers must opt in and every changed path is recorded and revalidated.
+    """
+    output = _run_mutable_git(
+        root,
+        "diff-files",
+        "--name-status",
+        "-z",
+        "--ignore-submodules=all",
+        "--",
+    ).stdout
+    records = output.split("\0")
+    if records and records[-1] == "":
+        records.pop()
+    if not records or len(records) % 2:
+        raise ValueError("Mutable incumbent task-brief drift report is malformed")
+
+    paths: set[str] = set()
+    drifts: list[LegacyTaskBriefDrift] = []
+    for index in range(0, len(records), 2):
+        status, relative_path = records[index : index + 2]
+        if status != "M" or not _is_task_brief_path(relative_path):
+            raise ValueError(
+                "Mutable incumbent bootstrap permits only modified tracked "
+                f"task briefs, found {status!r}: {relative_path!r}"
+            )
+        if relative_path in paths:
+            raise ValueError(
+                "Mutable incumbent task-brief drift report contains a "
+                f"duplicate path: {relative_path!r}"
+            )
+        paths.add(relative_path)
+    for relative_path in sorted(paths):
+        task_id = _task_id_from_task_brief_path(relative_path)
+        file_identity = filesystem.capture_regular_file(
+            root / relative_path,
+            role=f"legacy_task_brief:{relative_path}",
+            require_executable=False,
+        )
+        canonical_byte_length, canonical_sha256 = _render_canonical_task_brief_digest(
+            root,
+            config_bytes=config_bytes,
+            task_id=task_id,
+        )
+        if (
+            file_identity.byte_length != canonical_byte_length
+            or file_identity.sha256 != canonical_sha256
+        ):
+            raise ValueError(
+                "Mutable incumbent task brief is not canonical generated bytes: "
+                f"{relative_path}"
+            )
+        drifts.append(
+            LegacyTaskBriefDrift(
+                relative_path=relative_path,
+                device=file_identity.device,
+                inode=file_identity.inode,
+                mode=file_identity.mode,
+                byte_length=file_identity.byte_length,
+                sha256=file_identity.sha256,
+                canonical_byte_length=canonical_byte_length,
+                canonical_sha256=canonical_sha256,
+            )
+        )
+    return tuple(drifts)
+
+
 def _verify_mutable_tracked_cleanliness(
     root: Path,
     *,
     expected_head: str,
     expected_tree: str,
-) -> None:
-    """Reject index/tracked drift without applying immutable-runtime dirt rules."""
+    allow_legacy_task_brief_drift: bool = False,
+    expected_legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] | None = None,
+    config_bytes: bytes | None = None,
+    filesystem: LaunchFilesystem | None = None,
+) -> tuple[LegacyTaskBriefDrift, ...]:
+    """Reject mutable tracked drift except a bound legacy bootstrap residue."""
     index_flags = _run_mutable_git(root, "ls-files", "-v", "-z").stdout
     for record in index_flags.split("\0"):
         if not record:
@@ -4808,15 +5129,35 @@ def _verify_mutable_tracked_cleanliness(
             "--",
         )
     except ValueError as exc:
-        raise ValueError("Tracked git tree is dirty") from exc
+        if not allow_legacy_task_brief_drift:
+            raise ValueError("Tracked git tree is dirty") from exc
+        if config_bytes is None:
+            raise ValueError(
+                "Mutable incumbent legacy task-brief bootstrap requires captured config bytes"
+            )
+        legacy_task_brief_drift = _capture_legacy_mutable_task_brief_drift(
+            root,
+            config_bytes=config_bytes,
+            filesystem=filesystem or OSLaunchFilesystem(),
+        )
+    else:
+        legacy_task_brief_drift = ()
+    if (
+        expected_legacy_task_brief_drift is not None
+        and legacy_task_brief_drift != expected_legacy_task_brief_drift
+    ):
+        raise ValueError("Mutable incumbent legacy task-brief drift changed during validation")
     if _capture_mutable_head_tree(root) != (head_before, tree_before):
         raise ValueError("Mutable incumbent HEAD/tree changed during validation")
+    return legacy_task_brief_drift
 
 
 def _mutable_root_binding(
     cwd: ProcessCwdIdentity,
     *,
     filesystem: LaunchFilesystem | None = None,
+    allow_legacy_task_brief_drift: bool = False,
+    canonical_config_bytes: bytes | None = None,
 ) -> tuple[
     str,
     str,
@@ -4824,6 +5165,7 @@ def _mutable_root_binding(
     str,
     GitRemoteIdentity,
     tuple[LaunchFileIdentity, ...],
+    tuple[LegacyTaskBriefDrift, ...],
 ]:
     """Capture Git and governed-source bytes from a mutable process cwd.
 
@@ -4887,13 +5229,16 @@ def _mutable_root_binding(
     trusted_dev = _fetch_trusted_dev_identity(head)
     if trusted_dev.candidate_commit_tree != tree:
         raise ValueError("Mutable incumbent tree differs from the accepted dev commit")
-    _verify_mutable_tracked_cleanliness(
+    fs = filesystem or OSLaunchFilesystem()
+    legacy_task_brief_drift = _verify_mutable_tracked_cleanliness(
         cwd.path,
         expected_head=head,
         expected_tree=tree,
+        allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+        config_bytes=canonical_config_bytes,
+        filesystem=fs,
     )
 
-    fs = filesystem or OSLaunchFilesystem()
     sources = tuple(
         fs.capture_regular_file(
             cwd.path / Path(relative),
@@ -4930,8 +5275,20 @@ def _mutable_root_binding(
         cwd.path,
         expected_head=head,
         expected_tree=tree,
+        allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+        expected_legacy_task_brief_drift=legacy_task_brief_drift,
+        config_bytes=canonical_config_bytes,
+        filesystem=fs,
     )
-    return head, tree, trusted_dev, remote_url, remote, sources
+    return (
+        head,
+        tree,
+        trusted_dev,
+        remote_url,
+        remote,
+        sources,
+        legacy_task_brief_drift,
+    )
 
 
 def _mutable_process_contract(
@@ -5008,9 +5365,22 @@ def capture_mutable_incumbent_snapshot(
     seed_generation: ProcessGeneration,
     seed_argv: tuple[str, ...],
     seed_cwd: ProcessCwdIdentity,
+    allow_legacy_task_brief_drift: bool = False,
 ) -> MutableIncumbentSnapshot:
-    binding = _mutable_root_binding(seed_cwd)
-    head, tree, accepted, remote_url, remote, sources = binding
+    binding = _mutable_root_binding(
+        seed_cwd,
+        allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+        canonical_config_bytes=config_identity.config_bytes,
+    )
+    (
+        head,
+        tree,
+        accepted,
+        remote_url,
+        remote,
+        sources,
+        legacy_task_brief_drift,
+    ) = binding
     expected = _mutable_process_contract(
         config_identity,
         cwd=seed_cwd,
@@ -5020,7 +5390,11 @@ def capture_mutable_incumbent_snapshot(
     )
 
     def revalidate_root() -> None:
-        current = _mutable_root_binding(seed_cwd)
+        current = _mutable_root_binding(
+            seed_cwd,
+            allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            canonical_config_bytes=config_identity.config_bytes,
+        )
         if current != binding:
             raise ValueError("Mutable incumbent root/source binding drifted")
 
@@ -5045,6 +5419,7 @@ def capture_mutable_incumbent_snapshot(
         repository_slug=remote.slug,
         process=process,
         source_identities=sources,
+        legacy_task_brief_drift=legacy_task_brief_drift,
     )
 
 
@@ -5370,6 +5745,7 @@ class OSPromotionBackend:
                 seed_generation=seed_generation,
                 seed_argv=seed_argv,
                 seed_cwd=seed_cwd,
+                allow_legacy_task_brief_drift=True,
             )
             if (
                 mutable_incumbent.accepted_dev_commit
@@ -5497,6 +5873,7 @@ class OSPromotionBackend:
             seed_generation=current_seed[0],
             seed_argv=current_seed[1],
             seed_cwd=current_seed[2],
+            allow_legacy_task_brief_drift=True,
         )
         if current_mutable != plan.mutable_incumbent:
             raise ValueError("Mutable incumbent snapshot drift detected")
@@ -6196,6 +6573,19 @@ class PromotionTransaction:
                             "sha256": item.sha256,
                         }
                         for item in plan.mutable_incumbent.source_identities
+                    ],
+                    "legacy_task_brief_drift": [
+                        {
+                            "path": item.relative_path,
+                            "device": item.device,
+                            "inode": item.inode,
+                            "mode": item.mode,
+                            "byte_length": item.byte_length,
+                            "sha256": item.sha256,
+                            "canonical_byte_length": item.canonical_byte_length,
+                            "canonical_sha256": item.canonical_sha256,
+                        }
+                        for item in plan.mutable_incumbent.legacy_task_brief_drift
                     ],
                 }
                 if plan is not None and plan.mutable_incumbent is not None
