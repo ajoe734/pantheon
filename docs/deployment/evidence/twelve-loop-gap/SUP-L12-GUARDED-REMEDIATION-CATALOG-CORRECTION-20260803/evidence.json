@@ -69,13 +69,13 @@
         "delivery_state": "current_source_receipt",
         "note": "Current delivery receipt contains every content-digest-bound artifact.",
         "receipt_role": "current_delivery_receipt",
-        "sha": "829935f63adfb478c73452a0cc73601a0812c6d6",
-        "subject": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803: anchor recut evidence manifest"
+        "sha": "53449fc714e74a1c092629f7b3e740e4901e7d50",
+        "subject": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803: update evidence manifest to PR 4651 head"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "829935f63adfb478c73452a0cc73601a0812c6d6",
+      "head_sha": "53449fc714e74a1c092629f7b3e740e4901e7d50",
       "number": 4651,
       "state": "open",
       "url": "https://github.com/ajoe734/pantheon/pull/4651"
@@ -85,7 +85,7 @@
         "completed_at": "2026-08-09T01:56:00Z",
         "conclusion": "success",
         "event": "push",
-        "head_sha": "829935f63adfb478c73452a0cc73601a0812c6d6",
+        "head_sha": "53449fc714e74a1c092629f7b3e740e4901e7d50",
         "run_id": 30882325736,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906117256",
         "workflow": "Commit trailers"
@@ -94,7 +94,7 @@
         "completed_at": "2026-08-09T01:56:00Z",
         "conclusion": "success",
         "event": "push",
-        "head_sha": "829935f63adfb478c73452a0cc73601a0812c6d6",
+        "head_sha": "53449fc714e74a1c092629f7b3e740e4901e7d50",
         "run_id": 30882325736,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906117217",
         "workflow": "Runtime mirror guard"
@@ -103,7 +103,7 @@
         "completed_at": "2026-08-09T01:56:00Z",
         "conclusion": "success",
         "event": "push",
-        "head_sha": "829935f63adfb478c73452a0cc73601a0812c6d6",
+        "head_sha": "53449fc714e74a1c092629f7b3e740e4901e7d50",
         "run_id": 30882325736,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906190461",
         "workflow": "Smoke acceptance"
