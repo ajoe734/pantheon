@@ -24,7 +24,7 @@ import tarfile
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -65,6 +65,7 @@ PROCESS_ENVIRONMENT_ALLOWLIST = (
     "PANTHEON_STATUS_ROOT",
     "PYTHONDONTWRITEBYTECODE",
 )
+MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID = "<mutable-bootstrap-dynamic-flock-id>"
 GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT = (
     "PANTHEON_COMMAND_BASE_REF",
     "PANTHEON_COMMAND_REMOTE",
@@ -227,7 +228,12 @@ class TrackedGitlinkIdentity:
 class ProcessGeneration:
     pid: int
     starttime_ticks: int
-    state: str
+    # Linux scheduler state is an observation, not generation identity.  A
+    # live process can legitimately move between R and S while a promotion
+    # reads the incumbent's state.  PID reuse is instead bound by the stable
+    # (pid, starttime_ticks) pair; zombie rejection remains explicit at each
+    # guarded process read.
+    state: str = field(compare=False)
 
 
 @dataclass(frozen=True)
@@ -254,6 +260,25 @@ class SupervisorAdmissionLockIdentity:
     kernel_lock_end: str
     owner_pid: int
     owner_starttime_ticks: int
+
+
+def _normalize_mutable_bootstrap_admission_lock(
+    lock: SupervisorAdmissionLockIdentity,
+) -> SupervisorAdmissionLockIdentity:
+    """Hide only the kernel-assigned FLOCK handle during legacy bootstrap.
+
+    Linux can assign a fresh ``/proc/locks`` identifier when the incumbent
+    supervisor briefly releases and reacquires its advisory FLOCK while a
+    promotion preflight is reading its multi-gigabyte state log.  That handle
+    is not durable identity: every path, inode, content, time, lock range,
+    mode, and owner-generation field remains bound and is still compared.
+    This normalization is deliberately used only for the one mutable-root
+    bootstrap; immutable candidate and rollback runtimes remain exact.
+    """
+    return replace(
+        lock,
+        kernel_lock_id=MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID,
+    )
 
 
 @dataclass(frozen=True)
@@ -3251,6 +3276,7 @@ def discover_incumbent_supervisor_process(
     ] = _read_process_cwd_git_identity,
     candidate_revalidator: Callable[[], None] | None = None,
     allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
@@ -3485,12 +3511,21 @@ def discover_incumbent_supervisor_process(
     lock_after = runtime_reader.read_admission_lock(
         expected.admission_lock_path
     )
+    comparison_lock_before = lock_before
+    comparison_lock_after = lock_after
+    if allow_legacy_admission_lock_id_churn:
+        comparison_lock_before = _normalize_mutable_bootstrap_admission_lock(
+            lock_before
+        )
+        comparison_lock_after = _normalize_mutable_bootstrap_admission_lock(
+            lock_after
+        )
     _guarded_process_compare(
         runtime_reader,
         generation,
         label="admission lock generation",
-        actual=lock_after,
-        expected=lock_before,
+        actual=comparison_lock_after,
+        expected=comparison_lock_before,
     )
     _guarded_process_compare(
         runtime_reader,
@@ -3524,7 +3559,7 @@ def discover_incumbent_supervisor_process(
             (name, environment_contract[name])
             for name in expected_environment
         ),
-        admission_lock=lock_after,
+        admission_lock=comparison_lock_after,
     )
 
 
@@ -4664,6 +4699,10 @@ def capture_runtime_observation(
     now: datetime | None = None,
     require_current_dev_identity: bool = True,
     allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
+    cwd_git_identity_reader: Callable[
+        [ProcessCwdIdentity], tuple[str, str]
+    ] = _read_process_cwd_git_identity,
 ) -> RuntimeObservation:
     """Capture one exact process/state/config postcheck observation."""
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4679,8 +4718,12 @@ def capture_runtime_observation(
         expected_argv=expected_argv,
         expected_contract=expected_process_contract,
         reader=runtime_reader,
+        cwd_git_identity_reader=cwd_git_identity_reader,
         candidate_revalidator=revalidate_identity,
         allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
+        ),
     )
     if expected_generation is not None and process.generation != expected_generation:
         raise ValueError(
@@ -5869,6 +5912,7 @@ def capture_mutable_incumbent_snapshot(
     seed_cwd: ProcessCwdIdentity,
     allow_legacy_task_brief_drift: bool = False,
     allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> MutableIncumbentSnapshot:
     binding = _mutable_root_binding(
         seed_cwd,
@@ -5909,6 +5953,9 @@ def capture_mutable_incumbent_snapshot(
         cwd_git_identity_reader=lambda _cwd: (head, tree),
         candidate_revalidator=revalidate_root,
         allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
+        ),
     )
     if process.generation != seed_generation:
         raise ValueError("Mutable incumbent generation changed during capture")
@@ -6251,6 +6298,7 @@ class OSPromotionBackend:
                 seed_cwd=seed_cwd,
                 allow_legacy_task_brief_drift=True,
                 allow_legacy_environment_contract=True,
+                allow_legacy_admission_lock_id_churn=True,
             )
             if (
                 mutable_incumbent.accepted_dev_commit
@@ -6309,6 +6357,15 @@ class OSPromotionBackend:
             expected_generation=incumbent_process.generation,
             reader=self.reader,
             allow_legacy_environment_contract=bootstrap_mutable_incumbent,
+            allow_legacy_admission_lock_id_churn=bootstrap_mutable_incumbent,
+            cwd_git_identity_reader=(
+                lambda _cwd: (
+                    mutable_incumbent.head_commit,
+                    mutable_incumbent.tracked_tree_identity,
+                )
+                if mutable_incumbent is not None
+                else _read_process_cwd_git_identity(_cwd)
+            ),
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -6381,6 +6438,7 @@ class OSPromotionBackend:
             seed_cwd=current_seed[2],
             allow_legacy_task_brief_drift=True,
             allow_legacy_environment_contract=True,
+            allow_legacy_admission_lock_id_churn=True,
         )
         if current_mutable != plan.mutable_incumbent:
             raise ValueError("Mutable incumbent snapshot drift detected")
@@ -6398,6 +6456,11 @@ class OSPromotionBackend:
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
             allow_legacy_environment_contract=True,
+            allow_legacy_admission_lock_id_churn=True,
+            cwd_git_identity_reader=lambda _cwd: (
+                plan.mutable_incumbent.head_commit,
+                plan.mutable_incumbent.tracked_tree_identity,
+            ),
         )
 
     def observe(

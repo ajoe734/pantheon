@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 
 from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
+    ExpectedSupervisorProcessContract,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
     LegacyTaskBriefDrift,
@@ -3037,6 +3038,7 @@ def _discover_injected(
     *,
     git_identity: tuple[str, str] | None = None,
     allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     return discover_incumbent_supervisor_process(
         identity,
@@ -3047,6 +3049,9 @@ def _discover_injected(
             else (identity.head_commit, identity.tracked_tree_identity)
         ),
         allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
+        ),
     )
 
 
@@ -3113,6 +3118,92 @@ def test_mutable_incumbent_snapshot_binds_exact_process_and_sources(
     assert snapshot.head_commit == identity.head_commit
     assert snapshot.tracked_tree_identity == identity.tracked_tree_identity
     assert snapshot.repository_slug == "ajoe734/pantheon"
+
+
+def test_mutable_incumbent_snapshot_tolerates_scheduler_state_churn(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    seed_generation = reader.generations[1717]
+    reader.generations[1717] = replace(seed_generation, state="R")
+    binding = _mutable_binding_stub(identity)
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=binding,
+    ):
+        snapshot = promotion.capture_mutable_incumbent_snapshot(
+            identity,
+            reader=reader,
+            seed_generation=seed_generation,
+            seed_argv=argv,
+            seed_cwd=reader.cwd[1717],
+        )
+
+    assert snapshot.process.generation.pid == seed_generation.pid
+    assert (
+        snapshot.process.generation.starttime_ticks
+        == seed_generation.starttime_ticks
+    )
+    assert snapshot.process.generation.state == "R"
+
+
+def test_runtime_observation_uses_bound_mutable_cwd_git_identity(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    status_root = identity.config_path.parent.parent / "status-root"
+    provider_path = status_root / ".orchestrator" / "provider-capabilities.json"
+    provider_path.write_text('{"providers": {}}\n', encoding="utf-8")
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["paths"].__setitem__(
+            "provider_capabilities", str(provider_path)
+        ),
+    )
+    mutable_root = tmp_path / "dev-root"
+    mutable_root.mkdir()
+    mutable_stat = mutable_root.stat()
+    reader.cwd[1717] = ProcessCwdIdentity(
+        path=mutable_root,
+        device=mutable_stat.st_dev,
+        inode=mutable_stat.st_ino,
+    )
+    mutable_head = "c" * 40
+    mutable_tree = "d" * 40
+    expected = ExpectedSupervisorProcessContract(
+        executable=Path(argv[0]),
+        argv=argv,
+        entrypoint=Path(argv[3]),
+        config_path=identity.config_path,
+        cwd=mutable_root,
+        cwd_device=mutable_stat.st_dev,
+        cwd_inode=mutable_stat.st_ino,
+        cwd_commit=mutable_head,
+        cwd_tree=mutable_tree,
+        command_root=str(identity.candidate_root),
+        runtime_sha=identity.head_commit,
+        status_root=str(status_root),
+        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
+    )
+
+    with patch.object(CandidateRuntimeIdentity, "verify_immutable_snapshot"), patch.object(
+        CandidateRuntimeIdentity,
+        "verify_against_live_config",
+    ):
+        observation = promotion.capture_runtime_observation(
+            identity,
+            expected_argv=argv,
+            expected_process_contract=expected,
+            expected_generation=reader.generations[1717],
+            reader=reader,
+            require_current_dev_identity=False,
+            cwd_git_identity_reader=lambda _cwd: (mutable_head, mutable_tree),
+        )
+
+    assert observation.process.cwd.path == mutable_root
+    assert observation.process.cwd_commit == mutable_head
+    assert observation.process.cwd_tree == mutable_tree
 
 
 def test_mutable_incumbent_snapshot_rejects_ambiguous_processes(
@@ -4747,6 +4838,44 @@ def test_process_identity_rejects_admission_lock_generation_drift(
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
         _discover_injected(candidate, reader)
+
+
+def test_mutable_bootstrap_accepts_only_dynamic_flock_id_churn(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_admission_lock_id_churn=True,
+    )
+
+    assert (
+        identity.admission_lock.kernel_lock_id
+        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
+    )
+
+
+def test_mutable_bootstrap_rejects_other_admission_lock_drift(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(
+        original,
+        kernel_lock_id="72",
+        mtime_ns=34,
+    )
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_admission_lock_id_churn=True,
+        )
 
 
 def test_process_identity_rejects_admission_lock_owner_generation_mismatch(
