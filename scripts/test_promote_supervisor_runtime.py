@@ -21,6 +21,7 @@ from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
+    LegacyTaskBriefDrift,
     MutableIncumbentSnapshot,
     PromotionPlan,
     PromotionLock,
@@ -3080,6 +3081,7 @@ def _mutable_binding_stub(
         "https://github.com/ajoe734/pantheon.git",
         remote,
         (),
+        (),
     )
 
 
@@ -3239,6 +3241,453 @@ def test_mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked
                     device=root_stat.st_dev,
                     inode=root_stat.st_ino,
                 )
+            )
+
+
+def _legacy_mutable_task_brief_drift_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, Any]:
+    """Create one accepted mutable root with an old generated brief overwrite."""
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    common_py = source / ".orchestrator" / "common.py"
+    tracked_brief = (
+        source
+        / ".orchestrator"
+        / "task-briefs"
+        / "sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+    )
+    tracked_brief.parent.mkdir(parents=True, exist_ok=True)
+    common_py.write_text(
+        "from pathlib import Path\n"
+        "TASK_BRIEFS_DIR = None\n"
+        "def write_task_brief(config, task_id):\n"
+        "    path = TASK_BRIEFS_DIR / f'{task_id.lower().replace(\"-\", \"_\")}.md'\n"
+        "    path.write_text('orchestrator-regenerated task brief\\n', encoding='utf-8')\n"
+        "    return path\n",
+        encoding="utf-8",
+    )
+    tracked_brief.write_text("committed task brief\n", encoding="utf-8")
+    _git(source, "add", str(common_py.relative_to(source)))
+    _git(source, "add", str(tracked_brief.relative_to(source)))
+    _git(source, "commit", "-m", "track orchestrator task brief")
+    _git(source, "push", str(remote), "dev:dev")
+    commit = _git(source, "rev-parse", "HEAD")
+    _git(
+        source,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+    mutable_root = tmp_path / "dev-root"
+    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
+    regenerated_brief = mutable_root / tracked_brief.relative_to(source)
+    regenerated_brief.write_text(
+        "orchestrator-regenerated task brief\n",
+        encoding="utf-8",
+    )
+    return remote, mutable_root, regenerated_brief, mutable_root.stat()
+
+
+def test_mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    tracked_brief = (
+        source
+        / ".orchestrator"
+        / "task-briefs"
+        / "sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+    )
+    second_tracked_brief = (
+        source
+        / ".orchestrator"
+        / "task-briefs"
+        / "sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md"
+    )
+    tracked_brief.parent.mkdir(parents=True, exist_ok=True)
+    tracked_brief.write_text("committed task brief\n", encoding="utf-8")
+    second_tracked_brief.write_text("second committed task brief\n", encoding="utf-8")
+    _git(
+        source,
+        "add",
+        str(tracked_brief.relative_to(source)),
+        str(second_tracked_brief.relative_to(source)),
+    )
+    _git(source, "commit", "-m", "track orchestrator task brief")
+    _git(source, "push", str(remote), "dev:dev")
+    commit = _git(source, "rev-parse", "HEAD")
+    _git(
+        source,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+    mutable_root = tmp_path / "dev-root"
+    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
+    regenerated_brief = mutable_root / tracked_brief.relative_to(source)
+    regenerated_brief.write_text(
+        "orchestrator-regenerated task brief\n",
+        encoding="utf-8",
+    )
+    root_stat = mutable_root.stat()
+
+    def canonical_digest(
+        root: Path,
+        *,
+        expected_head: str = "",
+        config_bytes: bytes,
+        task_id: str,
+    ) -> tuple[int, str]:
+        relative_path = (
+            ".orchestrator/task-briefs/"
+            f"{task_id.lower().replace('-', '_')}.md"
+        )
+        content = (root / relative_path).read_bytes()
+        return len(content), hashlib.sha256(content).hexdigest()
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+        patch(
+            "promote_supervisor_runtime._render_canonical_task_brief_digest",
+            side_effect=canonical_digest,
+        ),
+    ):
+        binding = promotion._mutable_root_binding(
+            ProcessCwdIdentity(
+                path=mutable_root,
+                device=root_stat.st_dev,
+                inode=root_stat.st_ino,
+            ),
+            allow_legacy_task_brief_drift=True,
+            canonical_config_bytes=b"{}",
+        )
+
+        assert [item.relative_path for item in binding[-1]] == [
+            ".orchestrator/task-briefs/"
+            "sup_dispatch_refactor_proposal_doc_commit_20260806.md",
+        ]
+        (mutable_root / second_tracked_brief.relative_to(source)).write_text(
+            "second regenerated task brief\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(
+            ValueError,
+            match="legacy task-brief drift changed during validation",
+        ):
+            promotion._verify_mutable_tracked_cleanliness(
+                mutable_root,
+                expected_head=binding[0],
+                expected_tree=binding[1],
+                allow_legacy_task_brief_drift=True,
+                expected_legacy_task_brief_drift=binding[-1],
+                config_bytes=b"{}",
+            )
+
+
+def test_mutable_incumbent_bootstrap_rejects_staged_task_brief_drift(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    _git(mutable_root, "add", str(regenerated_brief.relative_to(mutable_root)))
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError, match="index differs from HEAD"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_mutable_incumbent_bootstrap_rejects_noncanonical_task_brief_bytes(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, _regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+        patch(
+            "promote_supervisor_runtime._render_canonical_task_brief_digest",
+            return_value=(0, "0" * 64),
+        ),
+    ):
+        with pytest.raises(ValueError, match="not canonical generated bytes"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_mutable_incumbent_bootstrap_rejects_same_path_byte_drift_on_revalidation(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+
+    def canonical_digest(
+        root: Path,
+        *,
+        expected_head: str = "",
+        config_bytes: bytes,
+        task_id: str,
+    ) -> tuple[int, str]:
+        relative_path = (
+            ".orchestrator/task-briefs/"
+            f"{task_id.lower().replace('-', '_')}.md"
+        )
+        content = (root / relative_path).read_bytes()
+        return len(content), hashlib.sha256(content).hexdigest()
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+        patch(
+            "promote_supervisor_runtime._render_canonical_task_brief_digest",
+            side_effect=canonical_digest,
+        ),
+    ):
+        binding = promotion._mutable_root_binding(
+            ProcessCwdIdentity(
+                path=mutable_root,
+                device=root_stat.st_dev,
+                inode=root_stat.st_ino,
+            ),
+            allow_legacy_task_brief_drift=True,
+            canonical_config_bytes=b"{}",
+        )
+        regenerated_brief.write_text(
+            "different canonical task brief bytes\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(
+            ValueError,
+            match="legacy task-brief drift changed during validation",
+        ):
+            promotion._verify_mutable_tracked_cleanliness(
+                mutable_root,
+                expected_head=binding[0],
+                expected_tree=binding[1],
+                allow_legacy_task_brief_drift=True,
+                expected_legacy_task_brief_drift=binding[-1],
+                config_bytes=b"{}",
+            )
+
+
+def test_mutable_incumbent_bootstrap_rejects_symlinked_task_brief_drift(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    external_brief = tmp_path / "external-task-brief.md"
+    external_brief.write_text("external task brief\n", encoding="utf-8")
+    regenerated_brief.unlink()
+    regenerated_brief.symlink_to(external_brief)
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_render_canonical_task_brief_digest_ignores_untracked_root_shadow_stdlib(
+    tmp_path: Path,
+) -> None:
+    _remote, mutable_root, _regenerated_brief, _root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    expected_head = _git(mutable_root, "rev-parse", "HEAD")
+    sentinel = tmp_path / "sentinel_stdlib.txt"
+    (mutable_root / "hashlib.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('SHADOW CODE EXECUTED: hashlib')\n",
+        encoding="utf-8",
+    )
+    (mutable_root / "json.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('SHADOW CODE EXECUTED: json')\n",
+        encoding="utf-8",
+    )
+    byte_length, sha256 = promotion._render_canonical_task_brief_digest(
+        mutable_root,
+        expected_head=expected_head,
+        config_bytes=b"{}",
+        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+    )
+    assert byte_length > 0
+    assert len(sha256) == 64
+    assert not sentinel.exists()
+
+
+def test_render_canonical_task_brief_digest_rejects_untracked_imported_module(
+    tmp_path: Path,
+) -> None:
+    _remote, mutable_root, _regenerated_brief, _root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    common_py = mutable_root / ".orchestrator" / "common.py"
+    common_py.write_text(
+        common_py.read_text(encoding="utf-8") + "\nimport shadow_helper\n",
+        encoding="utf-8",
+    )
+    _git(mutable_root, "add", ".orchestrator/common.py")
+    _git(mutable_root, "commit", "-m", "import shadow helper")
+    expected_head = _git(mutable_root, "rev-parse", "HEAD")
+
+    sentinel = tmp_path / "sentinel_shadow.txt"
+    (mutable_root / ".orchestrator" / "shadow_helper.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match="Canonical mutable task-brief rendering failed",
+    ):
+        promotion._render_canonical_task_brief_digest(
+            mutable_root,
+            expected_head=expected_head,
+            config_bytes=b"{}",
+            task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+        )
+    assert not sentinel.exists()
+
+
+def test_render_canonical_task_brief_digest_proves_untracked_and_mutable_worktree_edits_never_execute(
+    tmp_path: Path,
+) -> None:
+    _remote, mutable_root, _regenerated_brief, _root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    expected_head = _git(mutable_root, "rev-parse", "HEAD")
+    sentinel = tmp_path / "sentinel_uncommitted.txt"
+    common_py = mutable_root / ".orchestrator" / "common.py"
+    common_py.write_text(
+        common_py.read_text(encoding="utf-8") + "\nimport shadow_helper\n",
+        encoding="utf-8",
+    )
+    (mutable_root / ".orchestrator" / "shadow_helper.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\n",
+        encoding="utf-8",
+    )
+    byte_length, sha256 = promotion._render_canonical_task_brief_digest(
+        mutable_root,
+        expected_head=expected_head,
+        config_bytes=b"{}",
+        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+    )
+    assert byte_length > 0
+    assert len(sha256) == 64
+    assert not sentinel.exists()
+
+
+def test_render_canonical_task_brief_digest_post_capture_source_drift_race(
+    tmp_path: Path,
+) -> None:
+    _remote, mutable_root, _regenerated_brief, _root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    head_a = _git(mutable_root, "rev-parse", "HEAD")
+
+    # Mutate common.py in a new commit B on mutable_root
+    common_py = mutable_root / ".orchestrator" / "common.py"
+    sentinel = tmp_path / "sentinel_race.txt"
+    common_py.write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('COMMIT_B_EXECUTED')\n",
+        encoding="utf-8",
+    )
+    _git(mutable_root, "add", ".orchestrator/common.py")
+    _git(mutable_root, "commit", "-m", "commit B with mutated common.py")
+    head_b = _git(mutable_root, "rev-parse", "HEAD")
+    assert head_b != head_a
+
+    # While HEAD is at commit B, rendering with expected_head=head_a extracts head_a's tree and NOT commit B
+    byte_length, sha256 = promotion._render_canonical_task_brief_digest(
+        mutable_root,
+        expected_head=head_a,
+        config_bytes=b"{}",
+        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+    )
+    assert byte_length > 0
+    assert len(sha256) == 64
+    assert not sentinel.exists()
+
+    # Perform A -> B -> A ref switch by checking out head_a
+    _git(mutable_root, "checkout", head_a)
+    byte_length_a, sha256_a = promotion._render_canonical_task_brief_digest(
+        mutable_root,
+        expected_head=head_a,
+        config_bytes=b"{}",
+        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+    )
+    assert (byte_length_a, sha256_a) == (byte_length, sha256)
+    assert not sentinel.exists()
+
+
+def test_mutable_incumbent_bootstrap_rejects_non_task_brief_tracked_drift(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+    source_stat = source.stat()
+    (source / "README.md").write_text("tracked drift\n", encoding="utf-8")
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError, match="permits only modified tracked task briefs"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=source,
+                    device=source_stat.st_dev,
+                    inode=source_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
             )
 
 
@@ -4252,6 +4701,18 @@ class _FakePromotionBackend:
             repository_slug="ajoe734/pantheon",
             process=self.incumbent_process,
             source_identities=(),
+            legacy_task_brief_drift=(
+                LegacyTaskBriefDrift(
+                    relative_path=".orchestrator/task-briefs/legacy_bootstrap.md",
+                    device=71,
+                    inode=72,
+                    mode=0o100644,
+                    byte_length=73,
+                    sha256="d" * 64,
+                    canonical_byte_length=73,
+                    canonical_sha256="d" * 64,
+                ),
+            ),
         )
         self.baseline = _transaction_observation(
             self.incumbent_process,
@@ -4534,6 +4995,18 @@ def test_transaction_promotes_only_after_three_distinct_candidate_loops(
     assert len(result["candidate_observations"]) == 3
     assert backend.intents == [(100, "b" * 40)]
     assert backend.terminated == [backend.incumbent_generation]
+    assert result["mutable_incumbent"]["legacy_task_brief_drift"] == [
+        {
+            "path": ".orchestrator/task-briefs/legacy_bootstrap.md",
+            "device": 71,
+            "inode": 72,
+            "mode": 0o100644,
+            "byte_length": 73,
+            "sha256": "d" * 64,
+            "canonical_byte_length": 73,
+            "canonical_sha256": "d" * 64,
+        },
+    ]
     assert json.loads(evidence_path.read_text(encoding="utf-8")) == result
 
 
