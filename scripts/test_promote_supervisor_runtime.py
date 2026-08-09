@@ -3186,6 +3186,62 @@ def test_mutable_incumbent_root_rejects_tracked_source_drift(
             )
 
 
+def test_mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked_worktree(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    tracked_brief = (
+        source
+        / ".orchestrator"
+        / "task-briefs"
+        / "sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+    )
+    tracked_brief.parent.mkdir(parents=True, exist_ok=True)
+    tracked_brief.write_text("committed task brief\n", encoding="utf-8")
+    _git(source, "add", str(tracked_brief.relative_to(source)))
+    _git(source, "commit", "-m", "track orchestrator task brief")
+    _git(source, "push", str(remote), "dev:dev")
+    commit = _git(source, "rev-parse", "HEAD")
+    _git(
+        source,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+    mutable_root = tmp_path / "dev-root"
+    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
+    regenerated_brief = mutable_root / tracked_brief.relative_to(source)
+    regenerated_brief.write_text(
+        "orchestrator-regenerated task brief\n",
+        encoding="utf-8",
+    )
+    assert _git(
+        mutable_root,
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+    ) == "M .orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+    assert _git(mutable_root, "diff", "--cached", "--name-only") == ""
+    root_stat = mutable_root.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                )
+            )
+
+
 def test_mutable_incumbent_root_rejects_unaccepted_git_head(
     tmp_path: Path,
 ) -> None:
