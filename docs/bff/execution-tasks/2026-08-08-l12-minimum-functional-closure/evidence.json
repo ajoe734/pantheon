@@ -1,0 +1,47 @@
+{
+  "schema_version": "pantheon.l12.minimum-functional.evidence.v1",
+  "task_id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "evaluated_at": "2026-08-09T12:00:00Z",
+  "legacy_28_audit_summary": {
+    "total_catalog_task_count": 28,
+    "active_in_ai_status": 0,
+    "archived_task_count": 1,
+    "open_prs_count": 0,
+    "branches_or_worktrees_count": 0,
+    "active_task_details": [],
+    "archived_task_details": [
+      {
+        "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+        "terminal_status": "done",
+        "terminal_outcome": "superseded",
+        "superseded_by": "L12-MIN-E2E-20260808"
+      }
+    ],
+    "open_pr_details": []
+  },
+  "signed_packets_audit": {
+    "packet_a": {
+      "packet_id": "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+      "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+      "receipt_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-a-20260808-f56e2bc91--5cdd77b6a6d30f29.json",
+      "task_count": 15
+    },
+    "packet_b": {
+      "packet_id": "pkt-l12-minimum-functional-b-20260808-f56e2bc91",
+      "packet_digest": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77",
+      "receipt_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-b-20260808-f56e2bc91--2c36f24f0e2e3648.json",
+      "task_count": 2
+    },
+    "valid_hmac_result": true,
+    "task_hashes_verified": true,
+    "dag_and_artifact_scope_comparison": "verified match with execution-tasks.json"
+  },
+  "acceptance_criteria_verification": {
+    "acceptance_1_audit_28_ids": "Completed full audit across active tasks, archive, open PRs, branches, and worktrees. 0 active tasks, 1 archived superseded task (L12-VERIFY-LEARN-REAL-VERIFIER-001), 0 open PRs (PR #4455 is CLOSED), 0 matching branches/worktrees.",
+    "acceptance_2_successor_mapping": "legacy-28-reconciliation.json accurately records 28 successor mappings and exact materialization snapshot without hand-editing canonical task state or old catalogs.",
+    "acceptance_3_packet_integrity": "Validated 2 signed packets (pkt-l12-minimum-functional-a-20260808-f56e2bc91 digest 5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9, pkt-l12-minimum-functional-b-20260808-f56e2bc91 digest 2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77), receipts, digests, valid HMAC results, 15+2 task hashes, DAG and declared scopes matching execution-tasks.json.",
+    "acceptance_4_scope_safety": "No edits to .orchestrator/config.json, no product code edits."
+  }
+}
