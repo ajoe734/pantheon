@@ -44,8 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--recover-failed-packet-id",
         help=(
-            "Lock, verify, and requeue one exact signed packet id from failed "
-            "storage. This action does not drain the recovered packet."
+            "Lock, verify, and recover or rearm one exact signed packet id "
+            "from failed storage. This action does not drain the packet."
         ),
     )
     return parser
