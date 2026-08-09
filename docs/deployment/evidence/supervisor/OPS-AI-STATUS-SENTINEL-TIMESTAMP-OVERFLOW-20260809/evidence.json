@@ -1,0 +1,90 @@
+{
+  "schema_version": "supervisor_status_sentinel_overflow_evidence.v1",
+  "schema_status": {
+    "status": "owner_evidence_ready_for_independent_review",
+    "product_level_required": false,
+    "note": "Pre-review evidence manifest for repairing format_display_timestamp OverflowError when converting 9999-12-31T23:59:59Z sentinel into Asia/Taipei timezone."
+  },
+  "task": {
+    "id": "OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809",
+    "title": "Make ai-status derived timestamp rendering sentinel-safe",
+    "phase": "Assistant Dev Bridge / Governed Status Reliability",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809/evidence.md"
+  },
+  "scope": {
+    "owned_layer": "Display-only timestamp formatting fallback in scripts/ai_status.py and associated regression tests in scripts/test_ai_status.py.",
+    "not_changing": [
+      "Authoritative task state parsing and store semantics",
+      "Timestamp ordering, expiry logic, or storage layout",
+      "Supervisor dispatch, bridge task admission, or task state transition rules"
+    ],
+    "composes_with": [
+      "Governed status commands and status-state integrity suite",
+      "Assistant dev bridge inbox recovery and task materialization pipeline"
+    ],
+    "implementation_files": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "closeout_files": [
+      "docs/deployment/evidence/supervisor/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809/evidence.json",
+      "docs/deployment/evidence/supervisor/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809/evidence.md"
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Reproduce format_display_timestamp('9999-12-31T23:59:59Z') raising OverflowError under Asia/Taipei before the change.",
+      "status": "pass",
+      "evidence": "Observed OverflowError in scripts/ai_status.py:1408 during refresh_derived_status_views on 9999-12-31T23:59:59Z."
+    },
+    {
+      "id": "AC2",
+      "statement": "Implement smallest deterministic display-only fallback for timezone boundary overflow.",
+      "status": "pass",
+      "evidence": "Wrapped astimezone in try-except (OverflowError, ValueError) to return raw normalized string or isoformat without modifying parsed timestamps or canonical state."
+    },
+    {
+      "id": "AC3",
+      "statement": "Add focused regression tests for max UTC sentinel, normal timestamp, malformed fallback, embedded localization, and derived view refresh.",
+      "status": "pass",
+      "evidence": "Added TestSentinelTimestampOverflow suite in scripts/test_ai_status.py testing all 6 scenarios."
+    },
+    {
+      "id": "AC4",
+      "statement": "Run focused test slice, status integrity tests, and git diff --check.",
+      "status": "pass",
+      "evidence": "201 tests passed in scripts/test_ai_status.py; git diff --check returned 0."
+    }
+  ],
+  "verification": {
+    "owner_testing": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q scripts/test_ai_status.py -k TestSentinelTimestampOverflow",
+        "result": "6 passed in 1.13s"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q scripts/test_ai_status.py",
+        "result": "201 passed in 35.10s"
+      },
+      {
+        "command": "git diff --check",
+        "result": "clean (exit code 0)"
+      }
+    ]
+  },
+  "rollout_and_rollback": {
+    "rollout": "Merge PR into dev, run governed supervisor command runtime refresh.",
+    "rollback": "Revert task PR and run governed supervisor command runtime refresh."
+  }
+}
