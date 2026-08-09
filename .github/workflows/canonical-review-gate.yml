@@ -68,7 +68,14 @@ concurrency:
 
 jobs:
   gate:
-    name: Pantheon canonical review gate
+    # Keep the Actions check-run name distinct from the commit-status context
+    # emitted below.  A pull_request run is expected to observe no proof tag
+    # before review and publish a failing required status.  If this job used
+    # the same name, its own failure check-run would remain attached to the PR
+    # head after the post-approval workflow_dispatch publishes a newer success
+    # status, leaving GitHub's mergeability calculation blocked by two
+    # conflicting results for the required context.
+    name: Publish canonical review status
     runs-on: ubuntu-latest
     steps:
       # Shallow checkout of the PR head only, to run this workflow's own
@@ -91,8 +98,17 @@ jobs:
           HEAD_SHA: ${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # Exit 1 means the fail-closed required status was published because
+          # this exact head is not approved yet.  The publisher job itself is
+          # not the gate and must not create a second failing result with the
+          # required context name.  Missing/failed status publication still
+          # fails closed because the required context remains unsatisfied.
+          gate_rc=0
           python3 scripts/git/canonical_review_gate_ci.py \
             --repo "$REPO" \
             --head-ref "$HEAD_REF" \
             --head-sha "$HEAD_SHA" \
-            --target-url "$TARGET_URL"
+            --target-url "$TARGET_URL" || gate_rc=$?
+          if [[ "$gate_rc" -ne 0 && "$gate_rc" -ne 1 ]]; then
+            exit "$gate_rc"
+          fi
