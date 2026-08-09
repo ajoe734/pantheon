@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 
 DEFAULT_ALIVE_PATH = "/data/training-session/preview-worker-alive"
+TERMINAL_SESSION_STATUSES = {"completed", "committed", "discarded", "abandoned", "expired"}
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -108,6 +109,86 @@ def run_job(
     return response if isinstance(response, dict) else {}
 
 
+def complete_session(
+    *,
+    api_url: str,
+    session_id: str,
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        api_url.rstrip("/") + f"/api/training/sessions/{session_id}/complete",
+        data=b"{}",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **_authority_headers(),
+        },
+        method="POST",
+    )
+    response = _read_json_response(request, timeout_seconds)
+    return response if isinstance(response, dict) else {}
+
+
+def fetch_session(
+    *,
+    api_url: str,
+    session_id: str,
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        api_url.rstrip("/") + f"/api/training/sessions/{session_id}",
+        headers={"Accept": "application/json", **_authority_headers()},
+        method="GET",
+    )
+    response = _read_json_response(request, timeout_seconds)
+    return response if isinstance(response, dict) else {}
+
+
+def complete_and_read_terminal_session(
+    *,
+    api_url: str,
+    job: dict[str, Any],
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    """Complete a successful evaluation and prove its persisted session readback."""
+
+    session_id = str(job.get("session_id") or "").strip()
+    if not session_id:
+        raise RuntimeError("completed preview job missing session_id")
+
+    complete_session(
+        api_url=api_url,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+    )
+    session = fetch_session(
+        api_url=api_url,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+    )
+    readback_id = str(session.get("session_id") or session.get("id") or "").strip()
+    status = str(session.get("status") or "").strip().lower()
+    ended_at = str(session.get("ended_at") or session.get("completed_at") or "").strip()
+    if readback_id != session_id:
+        raise RuntimeError(
+            f"terminal session readback identity mismatch: expected={session_id!r} actual={readback_id!r}"
+        )
+    if status not in TERMINAL_SESSION_STATUSES or not ended_at:
+        raise RuntimeError(
+            f"session_id={session_id} did not reach persisted terminal state: "
+            f"status={status!r} ended_at={ended_at!r}"
+        )
+
+    return {
+        "session_id": session_id,
+        "status": status,
+        "ended_at": ended_at,
+        "job_id": job.get("job_id"),
+        "evaluation_proof_ref": job.get("evaluation_proof_ref"),
+        "governance_gate_state": job.get("governance_gate_state"),
+    }
+
+
 def run_tick(
     *,
     api_url: str,
@@ -125,6 +206,7 @@ def run_tick(
     failed = 0
     errors: list[str] = []
     job_ids: list[str] = []
+    terminal_sessions: list[dict[str, Any]] = []
 
     for job in jobs:
         job_id = str(job.get("job_id") or "").strip()
@@ -162,6 +244,26 @@ def run_tick(
             retryable += 1
         if result.get("status") == "completed":
             completed += 1
+            try:
+                terminal_sessions.append(
+                    complete_and_read_terminal_session(
+                        api_url=api_url,
+                        job=result,
+                        timeout_seconds=timeout_seconds,
+                    )
+                )
+            except urllib.error.HTTPError as exc:
+                failed += 1
+                detail = exc.read().decode("utf-8", errors="replace")
+                errors.append(
+                    f"job_id={job_id} terminal_session_http_error={exc.code} {detail}"
+                )
+            except urllib.error.URLError as exc:
+                failed += 1
+                errors.append(f"job_id={job_id} terminal_session_url_error={exc.reason}")
+            except RuntimeError as exc:
+                failed += 1
+                errors.append(f"job_id={job_id} terminal_session_error={exc}")
         else:
             failed += 1
             errors.append(f"job_id={job_id} unexpected_status={result.get('status')!r}")
@@ -175,6 +277,8 @@ def run_tick(
         "retryable": retryable,
         "failed": failed,
         "errors": errors,
+        "terminal_session_ids": [item["session_id"] for item in terminal_sessions],
+        "terminal_sessions": terminal_sessions,
     }
 
 
