@@ -57,6 +57,18 @@ accumulated, provenance-verifiable generated context drift without mutating the
 active checkout or broadly ignoring tracked changes. A later live retry still
 requires separate governed dispatch.
 
+The signed packet was queued at `06:31:28Z` and the supervisor drained it at
+`06:32:24Z`. Canonical `show` proves the task row was committed as `todo` with
+owner `Codex2` and reviewer `Codex`, but the receipt is `failed` and admission
+is `not_attempted`: the pinned `5877b644...` status runtime raised
+`OverflowError: date value out of range` while refreshing derived
+`current-work.md` after the authoritative assign transaction. Dispatch remains
+fail-closed because `scripts/explain_dispatch.py` reports that the signed packet
+is not admitted. The already-governed
+`OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809` source task owns that
+status-renderer defect. Do not claim the legacy-bootstrap implementation is
+underway until a successful admission receipt and authoritative readback exist.
+
 ## 2026-08-08 prior fail-closed attempts
 
 On 2026-08-08 the authorized retry used only

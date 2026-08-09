@@ -5,12 +5,12 @@
     "title": "Run governed V10 supervisor runtime promotion and verify recovery",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "fail_closed_blocked_pending_legacy_bootstrap_followup",
+    "status": "fail_closed_blocked_pending_bridge_admission_and_legacy_bootstrap_followup",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
     "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
-    "evidence_cut_at": "2026-08-09T06:29:07Z"
+    "evidence_cut_at": "2026-08-09T06:34:11Z"
   },
   "scope": {
     "owned_layer": "Authorized immutable supervisor-runtime promotion attempt, transaction outcome capture, fail-closed verification, and canonical source-only follow-up dispatch.",
@@ -313,7 +313,30 @@
     "task_id": "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
     "owner": "Codex2",
     "reviewer": "Codex",
-    "dispatch_status": "packet_prepared_pending_signed_bridge_queue",
+    "dispatch_status": "canonical_task_committed_but_signed_bridge_admission_failed",
+    "queued_at": "2026-08-09T06:31:28Z",
+    "drained_at": "2026-08-09T06:32:24Z",
+    "receipt_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629.json",
+    "failed_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/failed/sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629.json",
+    "receipt_sha256": "9bebffebae4ec3d4df11c5f878b6897e01069eb7c5f9898787268ba892900884",
+    "packet_digest": "2089df8463276d8523d0cbec3c3acf1f54e1b80eeb0e2e568739492f39d4cd3c",
+    "task_spec_hash": "6ff38384494a9f60e2df5acdb224522fdaf79efcb739d8624dce416298171fc4",
+    "receipt_status": "failed",
+    "admission_status": "not_attempted",
+    "canonical_materialization": {
+      "source": "active",
+      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "last_update": "2026-08-09T06:32:30Z",
+      "dev_bridge_task_spec_hash": "6ff38384494a9f60e2df5acdb224522fdaf79efcb739d8624dce416298171fc4"
+    },
+    "dispatch_diagnostic": "Task SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809 signed dev-bridge packet is not admitted",
+    "admission_blocker": {
+      "error": "OverflowError: date value out of range while pinned ai_status.py refreshed derived current-work.md after canonical assign",
+      "existing_source_task": "OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809",
+      "retry_rule": "Do not claim implementation underway or bypass the signed admission gate; retry governed admission only after the source/runtime defect is resolved."
+    },
     "evidence_binding": {
       "transaction_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T062622204757Z-3114628.json",
       "transaction_sha256": "2621af8274e995708218bf245d42447ad68d5138dfb52047896392c176ce8f14",
@@ -377,10 +400,20 @@
       "command": "compare PR 4648 source boundary with active incumbent state",
       "result": "prevention fix is present in candidate and promotion tracked-tree rejection is unchanged; legacy incumbent drift predates activation and cannot be removed by the existing transaction",
       "conclusion": "new_source_only_legacy_bootstrap_followup_required"
+    },
+    {
+      "command": "repository signer plus scripts/queue_assistant_dev_task_packet.py against central status root",
+      "result": "signed packet queued at 06:31:28Z; supervisor receipt failed at 06:32:24Z after canonical assign because derived timestamp localization overflowed",
+      "conclusion": "canonical_task_partial_materialization_preserved_but_bridge_admission_failed"
+    },
+    {
+      "command": "governed show plus scripts/explain_dispatch.py for SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
+      "result": "canonical task exists todo with matching owner/reviewer/spec hash; global dispatch block is signed dev-bridge packet not admitted",
+      "conclusion": "do_not_claim_implementation_underway"
     }
   ],
   "rollout_and_rollback": {
-    "rollout": "Blocked. Do not retry until the legacy-drift bootstrap source-only follow-up is merged and a separately authorized governed retry is dispatched.",
+    "rollout": "Blocked. First obtain a successful signed bridge admission for the already-materialized legacy-bootstrap task after the governed timestamp-overflow source defect is resolved; then wait for that source-only task to merge and for a separately authorized rollout retry.",
     "rollback": "Not invoked because the transaction stopped before incumbent capture, config change, signal, or candidate launch.",
     "operator_prohibitions": [
       "do not reset, stash, checkout, or edit the active mutable dev-root",
