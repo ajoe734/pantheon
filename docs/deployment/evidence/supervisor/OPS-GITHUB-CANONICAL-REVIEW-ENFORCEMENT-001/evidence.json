@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "schema_status": "repository_contract_ready_external_issuer_and_live_activation_withheld",
+  "task": {
+    "id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json"
+  },
+  "implementation": {
+    "initial_anchor_commit": "100e0ef40",
+    "provenance_anchor_commit": "86b9e6cb0d0f9fba6c3990e59207346a012f7e90",
+    "attestation_audit_workflow": ".github/workflows/canonical-review-attestation-audit.yml",
+    "mainline_review_gate_workflow": ".github/workflows/canonical-review-gate.yml",
+    "trusted_public_keys": ".github/canonical-review-keys.json",
+    "checker": "scripts/git/canonical_review_check.py",
+    "tests": "scripts/git/test_canonical_review_check.py",
+    "trust_boundary": "Protected base-branch public-key registry plus reviewer Ed25519 private key outside candidate/status roots -> signed exact PR/head/base/owner/reviewer envelope -> dedicated external verifier pinned to captured dev/master base SHA -> exact-head check through an externally owned GitHub App whose installation token is unavailable to repository Actions/shared owner runtime -> dedicated App-pinned required branch check.",
+    "repository_workflow_boundary": "canonical-review-attestation-audit.yml is read-only diagnostics: it rejects non-dev/master bases before checkout, pins the captured base SHA, has no checks:write or statuses:write permission, makes no check-runs or statuses API call, and never invokes the generic canonical_review_gate_ci.py status writer. canonical-review-gate.yml is the distinct generic required-status path: it verifies only the git-native exact-head review-proof tag emitted by the governed approval bridge. Its github-actions identity cannot satisfy the separately configured external-App-pinned reviewer attestation.",
+    "mainline_composition": {
+      "origin_dev_base": "f3c3b830d9756a1a2b2bf40a42b8e086e615a469",
+      "workflow_boundary_anchor": "4583c789ae35d0f16cc8718c73bfad7adfc09505",
+      "evidence_anchor": "b1091b7fdbbe213c040398dc104526f0b3f4211e",
+      "composition_merge": "40d3216ff2fdb32d83b4b763e5315a2b6552bf23",
+      "status_publisher_anchor": "5f8d467d5fee1aec269b54352c4087275482897b",
+      "conflict_resolution": "The current merge of origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469 completed without conflicts. The historical conflict against the earlier dev composition was limited to the leading comment block of .github/workflows/canonical-review-gate.yml; both comment-only sides were retained and no executable key changed in that earlier resolution.",
+      "result": "The task branch now composes current origin/dev. The generic exact-head review-proof workflow retains its required commit-status context, while its Actions publisher job is deliberately named Publish canonical review status. That separation prevents the expected pre-review failure check-run from colliding with the later exact-head success status. The trusted-base attestation audit remains read-only and isolated from the separate external-App-pinned reviewer-attestation issuer.",
+      "prior_origin_dev_base": "003688bd7402d051986c07f1769285925af24e1b",
+      "prior_composition_merge": "9e165a1d7edf751bc3b519e749ccf601eb231c57",
+      "second_composition_reason": "origin/dev advanced 20 commits (003688bd7 -> 34e1f494a) within two minutes of the exact-head approval of e8843e3d706bd30ff4aa45926678ab369903c015. scripts/git/auto_integrator.py refused to land PR #4303 with rebase_required: the approved head no longer contained dev, so the approval would not have covered what actually merged. The owner refreshed the branch by merging origin/dev forward at fc500eb14680ce59145900ef760d1c1aad4d04ce rather than by rebasing, which preserves this evidence manifest in the PR diff. None of the 20 dev commits touched any artifact of this task: git log 003688bd7402d051986c07f1769285925af24e1b..34e1f494a251f6c2292a6675baa0ed65fdab7bb5 over the six task artifacts is empty, so the refreshed composition changes no reviewed behaviour. The second merge reported no conflicts.",
+      "second_composition_conflicts": "none",
+      "third_composition_reason": "The supervisor redispatched the task after PR #4303 remained blocked at head c9d3485247c7fe2f9d7f69b49ba55806382782d6 and dev advanced. The owner forward-merged origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469 at 40d3216ff2fdb32d83b4b763e5315a2b6552bf23, then corrected the distinct GitHub result-name collision at anchor 5f8d467d5fee1aec269b54352c4087275482897b.",
+      "third_composition_conflicts": "none"
+    },
+    "status_publisher_regression": {
+      "observed_head": "c9d3485247c7fe2f9d7f69b49ba55806382782d6",
+      "failed_check_run": {
+        "id": 92604198652,
+        "name": "Pantheon canonical review gate",
+        "app_id": 15368,
+        "conclusion": "failure",
+        "completed_at": "2026-08-06T11:36:06Z"
+      },
+      "later_commit_status": {
+        "id": 51876975707,
+        "context": "Pantheon canonical review gate",
+        "state": "success",
+        "updated_at": "2026-08-08T06:58:08Z",
+        "target_url": "https://github.com/ajoe734/pantheon/actions/runs/31245097563"
+      },
+      "github_result": "PR #4303 remained mergeable_state=blocked because the PR head retained a failed check-run with the same name as the required success status. The workflow_dispatch check-run itself was attached to dev, so it could not replace the stale same-name PR-head check-run.",
+      "correction": "The publisher job is now named Publish canonical review status and treats checker exit 1 as the expected already-published fail-closed status result. The merge-authoritative context remains Pantheon canonical review gate, and missing status publication still blocks because the required context is absent.",
+      "live_readback_at": "2026-08-09T04:07:23Z",
+      "live_readback": {
+        "required_check": {
+          "context": "Pantheon canonical review gate",
+          "app_id": 15368
+        },
+        "strict": false,
+        "required_approving_review_count": 1,
+        "enforce_admins": true,
+        "allow_auto_merge": true
+      },
+      "live_mutations_performed": []
+    },
+    "legacy_status_is_not_authority": "The existing Pantheon canonical review gate user status and every github-actions App id 15368 check are additive compatibility evidence only; neither can satisfy the dedicated external App-pinned canonical check."
+  },
+  "artifacts": [
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/baseline.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/activation-plan.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/issuer-provenance.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/merge-entrypoint-matrix.json",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.md",
+    "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt"
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "claim": "Capture exact dev/master protection baseline.",
+      "status": "pass_with_live_drift_recorded",
+      "evidence": "baseline.json records the historical zero-approval/admin-unenforced hole, exact current master zero/admin-unenforced state, and the externally changed dev count=1/admin-enforced state observed while this worker made no mutations."
+    },
+    {
+      "id": "AC2",
+      "claim": "Exact-head canonical reviewer attestation cannot be forged or replayed by the PR author/shared GitHub credential.",
+      "status": "pass_repository_contract_external_canary_pending",
+      "evidence": "Ed25519 signer protections remain, and protection-plan now also requires a successful GitHub check-run canary from an App id other than 15368, slug other than github-actions, and owner other than ajoe734. Tests reject the generic Actions App, a shared-owner App, forged/cross-head/cross-PR/cross-repository/key-mismatch/self-owned envelopes, and plan readback with a same-name Actions check. Human/Ops external App provisioning and real canary proof remain intentionally pending."
+    },
+    {
+      "id": "AC3",
+      "claim": "Fail-closed required check rejects missing, rejected, stale-head, or self-owned attestations.",
+      "status": "pass_git_native_generic_gate_external_runtime_pending",
+      "evidence": "The deterministic checker rejects missing/rejected/stale/self-owned/expired/forged envelopes. The current generic required-status workflow now fails closed unless the governed independent-review transaction pushed the exact-head review-proof tag; it no longer reads unavailable runner-local task state. The isolated attestation audit workflow only audits and cannot publish the separate external-App-pinned required check. Activation requires the separately provisioned external App verifier to apply identical dev/master base allowlisting, exact base-SHA pinning, event refresh, and expiry/key-revocation scheduling before its dedicated App id may enter the machine plan."
+    },
+    {
+      "id": "AC4",
+      "claim": "Web UI, gh, REST, GraphQL, auto-merge creation/finalization, and admin bypass remain blocked before exact approval.",
+      "status": "pass_configuration_contract_external_issuer_and_live_probe_pending",
+      "evidence": "merge-entrypoint-matrix.json plus plan-bound verify-protection require the dedicated external App-pinned check, enforce_admins=true, allow_auto_merge=false, baseline strict, and the full pre-existing context/app_id multiset simultaneously. A same-name app id 15368 check fails readback. External App provisioning and live mutations/probes were not authorized."
+    },
+    {
+      "id": "AC5",
+      "claim": "Rollback-safe branch-protection activation and readback verification.",
+      "status": "pass_repository",
+      "evidence": "protection-plan schema v2 first requires and binds a successful dedicated external App canary, then preserves baseline strict plus the complete pre-existing context/app_id multiset, orders activation as auto-merge disable -> admin enforcement -> required-check update, and emits exact rollback operations. verify-protection derives the issuer only from that retained plan and refuses readback on generic Actions provenance, strict drift, or any lost/changed pre-existing check, in addition to admin/auto-merge failures. activation-plan.json remains blocked until a real canary and fresh baseline exist."
+    },
+    {
+      "id": "AC6",
+      "claim": "Do not mutate live GitHub protection without Human/Ops authorization.",
+      "status": "pass",
+      "evidence": "Only GET/read operations were performed in this dispatch. The 2026-08-09 readback observed externally changed dev protection (strict=false, one native approval, admins enforced, generic canonical context pinned to github-actions) and allow_auto_merge=true; this worker did not PATCH/POST/DELETE protection, repository settings, variables, keys, merge, or auto-merge."
+    },
+    {
+      "id": "AC7",
+      "claim": "Branch, commit, push, PR checks, exact-head independent review, merge, and archive evidence.",
+      "status": "review_pending_exact_head_approval",
+      "evidence": "PR #4303 is recomposed on origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469 at merge 40d3216ff2fdb32d83b4b763e5315a2b6552bf23. Anchor 5f8d467d5fee1aec269b54352c4087275482897b corrects the same-name check/status collision that left reviewed head c9d3485247c7fe2f9d7f69b49ba55806382782d6 blocked despite a later exact-head success status. Remaining: final validation/evidence commit, push, green PR results, and a fresh exact-head approval from current reviewer Claude. External App provisioning, authorized activation, and governed archived closeout remain separately pending."
+    }
+  ],
+  "non_interference": {
+    "live_branch_protection_changed": false,
+    "repository_auto_merge_changed": false,
+    "repository_variables_changed": false,
+    "github_app_created_or_installed": false,
+    "reviewer_keys_created_or_rotated": false,
+    "merge_or_auto_merge_calls_issued": false,
+    "canonical_status_files_edited_directly": false
+  },
+  "validation": {
+    "status": "pass",
+    "record": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/validation.txt",
+    "head_verified": "5f8d467d5fee1aec269b54352c4087275482897b",
+    "aggregate_python_tests": 194,
+    "suites": {
+      "canonical_review_check": 38,
+      "canonical_review_gate_workflow": 23,
+      "task_review_merge_gate": 94,
+      "github_review_bridge": 11,
+      "github_bus": 28
+    },
+    "static_checks": [
+      "py_compile (canonical_review_check.py, canonical_review_gate_ci.py)",
+      "JSON parse of all five task evidence manifests",
+      "YAML safe-load of both canonical-review workflows post-merge",
+      "attestation-audit workflow base allowlist/base-SHA/read-only contract",
+      "mainline generic-status / external-attestation separation contract",
+      "git diff --check over the full origin/dev...HEAD range",
+      "machine-plan CLI positive readback (dedicated external App canary -> plan v2)",
+      "machine-plan CLI generic github-actions canary rejection (issuer_provenance_invalid)",
+      "machine-plan CLI lost-existing-check negative readback",
+      "machine-plan CLI same-name Actions check negative readback"
+    ],
+    "not_run": [
+      "dedicated external GitHub App provisioning and successful live canary require Human/Ops",
+      "live protection activation/probes require Human/Ops authorization",
+      "actionlint: no executable available in this worker environment"
+    ],
+    "head_verified_note": "Verification re-ran in full at status-publisher anchor 5f8d467d5fee1aec269b54352c4087275482897b on composition merge 40d3216ff2fdb32d83b4b763e5315a2b6552bf23 and origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469. The workflow suite now includes the distinct publisher-job/required-context regression. The final commit after this anchor changes only this task evidence directory."
+  },
+  "re_review": {
+    "previous_rejected_heads": [
+      "6e427581ebd328e1c39e10342c999fec769d318d",
+      "293cb1d4780653c9753ee19d9567f917511b7b70",
+      "8b45c98347565c94189de985d65ad68bdbe22ba2"
+    ],
+    "rejecting_reviewer": "Codex2",
+    "current_reviewer": "Claude",
+    "reviewer_reassignment": "The canonical task row now assigns owner Codex and reviewer Claude. The exact-head approval must come from Claude through the governed command; the earlier Codex2 rejections and Antigravity approvals stand as history against superseded heads.",
+    "composed_origin_dev": "f3c3b830d9756a1a2b2bf40a42b8e086e615a469",
+    "required_before_reviewer_approval": [
+      "Confirm PR #4303 is MERGEABLE against current dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469.",
+      "Confirm the PR head's diff against 5f8d467d5fee1aec269b54352c4087275482897b touches only this evidence directory, so the 194-test verification at the code anchor still describes the reviewed behavior.",
+      "Confirm the publisher job name differs from Pantheon canonical review gate and expected checker exit 1 cannot leave a second same-name failed check-run on the PR head.",
+      "Expect the required commit status to fail closed on the fresh head until an independent approval creates its exact-head proof tag and dispatches the publisher.",
+      "Have Claude independently review this committed evidence manifest and approve only the exact current PR head through the governed command."
+    ],
+    "code_composition_anchor": "5f8d467d5fee1aec269b54352c4087275482897b",
+    "head_for_review_note": "The reviewable PR head is the evidence-refresh commit directly above status-publisher anchor 5f8d467d5fee1aec269b54352c4087275482897b and should touch only this evidence directory. A manifest cannot name its own commit, so the reviewer must bind approval to the exact current head of PR #4303 and confirm its diff against 5f8d467d5fee1aec269b54352c4087275482897b is evidence-only.",
+    "previous_approved_superseded_heads": [
+      "e8843e3d706bd30ff4aa45926678ab369903c015"
+    ],
+    "head_refresh_reason": "Head c9d3485247c7fe2f9d7f69b49ba55806382782d6 carried Antigravity's exact-head proof tag and a later success status, but GitHub kept PR #4303 blocked because an earlier PR-head Actions check-run used the same name and remained failed. The refreshed head composes current dev and corrects that result-name collision before requiring a fresh Claude review."
+  },
+  "residual_risks": [
+    {
+      "id": "DEDICATED-EXTERNAL-ISSUER-PROVISIONING",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "No dedicated external GitHub App id or successful canary is committed or inferred. protection-plan intentionally cannot generate an activatable plan until Human/Ops provisions an externally owned App/verifier and retains the read-only canary response."
+    },
+    {
+      "id": "LIVE-ACTIVATION-REQUIRES-HUMAN-OPS",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "The checker cannot govern GitHub merge endpoints until Human/Ops lands the protected public-key registry, provisions repo-external reviewer keys plus the dedicated external App/verifier, and activates the dedicated App-pinned required check with admin enforcement and repository auto-merge disabled."
+    },
+    {
+      "id": "DEV-PROTECTION-DRIFT",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "The 2026-08-09 readback observes strict=false, required native approval count=1, enforce_admins=true, generic canonical context pinned to github-actions App id 15368, and allow_auto_merge=true. These values differ from the historical committed baseline and were not mutated by this worker. Any external-App activation or rollback must regenerate a fresh baseline immediately before explicit authorization."
+    },
+    {
+      "id": "MASTER-ROLLOUT-ORDER",
+      "blocking_for_repository_delivery": false,
+      "blocking_for_live_enforcement": true,
+      "detail": "Master activation must wait until the reviewed checker/key registry exist on master and the dedicated external verifier has emitted and re-evaluated a successful exact-head canary there."
+    }
+  ]
+}
