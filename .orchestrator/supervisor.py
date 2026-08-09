@@ -18171,9 +18171,11 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
     queue_events = state.setdefault("queue", {}).setdefault("events", {})
+    workers = state.setdefault("workers", {})
     kept: list[dict[str, Any]] = []
     kept_ids: set[str] = set()
     changed = False
+    now = datetime.now(timezone.utc)
 
     # Queue records are only authoritative while their durable event still
     # exists.  A started record without a task, durable event, or worker cannot
@@ -18221,8 +18223,65 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             continue
 
         record = queue_events.get(event_id, {})
-        related_workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
+        related_worker_items = [
+            (run_id, worker)
+            for run_id, worker in workers.items()
+            if worker.get("queue_event_id") == event_id
+        ]
+        related_workers = [worker for _, worker in related_worker_items]
         has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
+
+        # ``retry_backoff`` is a scheduler hold, not a live process.  If every
+        # linked retry is overdue and its recorded process generation is gone,
+        # retaining the old ``started`` lease blocks promotion while no worker
+        # can complete it.  Drop that expired delivery lineage so the normal
+        # dispatcher may construct a fresh durable event for the still-open
+        # task on a later cycle.
+        stale_retry_workers = (
+            record.get("status") == "started"
+            and bool(related_worker_items)
+            and all(
+                str(worker.get("status") or "") == "retry_backoff"
+                and (next_retry_at := _parse_iso_utc(worker.get("next_retry_at"))) is not None
+                and next_retry_at <= now
+                and not worker_process_generation_is_current(worker)
+                for _, worker in related_worker_items
+            )
+        )
+        if stale_retry_workers:
+            for run_id, worker in related_worker_items:
+                workers.pop(run_id, None)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_reaped",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "worker_run_id": worker.get("run_id"),
+                        "queue_event_id": event_id,
+                        "message": (
+                            "Dropped an overdue retry-backoff worker whose "
+                            "recorded process generation is absent."
+                        ),
+                    },
+                )
+            write_activity_log(
+                config,
+                {
+                    "type": "queue_event_pruned",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "queue_event_id": event_id,
+                    "message": (
+                        "Pruned a started queue lease after every linked "
+                        "retry-backoff worker exceeded its retry deadline "
+                        "without a live process."
+                    ),
+                },
+            )
+            changed = True
+            continue
+
         if queue_event_is_orphaned(config, event, record, related_workers):
             age_seconds = queue_event_age_seconds(event)
             write_activity_log(
