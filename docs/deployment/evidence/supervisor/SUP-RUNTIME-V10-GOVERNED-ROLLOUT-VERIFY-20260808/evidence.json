@@ -337,6 +337,13 @@
       "existing_source_task": "OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809",
       "retry_rule": "Do not claim implementation underway or bypass the signed admission gate; retry governed admission only after the source/runtime defect is resolved."
     },
+    "admission_retry": {
+      "reason": "The original packet id remains bound to the failed inbox leaf even after later governed status refresh succeeded; queue_payload correctly returned duplicate instead of mutating that record.",
+      "packet_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/source-only-followup-legacy-drift-bootstrap-retry1.json",
+      "packet_id": "sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0636-r1",
+      "task_spec_expected_unchanged": true,
+      "dispatch_status": "packet_prepared_pending_signed_bridge_queue"
+    },
     "evidence_binding": {
       "transaction_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T062622204757Z-3114628.json",
       "transaction_sha256": "2621af8274e995708218bf245d42447ad68d5138dfb52047896392c176ce8f14",
