@@ -3036,6 +3036,7 @@ def _discover_injected(
     reader: InjectedRuntimeProcessReader,
     *,
     git_identity: tuple[str, str] | None = None,
+    allow_legacy_environment_contract: bool = False,
 ) -> SupervisorProcessIdentity:
     return discover_incumbent_supervisor_process(
         identity,
@@ -3045,6 +3046,7 @@ def _discover_injected(
             if git_identity is not None
             else (identity.head_commit, identity.tracked_tree_identity)
         ),
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
     )
 
 
@@ -4477,6 +4479,65 @@ def test_process_identity_allows_one_governed_legacy_incumbent_migration(
         "PANTHEON_COMMAND_RUNTIME_SHA": candidate.head_commit,
         "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
     }
+
+
+def test_process_identity_allows_bootstrap_legacy_environment_contract(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
+    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
+
+    with pytest.raises(ValueError, match="environment allowlist mismatch"):
+        _discover_injected(candidate, reader)
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_environment_contract=True,
+    )
+
+    assert dict(identity.environment_contract) == {
+        "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def test_process_identity_rejects_wrong_bootstrap_legacy_status_root(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
+    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
+    reader.environment[1717]["PANTHEON_STATUS_ROOT"] = "/wrong-status-root"
+
+    with pytest.raises(
+        ValueError,
+        match="environment PANTHEON_STATUS_ROOT mismatch",
+    ):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_environment_contract=True,
+        )
 
 
 def test_process_identity_revalidates_candidate_inside_lock_bracket(

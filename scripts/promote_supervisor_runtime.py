@@ -3250,6 +3250,7 @@ def discover_incumbent_supervisor_process(
         [ProcessCwdIdentity], tuple[str, str]
     ] = _read_process_cwd_git_identity,
     candidate_revalidator: Callable[[], None] | None = None,
+    allow_legacy_environment_contract: bool = False,
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
@@ -3440,13 +3441,31 @@ def discover_incumbent_supervisor_process(
         # incumbents without ``-B`` remain capturable for their one governed
         # migration; candidate and rollback variants both receive the flag.
         expected_environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    _guarded_process_compare(
-        runtime_reader,
-        generation,
-        label="environment allowlist",
-        actual=set(environment_contract),
-        expected=set(expected_environment),
-    )
+    if set(environment_contract) != set(expected_environment):
+        # Candidate and rollback launches always bind the complete command
+        # runtime. A mutable incumbent that predates that binding is admitted
+        # only during its one governed bootstrap migration: all of its process
+        # identity, argv, config, cwd, Git tree, status root, and admission
+        # lock checks remain exact.
+        legacy_environment = {"PANTHEON_STATUS_ROOT": expected.status_root}
+        if "PYTHONDONTWRITEBYTECODE" in environment_contract:
+            legacy_environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        if not allow_legacy_environment_contract:
+            _guarded_process_compare(
+                runtime_reader,
+                generation,
+                label="environment allowlist",
+                actual=set(environment_contract),
+                expected=set(expected_environment),
+            )
+        _guarded_process_compare(
+            runtime_reader,
+            generation,
+            label="legacy environment allowlist",
+            actual=set(environment_contract),
+            expected=set(legacy_environment),
+        )
+        expected_environment = legacy_environment
     for name in expected_environment:
         _guarded_process_compare(
             runtime_reader,
@@ -4644,6 +4663,7 @@ def capture_runtime_observation(
     reader: RuntimeProcessReader | None = None,
     now: datetime | None = None,
     require_current_dev_identity: bool = True,
+    allow_legacy_environment_contract: bool = False,
 ) -> RuntimeObservation:
     """Capture one exact process/state/config postcheck observation."""
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4660,6 +4680,7 @@ def capture_runtime_observation(
         expected_contract=expected_process_contract,
         reader=runtime_reader,
         candidate_revalidator=revalidate_identity,
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
     )
     if expected_generation is not None and process.generation != expected_generation:
         raise ValueError(
@@ -5847,6 +5868,7 @@ def capture_mutable_incumbent_snapshot(
     seed_argv: tuple[str, ...],
     seed_cwd: ProcessCwdIdentity,
     allow_legacy_task_brief_drift: bool = False,
+    allow_legacy_environment_contract: bool = False,
 ) -> MutableIncumbentSnapshot:
     binding = _mutable_root_binding(
         seed_cwd,
@@ -5886,6 +5908,7 @@ def capture_mutable_incumbent_snapshot(
         reader=reader,
         cwd_git_identity_reader=lambda _cwd: (head, tree),
         candidate_revalidator=revalidate_root,
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
     )
     if process.generation != seed_generation:
         raise ValueError("Mutable incumbent generation changed during capture")
@@ -6227,6 +6250,7 @@ class OSPromotionBackend:
                 seed_argv=seed_argv,
                 seed_cwd=seed_cwd,
                 allow_legacy_task_brief_drift=True,
+                allow_legacy_environment_contract=True,
             )
             if (
                 mutable_incumbent.accepted_dev_commit
@@ -6284,6 +6308,7 @@ class OSPromotionBackend:
             expected_process_contract=mutable_expected,
             expected_generation=incumbent_process.generation,
             reader=self.reader,
+            allow_legacy_environment_contract=bootstrap_mutable_incumbent,
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -6355,6 +6380,7 @@ class OSPromotionBackend:
             seed_argv=current_seed[1],
             seed_cwd=current_seed[2],
             allow_legacy_task_brief_drift=True,
+            allow_legacy_environment_contract=True,
         )
         if current_mutable != plan.mutable_incumbent:
             raise ValueError("Mutable incumbent snapshot drift detected")
@@ -6371,6 +6397,7 @@ class OSPromotionBackend:
             expected_process_contract=expected,
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
+            allow_legacy_environment_contract=True,
         )
 
     def observe(
