@@ -18167,8 +18167,6 @@ def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> No
 
 def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     events = load_event_queue(config)
-    if not events:
-        return False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
@@ -18176,6 +18174,45 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     kept: list[dict[str, Any]] = []
     kept_ids: set[str] = set()
     changed = False
+
+    # Queue records are only authoritative while their durable event still
+    # exists.  A started record without a task, durable event, or worker cannot
+    # be resumed or finalized through any normal worker path; retaining it
+    # falsely advertises an active lease and blocks promotion preflight.
+    durable_event_ids = {
+        str(event.get("event_id") or "")
+        for event in events
+        if isinstance(event, dict) and str(event.get("event_id") or "")
+    }
+    for event_id, record in list(queue_events.items()):
+        if event_id in durable_event_ids or not isinstance(record, dict):
+            continue
+        if record.get("status") not in active_statuses:
+            continue
+        if str(record.get("task_id") or ""):
+            continue
+        if any(
+            worker.get("queue_event_id") == event_id
+            for worker in state.get("workers", {}).values()
+            if isinstance(worker, dict)
+        ):
+            continue
+        queue_events.pop(event_id, None)
+        write_activity_log(
+            config,
+            {
+                "type": "malformed_queue_record_pruned",
+                "queue_event_id": event_id,
+                "message": (
+                    "Pruned an active queue record with no durable event, "
+                    "task, or worker."
+                ),
+            },
+        )
+        changed = True
+
+    if not events:
+        return changed
 
     for event in events:
         event_id = event.get("event_id")
