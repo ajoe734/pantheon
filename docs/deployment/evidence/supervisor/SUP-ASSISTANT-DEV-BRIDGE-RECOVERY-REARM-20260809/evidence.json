@@ -1,0 +1,109 @@
+{
+  "schema_version": "assistant_dev_bridge_recovery_rearm_evidence.v1",
+  "captured_at": "2026-08-09T09:12:56Z",
+  "task": {
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809",
+    "title": "Rearm exact recovery after a failed recovered-packet drain",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809",
+    "review_status": "review_pending"
+  },
+  "implementation": {
+    "base_commit": "93e321b4fb703faac2114d29e498cd94c08d269c",
+    "implementation_head": "8f0a507dd1622fbac1d170e65e00bbaa0856be85",
+    "commits": [
+      "c2120db177af977f1d38b16fbf12ffebad293429",
+      "8f0a507dd1622fbac1d170e65e00bbaa0856be85"
+    ]
+  },
+  "scope": {
+    "owned_layer": "Assistant dev bridge exact failed-packet recovery rearm state machine, durable retry evidence chain, existing drain CLI wording, isolated regressions, and task evidence.",
+    "not_changing": "No supervisor scheduling, fleet policy, canonical task-state schema, live inbox contents, manual queue/recovery edit path, runtime promotion, or downstream task dispatch.",
+    "implementation_files": [
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "scripts/drain_assistant_dev_task_packet_inbox.py"
+    ]
+  },
+  "incident": {
+    "failure_sequence": [
+      "An exact signed failed packet is recovered through the governed CLI and its durable recovery record reaches queued.",
+      "The recovered pending packet is drained again and fails before assignment, producing a new exact failed receipt and returning the leaf to failed storage.",
+      "The prior implementation rejects the resulting failed leaf because the durable recovery record is already queued, leaving no supported retry path."
+    ],
+    "repair_boundary": "The same exact-id recovery command may rearm only when packet signature/provenance, queue and dispatch fences, recovery history, and a new exact failed receipt all validate. Operators still do not edit or move inbox state manually."
+  },
+  "delivered_properties": [
+    "A queued recovery record plus an exact newly failed drain receipt now enters a supported rearm path and returns the same signed leaf to pending without draining it implicitly.",
+    "Each rearm appends a six-digit attempt record under recovery-rearms/<packet-id>/ that binds the previous recovery, the current failed receipt, the next recovery, canonical SHA-256 digests, packet identity, source/target paths, and timestamps.",
+    "The chain validates every prior attempt in order and rejects missing, stale, malformed, symlinked, ambiguous, digest-mismatched, identity-mismatched, or state-mismatched evidence before moving a leaf.",
+    "The previously consumed failed receipt digest cannot authorize another move, so manually bouncing the old pending leaf back to failed remains fail-closed.",
+    "A crash after evidence preparation, after failed-to-pending rename, or after next-recovery persistence can be resumed from the last prepared evidence without duplicating attempts.",
+    "Repeated genuine failures create consecutive evidence attempts; the regression proves attempts 1 and 2 compose before a successful governed drain.",
+    "The existing --recover-failed-packet-id CLI is the supported operator surface and now describes both initial recovery and rearm."
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "status": "pass",
+      "statement": "A recovered packet that fails a later drain before assignment can be rearmed through the exact-id CLI path."
+    },
+    {
+      "id": "AC2",
+      "status": "pass",
+      "statement": "Rearm remains packet-signature, receipt-digest, provenance, queue-lock, processing-fence, dispatch-fence, admission, and replay bound."
+    },
+    {
+      "id": "AC3",
+      "status": "pass",
+      "statement": "Consumed receipts, manual queue bounce, and tampered retry evidence fail closed without moving the failed leaf."
+    },
+    {
+      "id": "AC4",
+      "status": "pass",
+      "statement": "Prepared retry evidence resumes safely after a crash between leaf rename and recovery-record update."
+    },
+    {
+      "id": "AC5",
+      "status": "pass",
+      "statement": "Focused inbox and CLI regressions remain green and use pytest-temporary status roots and inboxes."
+    },
+    {
+      "id": "AC6",
+      "status": "review_pending",
+      "statement": "Fresh independent Codex2 exact-head review, protected merge, and owner closeout remain."
+    }
+  ],
+  "validation": {
+    "new_rearm_regressions": "5 passed, 16 deselected in 2.30s",
+    "focused_inbox_and_cli_suite": "27 passed in 8.13s",
+    "assistant_suite": "198 passed, 1 unrelated existing failure in 42.30s",
+    "assistant_suite_failure": "services/control-plane/bff/assistant/tests/test_orchestrator_status.py::TestOrchestratorStatus::test_read_orchestrator_status_missing_files expects project=unknown but current origin/dev code returns pantheon; the task changes no orchestrator-status source or test.",
+    "assistant_suite_failure_recheck": "The same isolated test still failed after unsetting PANTHEON_STATUS_ROOT, confirming it is not caused by the worker's ambient status-root binding.",
+    "python_compile": "pass for dev_bridge_inbox.py, test_dev_bridge_inbox.py, and drain_assistant_dev_task_packet_inbox.py",
+    "git_diff_check": "pass for origin/dev...implementation_head",
+    "commit_trailers": "pass for origin/dev..implementation_head"
+  },
+  "coordination_status": {
+    "governed_show": "fail_closed because status_activity_outbox recovery is pending",
+    "governed_start": "fail_closed because the central activity audit contains duplicate event id ai-status-event-b38f76a8cad402b7ad135e8e30a2ca85227210a6a81d40cdc908dfa91cbefa7a",
+    "source_task_effect": "No central ai-status.json, current-work.md, ai-activity-log.jsonl, runtime state, or live inbox file was edited to bypass the invariant.",
+    "required_before_closeout": "The governed command root must recover audit integrity before handoff/approval/done state transitions can materialize."
+  },
+  "independent_review": {
+    "reviewer": "Codex2",
+    "status": "pending",
+    "review_pr": null,
+    "review_head_sha": null,
+    "decision": null,
+    "required_next_action": "Codex2 must independently inspect the final PR head, record the exact-head decision in this already-committed manifest, and bind this REVIEW_FILE through the governed approve command."
+  },
+  "delivery": {
+    "merge_target": "dev",
+    "rollout": "Merge the exact independently reviewed task head through the protected dev PR. Runtime promotion and any live packet recovery/rearm are separate governed operations after merge.",
+    "rollback": "Revert the merged task PR through the normal protected flow. Do not hand-edit live queue, receipt, recovery, rearm-evidence, admission, replay, audit, or canonical state files."
+  }
+}
