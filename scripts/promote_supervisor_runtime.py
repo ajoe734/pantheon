@@ -5018,6 +5018,7 @@ sys.stdout.write(json.dumps({
 
 @dataclass(frozen=True)
 class CandidateTrackedLegacyTaskBriefProvenanceBinding:
+    task_id: str
     relative_path: str
     byte_length: int
     sha256: str
@@ -5044,14 +5045,7 @@ CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS: tuple[
     CandidateTrackedLegacyTaskBriefProvenanceBinding, ...
 ] = (
     CandidateTrackedLegacyTaskBriefProvenanceBinding(
-        relative_path=".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md",
-        byte_length=634,
-        sha256="dde1769f5ddf4a1d7c0f861d81f02e9dc977a27415d085a6db6614ecfca2772c",
-        authoritative_event_id="supervisor-task-failure-streak-a9d6b8a54889ffae650c47e67d004eff0dd93f691a92791345e2bcd38cbdccf6",
-        legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
-        prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
-    ),
-    CandidateTrackedLegacyTaskBriefProvenanceBinding(
+        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
         relative_path=".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md",
         byte_length=1364,
         sha256="21a8c81a28417a8dbbe1641e436deb35d38dced9b8a2944d6ff25ce36165c737",
@@ -5060,17 +5054,10 @@ CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS: tuple[
         prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
     ),
     CandidateTrackedLegacyTaskBriefProvenanceBinding(
+        task_id="SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801",
         relative_path=".orchestrator/task-briefs/sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md",
         byte_length=2132,
-        sha256="255c0d0e547fdcd0869a2df0a728883f38159cd31695e0d1a70939695c6d5171",
-        authoritative_event_id="ai-status-event-739b819ac053e3cdd0a58d6b12311705d553cc44cb372f3298302b2a5b337aea",
-        legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
-        prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
-    ),
-    CandidateTrackedLegacyTaskBriefProvenanceBinding(
-        relative_path=".orchestrator/task-briefs/sup_l12_guarded_remediation_catalog_correction_20260803.md",
-        byte_length=3092,
-        sha256="7ba325bbafa79eaf8fef8d50b7cb147be95bb234844516f6150f0e2905fc16c7",
+        sha256="40bb9032a826cf94ec2e0e596266dfaf0d90c48c7dc84fb7b179021fdb66dae6",
         authoritative_event_id="ai-status-event-739b819ac053e3cdd0a58d6b12311705d553cc44cb372f3298302b2a5b337aea",
         legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
         prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
@@ -5080,13 +5067,16 @@ CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS: tuple[
 
 def _find_candidate_tracked_legacy_task_brief_provenance_binding(
     *,
+    task_id: str,
     relative_path: str,
     byte_length: int,
     sha256: str,
 ) -> CandidateTrackedLegacyTaskBriefProvenanceBinding | None:
+    norm_task_id = task_id.upper().replace("_", "-")
     for binding in CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS:
         if (
-            binding.relative_path == relative_path
+            binding.task_id.upper().replace("_", "-") == norm_task_id
+            and binding.relative_path == relative_path
             and binding.byte_length == byte_length
             and binding.sha256 == sha256
         ):
@@ -5109,6 +5099,12 @@ def _verify_legacy_task_brief_binding_provenance(
     expected_head: str,
 ) -> None:
     """Verify structured exact provenance fields against candidate history."""
+    if binding not in CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS:
+        raise ValueError(
+            "Mutable incumbent task brief provenance binding does not match registered production binding: "
+            f"{binding}"
+        )
+
     if binding.authoritative_event_id not in EXPECTED_AUTHORITATIVE_EVENT_IDS:
         raise ValueError(
             "Mutable incumbent task brief authoritative event ID is invalid or unreviewed: "
@@ -5117,60 +5113,75 @@ def _verify_legacy_task_brief_binding_provenance(
 
     if binding.legacy_command_runtime_sha not in EXPECTED_LEGACY_COMMAND_RUNTIME_SHAS:
         raise ValueError(
-            "Mutable incumbent task brief legacy command runtime SHA is not an ancestor of expected_head or is invalid: "
+            "Mutable incumbent task brief legacy command runtime SHA is invalid or unreviewed: "
             f"{binding.legacy_command_runtime_sha}"
         )
 
     if binding.prevention_boundary_sha not in EXPECTED_PREVENTION_BOUNDARY_SHAS:
         raise ValueError(
-            "Mutable incumbent task brief prevention boundary SHA is not an ancestor of expected_head or is invalid: "
+            "Mutable incumbent task brief prevention boundary SHA is invalid or unreviewed: "
             f"{binding.prevention_boundary_sha}"
         )
 
-    if _has_commit_object(root, binding.legacy_command_runtime_sha) and _has_commit_object(root, expected_head):
-        try:
-            _run_mutable_git(
-                root,
-                "merge-base",
-                "--is-ancestor",
-                binding.legacy_command_runtime_sha,
-                expected_head,
-            )
-        except ValueError as exc:
-            raise ValueError(
-                "Mutable incumbent task brief legacy command runtime SHA is not an ancestor of expected_head: "
-                f"{binding.legacy_command_runtime_sha}"
-            ) from exc
+    if not _has_commit_object(root, expected_head):
+        raise ValueError(
+            "Candidate expected_head commit object is missing or invalid: "
+            f"{expected_head}"
+        )
 
-    if _has_commit_object(root, binding.prevention_boundary_sha) and _has_commit_object(root, expected_head):
-        try:
-            _run_mutable_git(
-                root,
-                "merge-base",
-                "--is-ancestor",
-                binding.prevention_boundary_sha,
-                expected_head,
-            )
-        except ValueError as exc:
-            raise ValueError(
-                "Mutable incumbent task brief prevention boundary SHA is not an ancestor of expected_head: "
-                f"{binding.prevention_boundary_sha}"
-            ) from exc
+    if not _has_commit_object(root, binding.legacy_command_runtime_sha):
+        raise ValueError(
+            "Legacy command runtime commit object is missing or invalid: "
+            f"{binding.legacy_command_runtime_sha}"
+        )
 
-    if _has_commit_object(root, binding.legacy_command_runtime_sha) and _has_commit_object(root, binding.prevention_boundary_sha):
-        try:
-            _run_mutable_git(
-                root,
-                "merge-base",
-                "--is-ancestor",
-                binding.legacy_command_runtime_sha,
-                binding.prevention_boundary_sha,
-            )
-        except ValueError as exc:
-            raise ValueError(
-                "Mutable incumbent task brief legacy command runtime SHA is not an ancestor of prevention boundary SHA: "
-                f"{binding.legacy_command_runtime_sha}"
-            ) from exc
+    if not _has_commit_object(root, binding.prevention_boundary_sha):
+        raise ValueError(
+            "Prevention boundary commit object is missing or invalid: "
+            f"{binding.prevention_boundary_sha}"
+        )
+
+    try:
+        _run_mutable_git(
+            root,
+            "merge-base",
+            "--is-ancestor",
+            binding.legacy_command_runtime_sha,
+            expected_head,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Mutable incumbent task brief legacy command runtime SHA is not an ancestor of expected_head: "
+            f"{binding.legacy_command_runtime_sha}"
+        ) from exc
+
+    try:
+        _run_mutable_git(
+            root,
+            "merge-base",
+            "--is-ancestor",
+            binding.prevention_boundary_sha,
+            expected_head,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Mutable incumbent task brief prevention boundary SHA is not an ancestor of expected_head: "
+            f"{binding.prevention_boundary_sha}"
+        ) from exc
+
+    try:
+        _run_mutable_git(
+            root,
+            "merge-base",
+            "--is-ancestor",
+            binding.legacy_command_runtime_sha,
+            binding.prevention_boundary_sha,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Mutable incumbent task brief legacy command runtime SHA is not an ancestor of prevention boundary SHA: "
+            f"{binding.legacy_command_runtime_sha}"
+        ) from exc
 
 
 def _is_historical_task_id_known(
@@ -5238,6 +5249,7 @@ def _is_historical_task_id_known(
 def _matches_candidate_tracked_provenance_blob(
     root: Path,
     *,
+    task_id: str,
     relative_path: str,
     expected_head: str,
     byte_length: int,
@@ -5245,6 +5257,7 @@ def _matches_candidate_tracked_provenance_blob(
 ) -> bool:
     """Verify byte_length and sha256 against candidate-tracked historical blobs."""
     binding = _find_candidate_tracked_legacy_task_brief_provenance_binding(
+        task_id=task_id,
         relative_path=relative_path,
         byte_length=byte_length,
         sha256=sha256,
@@ -5355,6 +5368,7 @@ def _verify_legacy_task_brief_provenance(
         )
 
     binding = _find_candidate_tracked_legacy_task_brief_provenance_binding(
+        task_id=task_id,
         relative_path=relative_path,
         byte_length=file_identity.byte_length,
         sha256=file_identity.sha256,
@@ -5373,6 +5387,7 @@ def _verify_legacy_task_brief_provenance(
 
     if _matches_candidate_tracked_provenance_blob(
         root,
+        task_id=task_id,
         relative_path=relative_path,
         expected_head=expected_head,
         byte_length=file_identity.byte_length,

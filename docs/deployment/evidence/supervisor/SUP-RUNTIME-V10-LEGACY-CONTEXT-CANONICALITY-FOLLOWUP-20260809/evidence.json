@@ -47,7 +47,7 @@
   "acceptance": [
     {
       "id": "AC1",
-      "statement": "Legacy mutable incumbent bootstrap accepts provenance-validated legacy task-brief drift and live-byte signatures (1364/21a8c81a..., 2132/40bb9032..., 3092/7ba325bb...).",
+      "statement": "Legacy mutable incumbent bootstrap accepts provenance-validated legacy task-brief drift for exact production bindings only (1364/21a8c81a..., 2132/40bb9032...).",
       "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_accepts_provenance_validated_legacy_task_brief_drift; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_accepts_live_byte_legacy_task_brief_drifts; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_accepts_second_live_byte_legacy_task_brief_drift"
     },
     {
@@ -57,8 +57,8 @@
     },
     {
       "id": "AC3",
-      "statement": "Mutated byte, wrong path, untracked source, wrong legacy command runtime SHA, and wrong prevention boundary SHA violations fail closed.",
-      "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_mutated_byte_legacy_task_brief; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_untracked_source_task_brief_path; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_prevention_boundary_violation; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_wrong_legacy_command_runtime_sha; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_wrong_prevention_boundary_sha"
+      "statement": "Mutated byte, wrong path, untracked source, event swap, another-valid-ancestor source/boundary SHA, and missing commit object fail closed.",
+      "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_mutated_byte_legacy_task_brief; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_untracked_source_task_brief_path; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_prevention_boundary_violation; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_event_swap; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_another_valid_ancestor_source_or_boundary_sha; scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_bootstrap_rejects_missing_commit_object"
     },
     {
       "id": "AC4",
@@ -78,15 +78,11 @@
     },
     {
       "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest scripts/test_promote_supervisor_runtime.py",
-      "result": "258 passed"
+      "result": "260 passed"
     },
     {
-      "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest scripts/test_sync_dev_root.py",
-      "result": "7 passed"
-    },
-    {
-      "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest .orchestrator/test_supervisor.py",
-      "result": "622 passed, 162 subtests passed"
+      "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest scripts/test_sync_dev_root.py .orchestrator/test_supervisor.py",
+      "result": "629 passed"
     },
     {
       "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD",
