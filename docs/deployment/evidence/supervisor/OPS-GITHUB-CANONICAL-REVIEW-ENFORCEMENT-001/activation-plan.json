@@ -31,7 +31,7 @@
     "scripts/git/canonical_review_check.py protection-plan accepts that canary. It must reject app id 15368, slug github-actions, an App owned by ajoe734, a wrong-name check, or a non-successful canary.",
     "A fresh full protection response, scoped required-review response, enforce-admin response, repository response, and ruleset response have been captured after any external freeze/release operation.",
     "The freshly generated machine plan preserves strict plus every unrelated context/app_id pair and writes rollback payloads before activation.",
-    ".github/workflows/canonical-review-gate.yml remains a read-only diagnostic workflow and is never selected as the merge-authoritative required check."
+    ".github/workflows/canonical-review-attestation-audit.yml remains a read-only diagnostic workflow and is never selected as the merge-authoritative required check. The distinct canonical-review-gate.yml lifecycle publisher is not the dedicated external-App attestation issuer."
   ],
   "activation_order": [
     {

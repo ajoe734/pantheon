@@ -23,16 +23,22 @@ an activation payload until it receives a successful read-only canary
 check-run response from that App.
 
 No GitHub App, live protection, repository setting, reviewer key, merge, or
-auto-merge state was created or changed. External App provisioning and live
-activation remain Human/Ops operations.
+auto-merge state was created or changed by this dispatch. Read-only capture on
+2026-08-09 observed that external operations had changed `dev` protection
+since the committed baseline: the generic context is pinned to App id 15368,
+`strict=false`, native approval count is one, admins are enforced, and
+repository auto-merge remains enabled. External App provisioning and the
+dedicated-attestation activation remain Human/Ops operations.
 
 ## Current-dev composition
 
 The task branch now composes `origin/dev`
-`34e1f494a251f6c2292a6675baa0ed65fdab7bb5` at composition merge
-`fc500eb14680ce59145900ef760d1c1aad4d04ce`.
+`f3c3b830d9756a1a2b2bf40a42b8e086e615a469` at composition merge
+`40d3216ff2fdb32d83b4b763e5315a2b6552bf23`. The merge completed without
+conflicts. Status-publisher correction anchor
+`5f8d467d5fee1aec269b54352c4087275482897b` sits above it.
 
-This is the second forward composition. The first,
+The historical second forward composition followed the first,
 `9e165a1d7edf751bc3b519e749ccf601eb231c57` over `origin/dev`
 `003688bd7402d051986c07f1769285925af24e1b`, cleared the `CONFLICTING`
 mergeable state PR #4303 had accumulated while `dev` advanced. The earlier
@@ -40,7 +46,7 @@ merge anchor `4583c789ae35d0f16cc8718c73bfad7adfc09505` resolved the generic
 `Pantheon canonical review gate` in favor of the current git-native
 exact-head review-proof implementation.
 
-The second composition was forced by timing, not by a review finding.
+That second composition was forced by timing, not by a review finding.
 `origin/dev` advanced 20 commits (`003688bd7` -> `34e1f494a`) within two
 minutes of Antigravity's exact-head approval of
 `e8843e3d706bd30ff4aa45926678ab369903c015`, whose proof tag and required
@@ -73,6 +79,29 @@ The generic helper `canonical_review_gate_ci.py` remains solely on that
 distinct exact-head proof/status path. The attestation audit workflow cannot
 invoke it and has neither `statuses: write` nor any status/check API call.
 The regression contract verifies both sides of this boundary.
+
+## Required-context publisher correction
+
+Read-only GitHub evidence on the superseded exact head
+`c9d3485247c7fe2f9d7f69b49ba55806382782d6` exposed a distinct result-name
+collision:
+
+- check-run `92604198652`, App id 15368, was named
+  `Pantheon canonical review gate` and remained `failure` on the PR head from
+  the initial pre-review run;
+- later commit status `51876975707` used that same context and became
+  `success` after exact-head approval;
+- workflow-dispatch run `31245097563` succeeded, but its check-run was attached
+  to `dev`, not the PR head; and
+- PR #4303 therefore stayed `mergeable_state=blocked` with both a same-name
+  failed check-run and successful commit status visible in its rollup.
+
+The publisher job is now named `Publish canonical review status`; only the
+commit status retains the required context name. Checker exit code 1 means the
+expected fail-closed status was posted for a not-yet-approved head, so it no
+longer creates a second failed result using the authoritative context name.
+If the status cannot be published, the required context remains missing and
+GitHub still fails closed.
 
 ## Why GitHub Actions is not an issuer
 
@@ -213,9 +242,12 @@ Reviewer should independently verify:
 - the trusted-base attestation audit cannot invoke
   `canonical_review_gate_ci.py` or post any generic commit status, while the
   distinct mainline git-native exact-head proof gate remains present;
+- the Actions publisher job is named `Publish canonical review status`, not
+  `Pantheon canonical review gate`, and an expected pre-review checker exit 1
+  cannot leave a competing same-name failure check-run;
 - the fresh PR head must receive a fresh exact-head approval from the current
-  reviewer `Antigravity`: its generic gate fails closed until the governed
+  reviewer `Claude`: its generic gate fails closed until the governed
   approval transaction has pushed the corresponding exact-head review-proof
-  tag. The task row reassigned owner to `Claude` and reviewer to `Antigravity`
-  after the earlier `Codex2` rejections, which stand as history against the
-  superseded heads `6e427581e`, `293cb1d47`, and `8b45c9834`.
+  tag. The canonical task row now assigns owner `Codex` and reviewer `Claude`;
+  the earlier `Codex2` rejections and `Antigravity` approvals remain history
+  against superseded heads.

@@ -1,14 +1,16 @@
 OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 validation
-Captured: 2026-08-06
-Head verified: fc500eb14680ce59145900ef760d1c1aad4d04ce
+Captured: 2026-08-09
+Head verified: 5f8d467d5fee1aec269b54352c4087275482897b
 
 Post-mainline composition:
 
 The task branch composes `origin/dev`
-`34e1f494a251f6c2292a6675baa0ed65fdab7bb5` at composition merge
-`fc500eb14680ce59145900ef760d1c1aad4d04ce`.
+`f3c3b830d9756a1a2b2bf40a42b8e086e615a469` at composition merge
+`40d3216ff2fdb32d83b4b763e5315a2b6552bf23`, with no conflicts. Anchor
+`5f8d467d5fee1aec269b54352c4087275482897b` corrects the required-context
+publisher collision and is the code head verified below.
 
-This is the second forward composition. The first,
+The historical second forward composition followed the first,
 `9e165a1d7edf751bc3b519e749ccf601eb231c57` over `origin/dev`
 `003688bd7402d051986c07f1769285925af24e1b`, cleared the `CONFLICTING`
 mergeable state on PR #4303. Its sole conflict was the leading comment block
@@ -33,6 +35,19 @@ at `.github/workflows/canonical-review-attestation-audit.yml`; it cannot
 invoke the generic status writer or publish the external-App-pinned reviewer
 attestation.
 
+Read-only live regression evidence:
+
+- PR-head check-run 92604198652 used name `Pantheon canonical review gate`
+  and remained failure on c9d3485247c7fe2f9d7f69b49ba55806382782d6.
+- Later commit status 51876975707 used the same context and was success at the
+  same exact head.
+- Workflow-dispatch run 31245097563 was success but its check-run was attached
+  to dev, while PR #4303 remained mergeable_state=blocked.
+- The publisher job is now `Publish canonical review status`; only its emitted
+  commit status uses the required context name. Expected checker exit 1 no
+  longer fails the publisher job, while an absent required status still
+  blocks.
+
 Focused commands:
 
     python3 -m pytest scripts/git/test_canonical_review_check.py
@@ -41,7 +56,7 @@ Focused commands:
     python3 -m pytest scripts/git/test_github_review_bridge.py
     PYTHONPATH=.orchestrator python3 -m pytest .orchestrator/test_github_bus.py
 
-PASS - 193 tests (plus 2 subtests): 38 canonical-review-check, 22 generic-gate
+PASS - 194 tests (plus 2 subtests): 38 canonical-review-check, 23 generic-gate
 workflow, 94 task-review-merge-gate, 11 github-review-bridge, and 28
 GitHub-bus tests. The github-review-bridge suite was omitted from the earlier
 182-test aggregate; it is included here.
@@ -96,6 +111,9 @@ Focused assertions covered:
    `pantheon-review/approve/<head-sha>` tag. It fails closed on a fresh head
    before independent approval instead of reading unavailable runner-local
    task state.
+7. The publisher check-run name is distinct from the required commit-status
+   context, and checker exit 1 is treated as an expected fail-closed status
+   publication rather than a second same-name failed GitHub result.
 
 Not run:
 
@@ -105,7 +123,7 @@ Not run:
   auto-merge mutation was authorized or performed.
 - The refreshed composition head has not yet been independently approved. Its
   generic canonical-review status is correctly expected to fail closed until
-  the current reviewer `Antigravity` approves that exact pushed head through
+  the current reviewer `Claude` approves that exact pushed head through
   the governed command, which creates the exact-head review-proof tag. The
   superseded head `e8843e3d706bd30ff4aa45926678ab369903c015` did carry a valid
   Antigravity approval, proof tag, and green required status; it was retired
