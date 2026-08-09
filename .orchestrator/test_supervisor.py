@@ -11521,6 +11521,29 @@ class OrphanedQueueEventTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"], {})
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "queue_event_pruned")
 
+    def test_prune_event_queue_drops_unbacked_active_record_without_task_or_worker(self) -> None:
+        state = {
+            "queue": {
+                "events": {
+                    "malformed-started": {
+                        "status": "started",
+                        "lease_owner": "missing-worker",
+                    }
+                }
+            },
+            "workers": {},
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.prune_event_queue(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"], {})
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "malformed_queue_record_pruned",
+        )
+
 
 class ChairReviewDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
