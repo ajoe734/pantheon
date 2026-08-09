@@ -326,8 +326,8 @@ def readiness_files(root: Path) -> tuple[Path, Path, Path]:
 
 def test_current_catalog_validate_only_binds_exact_pr_head() -> None:
     assert module.CURRENT_SOURCE_PR == 4539
-    assert module.CURRENT_SOURCE_HEAD == "f2b48094226f56a392f33a3f65d7a5118dca37a1"
-    assert module.CURRENT_SOURCE_BRANCH_CI_RUN == 30882135477
+    assert module.CURRENT_SOURCE_HEAD == "f70c2dd5c584e2374c2b89119f110728cce3a969"
+    assert module.CURRENT_SOURCE_BRANCH_CI_RUN == 30882325736
     result = subprocess.run(
         ["python3", str(SCRIPT), "--validate-only", "--current"],
         cwd=ROOT,
