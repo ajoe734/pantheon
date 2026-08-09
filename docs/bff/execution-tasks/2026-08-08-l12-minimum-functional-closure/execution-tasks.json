@@ -74,9 +74,9 @@
       "title": "Admit the minimum functional L12 successor without dispatching the old 28-task DAG",
       "phase": "M0 plan reconciliation",
       "wave": "M0",
-      "owner": "Antigravity2",
+      "owner": "Antigravity",
       "owner_capability": "supervisor coordination and canonical task reconciliation",
-      "reviewer": "Codex",
+      "reviewer": "Claude",
       "reviewer_capability": "independent plan and scope review",
       "dependsOn": [],
       "artifacts": [

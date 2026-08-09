@@ -1,8 +1,8 @@
 {
   "schema_version": "pantheon.l12.minimum-functional.evidence.v1",
   "task_id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
-  "owner": "Antigravity2",
-  "reviewer": "Codex",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
   "evaluated_at": "2026-08-09T12:00:00Z",
   "legacy_28_audit_summary": {
     "total_catalog_task_count": 28,
