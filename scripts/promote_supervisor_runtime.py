@@ -133,6 +133,40 @@ ALLOWED_GENERATED_UNTRACKED_FILES = frozenset(
     }
 )
 
+# A mutable incumbent is the old, running dev-root checkout used only to
+# materialize a rollback runtime.  Unlike an immutable candidate, that root
+# necessarily contains these Git-ignored runtime products.  They are never
+# copied into the immutable rollback checkout: the rollback is materialized
+# from the bound HEAD/tree and the governed launch sources remain tracked,
+# regular files.  Keep this list deliberately narrower than .gitignore so an
+# ignored source still fails closed.
+MUTABLE_INCUMBENT_IGNORED_RUNTIME_FILES = frozenset(
+    {
+        PurePosixPath(".claude/settings.local.json"),
+        PurePosixPath(".orchestrator/activity-audit.lock"),
+        PurePosixPath(".orchestrator/model-rotation-cooldowns.json"),
+        PurePosixPath(".orchestrator/provider_capabilities.json"),
+        PurePosixPath(".orchestrator/runtime-admission.lock"),
+        PurePosixPath(".orchestrator/state.json"),
+        PurePosixPath(".orchestrator/supervisor.pid"),
+        PurePosixPath(".orchestrator/task-state.lock"),
+        PurePosixPath(".orchestrator/watchdog-state.json"),
+        PurePosixPath("docs-site/ai-activity-log.jsonl"),
+        PurePosixPath("docs-site/orchestrator-state.json"),
+    }
+)
+MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES = (
+    PurePosixPath(".orchestrator/backups"),
+    PurePosixPath(".orchestrator/chair-reviews"),
+    PurePosixPath(".orchestrator/evidence"),
+    PurePosixPath(".orchestrator/logs"),
+    PurePosixPath(".orchestrator/metrics"),
+    PurePosixPath(".orchestrator/worker-runtime"),
+    PurePosixPath(".pytest_cache"),
+    PurePosixPath(".venv-pantheon"),
+    PurePosixPath("archive/logs"),
+)
+
 
 @dataclass(frozen=True)
 class GitRemoteIdentity:
@@ -1622,6 +1656,27 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
     if candidate in ALLOWED_GENERATED_UNTRACKED_FILES:
         return True
     return _is_task_brief_path(path)
+
+
+def _is_allowed_mutable_incumbent_ignored_runtime_path(path: str) -> bool:
+    """Accept only known runtime debris from the mutable bootstrap root.
+
+    This exception is intentionally unavailable to immutable candidate
+    cleanliness checks and does not accept arbitrary ignored source files.
+    """
+    candidate = PurePosixPath(path.rstrip("/"))
+    if not candidate.parts or candidate.is_absolute():
+        return False
+    if "__pycache__" in candidate.parts:
+        return True
+    if candidate in MUTABLE_INCUMBENT_IGNORED_RUNTIME_FILES:
+        return True
+    if candidate.parts[0].startswith(".venv-"):
+        return True
+    return any(
+        candidate == prefix or prefix in candidate.parents
+        for prefix in MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES
+    )
 
 
 def _is_task_brief_path(path: str) -> bool:
@@ -5160,12 +5215,12 @@ def _verify_legacy_task_brief_binding_provenance(
             root,
             "merge-base",
             "--is-ancestor",
-            binding.prevention_boundary_sha,
             expected_head,
+            binding.prevention_boundary_sha,
         )
     except ValueError as exc:
         raise ValueError(
-            "Mutable incumbent task brief prevention boundary SHA is not an ancestor of expected_head: "
+            "Mutable incumbent task brief expected_head is not before the prevention boundary SHA: "
             f"{binding.prevention_boundary_sha}"
         ) from exc
 
@@ -5525,6 +5580,10 @@ def _verify_mutable_tracked_cleanliness(
             raise ValueError(f"Malformed mutable git status record: {record!r}")
         status_code = record[:2]
         relative_path = record[3:]
+        if status_code == "!!" and _is_allowed_mutable_incumbent_ignored_runtime_path(
+            relative_path
+        ):
+            continue
         if status_code in {"??", "!!"}:
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
