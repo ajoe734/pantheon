@@ -1,0 +1,572 @@
+{
+  "schema_version": "pantheon.l12.minimum-functional.execution-tasks.v1",
+  "program_id": "pantheon-twelve-loop-minimum-functional-closure-2026-08-08",
+  "frozen_dev_sha": "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312",
+  "objective": "Run all twelve loops from trigger to persisted terminal output and next-consumer readback on Pantheon dev with the minimum functional scope.",
+  "out_of_scope": [
+    "security hardening",
+    "enterprise HA or multi-region work",
+    "load, chaos, or exhaustive race testing",
+    "compliance and broad evidence recuts",
+    "live-capital activation",
+    "orchestrator config edits"
+  ],
+  "active_legacy_reconciliation": {
+    "snapshot_status": {
+      "L12-HOSTED-001": "todo",
+      "L12-CLOSE-001": "todo"
+    },
+    "canonical_supersede_before_materialization": [
+      {
+        "old_id": "L12-HOSTED-001",
+        "replacement_id": "L12-MIN-HOSTED-20260808"
+      },
+      {
+        "old_id": "L12-CLOSE-001",
+        "replacement_id": "L12-MIN-CLOSE-20260808"
+      }
+    ],
+    "materialization_gate": "L12-MIN-INTEGRATE-20260808 must remain unmaterialized until both canonical supersede transitions are visible in task state.",
+    "preserve_active_inputs": [
+      "L12-VERIFY-KNOW-001",
+      "L12-VERIFY-RUNTIME-001",
+      "L12-VERIFY-OBS-001",
+      "LIFECYCLE-PROJ-BFF-001",
+      "LIFECYCLE-PROJ-MIGRATE-001",
+      "LIFECYCLE-PROJ-CAPACITY-001",
+      "LIFECYCLE-PROJ-CUTOVER-001",
+      "LIFECYCLE-PROJ-RETIRE-001"
+    ],
+    "state_transition_method": "governed canonical task command only; no JSON or orchestrator config edits"
+  },
+  "dispatch_packets": {
+    "packet_a": {
+      "task_count": 15,
+      "task_ids": [
+        "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+        "L12-MIN-SRC-20260808",
+        "L12-MIN-DIST-20260808",
+        "L12-MIN-ALPHA-20260808",
+        "L12-MIN-TEACH-20260808",
+        "L12-MIN-AGORA-20260808",
+        "L12-MIN-IMIT-20260808",
+        "L12-MIN-CONS-20260808",
+        "L12-MIN-DEP-20260808",
+        "L12-MIN-CAP-20260808",
+        "L12-MIN-TELREC-20260808",
+        "L12-MIN-EVO-20260808",
+        "L12-MIN-BFF-20260808",
+        "L12-MIN-INTEGRATE-20260808",
+        "L12-MIN-E2E-20260808"
+      ]
+    },
+    "packet_b": {
+      "task_count": 2,
+      "task_ids": [
+        "L12-MIN-HOSTED-20260808",
+        "L12-MIN-CLOSE-20260808"
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "title": "Admit the minimum functional L12 successor without dispatching the old 28-task DAG",
+      "phase": "M0 plan reconciliation",
+      "wave": "M0",
+      "owner": "Antigravity2",
+      "owner_capability": "supervisor coordination and canonical task reconciliation",
+      "reviewer": "Codex",
+      "reviewer_capability": "independent plan and scope review",
+      "dependsOn": [],
+      "artifacts": [
+        "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/"
+      ],
+      "acceptance": [
+        "Verify all 28 old catalog IDs remain absent from active tasks, successful archive, open PRs, branches, and worktrees at admission time.",
+        "Record that the new task IDs supersede the old unmaterialized catalog for the minimum functional milestone; do not edit the old catalog or canonical state by hand.",
+        "Confirm the two signed packets, receipt paths, task hashes, dependency graph, and declared scopes match execution-tasks.json.",
+        "Do not edit .orchestrator/config.json and do not implement product code."
+      ],
+      "branch": "task/SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+    },
+    {
+      "id": "L12-MIN-SRC-20260808",
+      "title": "Run Source Ingestion from one tick to SourceRecord readback",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Claude",
+      "owner_capability": "source ingestion Python service repair",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent service-bound functional review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"],
+      "artifacts": [
+        "services/source_ingestion/main.py",
+        "services/source_ingestion/controller_worker.py",
+        "services/source_ingestion/scheduler_worker.py",
+        "services/source_ingestion/tests/test_controller_worker.py",
+        "services/source_ingestion/tests/test_scheduler_worker.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/"
+      ],
+      "acceptance": [
+        "Fix the current readiness/worker blockage so one scheduled or manual tick completes.",
+        "Persist one real SourceRecord and expose its identifier through actual-state readback.",
+        "Prove Strategy Distillation can read that SourceRecord.",
+        "Do not edit shared catalog, Compose, BFF binding, security, or orchestration files."
+      ],
+      "branch": "task/L12-MIN-SRC-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-SRC-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808"
+    },
+    {
+      "id": "L12-MIN-DIST-20260808",
+      "title": "Run Strategy Distillation from SourceRecord to terminal StrategySpec draft",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Antigravity",
+      "owner_capability": "distillation worker and queue integration",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent normal-path functional review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-SRC-20260808"],
+      "artifacts": [
+        "services/source_ingestion/distillation_controller.py",
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/tests/test_distillation_controller.py",
+        "services/source_ingestion/tests/test_distillation_worker.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DIST-20260808/"
+      ],
+      "acceptance": [
+        "Consume the SourceRecord produced by L12-MIN-SRC-20260808.",
+        "Persist one terminal StrategySpec draft and expose job and terminal readback.",
+        "Prove Alpha Replication discovery can read the resulting strategy identifier.",
+        "Do not edit shared integration or security files."
+      ],
+      "branch": "task/L12-MIN-DIST-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-DIST-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DIST-20260808"
+    },
+    {
+      "id": "L12-MIN-ALPHA-20260808",
+      "title": "Run Alpha Replication from approved strategy to terminal experiment result",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Claude",
+      "owner_capability": "alpha replication and revalidation worker",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent terminal-readback review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-DIST-20260808"],
+      "artifacts": [
+        "services/research/alpha_replication/replication_controller.py",
+        "services/research/alpha_replication/revalidation_worker.py",
+        "services/research/alpha_replication/test_replication_controller.py",
+        "services/research/alpha_replication/test_revalidation_worker.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-ALPHA-20260808/"
+      ],
+      "acceptance": [
+        "Consume one approved strategy descended from the Distillation output.",
+        "Complete one replication/revalidation run and persist a terminal result.",
+        "Make the terminal experiment identifier readable by the next research/teaching surface.",
+        "Fix the currently non-terminating focused controller proof if it reproduces; do not add broad hardening."
+      ],
+      "branch": "task/L12-MIN-ALPHA-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-ALPHA-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-ALPHA-20260808"
+    },
+    {
+      "id": "L12-MIN-TEACH-20260808",
+      "title": "Register and run the existing Teaching worker to a terminal session",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Antigravity",
+      "owner_capability": "training-session worker integration",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent teaching-flow review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"],
+      "artifacts": [
+        "services/training-session/main.py",
+        "services/training-session/preview_eval_worker.py",
+        "services/training-session/tests/test_preview_eval_worker.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/"
+      ],
+      "acceptance": [
+        "Reuse the existing preview/evaluation worker rather than build a second controller.",
+        "Run one teaching command to a persisted terminal teaching/evaluation session.",
+        "Expose the terminal session identifier for the Learning verifier.",
+        "Do not edit shared catalog or Compose in this task."
+      ],
+      "branch": "task/L12-MIN-TEACH-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-TEACH-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808"
+    },
+    {
+      "id": "L12-MIN-AGORA-20260808",
+      "title": "Run one Agora interaction into persisted evidence and dataset handoff",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Claude",
+      "owner_capability": "Agora BFF dataset extraction and worker implementation",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent Agora handoff review",
+      "dependsOn": [
+        "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+        "LIFECYCLE-PROJ-BFF-001",
+        "LIFECYCLE-PROJ-RETIRE-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/dataset_extraction/",
+        "services/control-plane/bff/agora/router.py",
+        "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-AGORA-20260808/"
+      ],
+      "acceptance": [
+        "Implement the minimum worker/controller in the real Agora implementation path, not the schema-only specs directory.",
+        "Consume one interaction or journal event and persist one evidence/dataset handoff.",
+        "Prove the Imitation loop can read the produced dataset identifier.",
+        "Do not add unrelated BFF, security, or frontend work."
+      ],
+      "branch": "task/L12-MIN-AGORA-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-AGORA-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-AGORA-20260808"
+    },
+    {
+      "id": "L12-MIN-IMIT-20260808",
+      "title": "Register and run one shadow-evaluation dataset to a terminal candidate",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Antigravity",
+      "owner_capability": "policy-learning scheduler integration",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent shadow-evaluation review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-AGORA-20260808"],
+      "artifacts": [
+        "services/policy-learning/main.py",
+        "services/policy-learning/scheduler_worker.py",
+        "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-IMIT-20260808/"
+      ],
+      "acceptance": [
+        "Reuse the existing scheduler and consume the Agora dataset handoff.",
+        "Complete one shadow evaluation and persist a terminal candidate.",
+        "Expose the candidate identifier to the Learning verifier without sending it to live execution.",
+        "Do not edit shared catalog or Compose in this task."
+      ],
+      "branch": "task/L12-MIN-IMIT-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-IMIT-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-IMIT-20260808"
+    },
+    {
+      "id": "L12-MIN-CONS-20260808",
+      "title": "Register and run one consultation request to a terminal memo",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Claude",
+      "owner_capability": "consultation workflow executor integration",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent consultation-flow review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"],
+      "artifacts": [
+        "services/consultation/supervisor.py",
+        "services/consultation/workflow_executor.py",
+        "services/consultation/test_workflow_executor.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CONS-20260808/"
+      ],
+      "acceptance": [
+        "Reuse the existing consultation reconciler.",
+        "Run one ConsultRequest to a persisted terminal ConsultMemo or outcome.",
+        "Expose the terminal identifier for Promotion/Deployment input.",
+        "Do not add broad governance or security work."
+      ],
+      "branch": "task/L12-MIN-CONS-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-CONS-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CONS-20260808"
+    },
+    {
+      "id": "L12-MIN-DEP-20260808",
+      "title": "Run one approved paper deployment command to RuntimeBinding",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Antigravity",
+      "owner_capability": "deployment outbox and runtime-manager dispatch integration",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent deployment terminal review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-CONS-20260808"],
+      "artifacts": [
+        "services/deployment/outbox_consumer_worker.py",
+        "services/deployment/runtime_manager_dispatch_adapter.py",
+        "services/deployment/service.py",
+        "services/deployment/test_l12_dep_001_dispatcher.py",
+        "services/deployment/test_outbox_consumer_worker.py",
+        "services/runtime-manager/deploy_authority.py",
+        "services/runtime-manager/test_deploy_authority.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/"
+      ],
+      "acceptance": [
+        "Submit one approved paper deployment command through the existing outbox consumer.",
+        "Persist a terminal DeploymentPlan and one valid RuntimeBinding.",
+        "Prove Capital can read the binding and remove the current missing-plan inconsistency.",
+        "Do not implement live deployment or unrelated governance hardening."
+      ],
+      "branch": "task/L12-MIN-DEP-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-DEP-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808"
+    },
+    {
+      "id": "L12-MIN-CAP-20260808",
+      "title": "Run one paper RuntimeBinding through fleet execution to order, fill, and position",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Claude",
+      "owner_capability": "paper fleet and signal execution repair",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent paper-runtime review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-DEP-20260808"],
+      "artifacts": [
+        "services/execution/runtime-manager/paper_fleet_reconciler.py",
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py",
+        "services/execution/lean_runtime/paper_runtime.py",
+        "services/execution/lean_runtime/signal_consumer.py",
+        "services/execution/lean_runtime/test_signal_consumer.py",
+        "services/runtime-manager/fleet_desired_state.py",
+        "services/runtime-manager/test_fleet_desired_state.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CAP-20260808/"
+      ],
+      "acceptance": [
+        "Start the paper fleet reconciler for the RuntimeBinding produced by Deployment.",
+        "Consume one paper signal and persist paper order, fill, and position readback.",
+        "Fix the duplicate-signal loss reproduced by the current Runtime verifier.",
+        "Emit one runtime event for Telemetry; do not enable live capital."
+      ],
+      "branch": "task/L12-MIN-CAP-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-CAP-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CAP-20260808"
+    },
+    {
+      "id": "L12-MIN-TELREC-20260808",
+      "title": "Run one runtime event through telemetry and reconciliation to a terminal incident",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Antigravity",
+      "owner_capability": "telemetry and reconciliation-drift integration",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent observability-chain review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-CAP-20260808"],
+      "artifacts": [
+        "services/telemetry/main.py",
+        "services/telemetry/test_l12_tel_001_durable_ingest.py",
+        "services/reconciliation-drift/consumer.py",
+        "services/reconciliation-drift/scheduler_worker.py",
+        "services/reconciliation-drift/incident_listener.py",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/"
+      ],
+      "acceptance": [
+        "Consume the Capital runtime event through the existing telemetry ingest.",
+        "Run reconciliation and persist one terminal DriftReport or IncidentCase.",
+        "Expose the terminal incident identifier for Evolution input.",
+        "Do not add unrelated incident service or infrastructure hardening."
+      ],
+      "branch": "task/L12-MIN-TELREC-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-TELREC-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808"
+    },
+    {
+      "id": "L12-MIN-EVO-20260808",
+      "title": "Run one eligible incident through EvolutionDecision to downstream receipt",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Claude",
+      "owner_capability": "evolution sweep, postmortem bridge, and dispatch integration",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent evolution terminal review",
+      "dependsOn": ["SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "L12-MIN-TELREC-20260808"],
+      "artifacts": [
+        "services/evolution/postmortem_bridge.py",
+        "services/evolution/scheduler_worker.py",
+        "services/evolution/threshold_sweep_worker.py",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/test_l12_evo_001_downstream_integration.py",
+        "services/postmortems/consumer.py",
+        "services/control-plane/governance/evolution_controller.py",
+        "services/control-plane/governance/test_evolution_controller.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-EVO-20260808/"
+      ],
+      "acceptance": [
+        "Consume the IncidentCase produced by Telemetry/Reconciliation.",
+        "Persist one terminal EvolutionDecision and one downstream dispatch receipt.",
+        "Expose both identifiers to BFF/operator readback.",
+        "Do not redesign evolution governance or add broad resilience work."
+      ],
+      "branch": "task/L12-MIN-EVO-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-EVO-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-EVO-20260808"
+    },
+    {
+      "id": "L12-MIN-BFF-20260808",
+      "title": "Run one dependency health observation into telemetry and current BFF readback",
+      "phase": "M1 loop closure",
+      "wave": "M1",
+      "owner": "Antigravity",
+      "owner_capability": "BFF downstream health monitor integration",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent health-to-telemetry review",
+      "dependsOn": [
+        "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+        "LIFECYCLE-PROJ-BFF-001",
+        "LIFECYCLE-PROJ-RETIRE-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/downstream_health_monitor.py",
+        "services/control-plane/bff/test_bff_downstream_health_monitor.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-BFF-20260808/"
+      ],
+      "acceptance": [
+        "Reuse the existing downstream health monitor and observe one dependency state change.",
+        "Persist one health event into Telemetry and expose current BFF status.",
+        "Prove the operator health readback references that event.",
+        "Do not edit lifecycle projector files or add security work."
+      ],
+      "branch": "task/L12-MIN-BFF-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-BFF-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-BFF-20260808"
+    },
+    {
+      "id": "L12-MIN-INTEGRATE-20260808",
+      "title": "Integrate all twelve minimum loop owners into catalog, Compose, loop-control, and BFF readback",
+      "phase": "M2 shared integration",
+      "wave": "M2",
+      "owner": "Claude",
+      "owner_capability": "cross-service catalog and Compose integration",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent twelve-row binding review",
+      "dependsOn": [
+        "L12-MIN-SRC-20260808",
+        "L12-MIN-DIST-20260808",
+        "L12-MIN-ALPHA-20260808",
+        "L12-MIN-TEACH-20260808",
+        "L12-MIN-AGORA-20260808",
+        "L12-MIN-IMIT-20260808",
+        "L12-MIN-CONS-20260808",
+        "L12-MIN-DEP-20260808",
+        "L12-MIN-CAP-20260808",
+        "L12-MIN-TELREC-20260808",
+        "L12-MIN-EVO-20260808",
+        "L12-MIN-BFF-20260808",
+        "LIFECYCLE-PROJ-BFF-001",
+        "LIFECYCLE-PROJ-MIGRATE-001",
+        "LIFECYCLE-PROJ-CAPACITY-001",
+        "LIFECYCLE-PROJ-CUTOVER-001",
+        "LIFECYCLE-PROJ-RETIRE-001"
+      ],
+      "artifacts": [
+        "docs/deployment/loop-catalog.registry.json",
+        "docker-compose.yml",
+        "services/loop-control/",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-INTEGRATE-20260808/"
+      ],
+      "acceptance": [
+        "Register 12/12 controller identities and render 12/12 Compose ownership entries.",
+        "Expose non-null desired-state, actual-state, controller, last terminal result, and source identity for all twelve BFF rows.",
+        "Run focused catalog, loop-control, inventory, and health tests to completion with no functional skips.",
+        "Do not add security, HA, or unrelated frontend work."
+      ],
+      "branch": "task/L12-MIN-INTEGRATE-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-INTEGRATE-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-INTEGRATE-20260808"
+    },
+    {
+      "id": "L12-MIN-E2E-20260808",
+      "title": "Verify twelve minimum happy paths and one correlated chain",
+      "phase": "M3 complete functional verifier",
+      "wave": "M3",
+      "owner": "Antigravity",
+      "owner_capability": "cross-service product verification",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent end-to-end result review",
+      "dependsOn": ["L12-MIN-INTEGRATE-20260808"],
+      "artifacts": [
+        "scripts/verify_l12_minimum_functional_closure.py",
+        "scripts/test_verify_l12_minimum_functional_closure.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-E2E-20260808/"
+      ],
+      "acceptance": [
+        "Run twelve service-bound happy-path cases from one verifier invocation.",
+        "Run one correlated chain whose identifiers connect Source through BFF readback.",
+        "Report exactly which loop failed without changing product implementation in the verifier task.",
+        "Require 12/12 pass; do not add load, chaos, security, or enterprise acceptance gates."
+      ],
+      "branch": "task/L12-MIN-E2E-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-E2E-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-E2E-20260808"
+    },
+    {
+      "id": "L12-MIN-HOSTED-20260808",
+      "title": "Deploy merged dev and prove twelve hosted terminal readbacks",
+      "phase": "M4 hosted delivery",
+      "wave": "M4",
+      "owner": "Claude",
+      "owner_capability": "Pantheon dev deployment and hosted readback",
+      "reviewer": "Antigravity",
+      "reviewer_capability": "independent hosted identity and function review",
+      "dependsOn": ["L12-MIN-E2E-20260808", "LIFECYCLE-PROJ-RETIRE-001"],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-HOSTED-20260808/"
+      ],
+      "acceptance": [
+        "Deploy the exact merged Pantheon dev source through the existing dev deployment path without editing deployment authority.",
+        "Record the actually served FE and BFF identities and require BFF readiness 200.",
+        "Repeat the twelve minimum terminal readbacks against hosted dev and require 12/12 pass.",
+        "Keep the previous served release if any hosted probe fails."
+      ],
+      "branch": "task/L12-MIN-HOSTED-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-HOSTED-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-HOSTED-20260808"
+    },
+    {
+      "id": "L12-MIN-CLOSE-20260808",
+      "title": "Close the minimum twelve-loop functional milestone",
+      "phase": "M5 closeout",
+      "wave": "M5",
+      "owner": "Antigravity",
+      "owner_capability": "program closeout and canonical result synthesis",
+      "reviewer": "Claude",
+      "reviewer_capability": "independent twelve-row closeout review",
+      "dependsOn": ["L12-MIN-HOSTED-20260808"],
+      "artifacts": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CLOSE-20260808/"
+      ],
+      "acceptance": [
+        "Publish one twelve-row result table with trigger, terminal output, next-consumer readback, source merge, and hosted identity for every loop.",
+        "Close only when every row is pass and the hosted deployment still serves the reviewed source.",
+        "Do not require the retired evidence-only tasks, security hardening, HA, load, or live-capital work.",
+        "Record any deferred non-minimum work separately without reopening this functional milestone."
+      ],
+      "branch": "task/L12-MIN-CLOSE-20260808",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/L12-MIN-CLOSE-20260808",
+      "merge_target": "dev",
+      "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CLOSE-20260808"
+    }
+  ]
+}
