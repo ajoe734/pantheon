@@ -83,9 +83,14 @@ That bridge-recovery packet was processed and admitted at `06:41:24Z`.
 Authoritative materialization readback verified event count `13943` and equal
 expected/projected SHA-256
 `122280612385d969d79baf72d210f0f2b5c52886df96a6d0c3184a173b088445`.
-Task `SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809` now exists as
-`todo`, owned by `Claude2` and reviewed by `Codex`. This is the accepted source
-repair lane; the original legacy-bootstrap task remains blocked on admission.
+Task `SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809` initially
+materialized as `todo`, owned by `Claude2` and reviewed by `Codex`. The
+supervisor then applied its governed helper-claim policy at `06:43:29Z`, moving
+owner to `Claude` and reviewer to `Claude2`; it allocated the isolated task
+worktree and started worker run
+`claude1-1-20260809T064420Z-cc7311bc` at `06:44:22Z`. This is the accepted and
+active source repair lane; the original legacy-bootstrap task remains blocked
+on admission.
 
 ## 2026-08-08 prior fail-closed attempts
 

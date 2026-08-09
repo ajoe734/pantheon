@@ -10,7 +10,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
     "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
-    "evidence_cut_at": "2026-08-09T06:42:01Z"
+    "evidence_cut_at": "2026-08-09T06:45:00Z"
   },
   "scope": {
     "owned_layer": "Authorized immutable supervisor-runtime promotion attempt, transaction outcome capture, fail-closed verification, and canonical source-only follow-up dispatch.",
@@ -287,7 +287,7 @@
     "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
     "owner": "Codex2",
     "reviewer": "Codex",
-    "dispatch_status": "processed_and_authoritatively_materialized",
+    "dispatch_status": "processed_authoritatively_materialized_and_worker_started",
     "queued_at": "2026-08-08T22:59:49Z",
     "drained_at": "2026-08-08T23:01:24Z",
     "receipt_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255.json",
@@ -387,6 +387,19 @@
       "projected_state_sha256": "122280612385d969d79baf72d210f0f2b5c52886df96a6d0c3184a173b088445",
       "canonical_task_source": "active",
       "canonical_task_status": "todo"
+    },
+    "canonical_execution": {
+      "initial_owner": "Claude2",
+      "initial_reviewer": "Codex",
+      "helper_claimed_at": "2026-08-09T06:43:29Z",
+      "current_owner": "Claude",
+      "current_reviewer": "Claude2",
+      "worktree": "/tmp/pantheon-worker-worktrees/pantheon/sup-assistant-dev-bridge-partial-assign-recovery-20260809",
+      "branch": "task/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+      "worker_started_at": "2026-08-09T06:44:22Z",
+      "worker_run_id": "claude1-1-20260809T064420Z-cc7311bc",
+      "worker_pid": 3227388,
+      "process_generation": "worker-process-generation-sha256:ea5907ee8c4253852ca57abc426178f0ab9f7ae7b8d8697e23b58477c4b4fd2e"
     }
   },
   "verification": [
@@ -464,6 +477,11 @@
       "command": "signed bridge partial-assign recovery packet plus supervisor-owned drain and governed show",
       "result": "processed/admitted at 06:41:24Z; authoritative expected/projected hashes match at event 13943; source task is active todo with exact spec hash 551c882e",
       "conclusion": "bridge_recovery_source_task_dispatch_pass"
+    },
+    {
+      "command": "task-scoped activity readback for SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+      "result": "governed helper claim moved owner Claude2 to Claude and reviewer to Claude2; isolated worktree allocated and worker run claude1-1-20260809T064420Z-cc7311bc started",
+      "conclusion": "source_recovery_implementation_underway_under_supervisor_authority"
     }
   ],
   "rollout_and_rollback": {
