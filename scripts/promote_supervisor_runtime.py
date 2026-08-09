@@ -3700,40 +3700,57 @@ def build_candidate_runtime_identity(
             expected_head=head,
             expected_tree=tracked_tree,
         )
-        final_remote_url = parse_origin_url(root_handle)
-        final_remote = validate_remote_url(final_remote_url)
-        if final_remote_url != remote_url or final_remote.slug != remote.slug:
-            raise ValueError("Candidate remote identity changed during capture")
+        # A freshly materialized checkout can refresh and atomically replace
+        # its index while the read-only cleanliness probes run.  Re-open the
+        # candidate only after every such probe, then bind the returned
+        # snapshot to those final metadata identities.  Later revalidation
+        # still rejects any replacement after this capture point.
+        final_handle = _open_candidate_root_handle(resolved_root)
+        try:
+            if final_handle.identity != root_identity:
+                raise ValueError(
+                    "Candidate root file identity changed during capture"
+                )
+            _assert_candidate_handle_path(final_handle)
+            final_head, final_tree = _read_head_tree(final_handle)
+            if (final_head, final_tree) != (head, tracked_tree):
+                raise ValueError("Candidate HEAD/tree changed during capture")
+            final_remote_url = parse_origin_url(final_handle)
+            final_remote = validate_remote_url(final_remote_url)
+            if final_remote_url != remote_url or final_remote.slug != remote.slug:
+                raise ValueError("Candidate remote identity changed during capture")
 
-        return CandidateRuntimeIdentity(
-            candidate_root=resolved_root,
-            candidate_root_device=root_identity.device,
-            candidate_root_inode=root_identity.inode,
-            git_directory_device=root_handle.git_identity.device,
-            git_directory_inode=root_handle.git_identity.inode,
-            git_objects_device=root_handle.git_objects_identity.device,
-            git_objects_inode=root_handle.git_objects_identity.inode,
-            git_config_device=root_handle.git_config_identity.device,
-            git_config_inode=root_handle.git_config_identity.inode,
-            git_head_device=root_handle.git_head_identity.device,
-            git_head_inode=root_handle.git_head_identity.inode,
-            git_index_device=root_handle.git_index_identity.device,
-            git_index_inode=root_handle.git_index_identity.inode,
-            basename=basename,
-            head_commit=head,
-            tracked_tree_identity=tracked_tree,
-            accepted_dev_commit=trusted_dev.commit,
-            remote_url=remote_url,
-            canonical_remote=f"github.com/{remote.slug}",
-            repository_slug=remote.slug,
-            config_path=selected_config_path,
-            config_device=config_identity.device,
-            config_inode=config_identity.inode,
-            config_path_components=config_path_components,
-            config_bytes=config_bytes,
-            config_byte_length=len(config_bytes),
-            config_sha256=hashlib.sha256(config_bytes).hexdigest(),
-        )
+            return CandidateRuntimeIdentity(
+                candidate_root=resolved_root,
+                candidate_root_device=root_identity.device,
+                candidate_root_inode=root_identity.inode,
+                git_directory_device=final_handle.git_identity.device,
+                git_directory_inode=final_handle.git_identity.inode,
+                git_objects_device=final_handle.git_objects_identity.device,
+                git_objects_inode=final_handle.git_objects_identity.inode,
+                git_config_device=final_handle.git_config_identity.device,
+                git_config_inode=final_handle.git_config_identity.inode,
+                git_head_device=final_handle.git_head_identity.device,
+                git_head_inode=final_handle.git_head_identity.inode,
+                git_index_device=final_handle.git_index_identity.device,
+                git_index_inode=final_handle.git_index_identity.inode,
+                basename=basename,
+                head_commit=head,
+                tracked_tree_identity=tracked_tree,
+                accepted_dev_commit=trusted_dev.commit,
+                remote_url=remote_url,
+                canonical_remote=f"github.com/{remote.slug}",
+                repository_slug=remote.slug,
+                config_path=selected_config_path,
+                config_device=config_identity.device,
+                config_inode=config_identity.inode,
+                config_path_components=config_path_components,
+                config_bytes=config_bytes,
+                config_byte_length=len(config_bytes),
+                config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+            )
+        finally:
+            _close_candidate_root_handle(final_handle)
     finally:
         _close_candidate_root_handle(root_handle)
 

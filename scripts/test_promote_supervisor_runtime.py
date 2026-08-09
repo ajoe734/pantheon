@@ -1478,7 +1478,9 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert identity.git_objects_inode == (candidate / ".git" / "objects").stat().st_ino
         assert identity.git_config_inode == (candidate / ".git" / "config").stat().st_ino
         assert identity.git_head_inode == (candidate / ".git" / "HEAD").stat().st_ino
-        assert identity.git_index_inode == (candidate / ".git" / "index").stat().st_ino
+        assert identity.git_index_inode == (
+            candidate / ".git" / "index"
+        ).stat().st_ino
         assert identity.basename == commit
         assert identity.head_commit == commit
         assert identity.tracked_tree_identity == tree
@@ -1497,6 +1499,40 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert parse_origin_url(candidate) == "https://github.com/ajoe734/pantheon.git"
         assert verify_git_head_and_dev_ancestry(candidate, commit) == commit
         assert verify_working_tree_cleanliness(candidate) == tree
+
+
+def test_candidate_identity_recaptures_git_metadata_after_cleanliness_probe(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    original_cleanliness = promotion.verify_working_tree_cleanliness
+    cleanliness_calls = 0
+
+    def replace_index_after_final_cleanliness_probe(*args: Any, **kwargs: Any) -> str:
+        nonlocal cleanliness_calls
+        result = original_cleanliness(*args, **kwargs)
+        cleanliness_calls += 1
+        if cleanliness_calls == 2:
+            index = candidate / ".git" / "index"
+            replacement = candidate / ".git" / "index.replacement"
+            replacement.write_bytes(index.read_bytes())
+            os.replace(replacement, index)
+        return result
+
+    with parent_patch, remote_patch, config_patch, patch(
+        "promote_supervisor_runtime.verify_working_tree_cleanliness",
+        side_effect=replace_index_after_final_cleanliness_probe,
+    ):
+        identity = build_candidate_runtime_identity(candidate)
+        assert cleanliness_calls == 2
+        assert identity.git_index_inode == (candidate / ".git" / "index").stat().st_ino
+        identity.verify_immutable_snapshot()
 
 
 def test_candidate_identity_survives_closed_standard_stream_descriptors(
