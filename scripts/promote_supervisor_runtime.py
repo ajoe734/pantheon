@@ -4700,6 +4700,9 @@ def capture_runtime_observation(
     require_current_dev_identity: bool = True,
     allow_legacy_environment_contract: bool = False,
     allow_legacy_admission_lock_id_churn: bool = False,
+    cwd_git_identity_reader: Callable[
+        [ProcessCwdIdentity], tuple[str, str]
+    ] = _read_process_cwd_git_identity,
 ) -> RuntimeObservation:
     """Capture one exact process/state/config postcheck observation."""
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4715,6 +4718,7 @@ def capture_runtime_observation(
         expected_argv=expected_argv,
         expected_contract=expected_process_contract,
         reader=runtime_reader,
+        cwd_git_identity_reader=cwd_git_identity_reader,
         candidate_revalidator=revalidate_identity,
         allow_legacy_environment_contract=allow_legacy_environment_contract,
         allow_legacy_admission_lock_id_churn=(
@@ -6354,6 +6358,14 @@ class OSPromotionBackend:
             reader=self.reader,
             allow_legacy_environment_contract=bootstrap_mutable_incumbent,
             allow_legacy_admission_lock_id_churn=bootstrap_mutable_incumbent,
+            cwd_git_identity_reader=(
+                lambda _cwd: (
+                    mutable_incumbent.head_commit,
+                    mutable_incumbent.tracked_tree_identity,
+                )
+                if mutable_incumbent is not None
+                else _read_process_cwd_git_identity(_cwd)
+            ),
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -6445,6 +6457,10 @@ class OSPromotionBackend:
             reader=self.reader,
             allow_legacy_environment_contract=True,
             allow_legacy_admission_lock_id_churn=True,
+            cwd_git_identity_reader=lambda _cwd: (
+                plan.mutable_incumbent.head_commit,
+                plan.mutable_incumbent.tracked_tree_identity,
+            ),
         )
 
     def observe(

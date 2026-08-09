@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 
 from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
+    ExpectedSupervisorProcessContract,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
     LegacyTaskBriefDrift,
@@ -3145,6 +3146,64 @@ def test_mutable_incumbent_snapshot_tolerates_scheduler_state_churn(
         == seed_generation.starttime_ticks
     )
     assert snapshot.process.generation.state == "R"
+
+
+def test_runtime_observation_uses_bound_mutable_cwd_git_identity(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    status_root = identity.config_path.parent.parent / "status-root"
+    provider_path = status_root / ".orchestrator" / "provider-capabilities.json"
+    provider_path.write_text('{"providers": {}}\n', encoding="utf-8")
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["paths"].__setitem__(
+            "provider_capabilities", str(provider_path)
+        ),
+    )
+    mutable_root = tmp_path / "dev-root"
+    mutable_root.mkdir()
+    mutable_stat = mutable_root.stat()
+    reader.cwd[1717] = ProcessCwdIdentity(
+        path=mutable_root,
+        device=mutable_stat.st_dev,
+        inode=mutable_stat.st_ino,
+    )
+    mutable_head = "c" * 40
+    mutable_tree = "d" * 40
+    expected = ExpectedSupervisorProcessContract(
+        executable=Path(argv[0]),
+        argv=argv,
+        entrypoint=Path(argv[3]),
+        config_path=identity.config_path,
+        cwd=mutable_root,
+        cwd_device=mutable_stat.st_dev,
+        cwd_inode=mutable_stat.st_ino,
+        cwd_commit=mutable_head,
+        cwd_tree=mutable_tree,
+        command_root=str(identity.candidate_root),
+        runtime_sha=identity.head_commit,
+        status_root=str(status_root),
+        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
+    )
+
+    with patch.object(CandidateRuntimeIdentity, "verify_immutable_snapshot"), patch.object(
+        CandidateRuntimeIdentity,
+        "verify_against_live_config",
+    ):
+        observation = promotion.capture_runtime_observation(
+            identity,
+            expected_argv=argv,
+            expected_process_contract=expected,
+            expected_generation=reader.generations[1717],
+            reader=reader,
+            require_current_dev_identity=False,
+            cwd_git_identity_reader=lambda _cwd: (mutable_head, mutable_tree),
+        )
+
+    assert observation.process.cwd.path == mutable_root
+    assert observation.process.cwd_commit == mutable_head
+    assert observation.process.cwd_tree == mutable_tree
 
 
 def test_mutable_incumbent_snapshot_rejects_ambiguous_processes(
