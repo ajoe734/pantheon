@@ -643,9 +643,54 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "ERROR: You've hit your usage limit.\n",
             provider="codex",
         )
-        worker.update({"runner_status": "completed", "exit_code": 0})
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_terminated_runner_never_promotes_transcript_quota_text(self) -> None:
+        """SIGTERM/preempted worker (runner_status=terminated, exit_code=143) must not scan transcript plaintext for provider failures."""
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "terminated", "exit_code": 143})
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_generic_failed_runner_without_provider_envelope_is_none(self) -> None:
+        """Generic runner failure (runner_status=failed, exit_code=1) without structured envelope or explicit CLI error line returns None."""
+        worker = self._worker_for_log(
+            "if rate limit exceeded ... quota exceeded\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "failed", "exit_code": 1})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_missing_runner_status_returns_none(self) -> None:
+        """Missing runner_status returns None when log text is un-enveloped plaintext."""
+        worker = self._worker_for_log(
+            "if rate limit exceeded ... quota exceeded\n",
+            provider="codex",
+        )
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_captured_live_sigterm_source_snippet_does_not_cause_provider_pause(self) -> None:
+        """Replay worker run codex-20260809T095151Z-200962bd SIGTERM event: transcript source code line must not detect provider failure or cause a pause."""
+        source_line = 'if rate_limit_info.get("status") == "rejected" or "quota exceeded" in text:'
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "Working on task...",
+                    source_line,
+                    "Worker interrupted by supervisor SIGTERM",
+                ]
+            )
+            + "\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "terminated", "exit_code": 143})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
 
     def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
         cases = (

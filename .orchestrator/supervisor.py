@@ -423,7 +423,7 @@ NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
     r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
     re.IGNORECASE,
 )
-RUNNER_FAILURE_STATUSES = frozenset({"error", "failed", "terminated"})
+RUNNER_FAILURE_STATUSES = frozenset({"error", "failed"})
 PROVIDER_STREAM_FAILURE_STATUSES = frozenset(
     {"blocked", "denied", "error", "failed", "rate_limited", "rejected"}
 )
