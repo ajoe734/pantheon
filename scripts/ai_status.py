@@ -6206,10 +6206,73 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
 
 
+def structured_blocker_fields(args: list[str]) -> dict[str, Any]:
+    """Parse the opt-in, machine-checkable portion of a blocker command.
+
+    The legacy three-argument ``blocker`` command deliberately remains a
+    prose-only human gate.  A caller has to name one of these forms explicitly
+    before the supervisor may ever reconsider the blocker:
+
+    ``github_pr_ci <pr-number>``
+        Re-sample the named pull request's required CI contexts.
+    ``task_dependency <task-id> [required-status]``
+        Re-sample the named canonical task row (``done`` by default).
+    """
+
+    if not args:
+        return {}
+
+    check_kind = str(args[0] or "").strip().lower()
+    if check_kind == "github_pr_ci":
+        if len(args) != 2:
+            raise SystemExit(
+                "Usage: blocker <task-id> <message> <waiting-for> "
+                "github_pr_ci <pr-number>"
+            )
+        try:
+            pr_number = int(args[1])
+        except (TypeError, ValueError) as exc:
+            raise SystemExit("github_pr_ci blocker requires a positive PR number") from exc
+        if pr_number <= 0:
+            raise SystemExit("github_pr_ci blocker requires a positive PR number")
+        return {"check_kind": check_kind, "pr_number": pr_number}
+
+    if check_kind == "task_dependency":
+        if len(args) not in {2, 3}:
+            raise SystemExit(
+                "Usage: blocker <task-id> <message> <waiting-for> "
+                "task_dependency <task-id> [required-status]"
+            )
+        dependency_task_id = str(args[1] or "").strip()
+        required_status = str(args[2] if len(args) == 3 else "done").strip().lower()
+        if not dependency_task_id or not required_status:
+            raise SystemExit(
+                "task_dependency blocker requires a task id and non-empty required status"
+            )
+        return {
+            "check_kind": check_kind,
+            # ``task_id`` is already the identity of the task being blocked.
+            # Keep kind-specific keys nested so a dependency cannot overwrite
+            # that identity while still preserving the structured shape.
+            "check_params": {
+                "task_id": dependency_task_id,
+                "required_status": required_status,
+            },
+        }
+
+    raise SystemExit(
+        "Unknown blocker check_kind. Supported kinds: github_pr_ci, task_dependency"
+    )
+
+
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
-        raise SystemExit("Usage: blocker <task-id> <message> <waiting-for>")
+        raise SystemExit(
+            "Usage: blocker <task-id> <message> <waiting-for> "
+            "[github_pr_ci <pr-number> | task_dependency <task-id> [required-status]]"
+        )
     task_id, message, waiting_for = args[0], args[1], canonical_agent_name(args[2])
+    check_fields = structured_blocker_fields(args[3:])
     actor = current_actor()
     ensure_agent(actor)
     ensure_agent(waiting_for)
@@ -6225,16 +6288,16 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
-    state.setdefault("blockers", []).append(
-        {
-            "task_id": task_id,
-            "owner": actor,
-            "waiting_for": waiting_for,
-            "message": message,
-            "status": "open",
-            "created_at": timestamp,
-        }
-    )
+    blocker = {
+        "task_id": task_id,
+        "owner": actor,
+        "waiting_for": waiting_for,
+        "message": message,
+        "status": "open",
+        "created_at": timestamp,
+        **check_fields,
+    }
+    state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
 
 
@@ -6919,11 +6982,16 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     task_id, message = args[0], args[1]
     actor = current_actor()
     ensure_agent(actor)
-    if actor != "Human/Ops":
-        raise SystemExit("Only Human/Ops can reconcile an already-merged task to done")
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    current_reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor != "Human/Ops" and actor != current_reviewer:
+        raise SystemExit(
+            "Only Human/Ops or the task's current reviewer "
+            f"({current_reviewer or 'unknown'}) can reconcile an already-merged "
+            "task to done"
+        )
     if str(task.get("status") or "") not in {
         "todo",
         "in_progress",
@@ -7087,10 +7155,53 @@ GITHUB_REVIEW_MODES = {
 }
 
 
+def discover_open_pr_binding(
+    repository: str, *, head_branch: str, base_branch: str
+) -> dict[str, Any] | None:
+    """Independently ask GitHub whether an open PR exists at this exact head
+    branch, rather than trusting task metadata.
+
+    `source_ref`/`github` fields on a task record are legacy one-off
+    dispatch-provenance markers written by ad-hoc `dispatch_*.py` batch
+    task-creation scripts -- never by the normal assign/handoff/approve flow.
+    `task_has_pr_review_target`'s metadata check therefore silently misses the
+    overwhelming majority of real, PR-backed tasks, degrading the exact-head
+    binding safety gate to "only enforced when the reviewer happens to
+    remember REVIEW_PR/REVIEW_HEAD_SHA on their own" -- confirmed live: of 55
+    open task-branch PRs, 20 backing tasks had no such metadata, and at least
+    12 of those had never been through a bound approval at all.
+    SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808.
+    """
+    result = run_gh_json_command(
+        [
+            "pr", "view", head_branch,
+            "--repo", repository,
+            "--json", "number,headRefOid,baseRefName,state",
+        ]
+    )
+    if not isinstance(result, Mapping):
+        return None
+    if str(result.get("state") or "").upper() != "OPEN":
+        return None
+    pr_number = result.get("number")
+    head_sha = str(result.get("headRefOid") or "").strip().lower()
+    if not isinstance(pr_number, int) or pr_number <= 0:
+        return None
+    if not APPROVAL_HEAD_SHA_RE.match(head_sha):
+        return None
+    return {
+        "pr": pr_number,
+        "head_sha": head_sha,
+        "head_branch": head_branch,
+        "base": str(result.get("baseRefName") or "").strip() or base_branch,
+    }
+
+
 def resolve_approval_binding(
     task: dict[str, Any],
     *,
     warn_if_unbound: bool = True,
+    repository: str | None = None,
 ) -> dict[str, Any]:
     """Bind an approval to the exact pull-request head the reviewer inspected.
 
@@ -7120,6 +7231,22 @@ def resolve_approval_binding(
     independent = bool(reviewer) and reviewer != owner
 
     if not raw_pr and not raw_head:
+        discovered = (
+            discover_open_pr_binding(
+                repository, head_branch=head_branch, base_branch=base_branch
+            )
+            if repository
+            else None
+        )
+        if discovered is not None:
+            print(
+                f"note: {task_id} approval auto-bound to PR #{discovered['pr']} at "
+                f"exact head {discovered['head_sha'][:12]} (REVIEW_PR/REVIEW_HEAD_SHA "
+                "were not supplied; discovered live from GitHub because task metadata "
+                "does not reliably record the delivery PR).",
+                file=sys.stderr,
+            )
+            return discovered
         if independent and task_has_pr_review_target(task):
             raise SystemExit(
                 f"{task_id} is PR-backed but approve has no exact reviewed-head "
@@ -7312,11 +7439,11 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
-    binding = resolve_approval_binding(task)
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    repository_slug_value = repository_slug(config, repository_id)
+    binding = resolve_approval_binding(task, repository=repository_slug_value)
     if review_file and binding:
-        config = load_config()
-        repository_id = task_primary_repository_id(config, task)
-        repository_slug_value = repository_slug(config, repository_id)
         if not repository_slug_value or not review_evidence_file_committed(
             repository=repository_slug_value,
             head_sha=binding["head_sha"],

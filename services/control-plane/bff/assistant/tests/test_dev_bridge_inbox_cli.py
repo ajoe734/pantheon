@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,41 @@ def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root.mkdir()
     write_materializing_ai_status(repo_root)
     return repo_root
+
+
+def _copy_cli_to_isolated_worktree(tmp_path: Path, script: Path) -> tuple[Path, Path]:
+    worktree_root = tmp_path / "isolated-worktree"
+    worktree_script = worktree_root / "scripts" / script.name
+    worktree_script.parent.mkdir(parents=True)
+    shutil.copy2(script, worktree_script)
+    return worktree_root, worktree_script
+
+
+def _isolated_worktree_env(repo_root: Path) -> dict[str, str]:
+    bff_dir = REPO_ROOT / "services" / "control-plane" / "bff"
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    env = {
+        **os.environ,
+        "BRIDGE_SIGNING_KEY": TEST_KEY.hex(),
+        "PANTHEON_STATUS_ROOT": str(repo_root),
+        "PYTHONPATH": os.pathsep.join(
+            part for part in (str(bff_dir), inherited_pythonpath) if part
+        ),
+    }
+    for name in (
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_COMMAND_REMOTE",
+        "PANTHEON_COMMAND_BASE_REF",
+        "PANTHEON_STATUS_COMMAND_ROOT",
+        "PANTHEON_STATUS_COMMAND_SHA",
+        "PANTHEON_STATUS_COMMAND_REMOTE",
+        "PANTHEON_STATUS_COMMAND_BASE_REF",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        env.pop(name, None)
+    return env
 
 
 def test_queue_cli_accepts_dev_docs_generate_envelope(tmp_path: Path) -> None:
@@ -114,6 +150,72 @@ def test_drain_cli_materializes_queued_packet(tmp_path: Path) -> None:
     assert body["processedCount"] == 1
     assert body["packets"][0]["packetId"] == "pkt_inbox_cli_drain"
     assert "INBOX-CLI-TASK-001" in (repo_root / "assigned.txt").read_text(encoding="utf-8")
+
+
+def test_queue_cli_uses_status_root_when_invoked_from_isolated_worktree(tmp_path: Path) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    worktree_root, worktree_script = _copy_cli_to_isolated_worktree(tmp_path, QUEUE_SCRIPT)
+    signed = sign_packet(_make_packet("pkt_inbox_cli_status_root_queue"), key_store={"assistant-bridge-dev": TEST_KEY})
+    packet_path = tmp_path / "queue-packet.json"
+    packet_path.write_text(
+        json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(worktree_script), "--packet-file", str(packet_path)],
+        cwd=str(worktree_root),
+        env=_isolated_worktree_env(repo_root),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["inbox"] == str(repo_root / ".orchestrator" / "assistant-dev-packets")
+    assert (repo_root / ".orchestrator" / "assistant-dev-packets" / "pending" / "pkt_inbox_cli_status_root_queue.json").exists()
+    assert not (worktree_root / ".orchestrator").exists()
+
+
+def test_drain_cli_uses_status_root_when_invoked_from_isolated_worktree(tmp_path: Path) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    worktree_root, worktree_script = _copy_cli_to_isolated_worktree(tmp_path, DRAIN_SCRIPT)
+    signed = sign_packet(_make_packet("pkt_inbox_cli_status_root_drain"), key_store={"assistant-bridge-dev": TEST_KEY})
+    packet_path = tmp_path / "drain-packet.json"
+    packet_path.write_text(
+        json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}),
+        encoding="utf-8",
+    )
+    env = _isolated_worktree_env(repo_root)
+    queue_result = subprocess.run(
+        [
+            sys.executable,
+            str(QUEUE_SCRIPT),
+            "--packet-file",
+            str(packet_path),
+            "--repo-root",
+            str(repo_root),
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert queue_result.returncode == 0, queue_result.stderr
+
+    result = subprocess.run(
+        [sys.executable, str(worktree_script), "--limit", "1"],
+        cwd=str(worktree_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["processedCount"] == 1
+    assert "INBOX-CLI-TASK-001" in (repo_root / "assigned.txt").read_text(encoding="utf-8")
+    assert not (worktree_root / ".orchestrator").exists()
 
 
 def test_queue_cli_serializes_concurrent_writers(tmp_path: Path) -> None:

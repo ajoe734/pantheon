@@ -192,7 +192,7 @@ PY
     fi
     rm -rf -- "$temporary_parent"
   fi
-  python3 "$destination/scripts/provision_live_supervisor_config.py" \
+  python3 -B "$destination/scripts/provision_live_supervisor_config.py" \
     --command-root "$destination" \
     --validate-command-root-only >/dev/null
 }

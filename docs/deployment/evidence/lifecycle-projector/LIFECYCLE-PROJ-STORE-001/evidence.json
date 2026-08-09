@@ -1,0 +1,208 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-store-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-STORE-001",
+    "title": "Build the lifecycle projection relational store",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "review",
+    "base_branch": "dev",
+    "base_sha": "eca6b7de6313027d4c943679a1fa8fb7d93028ba",
+    "task_branch": "task/LIFECYCLE-PROJ-STORE-001",
+    "evidence_cut_at": "2026-08-06T00:00:00Z",
+    "evidence_cut_semantics": "Cut by the reassigned owner after rebuilding the branch on current dev and re-running every validation. This manifest cannot contain its own commit SHA or the future protected merge SHA; Antigravity must bind the exact final PR head with REVIEW_PR=4557 and REVIEW_HEAD_SHA, and the merge SHA must come from governed delivery metadata."
+  },
+  "ownership_transition": {
+    "canonical_pair": {
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    "historical_pairs": [
+      {"owner": "Antigravity", "reviewer": "Codex2"},
+      {"owner": "Codex", "reviewer": "Antigravity"},
+      {"owner": "Codex", "reviewer": "Codex2"}
+    ],
+    "note": "Antigravity has issued no decision on any head of this task and must review independently. The retained changes_requested decision below belongs to Codex2 and is history, not an approval."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql",
+      "services/trade_journey/test_projection_store.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/"
+    ],
+    "not_changing": [
+      "telemetry_events canonical source schema or retention",
+      "lifecycle reducer behavior",
+      "BFF routes or read selection",
+      "Docker Compose, deployment, or cutover"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-REDUCER-001",
+      "LIFECYCLE-PROJ-BFF-001"
+    ]
+  },
+  "implementation": {
+    "branch_rewrite": {
+      "performed": true,
+      "rejected_head": "9f6e2b8a44781bf4a7b3108daa436af2a04e968c",
+      "reason": "The required Commit trailers check scans the whole merge-base..head range. Two commits in that range carried 86-character subjects, so no follow-up commit could turn PR #4557 green.",
+      "offending_commits": [
+        {"sha": "8b20e5df2e8f9d534855ee1fab5587f5a4f1d812", "violation": "subject exceeds 72 chars (86)"},
+        {"sha": "85b8c8f75bf5d107318c79216d9d30fb5f874da0", "violation": "subject exceeds 72 chars (86)"}
+      ],
+      "failing_check": {
+        "name": "Commit trailers",
+        "workflow": "Branch CI Gate",
+        "conclusion": "FAILURE",
+        "run_id": "30927197622",
+        "job_id": "92052453617",
+        "completed_at": "2026-08-04T16:02:51Z"
+      },
+      "authorization": "docs/conventions/GIT_WORKFLOW.md 7.2 lists force push as allowed on task/*; the closeout spec restricts only routine force pushes.",
+      "approval_binding_orphaned": false,
+      "approval_binding_note": "PR #4557 had zero reviews and no refs/tags/pantheon-review/approve/* tag at the rejected head, so the rewrite orphaned no review proof.",
+      "content_preservation": "Current dev was taken as the new base and exactly the declared task artifacts were restored from the rejected head. projection_store.py, 001_create_trade_journey_projection_schema.sql, test_projection_store.py, and explain-plans.txt are byte-identical to the rejected head and still match their pre-rewrite sha256 values; only evidence.json, evidence.md, and checksums.txt were re-cut.",
+      "revert_risk": "none; the branch is additive against its base with zero deletions and zero modified paths"
+    },
+    "superseded_pull_request": {
+      "number": 4503,
+      "url": "https://github.com/ajoe734/pantheon/pull/4503",
+      "base": "dev",
+      "head_branch": "task/LIFECYCLE-PROJ-STORE-001-V2",
+      "reason": "The canonical integrator resolves only task/LIFECYCLE-PROJ-STORE-001. GitHub cannot retarget an existing PR to that different head branch, so #4503 must not remain as an unmergeable parallel task PR."
+    },
+    "pull_request": {
+      "status": "open_pending_exact_head_review",
+      "number": 4557,
+      "url": "https://github.com/ajoe734/pantheon/pull/4557",
+      "base": "dev",
+      "head_branch": "task/LIFECYCLE-PROJ-STORE-001",
+      "review_head": "must be bound by REVIEW_PR=4557 and REVIEW_HEAD_SHA=<final 40-hex head> in the canonical exact-head review command"
+    },
+    "protected_merge": {
+      "status": "pending independent review and required checks",
+      "merge_sha": null
+    }
+  },
+  "contract_proof": {
+    "authority": "telemetry_events remains unchanged and authoritative; projection rows retain event_id and ingested_seq lineage without raw payload copies",
+    "atomicity": "each global event receipt is claimed before identity/stage/aggregate mutation; receipt disposition, derived rows, revision, scoped quarantine truth, and contiguous checkpoint then commit in one PostgreSQL transaction",
+    "idempotency": "an all-exact-duplicate batch short-circuits before every derived mutation and before revision/freshness changes; mixed batches apply only new-receipt-owned rows and fail closed on ambiguous shared aggregate ownership; conflicting fingerprints fail closed",
+    "checkpoint": "a recursive indexed query derives the highest contiguous receipt sequence from durable database truth and crosses a previously persisted gap tail only after the missing receipt arrives",
+    "freshness": "accepted_live and last_live_success_at can advance only in live mode; backfill, recovery, and replay own separate timestamps",
+    "writer_exclusion": "a stable SHA-256-derived signed bigint scopes pg_try_advisory_xact_lock across independent Python processes; different overlapping controller locks still serialize on the global receipt claim, and a concurrent loser rolls back before derived mutation",
+    "identity": "the CHECK registry covers the existing materializer resolve identifiers and lifecycle stable identities; first/last source time and sequence bounds converge with LEAST/GREATEST",
+    "least_privilege": "bootstrap is explicit and reads the versioned migration file; the runtime constructor defaults to no DDL and was exercised with a DML-only PostgreSQL login that could not create a schema",
+    "quarantine": "unresolved counts are recomputed from controller-scoped unresolved rows, and an exact retry cannot increment occurrence or controller count"
+  },
+  "validation": [
+    {
+      "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL PYTHONPATH=. python3 -m pytest -q services/trade_journey/test_projection_store.py",
+      "result": "pass; 19 passed in 11.20s against PostgreSQL 16.14 on the rebuilt branch, including mixed duplicate/new ownership, a two-connection post-read barrier race, and a real DML-only runtime login"
+    },
+    {
+      "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL PYTHONPATH=. python3 -m pytest -q services/trade_journey",
+      "result": "pass; 138 passed in 47.50s on the rebuilt branch against current dev"
+    },
+    {
+      "command": "TEST_DATABASE_URL=$LOCAL_TEST_DATABASE_URL TEST_DATABASE_ADMIN_URL=$LOCAL_TEST_DATABASE_ADMIN_URL PYTHONPATH=. python3 -m pytest -q services/trade_journey/test_projection_store.py -k 'runtime_role_has_dml_without_ddl or migration_applied_twice_and_prior_reader_compat or indexed_explain_paths'",
+      "result": "pass; 3 passed, 16 deselected in 1.33s"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/projection_store.py services/trade_journey/test_projection_store.py && git diff --check",
+      "result": "pass"
+    },
+    {
+      "command": "sha256sum -c docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/checksums.txt (pre-rewrite manifest, before the evidence re-cut)",
+      "result": "pass; all six recorded artifacts OK, proving the rebuilt tree carries the reviewed source byte-for-byte"
+    }
+  ],
+  "validation_environment": {
+    "interpreter": "/home/lupin/pantheon/.venv/bin/python (shared Pantheon virtualenv)",
+    "psycopg_version": "3.3.4",
+    "postgres_version": "PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "not_claimed": [
+      "scripts/dev/provision_python_distribution.py was not re-run for this cut; the earlier owner's checkout-scoped .venv-pantheon result is not restated as a current observation",
+      "ruff is unavailable in this environment; no lint result is claimed"
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "Expand-only idempotent controller, receipt, identity, journey, stage, loop-run, and quarantine schema with required keys, constraints, and indexes",
+      "status": "passed"
+    },
+    {
+      "criterion": "One atomic event-to-checkpoint API with exact duplicate, conflict, quarantine, rollback/retry, gap, freshness, and two-writer behavior",
+      "status": "passed"
+    },
+    {
+      "criterion": "Migration file applies twice, prior controller SELECT remains compatible, runtime credentials require DML but not DDL, and five common reads use intended indexes",
+      "status": "passed"
+    },
+    {
+      "criterion": "Reviewed PR, required checks, merge SHA, and independent review",
+      "status": "pending"
+    }
+  ],
+  "security_and_safety": {
+    "raw_payload_copied": false,
+    "telemetry_events_mutated": false,
+    "runtime_role_has_schema_create": false,
+    "deployment_or_consumer_enabled": false,
+    "live_capital_or_broker_action": false
+  },
+  "review": {
+    "status": "rebuilt_on_current_dev_pending_first_antigravity_decision",
+    "reviewer": "Antigravity",
+    "prior_independent_decision": {
+      "status": "changes_requested",
+      "reviewed_head": "3e525480706ee0eb1cb5aadf583cb2a6c9670d1c",
+      "reviewer": "Codex2",
+      "findings": [
+        "mixed duplicate/new batches could apply duplicate-owned aggregate and quarantine mutations",
+        "overlapping controller locks could both commit derived rows after racing on one global event receipt"
+      ],
+      "disposition": "both findings repaired and covered by dedicated real-PostgreSQL regressions; retained as immutable history and not transferable to the current head or the current reviewer"
+    },
+    "required_scope": [
+      "reproduce a mixed durable-duplicate/new batch and verify old journey, stage, quarantine, and row revision truth remains unchanged while the new event commits",
+      "synchronize two PostgreSQL connections after the receipt pre-read and verify one success, one concurrent-claim rollback, one receipt, one journey, and one controller revision",
+      "reproduce duplicate-with-mutations immutability and revision stability",
+      "reproduce durable checkpoint gap closure and rollback/retry",
+      "verify mode-owned accepted_live/freshness and scoped quarantine truth",
+      "verify cross-process advisory lock identity and same-controller nonblocking failure",
+      "verify the exact migration file twice, DML-only runtime role, prior-reader query, and all five exact EXPLAIN index names",
+      "verify the branch rewrite restored only the declared artifacts and reverted no dev content",
+      "record PR required checks and bind the exact reviewed head before approval"
+    ],
+    "decision": "pending; Antigravity must independently bind the final post-evidence PR head"
+  },
+  "external_blockers": [
+    {
+      "severity": "high",
+      "blocking": true,
+      "owner": "Human/Ops",
+      "in_this_task_scope": false,
+      "description": "dev no longer contains .github/workflows/canonical-review-gate.yml, scripts/git/canonical_review_gate_ci.py, or scripts/git/test_canonical_review_gate_workflow.py. They were deleted by 23ae23c2185d31d2aeacafaa9b051127a6d53136 (PR #4590), a stale-base squash that removed 166 files and 47932 lines from dev, including this task's sibling evidence directories LIFECYCLE-PROJ-INCIDENT-20260801 and LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801. The workflow is still present on master. Until it is restored, the required 'Pantheon canonical review gate' status context cannot be produced by a pull_request run on a dev-based branch, so PR #4557 stays BLOCKED for reasons unrelated to this delivery."
+    }
+  ],
+  "residual_risks": [
+    {
+      "severity": "low",
+      "blocking": false,
+      "description": "This first expand-only migration is additive and intentionally has no destructive down migration; rollback leaves the unused schema in place."
+    },
+    {
+      "severity": "low",
+      "blocking": false,
+      "description": "No consumer is enabled by this task; reducer, BFF integration, scale, and hosted cutover remain owned by downstream tasks."
+    }
+  ],
+  "integrity": {
+    "algorithm": "sha256",
+    "companion_checksum_path": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/checksums.txt",
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file hashes this manifest; the checksum file cannot hash itself."
+  }
+}
