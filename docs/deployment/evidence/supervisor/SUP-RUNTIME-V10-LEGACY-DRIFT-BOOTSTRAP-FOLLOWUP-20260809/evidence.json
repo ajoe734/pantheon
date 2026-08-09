@@ -5,7 +5,7 @@
     "title": "Design governed bootstrap for accumulated legacy context drift",
     "phase": "Supervisor Runtime / Source-only Legacy Bootstrap Follow-up",
     "owner": "Antigravity2",
-    "reviewer": "Codex",
+    "reviewer": "Claude2",
     "status": "in_progress",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -77,7 +77,7 @@
     },
     {
       "id": "AC6",
-      "statement": "The canonical task-brief digest renderer extracts git HEAD into an isolated temporary directory, rendering strictly from byte-bound trusted tracked sources; untracked modules and worktree modifications in the mutable root cannot execute code or create import shadows before or during rendering.",
+      "statement": "The canonical task-brief digest renderer extracts captured expected_head into an isolated temporary directory, rendering strictly from byte-bound trusted tracked sources; untracked modules, worktree modifications, and post-capture ref-switches in the mutable root cannot execute code, create import shadows, or alter rendering before or during rendering.",
       "evidence_ref": "scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_ignores_untracked_root_shadow_stdlib; scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_rejects_untracked_imported_module; scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_proves_untracked_and_mutable_worktree_edits_never_execute; scripts/test_promote_supervisor_runtime.py::test_render_canonical_task_brief_digest_post_capture_source_drift_race"
     }
   ],
@@ -109,7 +109,7 @@
   ],
   "review": {
     "decision": "pending_independent_review",
-    "reviewer": "Codex",
+    "reviewer": "Claude2",
     "required_checks": [
       "Confirm the exception is reachable only through explicit mutable bootstrap and not through normal candidate or mutable cleanliness paths.",
       "Confirm only unstaged modified legal task-brief paths are accepted, and their exact set is bound across revalidation and serialized to transaction evidence.",

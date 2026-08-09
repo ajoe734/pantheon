@@ -3342,6 +3342,7 @@ def test_mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift(
     def canonical_digest(
         root: Path,
         *,
+        expected_head: str = "",
         config_bytes: bytes,
         task_id: str,
     ) -> tuple[int, str]:
@@ -3457,6 +3458,7 @@ def test_mutable_incumbent_bootstrap_rejects_same_path_byte_drift_on_revalidatio
     def canonical_digest(
         root: Path,
         *,
+        expected_head: str = "",
         config_bytes: bytes,
         task_id: str,
     ) -> tuple[int, str]:
@@ -3537,6 +3539,7 @@ def test_render_canonical_task_brief_digest_ignores_untracked_root_shadow_stdlib
     _remote, mutable_root, _regenerated_brief, _root_stat = (
         _legacy_mutable_task_brief_drift_fixture(tmp_path)
     )
+    expected_head = _git(mutable_root, "rev-parse", "HEAD")
     sentinel = tmp_path / "sentinel_stdlib.txt"
     (mutable_root / "hashlib.py").write_text(
         f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('SHADOW CODE EXECUTED: hashlib')\n",
@@ -3548,6 +3551,7 @@ def test_render_canonical_task_brief_digest_ignores_untracked_root_shadow_stdlib
     )
     byte_length, sha256 = promotion._render_canonical_task_brief_digest(
         mutable_root,
+        expected_head=expected_head,
         config_bytes=b"{}",
         task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
     )
@@ -3569,6 +3573,7 @@ def test_render_canonical_task_brief_digest_rejects_untracked_imported_module(
     )
     _git(mutable_root, "add", ".orchestrator/common.py")
     _git(mutable_root, "commit", "-m", "import shadow helper")
+    expected_head = _git(mutable_root, "rev-parse", "HEAD")
 
     sentinel = tmp_path / "sentinel_shadow.txt"
     (mutable_root / ".orchestrator" / "shadow_helper.py").write_text(
@@ -3581,6 +3586,7 @@ def test_render_canonical_task_brief_digest_rejects_untracked_imported_module(
     ):
         promotion._render_canonical_task_brief_digest(
             mutable_root,
+            expected_head=expected_head,
             config_bytes=b"{}",
             task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
         )
@@ -3593,6 +3599,7 @@ def test_render_canonical_task_brief_digest_proves_untracked_and_mutable_worktre
     _remote, mutable_root, _regenerated_brief, _root_stat = (
         _legacy_mutable_task_brief_drift_fixture(tmp_path)
     )
+    expected_head = _git(mutable_root, "rev-parse", "HEAD")
     sentinel = tmp_path / "sentinel_uncommitted.txt"
     common_py = mutable_root / ".orchestrator" / "common.py"
     common_py.write_text(
@@ -3605,6 +3612,7 @@ def test_render_canonical_task_brief_digest_proves_untracked_and_mutable_worktre
     )
     byte_length, sha256 = promotion._render_canonical_task_brief_digest(
         mutable_root,
+        expected_head=expected_head,
         config_bytes=b"{}",
         task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
     )
@@ -3619,18 +3627,40 @@ def test_render_canonical_task_brief_digest_post_capture_source_drift_race(
     _remote, mutable_root, _regenerated_brief, _root_stat = (
         _legacy_mutable_task_brief_drift_fixture(tmp_path)
     )
+    head_a = _git(mutable_root, "rev-parse", "HEAD")
+
+    # Mutate common.py in a new commit B on mutable_root
+    common_py = mutable_root / ".orchestrator" / "common.py"
     sentinel = tmp_path / "sentinel_race.txt"
-    (mutable_root / ".orchestrator" / "malicious.py").write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\n",
+    common_py.write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('COMMIT_B_EXECUTED')\n",
         encoding="utf-8",
     )
+    _git(mutable_root, "add", ".orchestrator/common.py")
+    _git(mutable_root, "commit", "-m", "commit B with mutated common.py")
+    head_b = _git(mutable_root, "rev-parse", "HEAD")
+    assert head_b != head_a
+
+    # While HEAD is at commit B, rendering with expected_head=head_a extracts head_a's tree and NOT commit B
     byte_length, sha256 = promotion._render_canonical_task_brief_digest(
         mutable_root,
+        expected_head=head_a,
         config_bytes=b"{}",
         task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
     )
     assert byte_length > 0
     assert len(sha256) == 64
+    assert not sentinel.exists()
+
+    # Perform A -> B -> A ref switch by checking out head_a
+    _git(mutable_root, "checkout", head_a)
+    byte_length_a, sha256_a = promotion._render_canonical_task_brief_digest(
+        mutable_root,
+        expected_head=head_a,
+        config_bytes=b"{}",
+        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+    )
+    assert (byte_length_a, sha256_a) == (byte_length, sha256)
     assert not sentinel.exists()
 
 

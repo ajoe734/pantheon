@@ -4874,6 +4874,7 @@ def _task_id_from_task_brief_path(relative_path: str) -> str:
 def _render_canonical_task_brief_digest(
     root: Path,
     *,
+    expected_head: str,
     config_bytes: bytes,
     task_id: str,
 ) -> tuple[int, str]:
@@ -4881,7 +4882,7 @@ def _render_canonical_task_brief_digest(
 
     The mutable root is accepted at its Git tree except for the legacy brief
     residue.  Its ``common.write_task_brief`` implementation is rendered strictly
-    from byte-bound trusted tracked sources extracted from git HEAD into an
+    from byte-bound trusted tracked sources extracted from expected_head into an
     isolated temporary directory. Untracked files and uncommitted worktree modifications
     in the mutable root are never placed in sys.path or executed.
     """
@@ -4938,7 +4939,9 @@ sys.stdout.write(json.dumps({
         environment.pop(name, None)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
 
-    tracked_output = _run_mutable_git(root, "ls-files", "-z").stdout
+    tracked_output = _run_mutable_git(
+        root, "ls-tree", "-r", "--name-only", "-z", expected_head
+    ).stdout
     tracked_files = [f for f in tracked_output.split("\0") if f]
     input_payload = json.dumps(
         {
@@ -4951,7 +4954,7 @@ sys.stdout.write(json.dumps({
         root,
         "archive",
         "--format=tar",
-        "HEAD",
+        expected_head,
         environment_overrides={
             "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_OPTIONAL_LOCKS": "0",
@@ -5016,6 +5019,7 @@ sys.stdout.write(json.dumps({
 def _capture_legacy_mutable_task_brief_drift(
     root: Path,
     *,
+    expected_head: str,
     config_bytes: bytes,
     filesystem: LaunchFilesystem,
 ) -> tuple[LegacyTaskBriefDrift, ...]:
@@ -5065,6 +5069,7 @@ def _capture_legacy_mutable_task_brief_drift(
         )
         canonical_byte_length, canonical_sha256 = _render_canonical_task_brief_digest(
             root,
+            expected_head=expected_head,
             config_bytes=config_bytes,
             task_id=task_id,
         )
@@ -5137,6 +5142,7 @@ def _verify_mutable_tracked_cleanliness(
             )
         legacy_task_brief_drift = _capture_legacy_mutable_task_brief_drift(
             root,
+            expected_head=expected_head,
             config_bytes=config_bytes,
             filesystem=filesystem or OSLaunchFilesystem(),
         )
