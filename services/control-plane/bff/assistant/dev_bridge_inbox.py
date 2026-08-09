@@ -8,6 +8,7 @@ runtime binding.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -18,9 +19,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping, Optional
 
-from .dev_bridge_dispatcher import dispatch_task_packet, _open_regular_fence_file
+from .dev_bridge_admission import admission_record_path, load_admission_record
+from .dev_bridge_dispatcher import (
+    _admission_provenance,
+    _open_regular_fence_file,
+    _release_dispatch_fence,
+    _try_acquire_dispatch_fence,
+    dispatch_task_packet,
+)
 from .dev_bridge_models import BridgeDispatchRequest, DevTaskPacket
-from .dev_bridge_signer import has_seen_packet, packet_digest, verify_packet
+from .dev_bridge_signer import (
+    has_seen_packet,
+    packet_digest,
+    replay_record,
+    verify_packet,
+)
 
 
 DEFAULT_INBOX_DIR = ".orchestrator/assistant-dev-packets"
@@ -29,6 +42,7 @@ PROCESSING_RETRY_SCHEMA = "pantheon.assistant-dev-packet-retry.v1"
 PROCESSING_CLAIM_TTL_SECONDS = 300.0
 RETRY_BASE_SECONDS = 0.25
 RETRY_MAX_SECONDS = 5.0
+FAILED_RECOVERY_SCHEMA = "pantheon.assistant-dev-packet-failed-recovery.v1"
 
 
 def _now() -> str:
@@ -133,6 +147,154 @@ def _read_optional_json(path: Path) -> Dict[str, Any] | None:
     if not path.exists():
         return None
     return _read_json(path)
+
+
+def _canonical_json_sha256(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _recovery_path(inbox: Path, packet_path: Path) -> Path:
+    return inbox / "recoveries" / packet_path.name
+
+
+def _recovery_identity(packet: DevTaskPacket) -> Dict[str, Any]:
+    signature = (
+        packet.signature.model_dump(mode="json", by_alias=True)
+        if packet.signature is not None
+        else None
+    )
+    return {
+        "packet_id": packet.packet_id,
+        "packet_digest": packet_digest(packet),
+        "signature": signature,
+        "signed_provenance": _admission_provenance(packet),
+    }
+
+
+def _validate_packet_leaf(
+    path: Path,
+    *,
+    packet_id: str,
+    expected_identity: Mapping[str, Any] | None = None,
+    key_store: Optional[Dict[str, bytes]] = None,
+) -> tuple[DevTaskPacket, Dict[str, Any]]:
+    packet = packet_from_payload(_read_json(path))
+    verify_packet(packet, key_store=key_store)
+    if packet.packet_id != packet_id:
+        raise ValueError(
+            f"Bridge failed recovery leaf {path} contains packet id "
+            f"{packet.packet_id!r}, not {packet_id!r}"
+        )
+    identity = _recovery_identity(packet)
+    if expected_identity is not None and identity != expected_identity:
+        raise ValueError(
+            f"Packet id {packet_id!r} recovery identity does not match its "
+            "signed packet digest, task specs, or provenance"
+        )
+    return packet, identity
+
+
+def _validate_recovery_record(
+    record: Mapping[str, Any],
+    *,
+    packet_id: str,
+    identity: Mapping[str, Any],
+) -> str:
+    if record.get("schema") != FAILED_RECOVERY_SCHEMA:
+        raise ValueError("Bridge failed recovery record schema is unsupported")
+    if record.get("packet_id") != packet_id:
+        raise ValueError("Bridge failed recovery record packet id mismatch")
+    if record.get("identity") != identity:
+        raise ValueError(
+            "Bridge failed recovery record signed identity or provenance mismatch"
+        )
+    state = str(record.get("state") or "").strip()
+    if state not in {"prepared", "queued"}:
+        raise ValueError("Bridge failed recovery record state is unsupported")
+    return state
+
+
+def _validate_recovery_receipt(
+    receipt_path: Path,
+    *,
+    packet_id: str,
+    packet_digest_value: str,
+    expected_status: str,
+) -> Dict[str, Any]:
+    receipt = _read_json(receipt_path)
+    if str(receipt.get("packetId") or "") != packet_id:
+        raise ValueError("Bridge failed recovery receipt packet id mismatch")
+    status = str(receipt.get("status") or "")
+    if expected_status == "failed":
+        if status not in {"failed", "error"}:
+            raise ValueError(
+                "Bridge failed recovery requires an exact failed/error receipt"
+            )
+    elif status != "processed":
+        raise ValueError("Bridge completed recovery receipt is not processed")
+    result = receipt.get("result")
+    audit_refs = result.get("auditRefs") if isinstance(result, Mapping) else None
+    observed_digest = (
+        str(audit_refs.get("packetDigest") or "")
+        if isinstance(audit_refs, Mapping)
+        else ""
+    )
+    result_packet_id = (
+        str(result.get("packetId") or "") if isinstance(result, Mapping) else ""
+    )
+    if result_packet_id != packet_id or observed_digest != packet_digest_value:
+        raise ValueError(
+            "Bridge failed recovery receipt does not bind the exact signed packet"
+        )
+    return receipt
+
+
+def _validate_admission_and_replay_collisions(
+    packet: DevTaskPacket,
+    *,
+    repo_root: str,
+) -> tuple[Dict[str, Any] | None, Dict[str, Any] | None]:
+    digest = packet_digest(packet)
+    expected_path = admission_record_path(
+        repo_root=repo_root,
+        packet_id=packet.packet_id,
+        packet_digest=digest,
+    )
+    directory = expected_path.parent
+    if directory.exists():
+        conflicting = sorted(
+            path
+            for path in directory.glob(f"{_safe_packet_id(packet.packet_id)}--*.json")
+            if path != expected_path
+        )
+        if conflicting:
+            raise ValueError(
+                f"Packet id {packet.packet_id!r} has a conflicting admission record"
+            )
+    admission = load_admission_record(
+        repo_root=repo_root,
+        packet_id=packet.packet_id,
+        packet_digest=digest,
+        expected_provenance=_admission_provenance(packet),
+    )
+    replay = replay_record(packet.packet_id, repo_root=repo_root)
+    if replay is not None:
+        replay_digest = str(replay.get("digest") or "").strip()
+        if replay_digest != digest:
+            raise ValueError(
+                f"Packet id {packet.packet_id!r} has a conflicting replay record"
+            )
+        if admission is None:
+            raise ValueError(
+                f"Packet id {packet.packet_id!r} has replay state without exact admission"
+            )
+    return admission, replay
 
 
 def _claim_path(inbox: Path, packet_path: Path) -> Path:
@@ -367,6 +529,223 @@ def queue_payload(
         key_store=key_store,
         source=source,
     )
+
+
+def recover_failed_task_packet(
+    packet_id: str,
+    *,
+    repo_root: Optional[str] = None,
+    inbox_dir: Optional[str] = None,
+    key_store: Optional[Dict[str, bytes]] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Requeue one exact signed failed leaf through a durable recovery record.
+
+    The whole decision and failed-to-pending transition runs under the inbox
+    queue lock plus the packet's processing/dispatch fences.  A durable
+    `prepared` record is written before rename so a crash on either side of
+    the rename can be resumed without accepting an unregistered pending leaf.
+    """
+
+    requested_id = str(packet_id or "").strip()
+    if not requested_id:
+        raise ValueError("packetId is required for failed recovery")
+    root = _repo_root(repo_root)
+    inbox = _inbox_root(str(root), inbox_dir)
+    leaf = Path(f"{_safe_packet_id(requested_id)}.json")
+    paths = {
+        name: inbox / name / leaf.name
+        for name in ("pending", "processing", "processed", "failed", "receipts")
+    }
+    recovery_path = _recovery_path(inbox, paths["failed"])
+
+    with _file_lock(inbox / ".queue.lock"):
+        processing_fence = _try_acquire_processing_fence(inbox, paths["failed"])
+        if processing_fence is None:
+            raise ValueError(
+                f"Packet id {requested_id!r} is fenced by a live inbox drainer"
+            )
+        dispatch_fence: int | None = None
+        try:
+            dispatch_fence = _try_acquire_dispatch_fence(
+                str(root),
+                requested_id,
+            )
+            if dispatch_fence is None:
+                raise ValueError(
+                    f"Packet id {requested_id!r} is fenced by a live dispatcher"
+                )
+
+            recovery = _read_optional_json(recovery_path)
+            queue_states = [
+                name
+                for name in ("pending", "processing", "processed")
+                if paths[name].exists()
+            ]
+            if len(queue_states) > 1:
+                raise ValueError(
+                    f"Packet id {requested_id!r} has conflicting queue states: "
+                    + ", ".join(queue_states)
+                )
+
+            failed_path = paths["failed"]
+            if not failed_path.exists():
+                if recovery is None:
+                    conflict = queue_states[0] if queue_states else "missing"
+                    raise ValueError(
+                        f"Packet id {requested_id!r} has no recoverable failed leaf "
+                        f"(observed {conflict})"
+                    )
+                if not queue_states:
+                    raise ValueError(
+                        f"Packet id {requested_id!r} recovery record has no packet leaf"
+                    )
+                state_name = queue_states[0]
+                packet, identity = _validate_packet_leaf(
+                    paths[state_name],
+                    packet_id=requested_id,
+                    expected_identity=recovery.get("identity"),
+                    key_store=key_store,
+                )
+                recovery_state = _validate_recovery_record(
+                    recovery,
+                    packet_id=requested_id,
+                    identity=identity,
+                )
+                receipt = _validate_recovery_receipt(
+                    paths["receipts"],
+                    packet_id=requested_id,
+                    packet_digest_value=str(identity["packet_digest"]),
+                    expected_status=(
+                        "processed" if state_name == "processed" else "failed"
+                    ),
+                )
+                admission, replay = _validate_admission_and_replay_collisions(
+                    packet,
+                    repo_root=str(root),
+                )
+                if state_name == "processed" and (
+                    admission is None or replay is None
+                ):
+                    raise ValueError(
+                        f"Packet id {requested_id!r} processed recovery is not "
+                        "bound to exact admission and replay state"
+                    )
+                if recovery_state == "prepared":
+                    completed = {
+                        **recovery,
+                        "state": "queued",
+                        "recovered_at": _now(),
+                    }
+                    _write_json_atomic(recovery_path, completed)
+                return {
+                    "status": (
+                        "already_completed"
+                        if state_name == "processed"
+                        else "already_recovered"
+                    ),
+                    "packetId": requested_id,
+                    "packetDigest": identity["packet_digest"],
+                    "queueState": state_name,
+                    "receiptSha256": _canonical_json_sha256(receipt),
+                    "recoveryPath": str(recovery_path),
+                    "inbox": str(inbox),
+                }
+
+            if queue_states:
+                raise ValueError(
+                    f"Packet id {requested_id!r} has conflicting failed and "
+                    f"{queue_states[0]} leaves"
+                )
+
+            packet, identity = _validate_packet_leaf(
+                failed_path,
+                packet_id=requested_id,
+                key_store=key_store,
+            )
+            receipt = _validate_recovery_receipt(
+                paths["receipts"],
+                packet_id=requested_id,
+                packet_digest_value=str(identity["packet_digest"]),
+                expected_status="failed",
+            )
+            _validate_admission_and_replay_collisions(
+                packet,
+                repo_root=str(root),
+            )
+
+            if recovery is not None:
+                recovery_state = _validate_recovery_record(
+                    recovery,
+                    packet_id=requested_id,
+                    identity=identity,
+                )
+                if recovery_state != "prepared":
+                    raise ValueError(
+                        f"Packet id {requested_id!r} has a queued recovery record "
+                        "but remains in failed storage"
+                    )
+            else:
+                recovery = {
+                    "schema": FAILED_RECOVERY_SCHEMA,
+                    "state": "prepared",
+                    "packet_id": requested_id,
+                    "identity": identity,
+                    "source": source or "operator_exact_failed_recovery",
+                    "source_path": str(failed_path),
+                    "target_path": str(paths["pending"]),
+                    "failed_receipt_sha256": _canonical_json_sha256(receipt),
+                    "prepared_at": _now(),
+                }
+                _write_json_atomic(recovery_path, recovery)
+
+            for metadata_path in (
+                _claim_path(inbox, failed_path),
+                _retry_path(inbox, failed_path),
+            ):
+                metadata = _read_optional_json(metadata_path)
+                if metadata is None:
+                    continue
+                metadata_identity = {
+                    "packet_id": metadata.get("packet_id"),
+                    "packet_digest": metadata.get("packet_digest"),
+                }
+                expected_metadata_identity = {
+                    "packet_id": requested_id,
+                    "packet_digest": identity["packet_digest"],
+                }
+                if metadata_identity != expected_metadata_identity:
+                    raise ValueError(
+                        f"Packet id {requested_id!r} has conflicting "
+                        f"{metadata_path.parent.name} metadata"
+                    )
+                metadata_path.unlink(missing_ok=True)
+                _fsync_directory(metadata_path.parent)
+
+            _ensure_directory(paths["pending"].parent)
+            os.replace(failed_path, paths["pending"])
+            _fsync_directory(failed_path.parent)
+            _fsync_directory(paths["pending"].parent)
+            completed = {
+                **recovery,
+                "state": "queued",
+                "recovered_at": _now(),
+            }
+            _write_json_atomic(recovery_path, completed)
+            return {
+                "status": "recovered",
+                "packetId": requested_id,
+                "packetDigest": identity["packet_digest"],
+                "queueState": "pending",
+                "receiptSha256": _canonical_json_sha256(receipt),
+                "recoveryPath": str(recovery_path),
+                "path": str(paths["pending"]),
+                "inbox": str(inbox),
+            }
+        finally:
+            if dispatch_fence is not None:
+                _release_dispatch_fence(dispatch_fence)
+            _release_processing_fence(processing_fence)
 
 
 def _pending_files(inbox: Path) -> Iterable[Path]:
