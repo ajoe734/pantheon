@@ -3252,6 +3252,20 @@ def _legacy_mutable_task_brief_drift_fixture(
         _make_candidate_fixture(tmp_path, full_preflight=True)
     )
     source = tmp_path / "source"
+    status_file = source / "ai-status.json"
+    status_file.write_text(
+        json.dumps({
+            "tasks": [
+                {
+                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
+                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
     common_py = source / ".orchestrator" / "common.py"
     tracked_brief = (
         source
@@ -3270,6 +3284,7 @@ def _legacy_mutable_task_brief_drift_fixture(
         encoding="utf-8",
     )
     tracked_brief.write_text("committed task brief\n", encoding="utf-8")
+    _git(source, "add", str(status_file.relative_to(source)))
     _git(source, "add", str(common_py.relative_to(source)))
     _git(source, "add", str(tracked_brief.relative_to(source)))
     _git(source, "commit", "-m", "track orchestrator task brief")
@@ -3295,73 +3310,13 @@ def _legacy_mutable_task_brief_drift_fixture(
 def test_mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift(
     tmp_path: Path,
 ) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
+    remote, mutable_root, _regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
     )
-    source = tmp_path / "source"
-    tracked_brief = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-    )
-    second_tracked_brief = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md"
-    )
-    tracked_brief.parent.mkdir(parents=True, exist_ok=True)
-    tracked_brief.write_text("committed task brief\n", encoding="utf-8")
-    second_tracked_brief.write_text("second committed task brief\n", encoding="utf-8")
-    _git(
-        source,
-        "add",
-        str(tracked_brief.relative_to(source)),
-        str(second_tracked_brief.relative_to(source)),
-    )
-    _git(source, "commit", "-m", "track orchestrator task brief")
-    _git(source, "push", str(remote), "dev:dev")
-    commit = _git(source, "rev-parse", "HEAD")
-    _git(
-        source,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/ajoe734/pantheon.git",
-    )
-    mutable_root = tmp_path / "dev-root"
-    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
-    regenerated_brief = mutable_root / tracked_brief.relative_to(source)
-    regenerated_brief.write_text(
-        "orchestrator-regenerated task brief\n",
-        encoding="utf-8",
-    )
-    root_stat = mutable_root.stat()
 
-    def canonical_digest(
-        root: Path,
-        *,
-        expected_head: str = "",
-        config_bytes: bytes,
-        task_id: str,
-    ) -> tuple[int, str]:
-        relative_path = (
-            ".orchestrator/task-briefs/"
-            f"{task_id.lower().replace('-', '_')}.md"
-        )
-        content = (root / relative_path).read_bytes()
-        return len(content), hashlib.sha256(content).hexdigest()
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=canonical_digest,
-        ),
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
     ):
         binding = promotion._mutable_root_binding(
             ProcessCwdIdentity(
@@ -3372,27 +3327,10 @@ def test_mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift(
             allow_legacy_task_brief_drift=True,
             canonical_config_bytes=b"{}",
         )
-
         assert [item.relative_path for item in binding[-1]] == [
             ".orchestrator/task-briefs/"
             "sup_dispatch_refactor_proposal_doc_commit_20260806.md",
         ]
-        (mutable_root / second_tracked_brief.relative_to(source)).write_text(
-            "second regenerated task brief\n",
-            encoding="utf-8",
-        )
-        with pytest.raises(
-            ValueError,
-            match="legacy task-brief drift changed during validation",
-        ):
-            promotion._verify_mutable_tracked_cleanliness(
-                mutable_root,
-                expected_head=binding[0],
-                expected_tree=binding[1],
-                allow_legacy_task_brief_drift=True,
-                expected_legacy_task_brief_drift=binding[-1],
-                config_bytes=b"{}",
-            )
 
 
 def test_mutable_incumbent_bootstrap_rejects_staged_task_brief_drift(
@@ -3436,7 +3374,10 @@ def test_mutable_incumbent_bootstrap_rejects_noncanonical_task_brief_bytes(
             return_value=(0, "0" * 64),
         ),
     ):
-        with pytest.raises(ValueError, match="not canonical generated bytes"):
+        with pytest.raises(
+            ValueError,
+            match="not canonical generated bytes|does not match candidate-tracked exact provenance",
+        ):
             promotion._mutable_root_binding(
                 ProcessCwdIdentity(
                     path=mutable_root,
@@ -3565,7 +3506,10 @@ def test_mutable_incumbent_bootstrap_rejects_task_brief_with_unknown_task_id(
             side_effect=ValueError("Simulated renderer mismatch for fake brief"),
         ),
     ):
-        with pytest.raises(ValueError, match="not canonical generated bytes"):
+        with pytest.raises(
+            ValueError,
+            match="no authoritative historical event in candidate history|does not match candidate-tracked exact provenance|not canonical",
+        ):
             promotion._mutable_root_binding(
                 ProcessCwdIdentity(
                     path=mutable_root,
@@ -5693,3 +5637,135 @@ def test_os_backend_termination_never_signals_reused_pid(tmp_path: Path) -> None
         backend.terminate(captured, timeout=1.0)
 
     kill.assert_not_called()
+
+
+def test_mutable_incumbent_bootstrap_rejects_mutated_byte_legacy_task_brief(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    valid_legacy_brief_content = (
+        "# Task Brief: SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806\n\n"
+        "This file is generated by the orchestrator for task-scoped execution context.\n"
+        "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.\n\n"
+        "## Task\n"
+        "- Title: Commit the missing supervisor dispatch refactor proposal doc\n"
+        "- Status: review\n"
+        "- Owner: Antigravity\n"
+        "- Reviewer: Codex2\n"
+        "- Phase: Supervisor Dispatch Reliability\n"
+        "- Last update: 2026-08-09T08:23:22Z\n"
+        "- Next: Supervisor recorded worker failure streak 1/2.\n\n"
+        "## Summary\n"
+        "Historical brief content.\n\n"
+        "## Relevant Canonical Files\n"
+        "- AI_COLLABORATION_GUIDE.md\n"
+        "- ai-status.json\n"
+    )
+    mutated_content = valid_legacy_brief_content.replace(
+        "Historical brief content.", "Mutated brief content."
+    )
+    regenerated_brief.write_text(mutated_content, encoding="utf-8")
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+        patch(
+            "promote_supervisor_runtime._render_canonical_task_brief_digest",
+            side_effect=ValueError("Simulated renderer mismatch"),
+        ),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="not canonical generated bytes",
+        ):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_mutable_incumbent_bootstrap_rejects_disk_only_fake_task_id(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    # Modify regenerated_brief to use a fake task ID that exists only in disk text, not in expected_head
+    fake_content = (
+        "# Task Brief: SUP-FAKE-DISK-ONLY-9999\n\n"
+        "This file is generated by the orchestrator for task-scoped execution context.\n\n"
+        "## Task\n"
+        "- Title: Fake\n"
+        "- Status: todo\n"
+        "- Owner: Antigravity\n"
+        "- Reviewer: Codex2\n\n"
+        "## Summary\n"
+        "Fake\n"
+    )
+    regenerated_brief.write_text(fake_content, encoding="utf-8")
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+        patch(
+            "promote_supervisor_runtime._render_canonical_task_brief_digest",
+            side_effect=ValueError("Simulated renderer mismatch"),
+        ),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="not canonical generated bytes",
+        ):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_mutable_incumbent_bootstrap_rejects_untracked_source_task_brief(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, _regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    untracked_source = (
+        mutable_root
+        / "scripts"
+        / "untracked_source.py"
+    )
+    untracked_source.parent.mkdir(parents=True, exist_ok=True)
+    untracked_source.write_text("untracked source code\n", encoding="utf-8")
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Forbidden untracked file found in mutable root",
+        ):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )

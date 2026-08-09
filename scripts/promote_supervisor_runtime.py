@@ -5016,12 +5016,19 @@ sys.stdout.write(json.dumps({
     return byte_length, sha256
 
 
+CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS: dict[str, set[tuple[int, str]]] = {
+    ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md": {
+        (634, "dde1769f5ddf4a1d7c0f861d81f02e9dc977a27415d085a6db6614ecfca2772c"),
+    },
+}
+
+
 def _is_historical_task_id_known(
     root: Path,
     task_id: str,
     expected_head: str,
 ) -> bool:
-    """Verify that task_id exists in active or historical repository task state."""
+    """Verify that task_id exists in authoritative candidate repository task state."""
     # 1. Check expected_head:ai-status.json
     try:
         head_status = _run_mutable_git(
@@ -5032,17 +5039,7 @@ def _is_historical_task_id_known(
     except ValueError:
         pass
 
-    # 2. Check live ai-status.json on disk
-    try:
-        disk_status = (root / "ai-status.json").read_text(
-            encoding="utf-8", errors="replace"
-        )
-        if task_id in disk_status:
-            return True
-    except Exception:
-        pass
-
-    # 3. Check Task archive files in expected_head or disk
+    # 2. Check candidate-tracked Task archive files in expected_head
     task_id_lower = task_id.lower()
     archive_paths = (
         f"ai-task-archive/tasks/{task_id}.json",
@@ -5058,8 +5055,16 @@ def _is_historical_task_id_known(
             return True
         except ValueError:
             pass
-        if (root / rel_archive).is_file():
+
+    # 3. Check candidate-tracked ai-activity-log.jsonl in expected_head
+    try:
+        activity_log = _run_mutable_git(
+            root, "cat-file", "-p", f"{expected_head}:ai-activity-log.jsonl"
+        ).stdout
+        if task_id in activity_log:
             return True
+    except ValueError:
+        pass
 
     # 4. Check git log for task_id in expected_head history
     try:
@@ -5080,6 +5085,53 @@ def _is_historical_task_id_known(
     return False
 
 
+def _matches_candidate_tracked_provenance_blob(
+    root: Path,
+    *,
+    relative_path: str,
+    expected_head: str,
+    byte_length: int,
+    sha256: str,
+) -> bool:
+    """Verify byte_length and sha256 against candidate-tracked historical blobs."""
+    known_signatures = CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS.get(
+        relative_path, set()
+    )
+    if (byte_length, sha256) in known_signatures:
+        return True
+
+    try:
+        rev_output = _run_mutable_git(
+            root,
+            "log",
+            "--format=%H",
+            "-n",
+            "50",
+            expected_head,
+            "--",
+            relative_path,
+        ).stdout.strip()
+        if not rev_output:
+            return False
+        commits = [c.strip() for c in rev_output.splitlines() if c.strip()]
+        for commit_sha in commits:
+            try:
+                blob_bytes = _run_git_bytes(
+                    root,
+                    "cat-file",
+                    "-p",
+                    f"{commit_sha}:{relative_path}",
+                ).stdout
+                if len(blob_bytes) == byte_length:
+                    if hashlib.sha256(blob_bytes).hexdigest() == sha256:
+                        return True
+            except ValueError:
+                continue
+    except ValueError:
+        pass
+    return False
+
+
 def _verify_legacy_task_brief_provenance(
     root: Path,
     *,
@@ -5089,10 +5141,16 @@ def _verify_legacy_task_brief_provenance(
     expected_head: str,
     config_bytes: bytes,
 ) -> tuple[int, str]:
-    """Verify history-bounded provenance proof for legacy task-brief residue.
+    """Verify candidate-tracked exact provenance proof for legacy task-brief residue.
 
     Returns (canonical_byte_length, canonical_sha256) for drift tracking.
+    Never trusts mutable disk status/archive or loose structural patterns.
     """
+    if not _is_task_brief_path(relative_path):
+        raise ValueError(
+            f"Mutable incumbent task brief path is invalid: {relative_path}"
+        )
+
     # 1. Try current canonical rendered digest match first.
     try:
         canonical_len, canonical_sha = _render_canonical_task_brief_digest(
@@ -5127,76 +5185,36 @@ def _verify_legacy_task_brief_provenance(
     except ValueError:
         pass
 
-    # 3. History-bounded structural & historical task provenance proof.
-    file_path = root / relative_path
-    if file_identity.byte_length > 204800:
+    # 3. Candidate-tracked exact provenance verification.
+    expected_task_id = task_id.upper().replace("_", "-")
+    if not _is_historical_task_id_known(root, expected_task_id, expected_head):
         raise ValueError(
-            f"Mutable incumbent task brief exceeds maximum length: {relative_path}"
+            "Mutable incumbent task brief task ID has no authoritative historical event in candidate history: "
+            f"{expected_task_id}"
         )
+
     try:
-        content_bytes = file_path.read_bytes()
-        content_text = content_bytes.decode("utf-8")
-    except (UnicodeDecodeError, OSError) as exc:
+        _run_mutable_git(
+            root, "cat-file", "-e", f"{expected_head}:{relative_path}"
+        )
+    except ValueError:
         raise ValueError(
-            f"Mutable incumbent task brief is not valid UTF-8 text: {relative_path}"
-        ) from exc
-
-    lines = [l.strip() for l in content_text.splitlines() if l.strip()]
-    if not lines or not lines[0].upper().startswith("# TASK BRIEF:"):
-        raise ValueError(
-            f"Mutable incumbent task brief header missing or malformed: {relative_path}"
+            f"Mutable incumbent task brief is not a tracked path in candidate tree: {relative_path}"
         )
 
-    header_task_id = lines[0].split(":", 1)[1].strip().upper()
-    expected_task_id_upper = task_id.upper().replace("_", "-")
-    if header_task_id != expected_task_id_upper:
-        raise ValueError(
-            "Mutable incumbent task brief header task ID mismatch: "
-            f"{header_task_id} != {expected_task_id_upper}"
-        )
-
-    marker_found = any(
-        "This file is generated by the orchestrator for task-scoped execution context." in line
-        or "Generated in the worker workspace because the supervisor root did not have a task brief file." in line
-        for line in content_text.splitlines()
-    )
-    if not marker_found:
-        raise ValueError(
-            f"Mutable incumbent task brief missing canonical generator marker: {relative_path}"
-        )
-
-    text_upper = content_text.upper()
-    required_sections = ["## TASK", "## SUMMARY"]
-    for sec in required_sections:
-        if sec not in text_upper:
-            raise ValueError(
-                f"Mutable incumbent task brief missing required section {sec}: {relative_path}"
-            )
-
-    if (
-        "## RELEVANT CANONICAL FILES" not in text_upper
-        and "## COORDINATION ROOT" not in text_upper
-        and "## ARTIFACTS" not in text_upper
+    if _matches_candidate_tracked_provenance_blob(
+        root,
+        relative_path=relative_path,
+        expected_head=expected_head,
+        byte_length=file_identity.byte_length,
+        sha256=file_identity.sha256,
     ):
-        raise ValueError(
-            f"Mutable incumbent task brief missing required context section: {relative_path}"
-        )
+        return file_identity.byte_length, file_identity.sha256
 
-    required_fields = ["- TITLE:", "- STATUS:", "- OWNER:", "- REVIEWER:"]
-    for field in required_fields:
-        if field not in text_upper:
-            raise ValueError(
-                f"Mutable incumbent task brief missing required field {field}: {relative_path}"
-            )
-
-    # 4. Verify historical task ID existence against repository history/state.
-    if not _is_historical_task_id_known(root, expected_task_id_upper, expected_head):
-        raise ValueError(
-            "Mutable incumbent task brief task ID is not a recognized historical task: "
-            f"{expected_task_id_upper}"
-        )
-
-    return file_identity.byte_length, file_identity.sha256
+    raise ValueError(
+        "Mutable incumbent task brief does not match candidate-tracked exact provenance: "
+        f"{relative_path} (length={file_identity.byte_length}, sha256={file_identity.sha256})"
+    )
 
 
 def _capture_legacy_mutable_task_brief_drift(
@@ -5306,6 +5324,35 @@ def _verify_mutable_tracked_cleanliness(
     head_before, tree_before = _capture_mutable_head_tree(root)
     if (head_before, tree_before) != (expected_head, expected_tree):
         raise ValueError("Mutable incumbent HEAD/tree changed during validation")
+
+    status_output = _run_mutable_git(
+        root,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--ignore-submodules=all",
+    ).stdout
+    for record in status_output.split("\0"):
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            raise ValueError(f"Malformed mutable git status record: {record!r}")
+        status_code = record[:2]
+        relative_path = record[3:]
+        if status_code in {"??", "!!"}:
+            if relative_path.endswith("/"):
+                kind = "ignored" if status_code == "!!" else "untracked"
+                raise ValueError(
+                    f"Forbidden {kind} directory found in mutable root: {relative_path}"
+                )
+            if not _is_allowed_generated_untracked_path(relative_path):
+                kind = "ignored" if status_code == "!!" else "untracked"
+                raise ValueError(
+                    f"Forbidden {kind} file found in mutable root: {relative_path}"
+                )
+
     try:
         _run_mutable_git(root, "diff-index", "--cached", "--quiet", "HEAD", "--")
     except ValueError as exc:

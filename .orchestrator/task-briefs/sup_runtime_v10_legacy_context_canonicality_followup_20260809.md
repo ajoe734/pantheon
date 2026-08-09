@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity2
 - Reviewer: Antigravity
-- Next: Resume the preserved 326-line scripts/promote_supervisor_runtime.py and scripts/test_promote_supervisor_runtime.py diff in the existing task worktree. Use bounded searches, finish focused tests/evidence/commit/PR, no live runtime mutation, then hand off exact head to Antigravity.
+- Next: Replace ecdc structural authorization with candidate-tracked exact provenance bindings: path/task/length/SHA256 + authoritative historical event + old command-runtime 5877b644 + prevention boundary f5570754. Never trust mutable disk status/archive. Keep current-render/head-blob fast paths and identity revalidation; add mutated-byte/wrong-path/wrong-event/source/boundary negatives; update evidence, amend or add compliant commit, push, test, handoff.
 
 ## Summary
 PR #4667 retained strict byte equality by re-rendering legacy brief content from current bound config, but the active pre-fix brief now fails that comparison before any promotion mutation. Repair only a fail-closed historical-context provenance boundary for the known generated residue; do not broaden drift acceptance or touch the live runtime.
