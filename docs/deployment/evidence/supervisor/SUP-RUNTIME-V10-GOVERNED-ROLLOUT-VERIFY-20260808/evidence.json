@@ -1,16 +1,16 @@
 {
-  "schema_version": "pantheon.supervisor.governed_runtime_rollout_verify.v2",
+  "schema_version": "pantheon.supervisor.governed_runtime_rollout_verify.v3",
   "task": {
     "id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
     "title": "Run governed V10 supervisor runtime promotion and verify recovery",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "fail_closed_blocked_pending_source_followup",
+    "status": "fail_closed_blocked_pending_legacy_bootstrap_followup",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
     "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
-    "evidence_cut_at": "2026-08-08T23:02:00Z"
+    "evidence_cut_at": "2026-08-09T06:29:07Z"
   },
   "scope": {
     "owned_layer": "Authorized immutable supervisor-runtime promotion attempt, transaction outcome capture, fail-closed verification, and canonical source-only follow-up dispatch.",
@@ -24,10 +24,11 @@
     "composes_with": [
       "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
       "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808 / PR 4642",
+      "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808 / PR 4648",
       "the existing sync-dev-root and promote-supervisor-runtime transaction"
     ]
   },
-  "governed_retry": {
+  "governed_retry_20260808": {
     "command": "$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT",
     "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
     "command_runtime_sha": "619acd04184e8d3fc3aef322d160e7c9106670ad",
@@ -47,7 +48,29 @@
       "the operator returned aborted and sync-dev-root did not signal the incumbent directly"
     ]
   },
-  "transaction_evidence": {
+  "governed_retry_20260809": {
+    "command": "$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT",
+    "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "command_runtime_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+    "started_at": "2026-08-09T06:26:03Z",
+    "finished_at": "2026-08-09T06:26:38Z",
+    "sync_exit_code": 1,
+    "origin_dev_candidate": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    "candidate_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    "prerequisite_reviewed_head": "10c5ba3fcf44209d2ec33cf2478a72b3a86fa048",
+    "prerequisite_merge_commit": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    "prerequisite_is_candidate_head": true,
+    "observations": [
+      "sync-dev-root identified the live supervisor root as mutable dev-root at 5877b64425c8d6aede147d6cbbc6fbb9e228c259, 38 commits behind accepted origin/dev",
+      "ACTIVE_MUTABLE_ROOT_PROTECTED fetched accepted dev but did not stash, reset, or checkout the running root",
+      "repository/live ready-dispatcher values still differed and therefore required transactional config migration",
+      "the SHA-named standalone candidate was materialized from exact accepted origin/dev f5570754e6b9534893fc65744e82abe7f0ff0a74",
+      "the candidate includes PR 4648, which prevents future command-root task-brief materialization without relaxing tracked-tree rejection",
+      "the operator received --promote --bootstrap-mutable-incumbent and aborted on four already-accumulated tracked task-brief overwrites",
+      "sync-dev-root did not directly signal the incumbent"
+    ]
+  },
+  "transaction_evidence_20260808": {
     "path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T225515388905Z-3787166.json",
     "sha256": "0b60885dcf2e0434e92c3ae02b0478dce800ca8ff0330a5f7ba9a87d1d50c33b",
     "recorded_at": "2026-08-08T22:55:28.694871Z",
@@ -68,7 +91,37 @@
     "rollback_launch_boundary_at": null,
     "rollback_failure": null
   },
-  "incumbent_before_and_after_abort": {
+  "transaction_evidence_20260809": {
+    "path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T062622204757Z-3114628.json",
+    "sha256": "2621af8274e995708218bf245d42447ad68d5138dfb52047896392c176ce8f14",
+    "recorded_at": "2026-08-09T06:26:38.697454Z",
+    "kind": "supervisor_runtime_promotion_transaction",
+    "state": "aborted",
+    "outcome": "aborted",
+    "exit_code": 1,
+    "bootstrap_mutable_incumbent": true,
+    "original_failure": "ValueError: Tracked git tree is dirty",
+    "baseline": null,
+    "candidate": null,
+    "incumbent": null,
+    "mutable_incumbent": null,
+    "config_transaction": null,
+    "candidate_pid": null,
+    "candidate_launch_boundary_at": null,
+    "rollback_pid": null,
+    "rollback_launch_boundary_at": null,
+    "rollback_failure": null,
+    "history": [
+      {
+        "at": "2026-08-09T06:26:38.697427Z",
+        "state": "aborted",
+        "details": {
+          "error": "ValueError: Tracked git tree is dirty"
+        }
+      }
+    ]
+  },
+  "incumbent_before_and_after_abort_20260808": {
     "pid": 98981,
     "alive_after_abort": true,
     "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
@@ -100,7 +153,41 @@
     "live_config_sha256_after": "904830b6ff1487f0a3d665be13446c55c8ab20d775ae37d9a0107647270eafa9",
     "unchanged_claim_basis": "The durable transaction stopped before incumbent capture and reports config_transaction null, candidate_pid null, rollback_pid null, and no launch boundary. Read-only post-abort PID/cwd/cmdline/environment and config hash matched the preflight observation."
   },
-  "candidate_post_abort_read_only_verification": {
+  "incumbent_before_and_after_abort_20260809": {
+    "pid": 3816018,
+    "alive_after_abort": true,
+    "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "head_commit": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+    "argv": [
+      "/usr/bin/python3.12",
+      "-u",
+      "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py",
+      "--config",
+      "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "--verbose"
+    ],
+    "observed_governed_environment": {
+      "PANTHEON_STATUS_ROOT": "/home/lupin/pantheon",
+      "PANTHEON_COMMAND_ROOT": null,
+      "PANTHEON_COMMAND_RUNTIME_SHA": null,
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "tracked_drift": {
+      "paths": [
+        ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md",
+        ".orchestrator/task-briefs/sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md",
+        ".orchestrator/task-briefs/sup_l12_guarded_remediation_catalog_correction_20260803.md",
+        ".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md"
+      ],
+      "count": 4,
+      "classification": "task briefs accumulated by the legacy supervisor before PR 4648 prevention became active",
+      "operator_disposition": "rejected because the general mutable-incumbent tracked-tree guard remains intentionally strict"
+    },
+    "live_config_sha256_before": "904830b6ff1487f0a3d665be13446c55c8ab20d775ae37d9a0107647270eafa9",
+    "live_config_sha256_after": "904830b6ff1487f0a3d665be13446c55c8ab20d775ae37d9a0107647270eafa9",
+    "unchanged_claim_basis": "The durable transaction has baseline, candidate, incumbent, mutable_incumbent, and config_transaction all null; candidate_pid and rollback_pid are null with no launch boundaries. Read-only post-abort PID/cwd/cmdline/allowlisted environment, tracked status, and config hash match preflight."
+  },
+  "candidate_post_abort_read_only_verification_20260808": {
     "command": "candidate scripts/promote-supervisor-runtime.sh --repo candidate --json without --promote",
     "mode": "discover_only",
     "exit_code": 1,
@@ -116,6 +203,26 @@
     "non_candidate_failures": [
       "the discover-only command does not bootstrap a mutable incumbent and therefore cannot bind the legacy incumbent as an immutable command runtime",
       "candidate-local runtime state files are intentionally absent before launch"
+    ]
+  },
+  "candidate_post_abort_read_only_verification_20260809": {
+    "command": "candidate scripts/promote-supervisor-runtime.sh --repo candidate --json without --promote",
+    "mode": "discover_only",
+    "observed_at": "2026-08-09T06:28:10.416416Z",
+    "exit_code": 1,
+    "candidate_identity_invariant": "pass",
+    "head_commit": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    "accepted_dev_commit": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    "tracked_tree_identity": "a910a73ba50e0ba7cd5d9b7b3d745e6b430ed2b9",
+    "remote_url": "https://github.com/ajoe734/pantheon.git",
+    "git_control_type": "standalone directory",
+    "working_tree_status_short_ignored_after_discovery": [],
+    "bytecode_paths_after_discovery": [],
+    "eligible_for_promotion": false,
+    "non_candidate_failures": [
+      "discover-only does not enable mutable-incumbent bootstrap and therefore does not bind the legacy mutable process",
+      "candidate-local state and provider files are intentionally absent before launch",
+      "no candidate heartbeat, task-state shadow, loop sequence, active-provider baseline, or launch contract exists before launch"
     ]
   },
   "subsequent_external_runtime_observation": {
@@ -163,17 +270,18 @@
   "acceptance_disposition": {
     "immutable_candidate_from_merged_dev": "pass",
     "candidate_contains_prior_git_identity_repair": "pass",
+    "candidate_contains_pr_4648_command_checkout_generation_prevention": "pass",
     "candidate_bytecode_clean_after_discovery_child": "pass",
     "candidate_launch_with_python_B_and_PYTHONDONTWRITEBYTECODE": "not_run; transaction aborted before launch",
     "status_child_no_pycache": "not_run; candidate was never launched",
     "three_fresh_recovery_loops": "not_run; candidate was never launched",
     "authoritative_shadow_catchup_queue_worker_parity_and_provider_baseline": "not_run; candidate was never launched",
-    "candidate_identity": "5877b64425c8d6aede147d6cbbc6fbb9e228c259 / tree 3e6b3d359c435ff9aa598621ab16d7744a1be2cc",
+    "candidate_identity": "f5570754e6b9534893fc65744e82abe7f0ff0a74 / tree a910a73ba50e0ba7cd5d9b7b3d745e6b430ed2b9",
     "rollback_identity": "not_applicable; no incumbent/config transaction or candidate launch began",
     "live_runtime_promotion": "not_accepted",
     "fail_closed_runtime_preservation": "pass"
   },
-  "source_only_followup": {
+  "preventive_source_only_followup": {
     "packet_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/source-only-followup-mutable-tracked-drift.json",
     "packet_id": "sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255",
     "task_id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
@@ -193,6 +301,25 @@
       "expected_state_sha256": "fa33819d168ef89c3878f4a4061c819fd299bd728ecc6c58331491f632264f3e",
       "projected_state_sha256": "fa33819d168ef89c3878f4a4061c819fd299bd728ecc6c58331491f632264f3e",
       "task_spec_hash": "1deaeb0e9a319156a433587811f71f91ade8f93c67acb8370ea72162214f3729"
+    },
+    "reviewed_head": "10c5ba3fcf44209d2ec33cf2478a72b3a86fa048",
+    "merge_commit": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    "terminal_status": "done",
+    "retry_disposition": "prevents new command-root generation but does not address drift accumulated before the fixed runtime is active"
+  },
+  "legacy_bootstrap_source_only_followup": {
+    "packet_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/source-only-followup-legacy-drift-bootstrap.json",
+    "packet_id": "sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629",
+    "task_id": "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "dispatch_status": "packet_prepared_pending_signed_bridge_queue",
+    "evidence_binding": {
+      "transaction_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T062622204757Z-3114628.json",
+      "transaction_sha256": "2621af8274e995708218bf245d42447ad68d5138dfb52047896392c176ce8f14",
+      "candidate": "f5570754e6b9534893fc65744e82abe7f0ff0a74",
+      "incumbent": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+      "legacy_task_brief_drift_count": 4
     }
   },
   "verification": [
@@ -225,16 +352,41 @@
       "command": "post-abort /proc allowlisted identity inspection for PID 3816018",
       "result": "alive at mutable dev-root@5877b644 with python3.12 -u, no -B, no command-root/runtime-SHA env, and fresh generated task-brief drift",
       "conclusion": "runtime_alive_but_governed_rollout_acceptance_fail"
+    },
+    {
+      "command": "2026-08-09 $PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT after PR 4648 merge",
+      "result": "exit 1; materialized immutable f5570754 candidate and transaction aborted with Tracked git tree is dirty before baseline/config/signal/launch",
+      "conclusion": "fail_closed_pass_and_legacy_bootstrap_gap_reproduced"
+    },
+    {
+      "command": "sha256sum 2026-08-09 transaction evidence and live config before/after",
+      "result": "transaction 2621af8274e99570...; live config remained 904830b6ff1487f0...",
+      "conclusion": "durable_record_and_no_config_mutation_pass"
+    },
+    {
+      "command": "read-only post-abort /proc identity and active-root tracked status",
+      "result": "PID 3816018 remained alive at mutable 5877b644 with unchanged argv/allowlisted environment; four legacy generated task-brief paths remain dirty",
+      "conclusion": "incumbent_preserved_and_accumulated_drift_gap_identified"
+    },
+    {
+      "command": "f5570754 candidate discover-only plus git status --short --ignored and explicit bytecode filesystem scan",
+      "result": "immutable commit/tree/remote/Git identity passed; tree a910a73b; ignored status and __pycache__/pyc/pyo lists empty after status-child exercise",
+      "conclusion": "candidate_identity_and_bytecode_cleanliness_pass"
+    },
+    {
+      "command": "compare PR 4648 source boundary with active incumbent state",
+      "result": "prevention fix is present in candidate and promotion tracked-tree rejection is unchanged; legacy incumbent drift predates activation and cannot be removed by the existing transaction",
+      "conclusion": "new_source_only_legacy_bootstrap_followup_required"
     }
   ],
   "rollout_and_rollback": {
-    "rollout": "Blocked. Do not retry until the source-only follow-up is merged and a separately authorized governed retry is dispatched.",
+    "rollout": "Blocked. Do not retry until the legacy-drift bootstrap source-only follow-up is merged and a separately authorized governed retry is dispatched.",
     "rollback": "Not invoked because the transaction stopped before incumbent capture, config change, signal, or candidate launch.",
     "operator_prohibitions": [
       "do not reset, stash, checkout, or edit the active mutable dev-root",
       "do not edit live config directly",
-      "do not signal or terminate PID 98981 directly",
-      "do not mutate or delete the immutable candidate"
+      "do not signal or terminate PID 3816018 directly",
+      "do not mutate or delete either immutable candidate"
     ]
   }
 }

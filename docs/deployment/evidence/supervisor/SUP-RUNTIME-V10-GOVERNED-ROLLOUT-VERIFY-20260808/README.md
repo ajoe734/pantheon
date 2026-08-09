@@ -4,7 +4,60 @@ Owner: Codex
 
 Reviewer: Codex2
 
-Outcome: fail closed; runtime unchanged; source-only follow-up required
+Outcome: fail closed; runtime unchanged; legacy-drift bootstrap follow-up required
+
+## 2026-08-09 governed retry after PR #4648
+
+The prerequisite source repair was independently reviewed at exact head
+`10c5ba3fcf44209d2ec33cf2478a72b3a86fa048` and merged to `dev` by PR #4648
+as `f5570754e6b9534893fc65744e82abe7f0ff0a74`. The task branch composed that
+merge, then the authorized retry again used only:
+
+```text
+$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT
+```
+
+The sync script protected the running mutable root, fetched accepted `dev`,
+materialized the SHA-named standalone candidate `f5570754e...`, and delegated
+all promotion authority to the candidate transaction. The transaction stopped
+before baseline capture, config mutation, process signalling, or candidate
+launch with `ValueError: Tracked git tree is dirty`.
+
+PR #4648 correctly prevents future supervisor queue/watch paths from
+materializing task briefs in the command checkout, without weakening the
+promotion cleanliness guard. It cannot remove four task-brief overwrites that
+the legacy incumbent accumulated before the fix was active. The live PID
+`3816018`, mutable cwd at `5877b644...`, argv, allowlisted environment, and
+config SHA-256 `904830b6...` remained unchanged after the abort.
+
+Durable transaction evidence:
+
+```text
+/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/
+supervisor-runtime-promotion-20260809T062622204757Z-3114628.json
+SHA-256: 2621af8274e995708218bf245d42447ad68d5138dfb52047896392c176ce8f14
+```
+
+A read-only candidate discovery passed immutable commit/tree/remote/Git
+identity for `f5570754e...` with tree `a910a73b...`. After the discovery
+status child, `git status --short --ignored` and an explicit filesystem scan
+both found no `__pycache__`, `.pyc`, or `.pyo` path. Discover-only remained
+ineligible because no launched candidate state exists and it does not bind the
+legacy mutable incumbent; this is expected and is not recovery evidence.
+
+No candidate process existed, so this record does not claim the `python -B`
+launch contract, status-child proof under a launched runtime, three fresh
+loops, authoritative-shadow catch-up, queue/worker parity, or provider
+baseline. Those gates remain pending.
+
+The next source-only packet is
+`source-only-followup-legacy-drift-bootstrap.json`. It asks for an explicit,
+transactional legacy-bootstrap boundary that can safely address already
+accumulated, provenance-verifiable generated context drift without mutating the
+active checkout or broadly ignoring tracked changes. A later live retry still
+requires separate governed dispatch.
+
+## 2026-08-08 prior fail-closed attempts
 
 On 2026-08-08 the authorized retry used only
 `$PANTHEON_COMMAND_ROOT/scripts/sync-dev-root.sh $PANTHEON_COMMAND_ROOT`.
@@ -47,8 +100,8 @@ governed V10 rollout contract and is not accepted as recovery evidence.
 No candidate process existed, so this record intentionally does not claim the
 `python -B` launch contract, status-child bytecode proof, three fresh loops,
 authoritative-shadow catch-up, queue/worker parity, or provider baseline.
-Those checks remain blocked until the source-only bootstrap drift policy is
-repaired and a separately authorized governed retry succeeds.
+Those checks remained blocked pending the preventive source repair and a
+separately authorized governed retry.
 
 `evidence.json` is the task-scoped review manifest. The source-only packet
 `source-only-followup-mutable-tracked-drift.json` is submitted through the
@@ -56,3 +109,5 @@ signed assistant dev bridge. Supervisor receipt
 `sup-runtime-v10-mutable-tracked-drift-followup-20260808-2255.json` records
 successful authoritative materialization of
 `SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808` at 23:01:24Z.
+That task later merged through PR #4648; the 2026-08-09 retry above proves the
+preventive fix alone cannot bootstrap the already-dirty legacy incumbent.
