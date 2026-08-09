@@ -372,9 +372,17 @@ def _rearm_evidence_records(
     directory = _recovery_rearm_directory(inbox, packet_path)
     if not directory.exists():
         return []
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(
+            "Bridge failed recovery retry evidence directory is ambiguous"
+        )
     records: list[tuple[Path, Dict[str, Any]]] = []
-    for path in sorted(item for item in directory.iterdir() if item.is_file()):
-        if not re.fullmatch(r"[0-9]{6}\.json", path.name):
+    for path in sorted(directory.iterdir()):
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or not re.fullmatch(r"[0-9]{6}\.json", path.name)
+        ):
             raise ValueError(
                 "Bridge failed recovery retry evidence has an ambiguous filename"
             )
@@ -501,6 +509,43 @@ def _validate_rearm_evidence_chain(
         ):
             raise ValueError("Bridge failed recovery retry evidence chain is stale")
     return prepared
+
+
+def _consumed_failed_receipt_sha256(record: Mapping[str, Any]) -> str:
+    attempt = _rearm_attempt(record)
+    if attempt == 0:
+        value = record.get("failed_receipt_sha256")
+    else:
+        last_rearm = record.get("last_rearm")
+        if not isinstance(last_rearm, Mapping) or last_rearm.get("attempt") != attempt:
+            raise ValueError("Bridge failed recovery retry evidence is malformed")
+        value = last_rearm.get("failed_receipt_sha256")
+    digest = str(value or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Bridge failed recovery retry evidence is malformed")
+    return digest
+
+
+def _complete_rearm_evidence(
+    *,
+    recovery_path: Path,
+    evidence_path: Path,
+    evidence: Mapping[str, Any],
+) -> Dict[str, Any]:
+    next_recovery = evidence.get("next_recovery")
+    if not isinstance(next_recovery, Mapping):
+        raise ValueError("Bridge failed recovery retry evidence is malformed")
+    completed_recovery = dict(next_recovery)
+    _write_json_atomic(recovery_path, completed_recovery)
+    _write_json_atomic(
+        evidence_path,
+        {
+            **evidence,
+            "state": "queued",
+            "queued_at": str(evidence.get("queued_at") or _now()),
+        },
+    )
+    return completed_recovery
 
 
 def _validate_admission_and_replay_collisions(
@@ -860,6 +905,30 @@ def recover_failed_task_packet(
                     packet_id=requested_id,
                     identity=identity,
                 )
+                prepared_rearm = _validate_rearm_evidence_chain(
+                    inbox=inbox,
+                    packet_path=paths["failed"],
+                    recovery=recovery,
+                    packet_id=requested_id,
+                    identity=identity,
+                )
+                if recovery_state == "prepared" and prepared_rearm is not None:
+                    raise ValueError(
+                        "Bridge failed recovery retry evidence conflicts with an "
+                        "unfinished initial recovery"
+                    )
+                if prepared_rearm is not None:
+                    evidence_path, evidence = prepared_rearm
+                    recovery = _complete_rearm_evidence(
+                        recovery_path=recovery_path,
+                        evidence_path=evidence_path,
+                        evidence=evidence,
+                    )
+                    recovery_state = _validate_recovery_record(
+                        recovery,
+                        packet_id=requested_id,
+                        identity=identity,
+                    )
                 receipt = _validate_recovery_receipt(
                     paths["receipts"],
                     packet_id=requested_id,
@@ -897,6 +966,7 @@ def recover_failed_task_packet(
                     "queueState": state_name,
                     "receiptSha256": _canonical_json_sha256(receipt),
                     "recoveryPath": str(recovery_path),
+                    "rearmAttempt": _rearm_attempt(recovery),
                     "inbox": str(inbox),
                 }
 
@@ -917,22 +987,98 @@ def recover_failed_task_packet(
                 packet_digest_value=str(identity["packet_digest"]),
                 expected_status="failed",
             )
+            receipt_sha256 = _canonical_json_sha256(receipt)
             _validate_admission_and_replay_collisions(
                 packet,
                 repo_root=str(root),
             )
 
+            rearm_evidence: tuple[Path, Dict[str, Any]] | None = None
             if recovery is not None:
                 recovery_state = _validate_recovery_record(
                     recovery,
                     packet_id=requested_id,
                     identity=identity,
                 )
-                if recovery_state != "prepared":
-                    raise ValueError(
-                        f"Packet id {requested_id!r} has a queued recovery record "
-                        "but remains in failed storage"
-                    )
+                prepared_rearm = _validate_rearm_evidence_chain(
+                    inbox=inbox,
+                    packet_path=failed_path,
+                    recovery=recovery,
+                    packet_id=requested_id,
+                    identity=identity,
+                )
+                if recovery_state == "prepared":
+                    if prepared_rearm is not None:
+                        raise ValueError(
+                            "Bridge failed recovery retry evidence conflicts with an "
+                            "unfinished initial recovery"
+                        )
+                    if (
+                        _consumed_failed_receipt_sha256(recovery)
+                        != receipt_sha256
+                    ):
+                        raise ValueError(
+                            "Bridge failed recovery receipt changed before the "
+                            "initial recovery completed"
+                        )
+                else:
+                    if prepared_rearm is not None:
+                        evidence_path, evidence = prepared_rearm
+                        if (
+                            recovery == evidence["next_recovery"]
+                            or receipt_sha256
+                            != evidence["current_failed_receipt_sha256"]
+                        ):
+                            recovery = _complete_rearm_evidence(
+                                recovery_path=recovery_path,
+                                evidence_path=evidence_path,
+                                evidence=evidence,
+                            )
+                            recovery_state = _validate_recovery_record(
+                                recovery,
+                                packet_id=requested_id,
+                                identity=identity,
+                            )
+                            prepared_rearm = _validate_rearm_evidence_chain(
+                                inbox=inbox,
+                                packet_path=failed_path,
+                                recovery=recovery,
+                                packet_id=requested_id,
+                                identity=identity,
+                            )
+                    if prepared_rearm is None:
+                        if (
+                            _consumed_failed_receipt_sha256(recovery)
+                            == receipt_sha256
+                        ):
+                            raise ValueError(
+                                f"Packet id {requested_id!r} has no new failed "
+                                "drain receipt to rearm"
+                            )
+                        attempt = _rearm_attempt(recovery) + 1
+                        evidence_path = _recovery_rearm_path(
+                            inbox,
+                            failed_path,
+                            attempt,
+                        )
+                        if evidence_path.exists():
+                            raise ValueError(
+                                "Bridge failed recovery retry evidence sequence "
+                                "is ambiguous"
+                            )
+                        evidence = _prepare_rearm_evidence(
+                            recovery=recovery,
+                            receipt=receipt,
+                            identity=identity,
+                            packet_id=requested_id,
+                            source_path=failed_path,
+                            target_path=paths["pending"],
+                            evidence_path=evidence_path,
+                            attempt=attempt,
+                        )
+                        _write_json_atomic(evidence_path, evidence)
+                        prepared_rearm = (evidence_path, evidence)
+                    rearm_evidence = prepared_rearm
             else:
                 recovery = {
                     "schema": FAILED_RECOVERY_SCHEMA,
@@ -942,7 +1088,7 @@ def recover_failed_task_packet(
                     "source": source or "operator_exact_failed_recovery",
                     "source_path": str(failed_path),
                     "target_path": str(paths["pending"]),
-                    "failed_receipt_sha256": _canonical_json_sha256(receipt),
+                    "failed_receipt_sha256": receipt_sha256,
                     "prepared_at": _now(),
                 }
                 _write_json_atomic(recovery_path, recovery)
@@ -974,19 +1120,35 @@ def recover_failed_task_packet(
             os.replace(failed_path, paths["pending"])
             _fsync_directory(failed_path.parent)
             _fsync_directory(paths["pending"].parent)
-            completed = {
-                **recovery,
-                "state": "queued",
-                "recovered_at": _now(),
-            }
-            _write_json_atomic(recovery_path, completed)
+            if rearm_evidence is not None:
+                evidence_path, evidence = rearm_evidence
+                recovery = _complete_rearm_evidence(
+                    recovery_path=recovery_path,
+                    evidence_path=evidence_path,
+                    evidence=evidence,
+                )
+                result_status = "rearmed"
+            else:
+                recovery = {
+                    **recovery,
+                    "state": "queued",
+                    "recovered_at": _now(),
+                }
+                _write_json_atomic(recovery_path, recovery)
+                result_status = "recovered"
             return {
-                "status": "recovered",
+                "status": result_status,
                 "packetId": requested_id,
                 "packetDigest": identity["packet_digest"],
                 "queueState": "pending",
-                "receiptSha256": _canonical_json_sha256(receipt),
+                "receiptSha256": receipt_sha256,
                 "recoveryPath": str(recovery_path),
+                "rearmAttempt": _rearm_attempt(recovery),
+                **(
+                    {"rearmEvidencePath": str(rearm_evidence[0])}
+                    if rearm_evidence is not None
+                    else {}
+                ),
                 "path": str(paths["pending"]),
                 "inbox": str(inbox),
             }
