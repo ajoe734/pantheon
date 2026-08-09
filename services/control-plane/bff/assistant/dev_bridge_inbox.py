@@ -43,6 +43,9 @@ PROCESSING_CLAIM_TTL_SECONDS = 300.0
 RETRY_BASE_SECONDS = 0.25
 RETRY_MAX_SECONDS = 5.0
 FAILED_RECOVERY_SCHEMA = "pantheon.assistant-dev-packet-failed-recovery.v1"
+FAILED_RECOVERY_REARM_SCHEMA = (
+    "pantheon.assistant-dev-packet-failed-recovery-rearm.v1"
+)
 
 
 def _now() -> str:
@@ -163,6 +166,18 @@ def _recovery_path(inbox: Path, packet_path: Path) -> Path:
     return inbox / "recoveries" / packet_path.name
 
 
+def _recovery_rearm_directory(inbox: Path, packet_path: Path) -> Path:
+    return inbox / "recovery-rearms" / packet_path.stem
+
+
+def _recovery_rearm_path(
+    inbox: Path,
+    packet_path: Path,
+    attempt: int,
+) -> Path:
+    return _recovery_rearm_directory(inbox, packet_path) / f"{attempt:06d}.json"
+
+
 def _recovery_identity(packet: DevTaskPacket) -> Dict[str, Any]:
     signature = (
         packet.signature.model_dump(mode="json", by_alias=True)
@@ -220,14 +235,13 @@ def _validate_recovery_record(
     return state
 
 
-def _validate_recovery_receipt(
-    receipt_path: Path,
+def _validate_recovery_receipt_payload(
+    receipt: Mapping[str, Any],
     *,
     packet_id: str,
     packet_digest_value: str,
     expected_status: str,
 ) -> Dict[str, Any]:
-    receipt = _read_json(receipt_path)
     if str(receipt.get("packetId") or "") != packet_id:
         raise ValueError("Bridge failed recovery receipt packet id mismatch")
     status = str(receipt.get("status") or "")
@@ -252,7 +266,241 @@ def _validate_recovery_receipt(
         raise ValueError(
             "Bridge failed recovery receipt does not bind the exact signed packet"
         )
-    return receipt
+    return dict(receipt)
+
+
+def _validate_recovery_receipt(
+    receipt_path: Path,
+    *,
+    packet_id: str,
+    packet_digest_value: str,
+    expected_status: str,
+) -> Dict[str, Any]:
+    return _validate_recovery_receipt_payload(
+        _read_json(receipt_path),
+        packet_id=packet_id,
+        packet_digest_value=packet_digest_value,
+        expected_status=expected_status,
+    )
+
+
+def _rearm_attempt(record: Mapping[str, Any]) -> int:
+    raw_attempt = record.get("rearm_attempt", 0)
+    if isinstance(raw_attempt, bool):
+        raise ValueError("Bridge failed recovery retry evidence is malformed")
+    try:
+        attempt = int(raw_attempt)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Bridge failed recovery retry evidence is malformed"
+        ) from exc
+    if attempt < 0 or str(raw_attempt).strip() != str(attempt):
+        raise ValueError("Bridge failed recovery retry evidence is malformed")
+    return attempt
+
+
+def _next_rearm_recovery_record(
+    previous: Mapping[str, Any],
+    *,
+    attempt: int,
+    evidence_path: Path,
+    previous_sha256: str,
+    receipt_sha256: str,
+    prepared_at: str,
+) -> Dict[str, Any]:
+    return {
+        **previous,
+        "state": "queued",
+        "rearm_attempt": attempt,
+        "rearmed_at": prepared_at,
+        "last_rearm": {
+            "attempt": attempt,
+            "evidence_path": str(evidence_path),
+            "previous_recovery_sha256": previous_sha256,
+            "failed_receipt_sha256": receipt_sha256,
+            "prepared_at": prepared_at,
+        },
+    }
+
+
+def _prepare_rearm_evidence(
+    *,
+    recovery: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    identity: Mapping[str, Any],
+    packet_id: str,
+    source_path: Path,
+    target_path: Path,
+    evidence_path: Path,
+    attempt: int,
+) -> Dict[str, Any]:
+    prepared_at = _now()
+    previous = dict(recovery)
+    failed_receipt = dict(receipt)
+    previous_sha256 = _canonical_json_sha256(previous)
+    receipt_sha256 = _canonical_json_sha256(failed_receipt)
+    next_recovery = _next_rearm_recovery_record(
+        previous,
+        attempt=attempt,
+        evidence_path=evidence_path,
+        previous_sha256=previous_sha256,
+        receipt_sha256=receipt_sha256,
+        prepared_at=prepared_at,
+    )
+    return {
+        "schema": FAILED_RECOVERY_REARM_SCHEMA,
+        "state": "prepared",
+        "packet_id": packet_id,
+        "identity": dict(identity),
+        "attempt": attempt,
+        "source_path": str(source_path),
+        "target_path": str(target_path),
+        "previous_recovery": previous,
+        "previous_recovery_sha256": previous_sha256,
+        "current_failed_receipt": failed_receipt,
+        "current_failed_receipt_sha256": receipt_sha256,
+        "next_recovery": next_recovery,
+        "next_recovery_sha256": _canonical_json_sha256(next_recovery),
+        "prepared_at": prepared_at,
+    }
+
+
+def _rearm_evidence_records(
+    inbox: Path,
+    packet_path: Path,
+) -> list[tuple[Path, Dict[str, Any]]]:
+    directory = _recovery_rearm_directory(inbox, packet_path)
+    if not directory.exists():
+        return []
+    records: list[tuple[Path, Dict[str, Any]]] = []
+    for path in sorted(item for item in directory.iterdir() if item.is_file()):
+        if not re.fullmatch(r"[0-9]{6}\.json", path.name):
+            raise ValueError(
+                "Bridge failed recovery retry evidence has an ambiguous filename"
+            )
+        records.append((path, _read_json(path)))
+    return records
+
+
+def _validate_rearm_evidence_chain(
+    *,
+    inbox: Path,
+    packet_path: Path,
+    recovery: Mapping[str, Any],
+    packet_id: str,
+    identity: Mapping[str, Any],
+) -> tuple[Path, Dict[str, Any]] | None:
+    records = _rearm_evidence_records(inbox, packet_path)
+    if not records:
+        if _rearm_attempt(recovery) != 0 or recovery.get("last_rearm") is not None:
+            raise ValueError(
+                "Bridge failed recovery retry evidence is missing or stale"
+            )
+        return None
+
+    previous_next: Mapping[str, Any] | None = None
+    prepared: tuple[Path, Dict[str, Any]] | None = None
+    for expected_attempt, (path, evidence) in enumerate(records, start=1):
+        if evidence.get("schema") != FAILED_RECOVERY_REARM_SCHEMA:
+            raise ValueError("Bridge failed recovery retry evidence schema is unsupported")
+        if evidence.get("packet_id") != packet_id or evidence.get("identity") != identity:
+            raise ValueError(
+                "Bridge failed recovery retry evidence identity or provenance mismatch"
+            )
+        if evidence.get("attempt") != expected_attempt:
+            raise ValueError("Bridge failed recovery retry evidence sequence is ambiguous")
+        if path != _recovery_rearm_path(inbox, packet_path, expected_attempt):
+            raise ValueError("Bridge failed recovery retry evidence path is ambiguous")
+        if evidence.get("source_path") != str(packet_path):
+            raise ValueError("Bridge failed recovery retry evidence source path mismatch")
+        target_path = inbox / "pending" / packet_path.name
+        if evidence.get("target_path") != str(target_path):
+            raise ValueError("Bridge failed recovery retry evidence target path mismatch")
+
+        previous = evidence.get("previous_recovery")
+        next_recovery = evidence.get("next_recovery")
+        failed_receipt = evidence.get("current_failed_receipt")
+        if not all(
+            isinstance(item, Mapping)
+            for item in (previous, next_recovery, failed_receipt)
+        ):
+            raise ValueError("Bridge failed recovery retry evidence is malformed")
+        assert isinstance(previous, Mapping)
+        assert isinstance(next_recovery, Mapping)
+        assert isinstance(failed_receipt, Mapping)
+        if evidence.get("previous_recovery_sha256") != _canonical_json_sha256(previous):
+            raise ValueError(
+                "Bridge failed recovery retry evidence previous digest mismatch"
+            )
+        if evidence.get("current_failed_receipt_sha256") != _canonical_json_sha256(
+            failed_receipt
+        ):
+            raise ValueError(
+                "Bridge failed recovery retry evidence receipt digest mismatch"
+            )
+        if evidence.get("next_recovery_sha256") != _canonical_json_sha256(next_recovery):
+            raise ValueError("Bridge failed recovery retry evidence next digest mismatch")
+
+        _validate_recovery_record(
+            previous,
+            packet_id=packet_id,
+            identity=identity,
+        )
+        _validate_recovery_record(
+            next_recovery,
+            packet_id=packet_id,
+            identity=identity,
+        )
+        if _rearm_attempt(previous) != expected_attempt - 1:
+            raise ValueError("Bridge failed recovery retry evidence sequence is stale")
+        if previous_next is not None and previous != previous_next:
+            raise ValueError("Bridge failed recovery retry evidence chain is stale")
+        _validate_recovery_receipt_payload(
+            failed_receipt,
+            packet_id=packet_id,
+            packet_digest_value=str(identity["packet_digest"]),
+            expected_status="failed",
+        )
+        prepared_at = str(evidence.get("prepared_at") or "")
+        if not prepared_at:
+            raise ValueError("Bridge failed recovery retry evidence is malformed")
+        expected_next = _next_rearm_recovery_record(
+            previous,
+            attempt=expected_attempt,
+            evidence_path=path,
+            previous_sha256=str(evidence["previous_recovery_sha256"]),
+            receipt_sha256=str(evidence["current_failed_receipt_sha256"]),
+            prepared_at=prepared_at,
+        )
+        if next_recovery != expected_next:
+            raise ValueError("Bridge failed recovery retry evidence next record mismatch")
+
+        state = str(evidence.get("state") or "")
+        if state == "prepared":
+            if prepared is not None or expected_attempt != len(records):
+                raise ValueError(
+                    "Bridge failed recovery retry evidence prepared-record ambiguity"
+                )
+            prepared = (path, evidence)
+        elif state == "queued":
+            if not str(evidence.get("queued_at") or ""):
+                raise ValueError("Bridge failed recovery retry evidence is malformed")
+        else:
+            raise ValueError("Bridge failed recovery retry evidence state is unsupported")
+        previous_next = next_recovery
+
+    assert previous_next is not None
+    if prepared is None:
+        if recovery != previous_next:
+            raise ValueError("Bridge failed recovery retry evidence chain is stale")
+    else:
+        evidence = prepared[1]
+        if recovery not in (
+            evidence["previous_recovery"],
+            evidence["next_recovery"],
+        ):
+            raise ValueError("Bridge failed recovery retry evidence chain is stale")
+    return prepared
 
 
 def _validate_admission_and_replay_collisions(
