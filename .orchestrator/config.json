@@ -946,19 +946,19 @@
     "target_workload": {
       "Claude": 5,
       "Claude2": 5,
-      "Antigravity": 5,
-      "Antigravity2": 6,
-      "Codex": 30,
-      "Codex2": 30,
+      "Antigravity": 30,
+      "Antigravity2": 30,
+      "Codex": 5,
+      "Codex2": 6,
       "Copilot": 0
     },
     "max_tasks_per_agent_by_agent": {
       "Claude": 1,
       "Claude2": 1,
-      "Antigravity": 1,
-      "Antigravity2": 6,
-      "Codex": 4,
-      "Codex2": 4,
+      "Antigravity": 4,
+      "Antigravity2": 4,
+      "Codex": 2,
+      "Codex2": 2,
       "Copilot": 0
     },
     "max_dispatches_per_tick": 10,
@@ -967,10 +967,10 @@
     "allow_legacy_provider_account_aliases": false,
     "max_concurrent_per_account": {
       "claude_account_shared_max_1": 1,
-      "antigravity": 1,
-      "antigravity2": 6,
-      "codex1": 4,
-      "codex2": 4,
+      "antigravity": 4,
+      "antigravity2": 4,
+      "codex1": 2,
+      "codex2": 2,
       "copilot": 0
     },
     "max_concurrent_workers": 13
