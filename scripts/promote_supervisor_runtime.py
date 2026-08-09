@@ -502,7 +502,13 @@ class CandidateRuntimeIdentity:
                 or root_handle.identity.inode != self.candidate_root_inode
             ):
                 raise ValueError("Candidate root file identity drift detected")
-            current_git_identity = (
+            # Git may atomically refresh its index while running the read-only
+            # cleanliness probes used to build this immutable identity.  The
+            # index is not executable authority: revalidate its current
+            # contents through the complete cleanliness checks below.  The
+            # repository control directory, objects, config and HEAD remain
+            # exact identity bindings and must never be rebound here.
+            current_static_git_identity = (
                 root_handle.git_identity.device,
                 root_handle.git_identity.inode,
                 root_handle.git_objects_identity.device,
@@ -511,10 +517,8 @@ class CandidateRuntimeIdentity:
                 root_handle.git_config_identity.inode,
                 root_handle.git_head_identity.device,
                 root_handle.git_head_identity.inode,
-                root_handle.git_index_identity.device,
-                root_handle.git_index_identity.inode,
             )
-            captured_git_identity = (
+            captured_static_git_identity = (
                 self.git_directory_device,
                 self.git_directory_inode,
                 self.git_objects_device,
@@ -523,10 +527,8 @@ class CandidateRuntimeIdentity:
                 self.git_config_inode,
                 self.git_head_device,
                 self.git_head_inode,
-                self.git_index_device,
-                self.git_index_inode,
             )
-            if current_git_identity != captured_git_identity:
+            if current_static_git_identity != captured_static_git_identity:
                 raise ValueError("Candidate Git metadata identity drift detected")
 
             remote_url = parse_origin_url(root_handle)
