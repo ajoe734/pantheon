@@ -10,7 +10,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
     "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
-    "evidence_cut_at": "2026-08-09T06:34:11Z"
+    "evidence_cut_at": "2026-08-09T06:42:01Z"
   },
   "scope": {
     "owned_layer": "Authorized immutable supervisor-runtime promotion attempt, transaction outcome capture, fail-closed verification, and canonical source-only follow-up dispatch.",
@@ -368,8 +368,26 @@
     "task_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
     "owner": "Claude2",
     "reviewer": "Codex",
-    "dispatch_status": "packet_prepared_pending_signed_bridge_queue",
-    "scope_boundary": "Recover signed admission after an authoritative assign commit followed by derived-view failure; do not implement the legacy runtime bootstrap repair in this task."
+    "dispatch_status": "processed_and_authoritatively_materialized",
+    "scope_boundary": "Recover signed admission after an authoritative assign commit followed by derived-view failure; do not implement the legacy runtime bootstrap repair in this task.",
+    "queued_at": "2026-08-09T06:39:25Z",
+    "drained_at": "2026-08-09T06:41:24Z",
+    "receipt_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/sup-assistant-dev-bridge-partial-assign-recovery-20260809-0638.json",
+    "processed_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/processed/sup-assistant-dev-bridge-partial-assign-recovery-20260809-0638.json",
+    "receipt_sha256": "18078df12135f359362ff699a0f720754d52d75b5ee76c2b10763b4c152ddad5",
+    "packet_digest": "b87f06a36318bd042df35c5779e34280f38dc54acbb501f612e7a5533213b910",
+    "task_spec_hash": "551c882edf66b43c0324e90603308d4f23d1627b38d07ed364444d45504333ad",
+    "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-assistant-dev-bridge-partial-assign-recovery-20260809-0638--b87f06a36318bd04.json",
+    "materialization_readback": {
+      "status": "verified",
+      "store_mode": "authoritative",
+      "event_count": 13943,
+      "last_event_id": "task-state-3273c7564ba6565bbecca5a3c50003c8f1e7c28235acd5233c9c9e7cf9d05dd1",
+      "expected_state_sha256": "122280612385d969d79baf72d210f0f2b5c52886df96a6d0c3184a173b088445",
+      "projected_state_sha256": "122280612385d969d79baf72d210f0f2b5c52886df96a6d0c3184a173b088445",
+      "canonical_task_source": "active",
+      "canonical_task_status": "todo"
+    }
   },
   "verification": [
     {
@@ -441,6 +459,11 @@
       "command": "requeue original packet id, then queue retry1 with identical task model and a new packet id",
       "result": "original returned duplicate against failed leaf; retry1 failed because materialized task remains bound to original signed provenance",
       "conclusion": "replay_and_provenance_guards_pass_but_partial_assign_recovery_missing"
+    },
+    {
+      "command": "signed bridge partial-assign recovery packet plus supervisor-owned drain and governed show",
+      "result": "processed/admitted at 06:41:24Z; authoritative expected/projected hashes match at event 13943; source task is active todo with exact spec hash 551c882e",
+      "conclusion": "bridge_recovery_source_task_dispatch_pass"
     }
   ],
   "rollout_and_rollback": {

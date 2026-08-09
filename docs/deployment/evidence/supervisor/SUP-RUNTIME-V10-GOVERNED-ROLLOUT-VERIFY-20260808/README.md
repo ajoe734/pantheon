@@ -79,6 +79,14 @@ bridge atomicity/recovery gap. The additional source-only packet
 authoritative recovery path for this exact post-commit failure; it does not
 broaden or duplicate the legacy-bootstrap implementation scope.
 
+That bridge-recovery packet was processed and admitted at `06:41:24Z`.
+Authoritative materialization readback verified event count `13943` and equal
+expected/projected SHA-256
+`122280612385d969d79baf72d210f0f2b5c52886df96a6d0c3184a173b088445`.
+Task `SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809` now exists as
+`todo`, owned by `Claude2` and reviewed by `Codex`. This is the accepted source
+repair lane; the original legacy-bootstrap task remains blocked on admission.
+
 ## 2026-08-08 prior fail-closed attempts
 
 On 2026-08-08 the authorized retry used only
