@@ -352,6 +352,55 @@ def queue_task_packet(
     }
 
 
+def requeue_failed_task_packet(
+    packet: DevTaskPacket,
+    *,
+    repo_root: Optional[str] = None,
+    inbox_dir: Optional[str] = None,
+    key_store: Optional[Dict[str, bytes]] = None,
+) -> Dict[str, Any]:
+    """Recover a failed leaf packet by moving it back to pending under lock-protection."""
+    root = _repo_root(repo_root)
+    inbox = _inbox_root(str(root), inbox_dir)
+    verify_packet(packet, key_store=key_store)
+    safe_id = _safe_packet_id(packet.packet_id)
+    failed_file = inbox / "failed" / f"{safe_id}.json"
+    paths = {
+        "pending": inbox / "pending" / f"{safe_id}.json",
+        "processing": inbox / "processing" / f"{safe_id}.json",
+        "processed": inbox / "processed" / f"{safe_id}.json",
+        "receipt": inbox / "receipts" / f"{safe_id}.json",
+    }
+
+    with _file_lock(inbox / ".queue.lock"):
+        if not failed_file.is_file():
+            raise ValueError(f"Packet {packet.packet_id!r} not found in failed inbox")
+
+        existing = [name for name, path in paths.items() if path.exists()]
+        if existing:
+            raise ValueError(f"Cannot requeue packet {packet.packet_id!r}: existing leaf found in {existing[0]}")
+
+        # Verify stored file content matches signed packet digest and spec
+        failed_payload = _read_json(failed_file)
+        stored_packet = packet_from_payload(failed_payload)
+        if packet_digest(stored_packet) != packet_digest(packet):
+            raise ValueError(f"Failed packet {packet.packet_id!r} payload digest mismatch")
+
+        # Move failed back to pending safely under lock
+        _ensure_directory(paths["pending"].parent)
+        os.replace(failed_file, paths["pending"])
+        _fsync_directory(failed_file.parent)
+        _fsync_directory(paths["pending"].parent)
+
+    return {
+        "status": "requeued",
+        "packetId": packet.packet_id,
+        "requeued": True,
+        "path": str(paths["pending"]),
+        "inbox": str(inbox),
+    }
+
+
 def queue_payload(
     payload: Mapping[str, Any],
     *,

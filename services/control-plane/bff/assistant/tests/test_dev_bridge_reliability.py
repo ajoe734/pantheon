@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -1884,3 +1886,234 @@ def test_receipt_persistence_failure_leaves_processing_for_safe_retry(
     assert persisted["recoveredFromReplay"] is True
     assert persisted["result"]["replayRejected"] is True
     assert not processing.exists()
+
+
+def test_assign_exit_nonzero_with_materialized_task_recovers_dispatched(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_assign_exit_nonzero_recovered")
+    task = packet.tasks[0]
+    real_run = dev_bridge_dispatcher.subprocess.run
+
+    def nonzero_with_materialized_task(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("cmd") or []
+        res = real_run(*args, **kwargs)
+        if len(cmd) > 1 and cmd[1].endswith("ai_status.py") and cmd[2] == "assign":
+            # Simulate a non-zero exit (code 1) after ai_status.py already mutated canonical state
+            res.returncode = 1
+            res.stderr = "derived view refresh failed after canonical commit"
+        return res
+
+    with patch.object(
+        dev_bridge_dispatcher.subprocess,
+        "run",
+        side_effect=nonzero_with_materialized_task,
+    ):
+        result = dispatch_task_packet(
+            BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root)),
+            key_store=KEY_STORE,
+        )
+
+    assert result.errors == []
+    assert result.admission_status == "admitted"
+    assert result.task_records[0].status == "dispatched"
+    assert result.task_records[0].error is None
+    assert has_seen_packet(packet.packet_id, repo_root=str(repo_root))
+
+
+def test_failed_receipt_recovery_for_exact_original_packet_id(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    authoritative_root, event_log, state = _authoritative_status_root(tmp_path)
+    packet = _signed("pkt_failed_leaf_recovery")
+    inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
+    runtime_env = {
+        "PANTHEON_STATUS_ROOT": str(authoritative_root),
+        "PANTHEON_COMMAND_ROOT": str(REPO_ROOT),
+        "PANTHEON_COMMAND_RUNTIME_SHA": _git_stdout(REPO_ROOT, "rev-parse", "HEAD"),
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+    }
+
+    # Queue original packet and simulate failed initial processing after partial assign
+    queued = queue_task_packet(packet, repo_root=str(repo_root))
+    assert queued["status"] == "queued"
+    pending_file = inbox / "pending" / f"{packet.packet_id}.json"
+    failed_dir = inbox / "failed"
+    failed_dir.mkdir(parents=True, exist_ok=True)
+    failed_file = failed_dir / f"{packet.packet_id}.json"
+
+    # Materialize task in authoritative task state store
+    task = packet.tasks[0]
+    metadata = _task_metadata(packet, task)
+    with patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata), "AI_NAME": "Human/Ops"}):
+        AI_STATUS.command_assign(
+            state,
+            [task.id, task.owner, task.reviewer, task.title],
+        )
+        AI_STATUS.append_state_commit(
+            event_log,
+            state,
+            source="Human/Ops",
+        )
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    (authoritative_root / "ai-status.json").write_text(
+        json.dumps(snapshot["state"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    # Move pending file to failed to simulate failed initial run
+    os.replace(pending_file, failed_file)
+
+    # 1. Assert queue_task_packet returns duplicate for failed leaf
+    dup = queue_task_packet(packet, repo_root=str(repo_root))
+    assert dup["status"] == "duplicate"
+    assert dup["existing"] == "failed"
+
+    # 2. Test fail closed checks on requeue_failed_task_packet
+    # 2a. Mismatched packet id
+    mismatched_id_packet = _signed("pkt_other_id")
+    with pytest.raises(ValueError, match="not found in failed inbox"):
+        dev_bridge_inbox.requeue_failed_task_packet(mismatched_id_packet, repo_root=str(repo_root))
+
+    # 2b. Modified digest/spec for same packet id
+    tampered_packet = copy.deepcopy(packet)
+    tampered_packet.tasks[0].title = "Tampered title"
+    tampered_signed = sign_packet(tampered_packet, key_store=KEY_STORE)
+    with pytest.raises(ValueError, match="payload digest mismatch"):
+        dev_bridge_inbox.requeue_failed_task_packet(tampered_signed, repo_root=str(repo_root))
+
+    # 3. Governed recovery via requeue_failed_task_packet
+    requeued = dev_bridge_inbox.requeue_failed_task_packet(packet, repo_root=str(repo_root))
+    assert requeued["status"] == "requeued"
+    assert (inbox / "pending" / f"{packet.packet_id}.json").is_file()
+    assert not (inbox / "failed" / f"{packet.packet_id}.json").is_file()
+
+    # 4. Test fail-closed on existing leaf collision during requeue
+    # Re-create a failed file to test collision while pending already exists
+    shutil.copy(inbox / "pending" / f"{packet.packet_id}.json", failed_file)
+    with pytest.raises(ValueError, match="existing leaf found in pending"):
+        dev_bridge_inbox.requeue_failed_task_packet(packet, repo_root=str(repo_root))
+    failed_file.unlink()
+
+    drained = drain_task_packet_inbox(repo_root=str(repo_root), dispatch_env=runtime_env)
+    assert drained["processedCount"] == 1
+    assert drained["errorCount"] == 0
+    receipt = drained["packets"][0]
+    assert receipt["status"] == "processed"
+    assert receipt["result"]["admissionStatus"] == "admitted"
+    assert (inbox / "processed" / f"{packet.packet_id}.json").is_file()
+    assert (inbox / "receipts" / f"{packet.packet_id}.json").is_file()
+
+
+def test_nonzero_assign_authoritative_readback_success_and_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+
+    authoritative_root, event_log, state = _authoritative_status_root(tmp_path)
+
+    runtime_env = {
+        "PANTHEON_STATUS_ROOT": str(authoritative_root),
+        "PANTHEON_COMMAND_ROOT": str(repo_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": "test-sha",
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        "PANTHEON_REQUIRE_TASK_STATE_READBACK": "1",
+    }
+
+    packet = _signed("pkt_nonzero_readback")
+    task = packet.tasks[0]
+
+    # Pre-populate authoritative event log and snapshot state with matching task
+    metadata = _task_metadata(packet, task)
+    with patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata), "AI_NAME": "Human/Ops"}):
+        AI_STATUS.command_assign(
+            state,
+            [task.id, task.owner, task.reviewer, task.title],
+        )
+        AI_STATUS.append_state_commit(
+            event_log,
+            state,
+            source="Human/Ops",
+        )
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    (authoritative_root / "ai-status.json").write_text(
+        json.dumps(snapshot["state"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (repo_root / "ai-status.json").write_text(
+        json.dumps(snapshot["state"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    # 1. Mock subprocess.run to simulate non-zero exit from ai_status.py assign
+    orig_run = subprocess.run
+
+    def mock_run(cmd, *args, **kwargs):
+        cmd_list = [str(c) for c in cmd]
+        if len(cmd_list) >= 3 and cmd_list[2] == "assign":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="derived view refresh failed")
+        return orig_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # _dispatch_task should perform governed show readback from authoritative log,
+    # find matching task spec and signed provenance, and succeed as "dispatched"
+    record = dev_bridge_dispatcher._dispatch_task(
+        task,
+        packet=packet,
+        repo_root=str(repo_root),
+        dry_run=False,
+        environment=runtime_env,
+    )
+    assert record.status == "dispatched"
+    assert record.error is None
+
+    # 2. Test mismatch case: tamper with task spec in authoritative log
+    event_log_tampered = authoritative_root / ".orchestrator" / "task-state-events-tampered.jsonl"
+    event_log_tampered.parent.mkdir(parents=True, exist_ok=True)
+    event_log_tampered.write_text("", encoding="utf-8")
+    state_tampered = AI_STATUS.default_state()
+    state_tampered["tasks"] = []
+    metadata_tampered = copy.deepcopy(metadata)
+    metadata_tampered["dev_bridge"]["task_spec"]["title"] = "Tampered Title"
+    encoded_spec = json.dumps(metadata_tampered["dev_bridge"]["task_spec"], sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    metadata_tampered["dev_bridge"]["task_spec_hash"] = hashlib.sha256(encoded_spec).hexdigest()
+    with patch.dict(os.environ, {"TASK_METADATA_JSON": json.dumps(metadata_tampered), "AI_NAME": "Human/Ops"}):
+        AI_STATUS.command_assign(
+            state_tampered,
+            [task.id, task.owner, task.reviewer, "Tampered Title"],
+        )
+        AI_STATUS.append_state_commit(
+            event_log_tampered,
+            state_tampered,
+            source="Human/Ops",
+        )
+
+    snapshot_tampered = AI_STATUS.load_snapshot(event_log_tampered)
+    (authoritative_root / "ai-status.json").write_text(
+        json.dumps(snapshot_tampered["state"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (repo_root / "ai-status.json").write_text(
+        json.dumps(snapshot_tampered["state"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    runtime_env_tampered = dict(runtime_env)
+    runtime_env_tampered["PANTHEON_TASK_STATE_EVENT_LOG"] = str(event_log_tampered)
+
+    record_mismatch = dev_bridge_dispatcher._dispatch_task(
+        task,
+        packet=packet,
+        repo_root=str(repo_root),
+        dry_run=False,
+        environment=runtime_env_tampered,
+    )
+    assert record_mismatch.status == "error"
+    assert "does not match the signed task spec" in record_mismatch.error
+

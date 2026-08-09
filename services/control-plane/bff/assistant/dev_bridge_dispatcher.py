@@ -1128,8 +1128,48 @@ def _dispatch_task(
             cwd=repo_root,
         )
         if result.returncode != 0:
+            error_msg = (result.stderr or result.stdout or "non-zero exit").strip()[:2000]
+            # Check if canonical task state write succeeded despite nonzero exit (e.g., derived view refresh failure).
+            try:
+                post_candidates: List[Dict[str, object]] = []
+                if governed:
+                    command_environment = {**env}
+                    for name in AUTO_WORKER_ENV_NAMES:
+                        command_environment.pop(name, None)
+                    command_environment["AI_NAME"] = BRIDGE_STATUS_ACTOR
+                    status_root = env.get(STATUS_ROOT_ENV) or repo_root
+                    try:
+                        show_payload = _run_readback_command(
+                            [sys.executable, ai_status, "show", task.id],
+                            environment=command_environment,
+                            repo_root=status_root,
+                            label=f"post-assign readback for {task.id}",
+                        )
+                        source = str(show_payload.get("source") or "").strip()
+                        candidate = show_payload.get("task") if source == "active" else (
+                            show_payload.get("snapshot", {}).get("task") if source == "archive" and isinstance(show_payload.get("snapshot"), dict) else None
+                        )
+                        if isinstance(candidate, dict):
+                            post_candidates.append(candidate)
+                    except (OSError, ValueError):
+                        pass
+
+                if not post_candidates:
+                    post_candidates = _materialized_task_candidates(
+                        repo_root=repo_root,
+                        task_id=task.id,
+                    )
+
+                if post_candidates:
+                    for candidate in post_candidates:
+                        _validate_materialized_task_candidate(packet, task, candidate)
+                    record.status = "dispatched"
+                    record.error = None
+                    return record
+            except (OSError, ValueError):
+                pass
             record.status = "retryable" if result.returncode == 75 else "error"
-            record.error = (result.stderr or result.stdout or "non-zero exit").strip()[:2000]
+            record.error = error_msg
     except subprocess.TimeoutExpired:
         record.status = "retryable"
         record.error = f"ai_status.py assign timed out after {timeout_seconds:g}s"

@@ -1,0 +1,10 @@
+{
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+  "title": "Recover signed admission after partial authoritative task assign",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "review_outcome": "pending_review",
+  "summary": "Recover signed admission after partial authoritative task assign. Cleaned branch scope by resetting unrelated SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808 commits and orchestrator_status diffs, verified exact-head push with --force-with-lease, and passed all 51 dev bridge reliability and inbox tests.",
+  "verification_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+  "verified": true
+}
