@@ -87,6 +87,10 @@ DEFAULT_DISPATCH_CLAIM_TTL_SECONDS = 300.0
 DISPATCH_CLAIM_SCHEMA = "pantheon.assistant-dev-bridge-dispatch-claim.v1"
 
 
+class MaterializedTaskMissingError(ValueError):
+    """The governed task store authoritatively reports that an id is absent."""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -883,11 +887,67 @@ def _run_readback_command(
     return payload
 
 
+def _run_governed_task_show(
+    *,
+    ai_status: str,
+    task_id: str,
+    environment: Mapping[str, str],
+    repo_root: str,
+) -> Dict[str, object]:
+    """Read one task through the governed command and classify exact absence.
+
+    `show` uses exit 1 for an unknown task.  Only its exact, id-bound error is
+    treated as an absent row; every other nonzero exit, malformed response, or
+    runtime failure remains fail-closed.
+    """
+
+    timeout_seconds = _assign_timeout_seconds(environment)
+    label = f"canonical task-state readback for {task_id}"
+    command = [sys.executable, ai_status, "show", task_id]
+    try:
+        result = subprocess.run(
+            command,
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            cwd=repo_root,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OSError(f"{label} timed out after {timeout_seconds:g}s") from exc
+    except OSError as exc:
+        raise OSError(f"{label} could not execute: {exc}") from exc
+
+    output = (result.stdout or "").strip()
+    error = (result.stderr or "").strip()
+    if result.returncode != 0:
+        if (
+            result.returncode == 1
+            and not output
+            and error == f"Unknown task: {task_id}"
+        ):
+            raise MaterializedTaskMissingError(
+                f"{label} reported exact absence: {error}"
+            )
+        detail = error or output or f"exit {result.returncode}"
+        if result.returncode in {3, 75}:
+            raise OSError(f"{label} unavailable: {detail[:500]}")
+        raise ValueError(f"{label} failed: {detail[:500]}")
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must return a JSON object")
+    return payload
+
+
 def _canonical_task_state_readback(
     packet: DevTaskPacket,
     *,
     repo_root: str,
     environment: Mapping[str, str],
+    tasks: Optional[List[BridgeTask]] = None,
 ) -> Dict[str, object]:
     task_state_env = _runtime_task_state_env(
         repo_root,
@@ -896,8 +956,12 @@ def _canonical_task_state_readback(
     required = str(
         environment.get(REQUIRE_TASK_STATE_READBACK_ENV) or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
+    ai_status, status_env, governed = _status_command_context(
+        repo_root,
+        environment=environment,
+    )
     if not task_state_env:
-        if required:
+        if required or governed:
             raise ValueError(
                 "canonical task-state runtime binding is missing; "
                 "file/activity-only bridge dispatch is not admissible"
@@ -907,10 +971,6 @@ def _canonical_task_state_readback(
             "taskIds": [task.id for task in packet.tasks],
         }
 
-    ai_status, status_env, governed = _status_command_context(
-        repo_root,
-        environment=environment,
-    )
     if not governed:
         raise ValueError(
             "canonical task-state readback requires the governed command runtime"
@@ -920,13 +980,14 @@ def _canonical_task_state_readback(
         command_environment.pop(name, None)
     command_environment["AI_NAME"] = BRIDGE_STATUS_ACTOR
 
+    selected_tasks = list(tasks) if tasks is not None else list(packet.tasks)
     task_readbacks: List[Dict[str, object]] = []
-    for task in packet.tasks:
-        payload = _run_readback_command(
-            [sys.executable, ai_status, "show", task.id],
+    for task in selected_tasks:
+        payload = _run_governed_task_show(
+            ai_status=ai_status,
+            task_id=task.id,
             environment=command_environment,
             repo_root=repo_root,
-            label=f"canonical task-state readback for {task.id}",
         )
         source = str(payload.get("source") or "").strip()
         if source == "active":
@@ -976,7 +1037,7 @@ def _canonical_task_state_readback(
         "status": "verified",
         "storeMode": task_state_env[TASK_STATE_MODE_ENV],
         "eventLog": task_state_env[TASK_STATE_EVENT_LOG_ENV],
-        "taskIds": [task.id for task in packet.tasks],
+        "taskIds": [task.id for task in selected_tasks],
         "tasks": task_readbacks,
         "checkpoint": {
             "eventCount": projection.get("event_count"),
@@ -996,6 +1057,23 @@ def _validate_materialized_tasks(
     """Bind a successful dispatch/admission to canonical task-state readback."""
 
     command_environment = _merged_environment(environment)
+    task_state_env = _runtime_task_state_env(
+        repo_root,
+        environment=command_environment,
+    )
+    _ai_status, _status_env, governed = _status_command_context(
+        repo_root,
+        environment=command_environment,
+    )
+    if task_state_env or governed:
+        # Governed mode has exactly one read authority.  Repository-local
+        # projection and archive files are derived outputs and must never be a
+        # fallback when the authoritative `show` path is unavailable.
+        return _canonical_task_state_readback(
+            packet,
+            repo_root=repo_root,
+            environment=command_environment,
+        )
 
     for task in packet.tasks:
         candidates = _materialized_task_candidates(
@@ -1038,30 +1116,6 @@ def _dispatch_task(
     )
 
     if dry_run:
-        return record
-
-    # A previous exact attempt may have materialised this row before a later
-    # task timed out.  It may also have completed and moved to the canonical
-    # archive before packet retry.  Validate that immutable signed provenance
-    # and treat it as the successful idempotent prefix; invoking `assign` would
-    # trip the archived-id reuse guard and prevent the remaining tasks from
-    # ever reaching admission.
-    try:
-        existing_candidates = _materialized_task_candidates(
-            repo_root=repo_root,
-            task_id=task.id,
-        )
-        for candidate in existing_candidates:
-            _validate_materialized_task_candidate(packet, task, candidate)
-    except OSError as exc:
-        record.status = "retryable"
-        record.error = f"existing bridge task readback unavailable: {exc}"
-        return record
-    except ValueError as exc:
-        record.status = "error"
-        record.error = str(exc)
-        return record
-    if existing_candidates:
         return record
 
     try:
@@ -1107,6 +1161,49 @@ def _dispatch_task(
         ensure_ascii=False,
     )
 
+    # A previous exact attempt may have materialised this row before the
+    # parent observed a timeout/nonzero exit.  In governed mode, only the
+    # authoritative `show` command and journal parity check may establish that
+    # idempotent prefix; repository-local task files are never consulted.
+    if governed:
+        try:
+            _canonical_task_state_readback(
+                packet,
+                repo_root=repo_root,
+                environment=env,
+                tasks=[task],
+            )
+        except MaterializedTaskMissingError:
+            pass
+        except OSError as exc:
+            record.status = "retryable"
+            record.error = f"existing bridge task readback unavailable: {exc}"
+            return record
+        except ValueError as exc:
+            record.status = "error"
+            record.error = str(exc)
+            return record
+        else:
+            return record
+    else:
+        try:
+            existing_candidates = _materialized_task_candidates(
+                repo_root=repo_root,
+                task_id=task.id,
+            )
+            for candidate in existing_candidates:
+                _validate_materialized_task_candidate(packet, task, candidate)
+        except OSError as exc:
+            record.status = "retryable"
+            record.error = f"existing bridge task readback unavailable: {exc}"
+            return record
+        except ValueError as exc:
+            record.status = "error"
+            record.error = str(exc)
+            return record
+        if existing_candidates:
+            return record
+
     cmd = [
         sys.executable,
         ai_status,
@@ -1118,6 +1215,8 @@ def _dispatch_task(
     ]
 
     timeout_seconds = _assign_timeout_seconds(env)
+    failure_status: str | None = None
+    failure_error: str | None = None
     try:
         result = subprocess.run(
             cmd,
@@ -1128,14 +1227,51 @@ def _dispatch_task(
             cwd=repo_root,
         )
         if result.returncode != 0:
-            record.status = "retryable" if result.returncode == 75 else "error"
-            record.error = (result.stderr or result.stdout or "non-zero exit").strip()[:2000]
+            failure_status = "retryable" if result.returncode == 75 else "error"
+            failure_error = (
+                result.stderr or result.stdout or "non-zero exit"
+            ).strip()[:2000]
     except subprocess.TimeoutExpired:
-        record.status = "retryable"
-        record.error = f"ai_status.py assign timed out after {timeout_seconds:g}s"
+        failure_status = "retryable"
+        failure_error = f"ai_status.py assign timed out after {timeout_seconds:g}s"
     except OSError as exc:
-        record.status = "error"
-        record.error = str(exc)
+        failure_status = "error"
+        failure_error = str(exc)
+
+    if failure_error is None:
+        return record
+
+    if governed:
+        # A nonzero exit or timeout is not proof that the authoritative writer
+        # failed before commit.  Read the exact row back immediately and accept
+        # only complete signed spec/provenance plus journal parity.  Missing,
+        # unavailable, malformed, or mismatched readback never reaches
+        # admission and never falls back to local projections.
+        try:
+            _canonical_task_state_readback(
+                packet,
+                repo_root=repo_root,
+                environment=env,
+                tasks=[task],
+            )
+        except MaterializedTaskMissingError:
+            record.status = failure_status or "error"
+            record.error = failure_error
+        except OSError as exc:
+            record.status = "retryable"
+            record.error = (
+                f"{failure_error}; authoritative post-assign readback unavailable: {exc}"
+            )
+        except ValueError as exc:
+            record.status = "error"
+            record.error = (
+                f"{failure_error}; authoritative post-assign readback invalid: {exc}"
+            )
+        else:
+            return record
+    else:
+        record.status = failure_status or "error"
+        record.error = failure_error
 
     return record
 

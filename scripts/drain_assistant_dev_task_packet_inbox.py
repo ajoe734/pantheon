@@ -20,7 +20,10 @@ for root in (STATUS_ROOT, CODE_ROOT):
     if bff_dir.exists() and str(bff_dir) not in sys.path:
         sys.path.insert(0, str(bff_dir))
 
-from assistant.dev_bridge_inbox import drain_task_packet_inbox  # noqa: E402
+from assistant.dev_bridge_inbox import (  # noqa: E402
+    drain_task_packet_inbox,
+    recover_failed_task_packet,
+)
 
 
 def _emit_json(stream: Any, payload: Mapping[str, Any]) -> None:
@@ -38,18 +41,38 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inbox-dir", help="Inbox directory. Defaults to .orchestrator/assistant-dev-packets.")
     parser.add_argument("--limit", type=int, default=None, help="Maximum pending packets to drain.")
     parser.add_argument("--dry-run", action="store_true", help="Verify and preview without moving or dispatching packets.")
+    parser.add_argument(
+        "--recover-failed-packet-id",
+        help=(
+            "Lock, verify, and requeue one exact signed packet id from failed "
+            "storage. This action does not drain the recovered packet."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        result = drain_task_packet_inbox(
-            repo_root=args.repo_root or str(STATUS_ROOT),
-            inbox_dir=args.inbox_dir,
-            limit=args.limit,
-            dry_run=args.dry_run,
-        )
+        if args.recover_failed_packet_id:
+            if args.dry_run or args.limit is not None:
+                raise ValueError(
+                    "--recover-failed-packet-id cannot be combined with "
+                    "--dry-run or --limit"
+                )
+            result = recover_failed_task_packet(
+                args.recover_failed_packet_id,
+                repo_root=args.repo_root or str(STATUS_ROOT),
+                inbox_dir=args.inbox_dir,
+                source="drain_cli_exact_failed_recovery",
+            )
+        else:
+            result = drain_task_packet_inbox(
+                repo_root=args.repo_root or str(STATUS_ROOT),
+                inbox_dir=args.inbox_dir,
+                limit=args.limit,
+                dry_run=args.dry_run,
+            )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         _emit_json(sys.stderr, {"status": "error", "error": str(exc)})
         return 2
