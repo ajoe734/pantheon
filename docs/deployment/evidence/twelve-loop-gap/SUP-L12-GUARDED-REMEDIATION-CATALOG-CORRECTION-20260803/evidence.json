@@ -45,7 +45,7 @@
   "scope": {
     "authoritative_write_owner": "Antigravity owns the corrected catalog, dual-profile dispatcher provenance, source receipt, and owner evidence. Codex2 is the independent reviewer.",
     "composes_with": [
-      "merged PR #4539 on dev (head f70c2dd5c584e2374c2b89119f110728cce3a969, merge 67d290d1c6e64ee7d485082e111ffa6fc3e81b18)",
+      "PR #4652 on dev (head 97fffe526c47b53ca90beb26c570edbec36374bc)",
       "guarded dispatcher validate-only, dry-run, then apply materialization after review and live promotion"
     ],
     "evidence_changed_files": [
@@ -68,24 +68,24 @@
         "delivery_state": "current_source_receipt",
         "note": "Current delivery receipt contains every content-digest-bound artifact.",
         "receipt_role": "current_delivery_receipt",
-        "sha": "f70c2dd5c584e2374c2b89119f110728cce3a969",
-        "subject": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803: anchor evidence README and companion"
+        "sha": "97fffe526c47b53ca90beb26c570edbec36374bc",
+        "subject": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803: recut catalog"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "f70c2dd5c584e2374c2b89119f110728cce3a969",
-      "merge_commit": "67d290d1c6e64ee7d485082e111ffa6fc3e81b18",
-      "number": 4539,
-      "state": "merged",
-      "url": "https://github.com/ajoe734/pantheon/pull/4539"
+      "head_sha": "97fffe526c47b53ca90beb26c570edbec36374bc",
+      "merge_commit": "pending",
+      "number": 4652,
+      "state": "open",
+      "url": "https://github.com/ajoe734/pantheon/pull/4652"
     },
     "required_checks": [
       {
         "completed_at": "2026-08-09T01:31:00Z",
         "conclusion": "success",
         "event": "push",
-        "head_sha": "f70c2dd5c584e2374c2b89119f110728cce3a969",
+        "head_sha": "97fffe526c47b53ca90beb26c570edbec36374bc",
         "run_id": 30882325736,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906117256",
         "workflow": "Commit trailers"
@@ -94,7 +94,7 @@
         "completed_at": "2026-08-09T01:31:00Z",
         "conclusion": "success",
         "event": "push",
-        "head_sha": "f70c2dd5c584e2374c2b89119f110728cce3a969",
+        "head_sha": "97fffe526c47b53ca90beb26c570edbec36374bc",
         "run_id": 30882325736,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906117217",
         "workflow": "Runtime mirror guard"
@@ -103,7 +103,7 @@
         "completed_at": "2026-08-09T01:31:00Z",
         "conclusion": "success",
         "event": "push",
-        "head_sha": "f70c2dd5c584e2374c2b89119f110728cce3a969",
+        "head_sha": "97fffe526c47b53ca90beb26c570edbec36374bc",
         "run_id": 30882325736,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30882325736/job/91906190461",
         "workflow": "Smoke acceptance"
@@ -287,7 +287,7 @@
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
       "containment": "Treat the receipt only as a source and CI proof; do not treat it as a merge or review decision.",
-      "description": "Receipt 3805e0555a6bfcfdd01c7504e0e2908f0a35bbfa is a verified source receipt, not a merged or independently reviewed delivery.",
+      "description": "Receipt 97fffe526c47b53ca90beb26c570edbec36374bc is a verified source receipt, not a merged or independently reviewed delivery.",
       "expiry": "The replacement PR merges or a subsequent source receipt supersedes this one.",
       "owner": "Codex2",
       "recheck_trigger": "On any source change, CI re-run, rebase, review decision, or merge.",
@@ -305,7 +305,7 @@
     "manifest_path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/evidence.json",
     "normalized_hosted_readback": {},
     "self_hash_omitted": true,
-    "self_hash_reason": "The companion checksum seals this manifest, while delivery receipt 6aec51e9ce8d48ab7e68d43a2587c9f5c760d737 binds finalized source and README bytes without recursive self-hashing.",
+    "self_hash_reason": "The companion checksum seals this manifest, while delivery receipt 97fffe526c47b53ca90beb26c570edbec36374bc binds finalized source and README bytes without recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
       "docs/bff/execution-tasks/2026-08-03-l12-guarded-remediation-correction/corrected-remediation-tasks.json@v1.0.0": "5ab2efe3cb55673366994b759f3d52190573ca9f0fc002393da3f5449b59e45b",
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803/README.md@v1.0.0": "1b9e0fa2c1ae072380a06896ce36cae414d3e78f95ca50d5d502fc0d6f782e2f",
@@ -315,12 +315,12 @@
   },
   "record_log": [
     {
-      "actor": "Codex2",
+      "actor": "Antigravity",
       "kind": "owner_source_receipt_prepared",
-      "recorded_at": "2026-08-04T05:59:34Z",
-      "reference": "Current source receipt 6aec51e9ce8d48ab7e68d43a2587c9f5c760d737 with successful push Branch CI protection gates.",
+      "recorded_at": "2026-08-09T11:38:55Z",
+      "reference": "Current source receipt 97fffe526c47b53ca90beb26c570edbec36374bc with successful push Branch CI protection gates.",
       "sequence": 1,
-      "sha": "6aec51e9ce8d48ab7e68d43a2587c9f5c760d737",
+      "sha": "97fffe526c47b53ca90beb26c570edbec36374bc",
       "status": "blocked_external_dependency"
     }
   ]
