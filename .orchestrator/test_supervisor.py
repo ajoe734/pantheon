@@ -28,6 +28,7 @@ import supervisor
 import provider_permissions
 import runtime_state
 import common
+import watch_events
 
 
 _OLD_ENV = {}
@@ -2196,6 +2197,84 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             copied_brief = Path(request.metadata["workspace_path"]) / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
             self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
             self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
+
+    def test_prepare_worker_workspace_generates_missing_brief_only_in_isolated_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            status_path = repo_root / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-BRIEF-002",
+                                "title": "Materialize isolated context",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Codex2",
+                                "summary_zh": "Keep generated context out of the command checkout.",
+                                "next": "Continue in the isolated task worktree.",
+                            }
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(repo_root / "activity-log.jsonl"),
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            relative_brief = ".orchestrator/task-briefs/ops_brief_002.md"
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-BRIEF-002",
+                reason="owned_in_progress_dispatch",
+                context_files=[relative_brief],
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-brief-generated",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+            self.assertFalse((repo_root / relative_brief).exists())
+            generated_brief = Path(request.metadata["workspace_path"]) / relative_brief
+            rendered = generated_brief.read_text(encoding="utf-8")
+            self.assertIn("# Task Brief: OPS-BRIEF-002", rendered)
+            self.assertIn("- Title: Materialize isolated context", rendered)
+            self.assertIn("- Owner: Codex", rendered)
+            self.assertIn("- Reviewer: Codex2", rendered)
+            self.assertEqual(
+                request.metadata["materialized_context_files"],
+                [relative_brief],
+            )
 
     def test_prepare_worker_workspace_blocks_dirty_reused_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -9861,7 +9940,7 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             ],
         )
 
-    def test_process_queue_builds_full_task_brief_outside_runtime_admission(self) -> None:
+    def test_process_queue_references_task_brief_without_rewriting_command_root(self) -> None:
         task_id = "OPS-TASK-BRIEF-LOCK-ORDER-TEST"
         dependency_id = "OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY"
         task = {
@@ -9928,7 +10007,9 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             "providers": {"codex": {"delivery_mode": "codex"}},
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        brief_path = self.root / "task-brief.md"
+        brief_path = self.root / ".orchestrator" / "task-briefs" / "ops_task_brief_lock_order_test.md"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text("tracked command-root brief\n", encoding="utf-8")
         lock_trace_path = self.root / "lock-trace.jsonl"
         captured_requests: list[supervisor.DeliveryRequest] = []
         real_build_request = supervisor.build_request
@@ -9975,23 +10056,18 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(len(captured_requests), 1)
-        self.assertIn(str(brief_path), captured_requests[0].context_files)
+        self.assertIn(
+            ".orchestrator/task-briefs/ops_task_brief_lock_order_test.md",
+            captured_requests[0].context_files,
+        )
         self.assertNotEqual(
             captured_requests[0].context_files,
             ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
         )
-        self.assertTrue(brief_path.is_file())
-        rendered = brief_path.read_text(encoding="utf-8")
-        self.assertIn("# Task Brief: OPS-TASK-BRIEF-LOCK-ORDER-TEST", rendered)
-        self.assertIn("- Status: todo", rendered)
-        self.assertIn("- Owner: Codex", rendered)
-        self.assertIn("- Reviewer: Codex2", rendered)
-        self.assertIn("- Next: Use the complete task-scoped context", rendered)
-        self.assertIn(
-            "- OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY: done · Archived dependency",
-            rendered,
+        self.assertEqual(
+            brief_path.read_text(encoding="utf-8"),
+            "tracked command-root brief\n",
         )
-        self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
         common_activity_log.assert_not_called()
         lock_trace = [
             line.split(":", 3)[:2]
@@ -10014,6 +10090,219 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         )
         self.assertLess(prior_runtime_release, task_acquire)
         self.assertLess(task_acquire, next_runtime_acquire)
+
+    def test_queue_delivery_event_seeds_non_materializing_worker_context(self) -> None:
+        event = {
+            "task_id": "OPS-BRIEF-QUEUE-001",
+            "target_agent": "Codex",
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "_queue_delivery_event_with_runtime_context",
+            return_value=True,
+        ) as queue_event:
+            queued = supervisor.queue_delivery_event(self.config, event)
+
+        self.assertTrue(queued)
+        self.assertEqual(
+            event["context_files"],
+            [
+                "AI_COLLABORATION_GUIDE.md",
+                ".orchestrator/task-briefs/ops_brief_queue_001.md",
+                ".orchestrator/skills/worker-anchor-commit.md",
+                ".orchestrator/skills/task-closeout-finalization.md",
+                "ai-status.json",
+            ],
+        )
+        queue_event.assert_called_once_with(self.config, event)
+
+    def test_run_once_watch_materializes_missing_brief_only_in_isolated_worktree(self) -> None:
+        task_id = "OPS-WATCH-BRIEF-001"
+        task = {
+            "id": task_id,
+            "title": "Keep watcher context out of the command root",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "summary_zh": "Materialize the generated brief in the worker worktree.",
+            "next": "Continue the isolated worker task.",
+            "artifacts": [".orchestrator/supervisor.py"],
+        }
+        self.status_path.write_text(
+            json.dumps({"tasks": [task], "handoffs": []}) + "\n",
+            encoding="utf-8",
+        )
+        command_brief = (
+            self.root
+            / ".orchestrator"
+            / "task-briefs"
+            / "ops_watch_brief_001.md"
+        )
+        worker_root = self.root / "workers"
+        config = {
+            **self.config,
+            "paths": {
+                **self.config["paths"],
+                "provider_capabilities": str(self.root / "provider-capabilities.json"),
+            },
+            "schema": {
+                **self.config["schema"],
+                "status_field": "status",
+                "handoffs_path": "handoffs",
+            },
+            "events": {
+                "enqueue_runtime_events": True,
+                "status_targets": {"in_progress": "owner"},
+                "review_statuses": ["review"],
+                "pending_handoff_statuses": ["pending"],
+                "watch_handoffs": True,
+            },
+            "watcher": {
+                "max_seen_events": 2000,
+                "recent_terminal_limit": 10,
+            },
+            "agents": {
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "file_inbox",
+                }
+            },
+            "providers": {"codex": {"delivery_mode": "file_inbox"}},
+            "worker_worktrees": {
+                "enabled": True,
+                "root": str(worker_root),
+                "source_root": str(self.root),
+                "base_ref": "origin/dev",
+                "reuse_existing": True,
+                "execution_reasons": ["status:*"],
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+            "supervisor": {},
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+        }
+        initial_state = runtime_state.default_state()
+        initial_state["supervisor"] = {
+            "pid": 61209,
+            "started_at": "2026-08-08T23:00:00Z",
+            "last_heartbeat_at": "2026-08-08T23:00:00Z",
+        }
+        self.state_path.write_text(
+            json.dumps(initial_state) + "\n",
+            encoding="utf-8",
+        )
+        captured_request: list[supervisor.DeliveryRequest] = []
+
+        def create_worktree(
+            _repo_root: Path,
+            worktree_path: Path,
+            _branch: str,
+            _base_ref: str,
+        ) -> tuple[bool, None]:
+            worktree_path.mkdir(parents=True)
+            return True, None
+
+        def process_queued_event(
+            queued_config: dict[str, object],
+            state: dict[str, object],
+            _provider_report: dict[str, object],
+        ) -> bool:
+            events = supervisor.load_event_queue(queued_config)
+            self.assertEqual(len(events), 1)
+            request = supervisor.build_request(queued_config, events[0])
+            ok, message = supervisor.prepare_worker_workspace(
+                queued_config,
+                state,
+                request,
+                queue_event_id=events[0]["event_id"],
+                target_agent=events[0]["target_display_name"],
+            )
+            self.assertTrue(ok, message)
+            captured_request.append(request)
+            return True
+
+        def run_reserved_phase(
+            _config: dict[str, object],
+            phase: str,
+            operation: object,
+        ) -> bool:
+            if phase != "process_queue":
+                return False
+            state = supervisor.load_runtime_state(config)
+            return bool(operation(state))
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
+            stack.enter_context(mock.patch.object(supervisor, "continue_or_skip_empty"))
+            stack.enter_context(mock.patch.object(supervisor, "drain_assistant_dev_packet_inbox", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})))
+            stack.enter_context(mock.patch.object(supervisor, "prefetch_task_state_shadow", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "prefetch_ownerless_merged_pr_snapshots", return_value={}))
+            stack.enter_context(mock.patch.object(supervisor, "pending_worker_base_refs", return_value=set()))
+            stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_blocked_tasks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "persist_blocked_task_reconciliation_runtime", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_runtime_on_boot", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "expire_provider_dispatch_pauses", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_fresh_provider_probe_failures", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_provider_pause_recovery", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_provider_auth_recovery", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "maybe_reassign_tasks_from_failure_streaks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_ownerless_in_progress_tasks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "auto_materialize_discussion_planning", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "watchdog_safe_mode_active", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "chair_review_failure_loop_details", return_value=[]))
+            stack.enter_context(mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "dispatch_chair_review", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "maybe_auto_commit_archive", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "process_queue", side_effect=process_queued_event))
+            stack.enter_context(mock.patch.object(supervisor, "_run_reserved_runtime_phase", side_effect=run_reserved_phase))
+            stack.enter_context(mock.patch.object(supervisor, "_finalize_runtime_cycle_locked", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
+            stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
+            stack.enter_context(mock.patch.object(supervisor, "persist_complete_cycle_metrics", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "_create_worker_worktree", side_effect=create_worktree))
+            stack.enter_context(mock.patch.object(watch_events, "recent_terminal_summaries", return_value=[]))
+            stack.enter_context(
+                mock.patch.object(
+                    watch_events,
+                    "execution_context_files",
+                    side_effect=AssertionError(
+                        "run_once watcher must use the injected pure context builder"
+                    ),
+                )
+            )
+
+            changed = supervisor.run_once(config, watch=True, replay=True)
+
+        self.assertTrue(changed)
+        self.assertFalse(command_brief.exists())
+        self.assertEqual(len(captured_request), 1)
+        request = captured_request[0]
+        self.assertEqual(
+            request.context_files,
+            supervisor.worker_execution_context_files(task_id),
+        )
+        generated_brief = Path(request.metadata["workspace_path"]) / command_brief.relative_to(self.root)
+        rendered = generated_brief.read_text(encoding="utf-8")
+        self.assertIn(f"# Task Brief: {task_id}", rendered)
+        self.assertIn("- Status: in_progress", rendered)
+        self.assertEqual(
+            request.metadata["materialized_context_files"],
+            [str(command_brief.relative_to(self.root))],
+        )
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
         original_events = [
