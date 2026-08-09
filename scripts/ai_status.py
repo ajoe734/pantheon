@@ -1405,7 +1405,12 @@ def format_display_timestamp(value: Any) -> str:
     parsed = parse_timestamp(value)
     if parsed is None:
         return "-" if value is None or value == "" else str(value)
-    return parsed.astimezone(DISPLAY_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        return parsed.astimezone(DISPLAY_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    except (OverflowError, ValueError):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return parsed.isoformat()
 
 
 def localize_embedded_timestamps(text: Any) -> str:
