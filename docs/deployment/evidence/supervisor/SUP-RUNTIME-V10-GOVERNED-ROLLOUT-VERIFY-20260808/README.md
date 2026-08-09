@@ -69,6 +69,16 @@ is not admitted. The already-governed
 status-renderer defect. Do not claim the legacy-bootstrap implementation is
 underway until a successful admission receipt and authoritative readback exist.
 
+When later governed status refresh succeeded, replaying the original packet id
+correctly returned `duplicate` because it is durably archived under `failed/`.
+A retry packet with a new id but the byte-model-identical task spec was also
+correctly rejected: the already-materialized task still binds the original
+signed provenance. This closes off unsafe operator workarounds but exposes a
+bridge atomicity/recovery gap. The additional source-only packet
+`source-only-followup-bridge-partial-assign-recovery.json` requests a supported
+authoritative recovery path for this exact post-commit failure; it does not
+broaden or duplicate the legacy-bootstrap implementation scope.
+
 ## 2026-08-08 prior fail-closed attempts
 
 On 2026-08-08 the authorized retry used only

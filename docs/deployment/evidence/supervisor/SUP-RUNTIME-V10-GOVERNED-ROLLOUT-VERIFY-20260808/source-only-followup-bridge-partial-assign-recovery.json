@@ -1,0 +1,73 @@
+{
+  "version": "pantheon.assistant.dev-task.v1",
+  "packetId": "sup-assistant-dev-bridge-partial-assign-recovery-20260809-0638",
+  "intent": "source_only_remediation_dispatch",
+  "emittedAt": "2026-08-09T06:38:19Z",
+  "actor": {
+    "id": "Codex",
+    "roles": [
+      "auto-worker"
+    ],
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ]
+  },
+  "mode": "supervisor_source_only",
+  "sourceConversationId": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "sourceTurnIds": [
+    "bridge-receipt-sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629",
+    "bridge-receipt-sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0636-r1"
+  ],
+  "documents": [
+    {
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "kind": "ASSISTANT_DEV_BRIDGE_FAIL_CLOSED_EVIDENCE",
+      "sourceRefs": [
+        "receipt-sha256:9bebffebae4ec3d4df11c5f878b6897e01069eb7c5f9898787268ba892900884",
+        "retry-receipt-sha256:07cb446498d8d3b3a2af7946c25da439e83d90a803a112766804ad391bfee70f",
+        "original-packet-digest:2089df8463276d8523d0cbec3c3acf1f54e1b80eeb0e2e568739492f39d4cd3c",
+        "task-spec-hash:6ff38384494a9f60e2df5acdb224522fdaf79efcb739d8624dce416298171fc4"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+      "title": "Recover signed admission after partial authoritative task assign",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "phase": "Supervisor Runtime / Source-only Assistant Bridge Recovery",
+      "dependsOn": [],
+      "artifacts": [
+        "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+        "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+        "services/control-plane/bff/assistant/dev_bridge_admission.py",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+        "scripts/queue_assistant_dev_task_packet.py",
+        "scripts/drain_assistant_dev_task_packet_inbox.py",
+        "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809/"
+      ],
+      "acceptance": [
+        "Reproduce an ai_status assign that commits the exact signed task and provenance to the authoritative store, then exits nonzero while refreshing a derived view; the bridge currently emits a failed receipt with admission not attempted even though governed show returns the task.",
+        "Make dispatch and admission crash-consistent and idempotent: after a nonzero assign, perform authoritative task readback and continue only when the full task spec plus original signed provenance are exact; otherwise fail closed without an admission record.",
+        "Provide a governed recovery mechanism for the exact original failed packet id that does not require moving/editing pending, failed, receipt, replay, canonical state, or admission JSON by hand.",
+        "Keep replay collision, packet digest, task-spec hash, actor, source conversation/turn, document, owner/reviewer, and provenance mismatch checks fail closed; a new packet id must not overwrite provenance on an already-materialized task.",
+        "Add focused crash-point and concurrency tests for assign-before-derived-failure, exact authoritative readback, retry claim expiry, duplicate failed leaf, packet-id collision, conflicting task spec, conflicting provenance, and admission record durability.",
+        "Perform no live config edit, process signal, runtime promotion, manual canonical-state edit, worker dispatch bypass, supervisor scheduling change, or fleet-routing change; after merge, recovering the legacy-bootstrap packet is a separate governed operation."
+      ],
+      "summary": "The original signed legacy-bootstrap packet committed its canonical task, then failed derived-view refresh before admission. Exact-id replay is pinned to failed/ and new-id replay correctly fails provenance. Repair only the assistant dev bridge transaction/recovery boundary so exact original provenance can be admitted after authoritative readback without hand-editing queue or state files."
+    }
+  ],
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "requiresBranchPrMerge": true,
+    "noDirectShellFromWeb": true
+  },
+  "auditConversationHref": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+}

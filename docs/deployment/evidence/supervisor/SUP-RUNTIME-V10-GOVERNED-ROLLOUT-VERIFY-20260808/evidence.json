@@ -342,7 +342,17 @@
       "packet_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/source-only-followup-legacy-drift-bootstrap-retry1.json",
       "packet_id": "sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0636-r1",
       "task_spec_expected_unchanged": true,
-      "dispatch_status": "packet_prepared_pending_signed_bridge_queue"
+      "dispatch_status": "failed_closed_provenance_mismatch",
+      "queued_at": "2026-08-09T06:37:19Z",
+      "drained_at": "2026-08-09T06:37:24Z",
+      "receipt_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/receipts/sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0636-r1.json",
+      "failed_path": "/home/lupin/pantheon/.orchestrator/assistant-dev-packets/failed/sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0636-r1.json",
+      "receipt_sha256": "07cb446498d8d3b3a2af7946c25da439e83d90a803a112766804ad391bfee70f",
+      "packet_digest": "b20102374dae92c3d9fb401761c419a6e00edc4b7926d8574bf332a1b77372e6",
+      "task_spec_hash": "6ff38384494a9f60e2df5acdb224522fdaf79efcb739d8624dce416298171fc4",
+      "admission_status": "not_attempted",
+      "failure": "materialized task 'SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809' does not match signed bridge provenance",
+      "conclusion": "New packet ids must not overwrite the original failed packet provenance; a source-only bridge recovery path is required."
     },
     "evidence_binding": {
       "transaction_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T062622204757Z-3114628.json",
@@ -351,6 +361,15 @@
       "incumbent": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
       "legacy_task_brief_drift_count": 4
     }
+  },
+  "bridge_partial_assign_recovery_followup": {
+    "packet_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/source-only-followup-bridge-partial-assign-recovery.json",
+    "packet_id": "sup-assistant-dev-bridge-partial-assign-recovery-20260809-0638",
+    "task_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-20260809",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "dispatch_status": "packet_prepared_pending_signed_bridge_queue",
+    "scope_boundary": "Recover signed admission after an authoritative assign commit followed by derived-view failure; do not implement the legacy runtime bootstrap repair in this task."
   },
   "verification": [
     {
@@ -417,6 +436,11 @@
       "command": "governed show plus scripts/explain_dispatch.py for SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
       "result": "canonical task exists todo with matching owner/reviewer/spec hash; global dispatch block is signed dev-bridge packet not admitted",
       "conclusion": "do_not_claim_implementation_underway"
+    },
+    {
+      "command": "requeue original packet id, then queue retry1 with identical task model and a new packet id",
+      "result": "original returned duplicate against failed leaf; retry1 failed because materialized task remains bound to original signed provenance",
+      "conclusion": "replay_and_provenance_guards_pass_but_partial_assign_recovery_missing"
     }
   ],
   "rollout_and_rollback": {
