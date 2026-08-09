@@ -6,9 +6,17 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
+from .. import dev_bridge_inbox
+from ..dev_bridge_inbox import (
+    drain_task_packet_inbox,
+    queue_task_packet,
+    recover_failed_task_packet,
+)
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
-from ..dev_bridge_signer import sign_packet
+from ..dev_bridge_models import BridgeDispatchResult, TaskDispatchRecord
+from ..dev_bridge_signer import packet_digest, sign_packet
 from .dev_bridge_test_support import write_materializing_ai_status
 
 
@@ -45,6 +53,51 @@ def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root.mkdir()
     write_materializing_ai_status(repo_root)
     return repo_root
+
+
+def _drain_as_failed(
+    repo_root: Path,
+    packet: DevTaskPacket,
+    *,
+    error: str,
+    dispatched_at: str,
+) -> Path:
+    failed_result = BridgeDispatchResult(
+        packetId=packet.packet_id,
+        dispatchedAt=dispatched_at,
+        taskRecords=[
+            TaskDispatchRecord(
+                taskId=task.id,
+                owner=task.owner,
+                reviewer=task.reviewer,
+                status="error",
+                error=error,
+            )
+            for task in packet.tasks
+        ],
+        auditRefs={
+            "packetId": packet.packet_id,
+            "packetDigest": packet_digest(packet),
+        },
+        admissionStatus="not_attempted",
+        errors=[error],
+    )
+    with patch.object(
+        dev_bridge_inbox,
+        "dispatch_task_packet",
+        return_value=failed_result,
+    ):
+        drained = drain_task_packet_inbox(repo_root=str(repo_root))
+    assert drained["errorCount"] == 1
+    failed = (
+        repo_root
+        / ".orchestrator"
+        / "assistant-dev-packets"
+        / "failed"
+        / f"{packet.packet_id}.json"
+    )
+    assert failed.is_file()
+    return failed
 
 
 def _copy_cli_to_isolated_worktree(tmp_path: Path, script: Path) -> tuple[Path, Path]:
@@ -303,3 +356,66 @@ def test_drain_cli_serializes_concurrent_drainers(tmp_path: Path) -> None:
     assert [path.name for path in processed.glob("*.json")] == [
         "pkt_inbox_cli_drain_concurrent.json"
     ]
+
+
+def test_drain_cli_rearms_a_recovered_packet_after_a_new_failed_drain(
+    tmp_path: Path,
+) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    packet = sign_packet(
+        _make_packet("pkt_inbox_cli_rearm"),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    queue_task_packet(
+        packet,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    _drain_as_failed(
+        repo_root,
+        packet,
+        error="injected initial CLI recovery failure",
+        dispatched_at="2026-08-09T08:10:00Z",
+    )
+    recover_failed_task_packet(
+        packet.packet_id,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    failed = _drain_as_failed(
+        repo_root,
+        packet,
+        error="injected recovered-packet CLI drain failure",
+        dispatched_at="2026-08-09T08:11:00Z",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(DRAIN_SCRIPT),
+            "--repo-root",
+            str(repo_root),
+            "--recover-failed-packet-id",
+            packet.packet_id,
+        ],
+        cwd=str(REPO_ROOT),
+        env=_isolated_worktree_env(repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    evidence_path = (
+        failed.parent.parent
+        / "recovery-rearms"
+        / failed.stem
+        / "000001.json"
+    )
+    assert body["status"] == "rearmed"
+    assert body["rearmAttempt"] == 1
+    assert body["rearmEvidencePath"] == str(evidence_path)
+    assert evidence_path.is_file()
+    assert not failed.exists()
+    assert (failed.parent.parent / "pending" / failed.name).is_file()
