@@ -2027,7 +2027,29 @@ def test_trusted_dev_fetch_rejects_git_environment_url_rewrite(
     })
 
 
-def test_git_identity_revalidation_rejects_metadata_inode_replacement(
+def test_git_identity_revalidation_accepts_clean_index_inode_refresh(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent,
+        remote,
+        live_config,
+    )
+    with parent_patch, remote_patch, config_patch:
+        identity = build_candidate_runtime_identity(candidate)
+        git_index = candidate / ".git" / "index"
+        replacement = candidate / ".git" / "index.replacement"
+        replacement.write_bytes(git_index.read_bytes())
+        os.replace(replacement, git_index)
+        assert git_index.stat().st_ino != identity.git_index_inode
+        identity.verify_immutable_snapshot()
+
+
+def test_git_identity_revalidation_rejects_static_metadata_inode_replacement(
     tmp_path: Path,
 ) -> None:
     candidate, parent, remote, _commit, _tree, _config_bytes = (
