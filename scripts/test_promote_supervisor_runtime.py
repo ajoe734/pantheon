@@ -3119,6 +3119,34 @@ def test_mutable_incumbent_snapshot_binds_exact_process_and_sources(
     assert snapshot.repository_slug == "ajoe734/pantheon"
 
 
+def test_mutable_incumbent_snapshot_tolerates_scheduler_state_churn(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    seed_generation = reader.generations[1717]
+    reader.generations[1717] = replace(seed_generation, state="R")
+    binding = _mutable_binding_stub(identity)
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=binding,
+    ):
+        snapshot = promotion.capture_mutable_incumbent_snapshot(
+            identity,
+            reader=reader,
+            seed_generation=seed_generation,
+            seed_argv=argv,
+            seed_cwd=reader.cwd[1717],
+        )
+
+    assert snapshot.process.generation.pid == seed_generation.pid
+    assert (
+        snapshot.process.generation.starttime_ticks
+        == seed_generation.starttime_ticks
+    )
+    assert snapshot.process.generation.state == "R"
+
+
 def test_mutable_incumbent_snapshot_rejects_ambiguous_processes(
     tmp_path: Path,
 ) -> None:

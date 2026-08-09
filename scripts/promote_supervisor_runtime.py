@@ -24,7 +24,7 @@ import tarfile
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -228,7 +228,12 @@ class TrackedGitlinkIdentity:
 class ProcessGeneration:
     pid: int
     starttime_ticks: int
-    state: str
+    # Linux scheduler state is an observation, not generation identity.  A
+    # live process can legitimately move between R and S while a promotion
+    # reads the incumbent's state.  PID reuse is instead bound by the stable
+    # (pid, starttime_ticks) pair; zombie rejection remains explicit at each
+    # guarded process read.
+    state: str = field(compare=False)
 
 
 @dataclass(frozen=True)
