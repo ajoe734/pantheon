@@ -3036,6 +3036,7 @@ def _discover_injected(
     reader: InjectedRuntimeProcessReader,
     *,
     git_identity: tuple[str, str] | None = None,
+    allow_legacy_environment_contract: bool = False,
 ) -> SupervisorProcessIdentity:
     return discover_incumbent_supervisor_process(
         identity,
@@ -3045,6 +3046,7 @@ def _discover_injected(
             if git_identity is not None
             else (identity.head_commit, identity.tracked_tree_identity)
         ),
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
     )
 
 
@@ -3179,6 +3181,92 @@ def test_mutable_incumbent_root_rejects_tracked_source_drift(
         remote.as_uri(),
     ):
         with pytest.raises(ValueError, match="Tracked git tree is dirty"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=source,
+                    device=source_stat.st_dev,
+                    inode=source_stat.st_ino,
+                )
+            )
+
+
+def test_mutable_incumbent_bootstrap_accepts_ignored_runtime_residue(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    (source / ".gitignore").write_text(
+        ".claude/settings.local.json\n"
+        "__pycache__/\n"
+        ".pytest_cache/\n"
+        ".venv-pantheon/\n"
+        ".orchestrator/evidence/\n"
+        ".orchestrator/state.json\n"
+        "docs-site/orchestrator-state.json\n"
+        "archive/logs/\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", ".gitignore")
+    _git(source, "commit", "-m", "ignore mutable runtime residue")
+    _git(source, "push", str(remote), "HEAD:dev")
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+
+    (source / ".claude").mkdir()
+    (source / ".claude" / "settings.local.json").write_text("{}\n")
+    (source / ".orchestrator" / "evidence").mkdir(parents=True)
+    (source / ".orchestrator" / "evidence" / "run.json").write_text("{}\n")
+    (source / ".orchestrator" / "state.json").write_text("{}\n")
+    (source / "scripts" / "__pycache__").mkdir(parents=True)
+    (source / "scripts" / "__pycache__" / "status.pyc").write_bytes(b"pyc")
+    (source / ".pytest_cache" / "v").mkdir(parents=True)
+    (source / ".venv-pantheon" / "bin").mkdir(parents=True)
+    (source / "archive" / "logs").mkdir(parents=True)
+    (source / "docs-site").mkdir(exist_ok=True)
+    (source / "docs-site" / "orchestrator-state.json").write_text("{}\n")
+    source_stat = source.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        promotion._mutable_root_binding(
+            ProcessCwdIdentity(
+                path=source,
+                device=source_stat.st_dev,
+                inode=source_stat.st_ino,
+            )
+        )
+
+
+def test_mutable_incumbent_bootstrap_rejects_ignored_source_file(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    ignored_source = source / "scripts" / "untracked_source.py"
+    (source / ".gitignore").write_text(
+        "scripts/untracked_source.py\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", ".gitignore")
+    _git(source, "commit", "-m", "ignore prohibited source")
+    _git(source, "push", str(remote), "HEAD:dev")
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+    ignored_source.write_text("print('must not be accepted')\n", encoding="utf-8")
+    source_stat = source.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Forbidden ignored file found in mutable root",
+        ):
             promotion._mutable_root_binding(
                 ProcessCwdIdentity(
                     path=source,
@@ -4391,6 +4479,65 @@ def test_process_identity_allows_one_governed_legacy_incumbent_migration(
         "PANTHEON_COMMAND_RUNTIME_SHA": candidate.head_commit,
         "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
     }
+
+
+def test_process_identity_allows_bootstrap_legacy_environment_contract(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
+    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
+
+    with pytest.raises(ValueError, match="environment allowlist mismatch"):
+        _discover_injected(candidate, reader)
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_environment_contract=True,
+    )
+
+    assert dict(identity.environment_contract) == {
+        "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def test_process_identity_rejects_wrong_bootstrap_legacy_status_root(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
+    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
+    reader.environment[1717]["PANTHEON_STATUS_ROOT"] = "/wrong-status-root"
+
+    with pytest.raises(
+        ValueError,
+        match="environment PANTHEON_STATUS_ROOT mismatch",
+    ):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_environment_contract=True,
+        )
 
 
 def test_process_identity_revalidates_candidate_inside_lock_bracket(
@@ -5987,15 +6134,31 @@ def test_mutable_incumbent_bootstrap_accepts_second_live_byte_legacy_task_brief_
 
 def test_verify_legacy_task_brief_binding_provenance_success() -> None:
     real_root = Path(".")
-    expected_head = promotion._run_mutable_git(real_root, "rev-parse", "HEAD").stdout.strip()
     binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
 
-    # Must not raise on real repository where provenance commits exist
+    # The registered legacy runtime remains admissible until the prevention
+    # boundary, even though this checkout is newer than that boundary.
     promotion._verify_legacy_task_brief_binding_provenance(
         real_root,
         binding=binding,
-        expected_head=expected_head,
+        expected_head=binding.legacy_command_runtime_sha,
     )
+
+
+def test_verify_legacy_task_brief_binding_rejects_head_after_prevention_boundary() -> None:
+    real_root = Path(".")
+    binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
+    expected_head = promotion._run_mutable_git(real_root, "rev-parse", "HEAD").stdout.strip()
+
+    with pytest.raises(
+        ValueError,
+        match="expected_head is not before the prevention boundary SHA",
+    ):
+        promotion._verify_legacy_task_brief_binding_provenance(
+            real_root,
+            binding=binding,
+            expected_head=expected_head,
+        )
 
 
 def test_mutable_incumbent_bootstrap_rejects_missing_authoritative_historical_event(
