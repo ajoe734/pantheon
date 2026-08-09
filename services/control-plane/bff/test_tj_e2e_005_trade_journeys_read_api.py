@@ -21,6 +21,12 @@ sys.path.insert(0, BFF_DIR)
 
 import main as bff_main  # noqa: E402
 import trade_journeys as tj  # noqa: E402
+from trade_journey_projection_store import (  # noqa: E402
+    InvalidPageToken,
+    PageTokenCodec,
+    ProjectionPage,
+    TradeJourneyProjectionStore,
+)
 from fastapi.testclient import TestClient  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 
@@ -77,7 +83,7 @@ def _client_with(events, *, raw_events=None):
     return TestClient(bff_main.app), store
 
 
-def _direct_client(events, *, raw_events=None):
+def _direct_client(events, *, raw_events=None, projection_reader=None):
     """Isolated app wired straight to `create_trade_journeys_router` with a
     test-double identity extractor.
 
@@ -114,6 +120,7 @@ def _direct_client(events, *, raw_events=None):
         extract_identity=extract_identity,
         require_read_role=require_read_role,
         get_event_store=lambda: store,
+        get_projection_reader=lambda: projection_reader,
     ))
     return TestClient(app, raise_server_exceptions=False), store
 
@@ -1067,3 +1074,186 @@ def test_tj_e2e_005_publish_rejects_projector_owned_store_without_mutation(
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == "PROJECTOR_OWNED_STORE"
     assert store_file.read_text(encoding="utf-8") == original
+
+
+# --------------------------------------------------------------------------- #
+# LIFECYCLE-PROJ-BFF-001: Postgres reader routing and cursor integrity
+# --------------------------------------------------------------------------- #
+
+
+def test_lifecycle_proj_bff_reader_tokens_reject_scope_and_filter_reuse() -> None:
+    codec = PageTokenCodec("reader-token-secret-is-long-enough")
+    token = codec.encode(
+        {
+            "v": 1,
+            "kind": "journeys",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "sort": "updated_at_desc",
+            "filters": {"status": "open"},
+            "after": ["2026-08-01T00:00:00Z", "tj-1"],
+        }
+    )
+    accepted = codec.decode(
+        token,
+        expected={
+            "v": 1,
+            "kind": "journeys",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "sort": "updated_at_desc",
+            "filters": {"status": "open"},
+        },
+    )
+    assert accepted["after"] == ["2026-08-01T00:00:00Z", "tj-1"]
+
+    for incompatible in (
+        {"tenant_id": "tenant-b"},
+        {"environment": "live"},
+        {"sort": "created_at_desc"},
+        {"filters": {"status": "completed"}},
+    ):
+        expected = {
+            "v": 1,
+            "kind": "journeys",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "sort": "updated_at_desc",
+            "filters": {"status": "open"},
+            **incompatible,
+        }
+        try:
+            codec.decode(token, expected=expected)
+        except InvalidPageToken:
+            pass
+        else:  # pragma: no cover - documents the security assertion
+            raise AssertionError("scope-incompatible page token was accepted")
+
+
+def test_lifecycle_proj_bff_list_uses_selected_postgres_reader() -> None:
+    projection = _materializer_with(_BASE_EVENTS).projections[0]
+
+    class Reader:
+        def __init__(self):
+            self.calls = []
+
+        def page_journeys(self, **kwargs):
+            self.calls.append(kwargs)
+            return ProjectionPage(items=[projection], next_page_token="signed-next", total=1)
+
+        def controller_freshness(self, **kwargs):
+            return {
+                "generation": 7,
+                "checkpoint": 11,
+                "status": "ready",
+                "mode": "live",
+                "accepted_live": True,
+            }
+
+    reader = Reader()
+    client, _ = _direct_client(_BASE_EVENTS, projection_reader=reader)
+    client = TestClient(client.app)
+    response = client.get(
+        "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper&status=open",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["page_info"]["next_page_token"] == "signed-next"
+    assert payload["meta"]["freshness"]["rebuild_status"] == "postgres_projection_reader"
+    assert reader.calls == [
+        {
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "filters": {
+                "q": None,
+                "persona_id": None,
+                "strategy_id": None,
+                "decision_id": None,
+                "order_id": None,
+                "broker_order_id": None,
+                "stage": None,
+                "status": "open",
+                "stalled": None,
+                "waiting_human": None,
+                "reconciliation_state": None,
+                "date_from": None,
+                "date_to": None,
+            },
+            "sort": "updated_at_desc",
+            "page_size": 50,
+            "page_token": None,
+        }
+    ]
+
+
+def test_lifecycle_proj_bff_postgres_page_query_is_scoped_and_bounded() -> None:
+    queries = []
+    journey_columns = [
+        "tenant_id", "environment", "journey_id", "status", "stage_coverage",
+        "is_terminal", "first_occurred_at", "last_occurred_at",
+        "current_identity_summary", "evidence_summary", "diagnostic_summary",
+        "loop_run_id", "projection_revision", "created_at", "updated_at",
+    ]
+    journey_row = (
+        "tenant-a", "paper", "tj-1", "open", {}, False,
+        "2026-08-01T00:00:00Z", "2026-08-01T00:01:00Z", {}, {}, {},
+        "", 3, "2026-08-01T00:00:00Z", "2026-08-01T00:01:00Z",
+    )
+
+    class Cursor:
+        def __init__(self):
+            self.description = []
+            self.rows = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params):
+            queries.append((sql, tuple(params)))
+            if "COUNT(*) AS total" in sql:
+                self.description = [("total",)]
+                self.rows = [(1,)]
+            else:
+                self.description = [(name,) for name in journey_columns]
+                self.rows = [journey_row]
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return Cursor()
+
+    reader = TradeJourneyProjectionStore(
+        "postgresql://unit",
+        token_secret="reader-token-secret-is-long-enough",
+        connect=lambda dsn: Connection(),
+    )
+    result = reader.page_journeys(
+        tenant_id="tenant-a",
+        environment="paper",
+        filters={"status": "open"},
+        page_size=200,
+    )
+
+    assert [item.journey_id for item in result.items] == ["tj-1"]
+    page_sql, page_params = queries[0]
+    assert "tenant_id=%s AND environment=%s AND status=%s" in page_sql
+    assert "ORDER BY updated_at DESC, journey_id DESC LIMIT %s" in page_sql
+    assert page_params[-1] == 201
+    assert page_params[:3] == ("tenant-a", "paper", "open")
+    count_sql, count_params = queries[1]
+    assert "tenant_id=%s AND environment=%s AND status=%s" in count_sql
+    assert " LIMIT " not in count_sql
+    assert count_params == ("tenant-a", "paper", "open")

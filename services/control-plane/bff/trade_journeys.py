@@ -54,6 +54,12 @@ from services.trade_journey.slo_data_quality import (
     load_slo_targets,
     metrics_to_dict,
 )
+from trade_journey_projection_store import (
+    InvalidPageToken,
+    ProjectionReadError,
+    ProjectionReadUnavailable,
+    TradeJourneyProjectionStore,
+)
 
 EVENTS_STORE_ENV = "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"
 PROJECTOR_STORE_SCHEMA = "pantheon.trade-journey-projection.v1"
@@ -553,6 +559,46 @@ def _unavailable_list_envelope(
     }
 
 
+def _projection_reader_meta(
+    snapshot_at: str,
+    read_state: str,
+    reader: TradeJourneyProjectionStore,
+    *,
+    tenant_id: str,
+    environment: str,
+) -> Dict[str, Any]:
+    """Build the existing metadata DTO from Postgres controller truth.
+
+    A configured Postgres reader never falls back to JSON and therefore cannot
+    accidentally claim current projection truth from the legacy store.
+    """
+    controller = reader.controller_freshness(
+        tenant_id=tenant_id,
+        environment=environment,
+    ) or {}
+    formal = (
+        controller.get("accepted_live") is True
+        and controller.get("status") == "ready"
+        and controller.get("mode") == "live"
+    )
+    return {
+        "snapshot_at": snapshot_at,
+        "read_state": read_state if formal or read_state == "unavailable" else "degraded",
+        "freshness": {
+            "materializer_revision": int(controller.get("generation") or 0),
+            "rebuild_status": "postgres_projection_reader",
+            "source_watermarks": {"postgres": str(controller.get("checkpoint") or 0)},
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "generation": controller.get("generation"),
+            "projector_owned": True,
+            "projection_mode": controller.get("mode"),
+            "truth_level": "canonical_live" if formal else "not_accepted_live",
+            "accepted_live": bool(controller.get("accepted_live")),
+            "controller": controller,
+        },
+    }
+
+
 def _read_state(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, Any]]) -> str:
     codes = {item.get("code") for item in diagnostics}
     if codes & _ANOMALY_DIAGNOSTIC_CODES:
@@ -941,6 +987,7 @@ def create_trade_journeys_router(
     require_read_role: Callable[[Any], None],
     require_operator_role: Optional[Callable[[Any], None]] = None,
     get_event_store: Callable[[], TradeJourneyEventStore] = lambda: EVENT_STORE,
+    get_projection_reader: Callable[[], Optional[TradeJourneyProjectionStore]] = lambda: None,
     dispatch_action: Callable[[Dict[str, Any]], Dict[str, Any]] = _unconfigured_action_dispatcher,
     action_ledger: ActionLedger = ACTION_LEDGER,
     utc_now: Callable[[], str] = _default_utc_now,
@@ -1129,6 +1176,24 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                types_to_try = (identifier_type,) if identifier_type else _RESOLVABLE_IDENTIFIER_TYPES
+                if not _can_view_live_sensitive(identity, environment):
+                    types_to_try = tuple(id_type for id_type in types_to_try if id_type not in _LIVE_SENSITIVE_IDENTIFIER_TYPES)
+                candidates: List[Dict[str, Any]] = []
+                all_ids: set[str] = set()
+                for id_type in types_to_try:
+                    matches = reader.resolve(tenant_id=tenant_id, environment=environment, identifier_type=id_type, identifier_value=q)
+                    if matches:
+                        candidates.append({"identifier_type": id_type, "identifier": q, "journey_ids": matches, "match_count": len(matches)})
+                        all_ids.update(matches)
+                data = {"id": "trade-journey-resolve", "query": q, "tenant_id": tenant_id, "environment": environment, "candidates": candidates, "journey_ids": sorted(all_ids), "ambiguous": len(all_ids) > 1}
+                latency_recorder.record("resolve", (time.perf_counter() - _slo_timer_start) * 1000.0)
+                return {"data": data, "meta": _projection_reader_meta(snapshot_at, "formal", reader, tenant_id=tenant_id, environment=environment)}
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(snapshot_at, entity_id="trade-journey-resolve")
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1184,6 +1249,15 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                metrics = reader.metrics(tenant_id=tenant_id, environment=environment)
+                data = {"id": "trade-journey-metrics", "tenant_id": tenant_id, "environment": environment, **metrics}
+                read_state = "formal" if metrics["total_journeys"] else "partial"
+                return {"data": data, "meta": _projection_reader_meta(snapshot_at, read_state, reader, tenant_id=tenant_id, environment=environment)}
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(snapshot_at, entity_id="trade-journey-metrics")
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1295,6 +1369,27 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            filters = {
+                "q": q, "persona_id": persona_id, "strategy_id": strategy_id,
+                "decision_id": decision_id, "order_id": order_id,
+                "broker_order_id": broker_order_id, "stage": stage, "status": status,
+                "stalled": stalled, "waiting_human": waiting_human,
+                "reconciliation_state": reconciliation_state,
+                "date_from": _normalize_bound(date_from), "date_to": _normalize_bound(date_to),
+            }
+            try:
+                page_result = reader.page_journeys(tenant_id=tenant_id, environment=environment, filters=filters, sort=sort, page_size=page_size, page_token=page_token)
+            except InvalidPageToken:
+                return _err(400, "VALIDATION_FAILED", "page_token is invalid for this scope, filter, or sort")
+            except ProjectionReadUnavailable:
+                return _unavailable_list_envelope(snapshot_at, page_size, entity_id="trade-journeys")
+            now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+            items = [_mask_live_sensitive(_list_row(projection, now=now), identity, projection.environment) for projection in page_result.items]
+            states = {item.get("read_state") for item in items}
+            overall_state = "formal" if not states or states == {"formal"} else "degraded" if "degraded" in states else "partial"
+            return {"data": {"id": "trade-journeys", "tenant_id": tenant_id, "environment": environment, "items": items}, "page_info": {"next_page_token": page_result.next_page_token, "total": page_result.total, "page_size": page_size, "returned": len(items), "has_more": page_result.next_page_token is not None}, "meta": _projection_reader_meta(snapshot_at, overall_state, reader, tenant_id=tenant_id, environment=environment)}
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1377,6 +1472,18 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = reader.get_journey(tenant_id=tenant_id, environment=environment, journey_id=journey_id) if _tenant_allowed(identity, tenant_id) else None
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(snapshot_at, entity_id=journey_id)
+            if projection is None:
+                return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+            now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+            detail = _mask_live_sensitive(_detail(projection, now=now), identity, projection.environment)
+            latency_recorder.record("detail", (time.perf_counter() - _slo_timer_start) * 1000.0)
+            return {"data": detail, "meta": _projection_reader_meta(snapshot_at, detail.get("read_state", "formal"), reader, tenant_id=tenant_id, environment=environment)}
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1417,6 +1524,19 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = reader.get_journey(tenant_id=tenant_id, environment=environment, journey_id=journey_id) if _tenant_allowed(identity, tenant_id) else None
+                if projection is None:
+                    return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+                page_result = reader.page_timeline(tenant_id=tenant_id, environment=environment, journey_id=journey_id, page_size=page_size, page_token=page_token)
+            except InvalidPageToken:
+                return _err(400, "VALIDATION_FAILED", "page_token is invalid for this journey scope")
+            except ProjectionReadUnavailable:
+                return _unavailable_list_envelope(snapshot_at, page_size, entity_id=f"{journey_id}-timeline")
+            events = [_mask_live_sensitive(_timeline_event(event), identity, projection.environment) for event in page_result.items]
+            return {"data": {"id": f"{journey_id}-timeline", "journey_id": journey_id, "items": events}, "page_info": {"next_page_token": page_result.next_page_token, "total": page_result.total, "page_size": page_size, "returned": len(events), "has_more": page_result.next_page_token is not None}, "meta": _projection_reader_meta(snapshot_at, _read_state(projection.snapshot, projection.diagnostics), reader, tenant_id=tenant_id, environment=environment)}
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1473,6 +1593,15 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = reader.get_journey(tenant_id=tenant_id, environment=environment, journey_id=journey_id) if _tenant_allowed(identity, tenant_id) else None
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(snapshot_at, entity_id=f"{journey_id}-graph")
+            if projection is None:
+                return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+            return {"data": _mask_live_graph(_graph(projection), identity, projection.environment), "meta": _projection_reader_meta(snapshot_at, _read_state(projection.snapshot, projection.diagnostics), reader, tenant_id=tenant_id, environment=environment)}
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1507,6 +1636,15 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = reader.get_journey(tenant_id=tenant_id, environment=environment, journey_id=journey_id) if _tenant_allowed(identity, tenant_id) else None
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(snapshot_at, entity_id=f"{journey_id}-evidence")
+            if projection is None:
+                return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+            return {"data": _evidence(projection), "meta": _projection_reader_meta(snapshot_at, _read_state(projection.snapshot, projection.diagnostics), reader, tenant_id=tenant_id, environment=environment)}
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
